@@ -10,7 +10,7 @@
  */
 
 export const SHACL_SHAPES_TURTLE = `\
-@prefix cg:    <https://ns.foxximediums.com/context-graphs#> .
+@prefix cg:    <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#> .
 @prefix sh:    <http://www.w3.org/ns/shacl#> .
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov:  <http://www.w3.org/ns/prov#> .

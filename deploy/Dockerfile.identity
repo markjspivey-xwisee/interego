@@ -1,0 +1,15 @@
+FROM node:20-slim
+
+WORKDIR /app
+
+COPY deploy/identity/package.json ./
+RUN npm install
+
+COPY deploy/identity/server.ts ./
+
+EXPOSE 8090
+
+ENV PORT=8090
+ENV CSS_URL=http://css:3456/
+
+CMD ["npx", "tsx", "server.ts"]

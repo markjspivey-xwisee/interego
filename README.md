@@ -1,6 +1,6 @@
 # @foxxi/context-graphs
 
-Reference implementation of **[Context Graphs 1.0](https://spec.foxximediums.com/context-graphs/)** — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
+Reference implementation of **[Context Graphs 1.0](https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html)** — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
 
 Context Graphs lets AI coding agents publish, discover, and compose knowledge graphs with full provenance, trust, temporal validity, and semiotic metadata — federated across decentralized Solid pods.
 
@@ -485,7 +485,7 @@ Part of the Foxxi Mediums knowledge infrastructure:
 
 ## Spec Compliance
 
-This implementation follows the [Context Graphs 1.0 Working Draft](https://spec.foxximediums.com/context-graphs/):
+This implementation follows the [Context Graphs 1.0 Working Draft](https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html):
 
 - §3.1 Context Descriptor structure
 - §3.4 Composition operators (union, intersection, restriction, override) forming a bounded lattice

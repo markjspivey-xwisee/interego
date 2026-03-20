@@ -1,0 +1,1757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Context Graphs 1.0</title>
+<style>
+  :root {
+    --w3c-blue: #005A9C;
+    --w3c-dark: #003366;
+    --note-bg: #E8F5E9;
+    --note-border: #4CAF50;
+    --example-bg: #F3F0FF;
+    --example-border: #7B1FA2;
+    --issue-bg: #FFF3E0;
+    --issue-border: #FF9800;
+    --warn-bg: #FFF8E1;
+    --warn-border: #FFC107;
+    --def-bg: #E3F2FD;
+    --def-border: #1976D2;
+  }
+  body {
+    font-family: 'Noto Sans', 'Segoe UI', Helvetica, Arial, sans-serif;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 2em;
+    line-height: 1.6;
+    color: #333;
+    counter-reset: section;
+    font-size: 15px;
+  }
+  h1 { font-size: 2em; color: var(--w3c-dark); border-bottom: 3px solid var(--w3c-blue); padding-bottom: 0.3em; }
+  h2 { font-size: 1.5em; color: var(--w3c-blue); border-bottom: 1px solid #ccc; padding-bottom: 0.2em; margin-top: 2em;
+       counter-increment: section; counter-reset: subsection; }
+  h2::before { content: counter(section) ". "; }
+  h3 { font-size: 1.2em; color: var(--w3c-dark); margin-top: 1.5em;
+       counter-increment: subsection; counter-reset: subsubsection; }
+  h3::before { content: counter(section) "." counter(subsection) " "; }
+  h4 { font-size: 1.05em; color: #555; margin-top: 1.2em;
+       counter-increment: subsubsection; }
+  h4::before { content: counter(section) "." counter(subsection) "." counter(subsubsection) " "; }
+  a { color: var(--w3c-blue); }
+  code, pre { font-family: 'Fira Code', 'Consolas', monospace; font-size: 0.92em; }
+  code { background: #f4f4f4; padding: 0.15em 0.35em; border-radius: 3px; }
+  pre { background: #f8f8f8; padding: 1em 1.2em; border-left: 4px solid var(--w3c-blue); overflow-x: auto; line-height: 1.45; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #ccc; padding: 0.5em 0.75em; text-align: left; font-size: 0.93em; }
+  th { background: #E8EAF6; font-weight: 600; }
+  .header-block {
+    background: linear-gradient(135deg, #E8EAF6 0%, #C5CAE9 100%);
+    border: 2px solid var(--w3c-blue);
+    padding: 1.5em 2em;
+    margin-bottom: 2em;
+    border-radius: 4px;
+  }
+  .header-block h1 { border: none; margin: 0 0 0.3em 0; }
+  .header-block .subtitle { font-size: 1.1em; color: #555; margin: 0.2em 0; }
+  .header-block dl { margin: 0.8em 0 0 0; }
+  .header-block dt { font-weight: 600; color: var(--w3c-dark); display: inline; }
+  .header-block dd { display: inline; margin: 0 1.5em 0 0.3em; }
+  .note, .example, .issue, .advisement, .definition {
+    padding: 1em 1.2em;
+    margin: 1.2em 0;
+    border-radius: 4px;
+    border-left: 5px solid;
+  }
+  .note { background: var(--note-bg); border-color: var(--note-border); }
+  .example { background: var(--example-bg); border-color: var(--example-border); }
+  .issue { background: var(--issue-bg); border-color: var(--issue-border); }
+  .advisement { background: var(--warn-bg); border-color: var(--warn-border); }
+  .definition { background: var(--def-bg); border-color: var(--def-border); }
+  .note::before { content: "NOTE: "; font-weight: 700; color: var(--note-border); }
+  .example::before { content: "EXAMPLE: "; font-weight: 700; color: var(--example-border); }
+  .issue::before { content: "ISSUE: "; font-weight: 700; color: var(--issue-border); }
+  .advisement::before { content: "IMPORTANT: "; font-weight: 700; color: var(--warn-border); }
+  .definition::before { content: "DEFINITION: "; font-weight: 700; color: var(--def-border); }
+  .rfc2119 { font-variant: small-caps; font-weight: bold; }
+  .toc { background: #fafafa; border: 1px solid #ddd; padding: 1em 1.5em; margin: 1.5em 0; border-radius: 4px; }
+  .toc h2 { border: none; margin: 0 0 0.5em 0; font-size: 1.2em; }
+  .toc h2::before { content: ""; }
+  .toc ol { margin: 0; padding-left: 1.5em; }
+  .toc li { margin: 0.2em 0; }
+  .toc ol ol { padding-left: 1.2em; }
+  .prefix-table td:first-child { font-family: monospace; white-space: nowrap; }
+  .prefix-table td:nth-child(2) { font-family: monospace; font-size: 0.85em; word-break: break-all; }
+  .term { font-weight: 600; font-style: italic; color: var(--w3c-dark); }
+  .conformance-keyword { font-variant: small-caps; }
+  dl.spec-terms dt { font-weight: 700; margin-top: 0.8em; }
+  dl.spec-terms dd { margin-left: 1.5em; }
+  .figure { text-align: center; margin: 1.5em 0; }
+  .figure img { max-width: 100%; }
+  .figure figcaption { font-style: italic; color: #666; margin-top: 0.5em; }
+  .back-ref { font-size: 0.85em; color: #888; }
+  hr { border: none; border-top: 2px solid #E0E0E0; margin: 2.5em 0; }
+  .abstract { border: 1px solid #ccc; background: #fafafa; padding: 1em 1.5em; margin: 1em 0; border-radius: 4px; }
+  .status { border: 1px solid #B39DDB; background: #F3E5F5; padding: 1em 1.5em; margin: 1em 0; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  HEADER                                                        -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<div class="header-block">
+  <h1>Context Graphs 1.0</h1>
+  <p class="subtitle">A Compositional Framework for Typed Graph Contexts on the Web</p>
+  <p class="subtitle">Foxxi Mediums Inc. — Specification Draft — 17 March 2026</p>
+  <dl>
+    <dt>This version:</dt>
+    <dd><a href="https://spec.foxximediums.com/context-graphs/2026/WD-20260317/">https://spec.foxximediums.com/context-graphs/2026/WD-20260317/</a></dd><br>
+    <dt>Latest published version:</dt>
+    <dd><a href="https://spec.foxximediums.com/context-graphs/">https://spec.foxximediums.com/context-graphs/</a></dd><br>
+    <dt>Author:</dt>
+    <dd>Mark Spivey (<a href="https://foxximediums.com">Foxxi Mediums Inc.</a>) &lt;<a href="mailto:mark.spivey@xwisee.com">mark.spivey@xwisee.com</a>&gt;</dd><br>
+    <dt>Repository:</dt>
+    <dd><a href="https://github.com/foxximediums/context-graphs">GitHub foxximediums/context-graphs</a></dd>
+  </dl>
+</div>
+
+<div class="abstract">
+  <h2 style="border:none; margin-top:0;">Abstract</h2>
+  <p>
+    This specification defines <em>Context Graphs</em>, an abstract data model and RDF vocabulary for
+    representing, composing, and querying <em>typed contextual metadata</em> over RDF graphs and datasets.
+    Context Graphs provide a principled mechanism for annotating RDF Named Graphs [<a href="https://www.w3.org/TR/rdf12-concepts/">RDF12-CONCEPTS</a>]
+    with structured provenance [<a href="https://www.w3.org/TR/prov-o/">PROV-O</a>],
+    temporal extent, agent attribution, access control policies, semiotic interpretation frames,
+    and compositional relationships&mdash;all expressed as first-class RDF resources.
+  </p>
+  <p>
+    The model extends the RDF 1.2 Dataset abstraction by introducing <em>Context Descriptors</em>: typed
+    resources that associate a Named Graph with one or more <em>Context Facets</em>, each drawn from a
+    controlled vocabulary of context types. Context Descriptors compose via algebraic operations
+    (union, intersection, restriction, projection) enabling federated systems to negotiate shared
+    contexts across trust boundaries. The vocabulary reuses and profiles existing W3C Recommendations
+    including RDF 1.2, SPARQL 1.2, JSON-LD 1.1, SHACL, PROV-O, Activity Streams 2.0,
+    Verifiable Credentials Data Model 2.0, Web Annotation Data Model, and the Solid Protocol.
+  </p>
+</div>
+
+<div class="status">
+  <h2 style="border:none; margin-top:0;">Status of This Document</h2>
+  <p>
+    <em>This section describes the status of this document at the time of its publication.</em>
+  </p>
+  <p>
+    This document is an independent specification published by Foxxi Mediums Inc. It is written
+    in the style of a W3C Technical Report and extensively profiles and reuses W3C Recommendations,
+    but it is <strong>not</strong> a product of any W3C Working Group and does not carry W3C
+    endorsement or Recommendation status. References to W3C specifications throughout this
+    document indicate normative or informative dependencies on those specifications, not
+    organizational affiliation.
+  </p>
+  <p>
+    This specification is offered under a permissive open license for community review, adoption,
+    and extension. The author welcomes feedback and contributions.
+  </p>
+  <p>
+    Comments on this specification are welcome. Please file issues on the
+    <a href="https://github.com/foxximediums/context-graphs/issues">GitHub repository</a>.
+  </p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  TABLE OF CONTENTS                                             -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<nav class="toc">
+  <h2>Table of Contents</h2>
+  <ol>
+    <li><a href="#introduction">Introduction</a>
+      <ol>
+        <li><a href="#motivation">Motivation</a></li>
+        <li><a href="#design-goals">Design Goals</a></li>
+        <li><a href="#relationship">Relationship to Other Specifications</a></li>
+      </ol>
+    </li>
+    <li><a href="#conformance">Conformance</a></li>
+    <li><a href="#data-model">Data Model</a>
+      <ol>
+        <li><a href="#context-descriptor">Context Descriptor</a></li>
+        <li><a href="#context-facets">Context Facets</a></li>
+        <li><a href="#context-graph-binding">Context&ndash;Graph Binding</a></li>
+        <li><a href="#context-composition">Context Composition</a></li>
+        <li><a href="#triple-term-annotations">Triple Term Annotations</a></li>
+      </ol>
+    </li>
+    <li><a href="#vocabulary">Vocabulary</a>
+      <ol>
+        <li><a href="#namespace">Namespace and Prefix</a></li>
+        <li><a href="#classes">Classes</a></li>
+        <li><a href="#properties">Properties</a></li>
+        <li><a href="#context-types">Context Types (Controlled Vocabulary)</a></li>
+        <li><a href="#composition-operators">Composition Operators</a></li>
+      </ol>
+    </li>
+    <li><a href="#facet-profiles">Facet Profiles</a>
+      <ol>
+        <li><a href="#temporal-facet">Temporal Facet</a></li>
+        <li><a href="#provenance-facet">Provenance Facet</a></li>
+        <li><a href="#agent-facet">Agent Facet</a></li>
+        <li><a href="#access-facet">Access Control Facet</a></li>
+        <li><a href="#semiotic-facet">Semiotic Facet</a></li>
+        <li><a href="#trust-facet">Trust &amp; Verifiability Facet</a></li>
+        <li><a href="#federation-facet">Federation Facet</a></li>
+      </ol>
+    </li>
+    <li><a href="#shacl-shapes">SHACL Shapes</a></li>
+    <li><a href="#json-ld-context">JSON-LD Context</a></li>
+    <li><a href="#sparql-extensions">SPARQL Integration</a></li>
+    <li><a href="#solid-integration">Solid Protocol Integration</a></li>
+    <li><a href="#security">Security and Privacy Considerations</a></li>
+    <li><a href="#examples">Complete Examples</a></li>
+    <li><a href="#references">References</a></li>
+  </ol>
+</nav>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  1. INTRODUCTION                                               -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="introduction">Introduction</h2>
+
+<p>
+  <em>This section is non-normative.</em>
+</p>
+
+<p>
+  The Resource Description Framework (RDF) [<a href="https://www.w3.org/TR/rdf12-concepts/">RDF12-CONCEPTS</a>]
+  provides Named Graphs as a mechanism for grouping triples into identifiable units within an RDF Dataset.
+  However, the RDF specification intentionally leaves the <em>semantics</em> of graph naming open: a graph
+  name is simply an IRI, and what that IRI denotes&mdash;whether the graph itself, the act of asserting
+  the graph, or some external resource&mdash;is unspecified. This architectural openness, while
+  preserving generality, has led to fragmented practices for associating contextual metadata
+  (provenance, temporality, trust, access control) with graph-level units of data.
+</p>
+
+<p>
+  The <em>Context Graphs</em> specification addresses this gap by defining a formal, composable layer of
+  <strong>typed contextual metadata</strong> over RDF Named Graphs. Rather than inventing new
+  primitives, Context Graphs profiles and composes existing W3C vocabularies into a coherent
+  framework with well-defined algebraic composition semantics.
+</p>
+
+<h3 id="motivation">Motivation</h3>
+
+<p>
+  Existing approaches to graph-level metadata suffer from several limitations:
+</p>
+
+<p>
+  <strong>Named Graph opacity.</strong> RDF 1.2 Named Graphs carry an IRI identifier but no
+  standardized mechanism for describing what that graph represents, when it was asserted, by whom,
+  or under what authority. Practitioners resort to ad hoc metadata triples in the default graph
+  with no interoperable schema.
+</p>
+
+<p>
+  <strong>Vocabulary fragmentation.</strong> Provenance metadata uses PROV-O; temporal annotations use
+  OWL-Time or Dublin Core; access control uses WAC or ACP; trust uses Verifiable Credentials.
+  No specification defines how these vocabularies compose at the graph level or how a consuming
+  system should interpret their co-occurrence.
+</p>
+
+<p>
+  <strong>Federation impedance.</strong> When graphs from multiple origins are merged into a single
+  dataset&mdash;as in Solid pod aggregation, SPARQL federation, or linked data crawling&mdash;the
+  contextual metadata from each source must be preserved, compared, and negotiated. There is no
+  standard model for this operation.
+</p>
+
+<p>
+  <strong>Statement-level context.</strong> RDF 1.2 triple terms (RDF-star) enable statements about
+  statements, but the relationship between triple-level annotations and graph-level context is
+  undefined. Context Graphs bridges this gap by defining how triple term annotations inherit from,
+  override, or refine their enclosing graph's context.
+</p>
+
+<h3 id="design-goals">Design Goals</h3>
+
+<p>
+  The design of this specification is guided by the following principles:
+</p>
+
+<p>
+  <strong>DG1. Maximal Reuse.</strong> Every concept in this specification <span class="rfc2119">SHOULD</span>
+  be expressible using an existing W3C vocabulary. New terms are introduced only when no existing
+  term provides the required semantics.
+</p>
+
+<p>
+  <strong>DG2. Compositional Closure.</strong> Context Descriptors compose under well-defined
+  algebraic operations (union, intersection, restriction, projection). The result of any
+  composition operation is itself a valid Context Descriptor.
+</p>
+
+<p>
+  <strong>DG3. Layered Adoption.</strong> Conformant implementations may support any subset of
+  Context Facet types. A system that understands only Temporal and Provenance facets can still
+  consume and preserve facets it does not understand.
+</p>
+
+<p>
+  <strong>DG4. Decentralization.</strong> Context Graphs are designed for decentralized environments
+  (Solid, federated SPARQL, linked data). No central authority is required for context creation,
+  validation, or resolution.
+</p>
+
+<p>
+  <strong>DG5. Formal Grounding.</strong> The compositional model has a category-theoretic
+  interpretation as a presheaf over a context category, ensuring formal properties
+  (functoriality, naturality of context transformations) hold.
+</p>
+
+<h3 id="relationship">Relationship to Other Specifications</h3>
+
+<table>
+  <thead>
+    <tr><th>Specification</th><th>Version</th><th>Relationship</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>RDF Concepts</td><td>1.2 (WD)</td><td>Foundation. Context Graphs extends Named Graphs and Triple Terms.</td></tr>
+    <tr><td>RDF Schema</td><td>1.2 (WD)</td><td>Vocabulary definitions use RDFS classes and properties.</td></tr>
+    <tr><td>SPARQL Query</td><td>1.2 (WD)</td><td>Context-aware query patterns defined via SPARQL extension functions.</td></tr>
+    <tr><td>JSON-LD</td><td>1.1 (Rec)</td><td>JSON-LD context document provided for serialization.</td></tr>
+    <tr><td>SHACL</td><td>1.0 (Rec), 1.1 (WD)</td><td>SHACL shapes for validating Context Descriptors.</td></tr>
+    <tr><td>PROV-O</td><td>1.0 (Rec)</td><td>Provenance Facet profiles <code>prov:Activity</code>, <code>prov:Entity</code>, <code>prov:Agent</code>.</td></tr>
+    <tr><td>OWL-Time</td><td>1.0 (Rec)</td><td>Temporal Facet uses <code>time:Interval</code>, <code>time:Instant</code>.</td></tr>
+    <tr><td>Activity Streams</td><td>2.0 (Rec)</td><td>Agent Facet compatible with AS2 Actor model.</td></tr>
+    <tr><td>Verifiable Credentials</td><td>2.0 (Rec)</td><td>Trust Facet leverages VC Data Model for signed contexts.</td></tr>
+    <tr><td>Web Annotation</td><td>1.0 (Rec)</td><td>Annotation model informs triple-level context targeting.</td></tr>
+    <tr><td>Web Access Control</td><td>(ED)</td><td>Access Facet profiles WAC authorization model.</td></tr>
+    <tr><td>Solid Protocol</td><td>0.11 (ED)</td><td>Federation Facet and storage integration defined.</td></tr>
+    <tr><td>Dublin Core Terms</td><td>2020 (ISO 15836)</td><td>Temporal and descriptive metadata alignment.</td></tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  2. CONFORMANCE                                                -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="conformance">Conformance</h2>
+
+<p>
+  As well as sections marked as non-normative, all authoring guidelines, diagrams, examples,
+  and notes in this specification are non-normative. Everything else in this specification is
+  normative.
+</p>
+
+<p>
+  The key words <span class="rfc2119">MUST</span>, <span class="rfc2119">MUST NOT</span>,
+  <span class="rfc2119">REQUIRED</span>, <span class="rfc2119">SHALL</span>,
+  <span class="rfc2119">SHALL NOT</span>, <span class="rfc2119">SHOULD</span>,
+  <span class="rfc2119">SHOULD NOT</span>, <span class="rfc2119">RECOMMENDED</span>,
+  <span class="rfc2119">MAY</span>, and <span class="rfc2119">OPTIONAL</span>
+  in this document are to be interpreted as described in [<a href="https://www.rfc-editor.org/rfc/rfc2119">RFC2119</a>]
+  and [<a href="https://www.rfc-editor.org/rfc/rfc8174">RFC8174</a>].
+</p>
+
+<h3>Conformance Classes</h3>
+
+<p>This specification defines four conformance classes:</p>
+
+<dl class="spec-terms">
+  <dt>Context Graph Producer</dt>
+  <dd>A system that creates RDF data conforming to this specification. A conformant producer
+  <span class="rfc2119">MUST</span> generate valid Context Descriptors as defined in
+  <a href="#data-model">§3</a> and <span class="rfc2119">MUST</span> pass SHACL validation
+  against the shapes defined in <a href="#shacl-shapes">§6</a>.</dd>
+
+  <dt>Context Graph Consumer</dt>
+  <dd>A system that reads and interprets Context Graph data. A conformant consumer
+  <span class="rfc2119">MUST</span> recognize the <code>cg:</code> namespace and
+  <span class="rfc2119">MUST</span> preserve unrecognized facets during processing. A consumer
+  <span class="rfc2119">SHOULD</span> implement at least the Temporal and Provenance facets.</dd>
+
+  <dt>Context Graph Mediator</dt>
+  <dd>A system that performs composition operations (union, intersection, restriction, projection)
+  on Context Descriptors across trust boundaries. A conformant mediator <span class="rfc2119">MUST</span>
+  implement all four composition operators defined in <a href="#context-composition">§3.4</a>.</dd>
+
+  <dt>Context Graph Validator</dt>
+  <dd>A system that validates Context Graph data against the SHACL shapes defined in this
+  specification. A conformant validator <span class="rfc2119">MUST</span> implement
+  [<a href="https://www.w3.org/TR/shacl/">SHACL</a>] Core and <span class="rfc2119">SHOULD</span>
+  implement SHACL-SPARQL for advanced constraint evaluation.</dd>
+</dl>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  3. DATA MODEL                                                 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="data-model">Data Model</h2>
+
+<p>
+  The Context Graphs data model extends the RDF 1.2 Dataset model [<a href="https://www.w3.org/TR/rdf12-concepts/#section-dataset">RDF12-CONCEPTS §5</a>]
+  with three new abstract constructs: <em>Context Descriptors</em>, <em>Context Facets</em>, and
+  <em>Context&ndash;Graph Bindings</em>. These constructs are themselves represented as RDF resources,
+  ensuring that the meta-layer is fully expressible in the object language.
+</p>
+
+<h3 id="context-descriptor">Context Descriptor</h3>
+
+<div class="definition">
+  A <span class="term">Context Descriptor</span> is an RDF resource of type <code>cg:ContextDescriptor</code>
+  that aggregates one or more <em>Context Facets</em> into a single, identifiable unit of contextual
+  metadata. Each Context Descriptor is identified by an IRI and carries a set of facet bindings.
+</div>
+
+<p>
+  Formally, a Context Descriptor <em>D</em> is a tuple:
+</p>
+
+<pre><code>D = ( id: IRI,
+      facets: Set&lt;ContextFacet&gt;,
+      version: xsd:nonNegativeInteger,
+      supersedes: Set&lt;IRI&gt;,
+      validFrom: xsd:dateTime?,
+      validUntil: xsd:dateTime? )</code></pre>
+
+<p>Where:</p>
+
+<p>
+  &bull; <code>id</code> is the IRI identifying this Context Descriptor.<br>
+  &bull; <code>facets</code> is a non-empty set of Context Facet instances.<br>
+  &bull; <code>version</code> is a monotonically increasing version counter (default: <code>0</code>).<br>
+  &bull; <code>supersedes</code> is the (possibly empty) set of Context Descriptor IRIs that this descriptor replaces.<br>
+  &bull; <code>validFrom</code> / <code>validUntil</code> bound the temporal validity of the descriptor itself (distinct from any Temporal Facet within it).
+</p>
+
+<div class="note">
+  The <code>validFrom</code>/<code>validUntil</code> pair on the descriptor represents the
+  <em>administrative</em> validity window&mdash;when the descriptor itself is considered authoritative.
+  This is distinct from the Temporal Facet, which describes when the <em>described graph's content</em>
+  is temporally scoped. A descriptor can be administratively valid while describing a graph whose
+  temporal extent lies in the past.
+</div>
+
+<h3 id="context-facets">Context Facets</h3>
+
+<div class="definition">
+  A <span class="term">Context Facet</span> is a typed component of a Context Descriptor that
+  provides a specific dimension of contextual metadata. Each facet has a <em>facet type</em>
+  (drawn from a controlled vocabulary) and carries type-specific properties.
+</div>
+
+<p>
+  Formally, a Context Facet <em>F</em> is a tuple:
+</p>
+
+<pre><code>F = ( type: cg:ContextType,
+      properties: Map&lt;IRI, RDFTerm&gt; )</code></pre>
+
+<p>
+  The specification defines seven core facet types (<a href="#facet-profiles">§5</a>). Implementations
+  <span class="rfc2119">MAY</span> define additional facet types by minting new instances of
+  <code>cg:ContextType</code> in their own namespace.
+</p>
+
+<table>
+  <thead>
+    <tr><th>Facet Type IRI</th><th>Label</th><th>Primary Reused Vocabulary</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>cg:Temporal</code></td><td>Temporal</td><td>OWL-Time, Dublin Core Terms</td></tr>
+    <tr><td><code>cg:Provenance</code></td><td>Provenance</td><td>PROV-O</td></tr>
+    <tr><td><code>cg:Agent</code></td><td>Agent</td><td>PROV-O, Activity Streams 2.0</td></tr>
+    <tr><td><code>cg:AccessControl</code></td><td>Access Control</td><td>WAC, ACP, Solid</td></tr>
+    <tr><td><code>cg:Semiotic</code></td><td>Semiotic</td><td>(new vocabulary; see §5.5)</td></tr>
+    <tr><td><code>cg:Trust</code></td><td>Trust &amp; Verifiability</td><td>Verifiable Credentials 2.0, DID Core</td></tr>
+    <tr><td><code>cg:Federation</code></td><td>Federation</td><td>Solid Protocol, LDP, DCAT 3</td></tr>
+  </tbody>
+</table>
+
+<h3 id="context-graph-binding">Context&ndash;Graph Binding</h3>
+
+<div class="definition">
+  A <span class="term">Context&ndash;Graph Binding</span> is an RDF statement that associates a
+  Context Descriptor with one or more Named Graphs within an RDF Dataset. It is expressed using
+  the <code>cg:describes</code> property.
+</div>
+
+<pre><code>&lt;urn:cg:descriptor:42&gt; a cg:ContextDescriptor ;
+    cg:describes &lt;urn:graph:observations-2026-Q1&gt; ;
+    cg:describes &lt;urn:graph:observations-2026-Q2&gt; .</code></pre>
+
+<p>
+  A single Context Descriptor <span class="rfc2119">MAY</span> describe multiple Named Graphs
+  (one-to-many). A single Named Graph <span class="rfc2119">MAY</span> be described by multiple
+  Context Descriptors (many-to-one). When a graph is described by multiple descriptors, the
+  effective context is the <em>union</em> of all descriptor facets unless explicitly composed
+  otherwise via composition operators.
+</p>
+
+<div class="advisement">
+  Context&ndash;Graph Bindings <span class="rfc2119">SHOULD</span> be placed in the default graph
+  of an RDF Dataset, or in a designated <em>context manifest graph</em> identified by the well-known
+  IRI <code>&lt;.well-known/context-graphs&gt;</code> relative to the dataset's base IRI. This
+  ensures that context metadata is discoverable without requiring knowledge of specific Named
+  Graph IRIs.
+</div>
+
+<h3 id="context-composition">Context Composition</h3>
+
+<p>
+  Context Descriptors compose under four algebraic operators. These operators are closed: the
+  result of any operator applied to valid Context Descriptors is itself a valid Context Descriptor.
+</p>
+
+<h4 id="union-op">Union (<code>cg:union</code>)</h4>
+
+<p>
+  Given descriptors <em>D₁</em> and <em>D₂</em>, the union <em>D₁ ∪ D₂</em> produces a new
+  descriptor whose facet set is the set union of all facets from both operands. Where facets of
+  the same type appear in both operands, they are combined according to the merge semantics
+  defined by the facet type's profile (see <a href="#facet-profiles">§5</a>).
+</p>
+
+<pre><code>&lt;urn:cg:composed:1&gt; a cg:ComposedDescriptor ;
+    cg:compositionOp cg:union ;
+    cg:operand &lt;urn:cg:descriptor:A&gt; ;
+    cg:operand &lt;urn:cg:descriptor:B&gt; .</code></pre>
+
+<h4 id="intersection-op">Intersection (<code>cg:intersection</code>)</h4>
+
+<p>
+  The intersection <em>D₁ ∩ D₂</em> produces a descriptor containing only facet types present in
+  <em>both</em> operands. For each shared facet type, the intersection of the facet's properties
+  is computed (type-specific; see <a href="#facet-profiles">§5</a>). This operator is useful for
+  computing the <em>common context</em> when federating graphs from independent sources.
+</p>
+
+<h4 id="restriction-op">Restriction (<code>cg:restriction</code>)</h4>
+
+<p>
+  Given a descriptor <em>D</em> and a set of facet types <em>T</em>, the restriction
+  <em>D|<sub>T</sub></em> produces a new descriptor containing only the facets whose types are
+  in <em>T</em>. This enables <em>context projection</em>&mdash;e.g., extracting only the
+  provenance information from a rich context.
+</p>
+
+<pre><code>&lt;urn:cg:restricted:1&gt; a cg:ComposedDescriptor ;
+    cg:compositionOp cg:restriction ;
+    cg:operand &lt;urn:cg:descriptor:A&gt; ;
+    cg:restrictToType cg:Provenance ;
+    cg:restrictToType cg:Temporal .</code></pre>
+
+<h4 id="override-op">Override (<code>cg:override</code>)</h4>
+
+<p>
+  Given descriptors <em>D₁</em> (base) and <em>D₂</em> (override), <em>D₂ ▷ D₁</em> produces a
+  descriptor where facets from <em>D₂</em> replace same-typed facets in <em>D₁</em>, and facets
+  unique to either operand are preserved. This models the common pattern where a local context
+  overrides inherited defaults.
+</p>
+
+<div class="note">
+  The four composition operators form a <em>bounded lattice</em> over the set of Context Descriptors,
+  with <code>cg:union</code> as join, <code>cg:intersection</code> as meet, the empty descriptor
+  as bottom, and the universal descriptor (containing all facet types with maximal property ranges)
+  as top. This lattice structure ensures that context negotiation in federated settings converges.
+</div>
+
+<h3 id="triple-term-annotations">Triple Term Annotations</h3>
+
+<p>
+  RDF 1.2 introduces <em>triple terms</em> [<a href="https://www.w3.org/TR/rdf12-concepts/#section-triple-terms">RDF12-CONCEPTS §3.5</a>],
+  enabling statements about statements. Context Graphs defines a mechanism for triple-level
+  context annotations that interact with graph-level Context Descriptors.
+</p>
+
+<div class="definition">
+  A <span class="term">Triple Context Annotation</span> is a set of triples whose subject is a
+  triple term and whose predicates are drawn from the <code>cg:</code> vocabulary, associating
+  context facet information directly with a specific statement.
+</div>
+
+<pre><code># Graph-level context
+&lt;urn:cg:desc:1&gt; a cg:ContextDescriptor ;
+    cg:describes &lt;urn:graph:G1&gt; ;
+    cg:hasFacet [ a cg:TemporalFacet ;
+        cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ] .
+
+# Triple-level context override (RDF 1.2 triple term)
+&lt;&lt; &lt;urn:sensor:7&gt; &lt;urn:vocab:reading&gt; "42.3"^^xsd:double &gt;&gt;
+    cg:hasFacet [ a cg:TemporalFacet ;
+        cg:validFrom "2026-03-15T14:30:00Z"^^xsd:dateTime ] .</code></pre>
+
+<p>
+  <strong>Inheritance rule:</strong> When a triple within a Named Graph has its own triple-level
+  context annotation, the effective context for that triple is computed as:
+</p>
+
+<pre><code>effectiveContext(triple) = override(tripleContext, graphContext)</code></pre>
+
+<p>
+  That is, triple-level facets override graph-level facets of the same type, and graph-level
+  facets not overridden at the triple level are inherited. This follows the Override composition
+  operator semantics (<a href="#override-op">§3.4.4</a>).
+</p>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  4. VOCABULARY                                                 -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="vocabulary">Vocabulary</h2>
+
+<h3 id="namespace">Namespace and Prefix</h3>
+
+<p>
+  The Context Graphs vocabulary is identified by the namespace IRI:
+</p>
+
+<pre><code>https://ns.foxximediums.com/context-graphs#</code></pre>
+
+<p>
+  The conventional prefix is <code>cg:</code>.
+</p>
+
+<p>
+  The following prefix bindings are used throughout this specification:
+</p>
+
+<table class="prefix-table">
+  <thead><tr><th>Prefix</th><th>Namespace IRI</th><th>Specification</th></tr></thead>
+  <tbody>
+    <tr><td><code>cg:</code></td><td>https://ns.foxximediums.com/context-graphs#</td><td>This specification</td></tr>
+    <tr><td><code>rdf:</code></td><td>http://www.w3.org/1999/02/22-rdf-syntax-ns#</td><td>RDF 1.2</td></tr>
+    <tr><td><code>rdfs:</code></td><td>http://www.w3.org/2000/01/rdf-schema#</td><td>RDF Schema 1.2</td></tr>
+    <tr><td><code>xsd:</code></td><td>http://www.w3.org/2001/XMLSchema#</td><td>XML Schema Datatypes</td></tr>
+    <tr><td><code>owl:</code></td><td>http://www.w3.org/2002/07/owl#</td><td>OWL 2</td></tr>
+    <tr><td><code>prov:</code></td><td>http://www.w3.org/ns/prov#</td><td>PROV-O</td></tr>
+    <tr><td><code>time:</code></td><td>http://www.w3.org/2006/time#</td><td>OWL-Time</td></tr>
+    <tr><td><code>dct:</code></td><td>http://purl.org/dc/terms/</td><td>Dublin Core Terms</td></tr>
+    <tr><td><code>as:</code></td><td>https://www.w3.org/ns/activitystreams#</td><td>Activity Streams 2.0</td></tr>
+    <tr><td><code>shacl:</code></td><td>http://www.w3.org/ns/shacl#</td><td>SHACL</td></tr>
+    <tr><td><code>acl:</code></td><td>http://www.w3.org/ns/auth/acl#</td><td>Web Access Control</td></tr>
+    <tr><td><code>vc:</code></td><td>https://www.w3.org/2018/credentials#</td><td>Verifiable Credentials 2.0</td></tr>
+    <tr><td><code>did:</code></td><td>https://www.w3.org/ns/did#</td><td>DID Core</td></tr>
+    <tr><td><code>dcat:</code></td><td>http://www.w3.org/ns/dcat#</td><td>DCAT 3</td></tr>
+    <tr><td><code>ldp:</code></td><td>http://www.w3.org/ns/ldp#</td><td>Linked Data Platform</td></tr>
+    <tr><td><code>solid:</code></td><td>http://www.w3.org/ns/solid/terms#</td><td>Solid Terms</td></tr>
+    <tr><td><code>oa:</code></td><td>http://www.w3.org/ns/oa#</td><td>Web Annotation</td></tr>
+  </tbody>
+</table>
+
+<h3 id="classes">Classes</h3>
+
+<dl class="spec-terms">
+  <dt><code>cg:ContextDescriptor</code></dt>
+  <dd>
+    <strong>Subclass of:</strong> <code>prov:Entity</code>, <code>dcat:Resource</code><br>
+    <strong>Description:</strong> The root class for all context descriptors. Every Context Descriptor
+    is a PROV Entity (it is generated, used, and potentially invalidated) and a DCAT Resource
+    (it is discoverable and catalogable).
+  </dd>
+
+  <dt><code>cg:ComposedDescriptor</code></dt>
+  <dd>
+    <strong>Subclass of:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Description:</strong> A Context Descriptor produced by applying a composition operator
+    to one or more operand descriptors. The <code>cg:compositionOp</code> property identifies the
+    operator, and <code>cg:operand</code> links to the input descriptors.
+  </dd>
+
+  <dt><code>cg:ContextFacet</code></dt>
+  <dd>
+    <strong>Description:</strong> Abstract base class for all context facets. Not intended for
+    direct instantiation; use a typed subclass.
+  </dd>
+
+  <dt><code>cg:TemporalFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code>, <code>time:TemporalEntity</code></dd>
+
+  <dt><code>cg:ProvenanceFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code>, <code>prov:Entity</code></dd>
+
+  <dt><code>cg:AgentFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code></dd>
+
+  <dt><code>cg:AccessControlFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code></dd>
+
+  <dt><code>cg:SemioticFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code></dd>
+
+  <dt><code>cg:TrustFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code></dd>
+
+  <dt><code>cg:FederationFacet</code></dt>
+  <dd><strong>Subclass of:</strong> <code>cg:ContextFacet</code>, <code>dcat:DataService</code></dd>
+
+  <dt><code>cg:ContextType</code></dt>
+  <dd>
+    <strong>Subclass of:</strong> <code>rdfs:Class</code><br>
+    <strong>Description:</strong> A metaclass whose instances are the named context types
+    (<code>cg:Temporal</code>, <code>cg:Provenance</code>, etc.). Extensible by third parties.
+  </dd>
+</dl>
+
+<h3 id="properties">Properties</h3>
+
+<dl class="spec-terms">
+  <dt><code>cg:describes</code></dt>
+  <dd>
+    <strong>Domain:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Range:</strong> <code>rdfs:Resource</code> (typically a Named Graph IRI)<br>
+    <strong>Description:</strong> Associates a Context Descriptor with the Named Graph(s) it describes.
+  </dd>
+
+  <dt><code>cg:hasFacet</code></dt>
+  <dd>
+    <strong>Domain:</strong> <code>cg:ContextDescriptor</code> ∪ RDF Triple Term<br>
+    <strong>Range:</strong> <code>cg:ContextFacet</code><br>
+    <strong>Description:</strong> Links a descriptor (or a triple term, for statement-level context)
+    to a facet instance. A descriptor <span class="rfc2119">MUST</span> have at least one <code>cg:hasFacet</code> value.
+  </dd>
+
+  <dt><code>cg:facetType</code></dt>
+  <dd>
+    <strong>Domain:</strong> <code>cg:ContextFacet</code><br>
+    <strong>Range:</strong> <code>cg:ContextType</code><br>
+    <strong>Description:</strong> Declares the type classification of a facet. Redundant when the
+    facet is typed via <code>rdf:type</code> with a specific facet class, but useful for
+    extensibility when custom facet types are introduced.
+  </dd>
+
+  <dt><code>cg:compositionOp</code></dt>
+  <dd>
+    <strong>Domain:</strong> <code>cg:ComposedDescriptor</code><br>
+    <strong>Range:</strong> <code>cg:CompositionOperator</code><br>
+    <strong>Description:</strong> Identifies the algebraic operator used to produce this composed descriptor.
+  </dd>
+
+  <dt><code>cg:operand</code></dt>
+  <dd>
+    <strong>Domain:</strong> <code>cg:ComposedDescriptor</code><br>
+    <strong>Range:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Description:</strong> Links a composed descriptor to its input operand(s).
+  </dd>
+
+  <dt><code>cg:restrictToType</code></dt>
+  <dd>
+    <strong>Domain:</strong> <code>cg:ComposedDescriptor</code><br>
+    <strong>Range:</strong> <code>cg:ContextType</code><br>
+    <strong>Description:</strong> Used with <code>cg:restriction</code> to specify which facet types
+    to retain.
+  </dd>
+
+  <dt><code>cg:supersedes</code></dt>
+  <dd>
+    <strong>Domain:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Range:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Description:</strong> Indicates that this descriptor replaces a previous version.
+    Consumers <span class="rfc2119">SHOULD</span> prefer the superseding descriptor.
+  </dd>
+
+  <dt><code>cg:version</code></dt>
+  <dd>
+    <strong>Domain:</strong> <code>cg:ContextDescriptor</code><br>
+    <strong>Range:</strong> <code>xsd:nonNegativeInteger</code>
+  </dd>
+
+  <dt><code>cg:validFrom</code></dt>
+  <dd>
+    <strong>Domain:</strong> <code>cg:ContextDescriptor</code> ∪ <code>cg:TemporalFacet</code><br>
+    <strong>Range:</strong> <code>xsd:dateTime</code><br>
+    <strong>Description:</strong> The earliest instant at which this resource is considered valid.
+    Aligned with <code>dct:valid</code> semantics and <code>vc:validFrom</code>.
+  </dd>
+
+  <dt><code>cg:validUntil</code></dt>
+  <dd>
+    <strong>Domain:</strong> <code>cg:ContextDescriptor</code> ∪ <code>cg:TemporalFacet</code><br>
+    <strong>Range:</strong> <code>xsd:dateTime</code>
+  </dd>
+</dl>
+
+<h3 id="context-types">Context Types (Controlled Vocabulary)</h3>
+
+<p>The following named individuals are instances of <code>cg:ContextType</code>:</p>
+
+<pre><code>cg:Temporal      a cg:ContextType ; rdfs:label "Temporal"@en .
+cg:Provenance    a cg:ContextType ; rdfs:label "Provenance"@en .
+cg:Agent         a cg:ContextType ; rdfs:label "Agent"@en .
+cg:AccessControl a cg:ContextType ; rdfs:label "Access Control"@en .
+cg:Semiotic      a cg:ContextType ; rdfs:label "Semiotic"@en .
+cg:Trust         a cg:ContextType ; rdfs:label "Trust"@en .
+cg:Federation    a cg:ContextType ; rdfs:label "Federation"@en .</code></pre>
+
+<h3 id="composition-operators">Composition Operators</h3>
+
+<pre><code>cg:union         a cg:CompositionOperator ; rdfs:label "Union"@en .
+cg:intersection  a cg:CompositionOperator ; rdfs:label "Intersection"@en .
+cg:restriction   a cg:CompositionOperator ; rdfs:label "Restriction"@en .
+cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en .</code></pre>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  5. FACET PROFILES                                             -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="facet-profiles">Facet Profiles</h2>
+
+<p>
+  Each facet type defines a <em>profile</em>: the set of properties it carries, the vocabularies
+  it reuses, its merge semantics under composition, and its SHACL shape constraints.
+</p>
+
+<h3 id="temporal-facet">Temporal Facet</h3>
+
+<p>
+  The Temporal Facet represents the temporal extent or validity of the described graph's content.
+  It profiles OWL-Time [<a href="https://www.w3.org/TR/owl-time/">OWL-Time</a>] and Dublin Core
+  temporal properties.
+</p>
+
+<dl class="spec-terms">
+  <dt>Class:</dt><dd><code>cg:TemporalFacet</code> (subclass of <code>cg:ContextFacet</code>, <code>time:TemporalEntity</code>)</dd>
+  <dt>Properties:</dt>
+  <dd>
+    <code>cg:validFrom</code> → <code>xsd:dateTime</code> (aligned with <code>dct:valid</code> start)<br>
+    <code>cg:validUntil</code> → <code>xsd:dateTime</code><br>
+    <code>time:hasBeginning</code> → <code>time:Instant</code> (for richer temporal modeling)<br>
+    <code>time:hasEnd</code> → <code>time:Instant</code><br>
+    <code>cg:temporalResolution</code> → <code>time:Duration</code> (granularity of temporal claims)<br>
+    <code>cg:temporalRelation</code> → Allen Interval relation IRI (e.g., <code>time:intervalDuring</code>)
+  </dd>
+  <dt>Merge semantics (union):</dt>
+  <dd>The union of two Temporal Facets produces a facet whose <code>validFrom</code> is the
+  <em>minimum</em> of the operands and whose <code>validUntil</code> is the <em>maximum</em>
+  (i.e., the convex hull of the temporal intervals).</dd>
+  <dt>Merge semantics (intersection):</dt>
+  <dd>The intersection produces the <em>overlap</em> interval. If no overlap exists, the
+  intersection is empty and the resulting descriptor <span class="rfc2119">MUST NOT</span> contain
+  a Temporal Facet.</dd>
+</dl>
+
+<div class="example">
+<pre><code>[] a cg:TemporalFacet ;
+    cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
+    cg:validUntil "2026-03-31T23:59:59Z"^^xsd:dateTime ;
+    cg:temporalResolution "P1D"^^xsd:duration ;
+    time:hasBeginning [ a time:Instant ;
+        time:inXSDDateTimeStamp "2026-01-01T00:00:00Z"^^xsd:dateTimeStamp ] .</code></pre>
+</div>
+
+<h3 id="provenance-facet">Provenance Facet</h3>
+
+<p>
+  The Provenance Facet profiles PROV-O [<a href="https://www.w3.org/TR/prov-o/">PROV-O</a>] to
+  describe how the graph's content was generated, by what activities, and from which sources.
+</p>
+
+<dl class="spec-terms">
+  <dt>Class:</dt><dd><code>cg:ProvenanceFacet</code> (subclass of <code>cg:ContextFacet</code>, <code>prov:Entity</code>)</dd>
+  <dt>Properties:</dt>
+  <dd>
+    <code>prov:wasGeneratedBy</code> → <code>prov:Activity</code><br>
+    <code>prov:wasDerivedFrom</code> → <code>prov:Entity</code> (source data)<br>
+    <code>prov:wasAttributedTo</code> → <code>prov:Agent</code><br>
+    <code>prov:generatedAtTime</code> → <code>xsd:dateTime</code><br>
+    <code>prov:used</code> → <code>prov:Entity</code> (inputs consumed by the generating activity)<br>
+    <code>cg:provenanceChain</code> → <code>rdf:List</code> of <code>cg:ProvenanceFacet</code> (ordered derivation history)
+  </dd>
+  <dt>Merge semantics (union):</dt>
+  <dd>The union of Provenance Facets concatenates their provenance chains and unions their
+  <code>prov:wasDerivedFrom</code> sets.</dd>
+</dl>
+
+<div class="example">
+<pre><code>[] a cg:ProvenanceFacet ;
+    prov:wasGeneratedBy [
+        a prov:Activity ;
+        prov:wasAssociatedWith &lt;https://example.org/agent/etl-pipeline-v3&gt; ;
+        prov:startedAtTime "2026-03-17T08:00:00Z"^^xsd:dateTime ;
+        prov:used &lt;https://data.example.org/raw/sensor-dump-20260317.csv&gt;
+    ] ;
+    prov:wasDerivedFrom &lt;https://data.example.org/raw/sensor-dump-20260317.csv&gt; ;
+    prov:generatedAtTime "2026-03-17T08:42:00Z"^^xsd:dateTime .</code></pre>
+</div>
+
+<h3 id="agent-facet">Agent Facet</h3>
+
+<p>
+  The Agent Facet identifies the agents (persons, organizations, software) responsible for or
+  associated with the graph, profiling both PROV-O agents and Activity Streams 2.0 actors.
+</p>
+
+<dl class="spec-terms">
+  <dt>Class:</dt><dd><code>cg:AgentFacet</code> (subclass of <code>cg:ContextFacet</code>)</dd>
+  <dt>Properties:</dt>
+  <dd>
+    <code>cg:assertingAgent</code> → <code>prov:Agent</code> ∩ <code>as:Actor</code> (the agent asserting the graph)<br>
+    <code>cg:onBehalfOf</code> → <code>prov:Agent</code> (delegation chain, per <code>prov:actedOnBehalfOf</code>)<br>
+    <code>cg:agentRole</code> → <code>cg:AgentRole</code> (e.g., <code>cg:Author</code>, <code>cg:Curator</code>, <code>cg:Validator</code>)<br>
+    <code>cg:agentIdentity</code> → IRI (DID, WebID, ORCID, or other agent identifier)
+  </dd>
+  <dt>Merge semantics:</dt>
+  <dd>Agent Facets union into a set of agents with their roles.</dd>
+</dl>
+
+<div class="example">
+<pre><code>[] a cg:AgentFacet ;
+    cg:assertingAgent [
+        a prov:SoftwareAgent, as:Application ;
+        rdfs:label "HELA Ingestion Pipeline" ;
+        cg:agentIdentity &lt;did:web:foxximediums.com:hela:ingest&gt;
+    ] ;
+    cg:agentRole cg:Author ;
+    cg:onBehalfOf &lt;https://foxximediums.com/#org&gt; .</code></pre>
+</div>
+
+<h3 id="access-facet">Access Control Facet</h3>
+
+<p>
+  The Access Control Facet profiles Web Access Control (WAC) [<a href="https://solidproject.org/TR/wac">WAC</a>]
+  to declare who may read, write, append, or control the described graph.
+</p>
+
+<dl class="spec-terms">
+  <dt>Class:</dt><dd><code>cg:AccessControlFacet</code> (subclass of <code>cg:ContextFacet</code>)</dd>
+  <dt>Properties:</dt>
+  <dd>
+    <code>cg:authorization</code> → <code>acl:Authorization</code><br>
+    <code>acl:mode</code> → { <code>acl:Read</code>, <code>acl:Write</code>, <code>acl:Append</code>, <code>acl:Control</code> }<br>
+    <code>acl:agent</code> → Agent IRI<br>
+    <code>acl:agentClass</code> → Class IRI (e.g., <code>foaf:Agent</code> for public access)<br>
+    <code>cg:consentBasis</code> → IRI (legal basis for data processing, e.g., GDPR Article 6 basis)
+  </dd>
+  <dt>Merge semantics (union):</dt>
+  <dd>Authorization sets are unioned. Conflicting authorizations (allow vs. deny for same agent/mode)
+  <span class="rfc2119">MUST</span> be resolved by the consuming system's policy; this specification
+  does not define deny semantics.</dd>
+</dl>
+
+<h3 id="semiotic-facet">Semiotic Facet</h3>
+
+<p>
+  The Semiotic Facet is a novel contribution of this specification. It captures the
+  <em>interpretive frame</em> under which the graph's content should be understood, grounded
+  in Peircean triadic semiotics (sign&ndash;object&ndash;interpretant).
+</p>
+
+<dl class="spec-terms">
+  <dt>Class:</dt><dd><code>cg:SemioticFacet</code> (subclass of <code>cg:ContextFacet</code>)</dd>
+  <dt>Properties:</dt>
+  <dd>
+    <code>cg:interpretationFrame</code> → IRI (the ontological or conceptual framework for interpretation)<br>
+    <code>cg:signSystem</code> → IRI (the vocabulary or schema that defines the sign repertoire)<br>
+    <code>cg:groundTruth</code> → <code>xsd:boolean</code> (whether this graph is asserted as ground truth)<br>
+    <code>cg:modalStatus</code> → { <code>cg:Asserted</code>, <code>cg:Hypothetical</code>,
+       <code>cg:Counterfactual</code>, <code>cg:Quoted</code>, <code>cg:Retracted</code> }<br>
+    <code>cg:epistemicConfidence</code> → <code>xsd:double</code> [0.0, 1.0] (degree of belief)<br>
+    <code>cg:languageTag</code> → <code>xsd:language</code> (natural language of content, aligns with <code>dct:language</code>)
+  </dd>
+  <dt>Merge semantics (union):</dt>
+  <dd>Semiotic Facets do not merge; multiple semiotic facets indicate multiple
+  interpretive frames and are preserved as distinct facets in the union.</dd>
+</dl>
+
+<div class="example">
+<pre><code>[] a cg:SemioticFacet ;
+    cg:interpretationFrame &lt;https://schema.org/MedicalScholarlyArticle&gt; ;
+    cg:signSystem &lt;http://purl.bioontology.org/ontology/SNOMEDCT/&gt; ;
+    cg:modalStatus cg:Asserted ;
+    cg:epistemicConfidence "0.92"^^xsd:double ;
+    cg:languageTag "en"^^xsd:language .</code></pre>
+</div>
+
+<div class="note">
+  The Semiotic Facet addresses a fundamental gap in RDF: graphs carry no standard indication of
+  whether their content is asserted as fact, offered as hypothesis, quoted from a third party,
+  or presented as a counterfactual scenario. The <code>cg:modalStatus</code> property provides
+  this missing pragmatic layer, extending the annotation capabilities of RDF 1.2 triple terms
+  to the graph level.
+</div>
+
+<h3 id="trust-facet">Trust &amp; Verifiability Facet</h3>
+
+<p>
+  The Trust Facet profiles Verifiable Credentials Data Model 2.0 [<a href="https://www.w3.org/TR/vc-data-model-2.0/">VC-DATA-MODEL-2.0</a>]
+  and DID Core [<a href="https://www.w3.org/TR/did-core/">DID-CORE</a>] to enable cryptographic
+  verification of context claims.
+</p>
+
+<dl class="spec-terms">
+  <dt>Class:</dt><dd><code>cg:TrustFacet</code> (subclass of <code>cg:ContextFacet</code>)</dd>
+  <dt>Properties:</dt>
+  <dd>
+    <code>cg:verifiableCredential</code> → <code>vc:VerifiableCredential</code><br>
+    <code>cg:issuer</code> → IRI (DID or WebID of the credential issuer, aligned with <code>vc:issuer</code>)<br>
+    <code>cg:proofMechanism</code> → IRI (e.g., <code>https://w3id.org/security#Ed25519Signature2020</code>)<br>
+    <code>cg:trustLevel</code> → { <code>cg:SelfAsserted</code>, <code>cg:ThirdPartyAttested</code>,
+       <code>cg:CryptographicallyVerified</code> }<br>
+    <code>cg:revocationStatus</code> → IRI (link to a VC status list or revocation endpoint)
+  </dd>
+  <dt>Merge semantics (intersection):</dt>
+  <dd>The intersection of Trust Facets retains only credentials recognized by <em>both</em>
+  parties (common trust anchors).</dd>
+</dl>
+
+<h3 id="federation-facet">Federation Facet</h3>
+
+<p>
+  The Federation Facet describes the origin, storage location, synchronization protocol, and
+  cataloging metadata for graphs in a federated environment. It profiles DCAT 3
+  [<a href="https://www.w3.org/TR/vocab-dcat-3/">DCAT-3</a>], Linked Data Platform
+  [<a href="https://www.w3.org/TR/ldp/">LDP</a>], and Solid Protocol.
+</p>
+
+<dl class="spec-terms">
+  <dt>Class:</dt><dd><code>cg:FederationFacet</code> (subclass of <code>cg:ContextFacet</code>, <code>dcat:DataService</code>)</dd>
+  <dt>Properties:</dt>
+  <dd>
+    <code>cg:origin</code> → IRI (the authoritative source of this graph)<br>
+    <code>cg:storageEndpoint</code> → IRI (the LDP/Solid container or SPARQL endpoint where the graph resides)<br>
+    <code>dcat:endpointURL</code> → IRI (SPARQL endpoint, if applicable)<br>
+    <code>cg:syncProtocol</code> → { <code>cg:SolidNotifications</code>, <code>cg:WebSub</code>,
+       <code>cg:LinkedDataNotifications</code>, <code>cg:Polling</code> }<br>
+    <code>cg:replicaOf</code> → IRI (link to the authoritative graph IRI if this is a replica)<br>
+    <code>cg:lastSynced</code> → <code>xsd:dateTime</code><br>
+    <code>dcat:distribution</code> → <code>dcat:Distribution</code> (format, access URL, media type)
+  </dd>
+  <dt>Merge semantics:</dt>
+  <dd>Federation Facets are preserved as-is in union operations; they represent distinct
+  origin records and are never collapsed.</dd>
+</dl>
+
+<div class="example">
+<pre><code>[] a cg:FederationFacet ;
+    cg:origin &lt;https://pod.example.org/alice/data/observations&gt; ;
+    cg:storageEndpoint &lt;https://pod.example.org/alice/&gt; ;
+    cg:syncProtocol cg:SolidNotifications ;
+    cg:lastSynced "2026-03-17T12:00:00Z"^^xsd:dateTime ;
+    dcat:endpointURL &lt;https://sparql.example.org/query&gt; ;
+    dcat:distribution [
+        a dcat:Distribution ;
+        dcat:mediaType "application/trig" ;
+        dcat:accessURL &lt;https://pod.example.org/alice/data/observations.trig&gt;
+    ] .</code></pre>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  6. SHACL SHAPES                                               -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="shacl-shapes">SHACL Shapes</h2>
+
+<p>
+  The following SHACL [<a href="https://www.w3.org/TR/shacl/">SHACL</a>] shapes define the
+  validation constraints for Context Graph data. Conformant producers <span class="rfc2119">MUST</span>
+  generate data that passes validation against these shapes. Conformant validators
+  <span class="rfc2119">MUST</span> implement these shapes.
+</p>
+
+<pre><code>@prefix cg:    &lt;https://ns.foxximediums.com/context-graphs#&gt; .
+@prefix sh:    &lt;http://www.w3.org/ns/shacl#&gt; .
+@prefix xsd:   &lt;http://www.w3.org/2001/XMLSchema#&gt; .
+@prefix prov:  &lt;http://www.w3.org/ns/prov#&gt; .
+@prefix rdf:   &lt;http://www.w3.org/1999/02/22-rdf-syntax-ns#&gt; .
+
+# ── Context Descriptor Shape ──────────────────────────────────
+
+cg:ContextDescriptorShape a sh:NodeShape ;
+    sh:targetClass cg:ContextDescriptor ;
+    sh:property [
+        sh:path cg:hasFacet ;
+        sh:minCount 1 ;
+        sh:class cg:ContextFacet ;
+        sh:message "A ContextDescriptor MUST have at least one facet." ;
+    ] ;
+    sh:property [
+        sh:path cg:describes ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A ContextDescriptor MUST describe at least one Named Graph." ;
+    ] ;
+    sh:property [
+        sh:path cg:version ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:nonNegativeInteger ;
+    ] ;
+    sh:property [
+        sh:path cg:validFrom ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:dateTime ;
+    ] ;
+    sh:property [
+        sh:path cg:validUntil ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:dateTime ;
+    ] ;
+    sh:sparql [
+        sh:message "validUntil MUST be after validFrom when both are present." ;
+        sh:select """
+            SELECT $this WHERE {
+                $this cg:validFrom ?from .
+                $this cg:validUntil ?until .
+                FILTER (?until &lt;= ?from)
+            }
+        """ ;
+    ] .
+
+# ── Composed Descriptor Shape ─────────────────────────────────
+
+cg:ComposedDescriptorShape a sh:NodeShape ;
+    sh:targetClass cg:ComposedDescriptor ;
+    sh:property [
+        sh:path cg:compositionOp ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:class cg:CompositionOperator ;
+    ] ;
+    sh:property [
+        sh:path cg:operand ;
+        sh:minCount 1 ;
+        sh:class cg:ContextDescriptor ;
+    ] .
+
+# ── Temporal Facet Shape ──────────────────────────────────────
+
+cg:TemporalFacetShape a sh:NodeShape ;
+    sh:targetClass cg:TemporalFacet ;
+    sh:property [
+        sh:path cg:validFrom ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:dateTime ;
+    ] ;
+    sh:property [
+        sh:path cg:validUntil ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:dateTime ;
+    ] ;
+    sh:property [
+        sh:path cg:temporalResolution ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:duration ;
+    ] .
+
+# ── Provenance Facet Shape ────────────────────────────────────
+
+cg:ProvenanceFacetShape a sh:NodeShape ;
+    sh:targetClass cg:ProvenanceFacet ;
+    sh:property [
+        sh:path prov:wasGeneratedBy ;
+        sh:class prov:Activity ;
+    ] ;
+    sh:property [
+        sh:path prov:generatedAtTime ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:dateTime ;
+    ] .
+
+# ── Semiotic Facet Shape ──────────────────────────────────────
+
+cg:SemioticFacetShape a sh:NodeShape ;
+    sh:targetClass cg:SemioticFacet ;
+    sh:property [
+        sh:path cg:modalStatus ;
+        sh:maxCount 1 ;
+        sh:in ( cg:Asserted cg:Hypothetical cg:Counterfactual cg:Quoted cg:Retracted ) ;
+    ] ;
+    sh:property [
+        sh:path cg:epistemicConfidence ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:double ;
+        sh:minInclusive 0.0 ;
+        sh:maxInclusive 1.0 ;
+    ] .
+
+# ── Trust Facet Shape ─────────────────────────────────────────
+
+cg:TrustFacetShape a sh:NodeShape ;
+    sh:targetClass cg:TrustFacet ;
+    sh:property [
+        sh:path cg:trustLevel ;
+        sh:maxCount 1 ;
+        sh:in ( cg:SelfAsserted cg:ThirdPartyAttested cg:CryptographicallyVerified ) ;
+    ] .</code></pre>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  7. JSON-LD CONTEXT                                            -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="json-ld-context">JSON-LD Context</h2>
+
+<p>
+  The following JSON-LD 1.1 [<a href="https://www.w3.org/TR/json-ld11/">JSON-LD11</a>] context
+  document enables compact serialization of Context Graph data. Conformant producers
+  <span class="rfc2119">SHOULD</span> reference this context when serializing Context Graphs as
+  JSON-LD.
+</p>
+
+<pre><code>{
+  "@context": {
+    "@version": 1.1,
+    "cg": "https://ns.foxximediums.com/context-graphs#",
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "prov": "http://www.w3.org/ns/prov#",
+    "time": "http://www.w3.org/2006/time#",
+    "dct": "http://purl.org/dc/terms/",
+    "as": "https://www.w3.org/ns/activitystreams#",
+    "acl": "http://www.w3.org/ns/auth/acl#",
+    "vc": "https://www.w3.org/2018/credentials#",
+    "dcat": "http://www.w3.org/ns/dcat#",
+    "oa": "http://www.w3.org/ns/oa#",
+
+    "ContextDescriptor": "cg:ContextDescriptor",
+    "ComposedDescriptor": "cg:ComposedDescriptor",
+    "ContextFacet": "cg:ContextFacet",
+    "TemporalFacet": "cg:TemporalFacet",
+    "ProvenanceFacet": "cg:ProvenanceFacet",
+    "AgentFacet": "cg:AgentFacet",
+    "AccessControlFacet": "cg:AccessControlFacet",
+    "SemioticFacet": "cg:SemioticFacet",
+    "TrustFacet": "cg:TrustFacet",
+    "FederationFacet": "cg:FederationFacet",
+
+    "describes": { "@id": "cg:describes", "@type": "@id" },
+    "hasFacet": { "@id": "cg:hasFacet" },
+    "facetType": { "@id": "cg:facetType", "@type": "@id" },
+    "compositionOp": { "@id": "cg:compositionOp", "@type": "@id" },
+    "operand": { "@id": "cg:operand", "@type": "@id", "@container": "@set" },
+    "restrictToType": { "@id": "cg:restrictToType", "@type": "@id", "@container": "@set" },
+    "supersedes": { "@id": "cg:supersedes", "@type": "@id" },
+    "version": { "@id": "cg:version", "@type": "xsd:nonNegativeInteger" },
+
+    "validFrom": { "@id": "cg:validFrom", "@type": "xsd:dateTime" },
+    "validUntil": { "@id": "cg:validUntil", "@type": "xsd:dateTime" },
+    "temporalResolution": { "@id": "cg:temporalResolution", "@type": "xsd:duration" },
+
+    "wasGeneratedBy": { "@id": "prov:wasGeneratedBy" },
+    "wasDerivedFrom": { "@id": "prov:wasDerivedFrom", "@type": "@id" },
+    "wasAttributedTo": { "@id": "prov:wasAttributedTo", "@type": "@id" },
+    "generatedAtTime": { "@id": "prov:generatedAtTime", "@type": "xsd:dateTime" },
+
+    "assertingAgent": { "@id": "cg:assertingAgent" },
+    "onBehalfOf": { "@id": "cg:onBehalfOf", "@type": "@id" },
+    "agentRole": { "@id": "cg:agentRole", "@type": "@id" },
+    "agentIdentity": { "@id": "cg:agentIdentity", "@type": "@id" },
+
+    "interpretationFrame": { "@id": "cg:interpretationFrame", "@type": "@id" },
+    "signSystem": { "@id": "cg:signSystem", "@type": "@id" },
+    "modalStatus": { "@id": "cg:modalStatus", "@type": "@id" },
+    "epistemicConfidence": { "@id": "cg:epistemicConfidence", "@type": "xsd:double" },
+    "groundTruth": { "@id": "cg:groundTruth", "@type": "xsd:boolean" },
+
+    "trustLevel": { "@id": "cg:trustLevel", "@type": "@id" },
+    "issuer": { "@id": "cg:issuer", "@type": "@id" },
+    "proofMechanism": { "@id": "cg:proofMechanism", "@type": "@id" },
+
+    "origin": { "@id": "cg:origin", "@type": "@id" },
+    "storageEndpoint": { "@id": "cg:storageEndpoint", "@type": "@id" },
+    "syncProtocol": { "@id": "cg:syncProtocol", "@type": "@id" },
+    "replicaOf": { "@id": "cg:replicaOf", "@type": "@id" },
+    "lastSynced": { "@id": "cg:lastSynced", "@type": "xsd:dateTime" }
+  }
+}</code></pre>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  8. SPARQL INTEGRATION                                         -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="sparql-extensions">SPARQL Integration</h2>
+
+<p>
+  Context Graphs data is queryable via standard SPARQL 1.2 [<a href="https://w3c.github.io/sparql-query/spec/">SPARQL12-QUERY</a>]
+  using <code>GRAPH</code> patterns and property paths. This section defines recommended query
+  patterns and optional extension functions for context-aware querying.
+</p>
+
+<h3>Query Pattern: Retrieving Context for a Named Graph</h3>
+
+<pre><code>PREFIX cg:   &lt;https://ns.foxximediums.com/context-graphs#&gt;
+PREFIX prov: &lt;http://www.w3.org/ns/prov#&gt;
+
+SELECT ?descriptor ?facetType ?validFrom ?validUntil ?agent
+WHERE {
+    ?descriptor a cg:ContextDescriptor ;
+        cg:describes &lt;urn:graph:target&gt; ;
+        cg:hasFacet ?facet .
+
+    ?facet a ?facetType .
+
+    OPTIONAL { ?facet cg:validFrom ?validFrom }
+    OPTIONAL { ?facet cg:validUntil ?validUntil }
+    OPTIONAL {
+        ?facet cg:assertingAgent ?agentNode .
+        ?agentNode cg:agentIdentity ?agent .
+    }
+}</code></pre>
+
+<h3>Query Pattern: Filtering Graphs by Temporal Context</h3>
+
+<pre><code>PREFIX cg: &lt;https://ns.foxximediums.com/context-graphs#&gt;
+
+SELECT ?graph ?content
+WHERE {
+    ?desc a cg:ContextDescriptor ;
+        cg:describes ?graph ;
+        cg:hasFacet ?tf .
+
+    ?tf a cg:TemporalFacet ;
+        cg:validFrom ?from ;
+        cg:validUntil ?until .
+
+    FILTER (?from &lt;= "2026-03-01T00:00:00Z"^^xsd:dateTime
+         &amp;&amp; ?until &gt;= "2026-03-01T00:00:00Z"^^xsd:dateTime)
+
+    GRAPH ?graph { ?s ?p ?content }
+}</code></pre>
+
+<h3>Query Pattern: Filtering by Modal Status (Semiotic Facet)</h3>
+
+<pre><code>PREFIX cg: &lt;https://ns.foxximediums.com/context-graphs#&gt;
+
+# Find all graphs whose content is asserted (not hypothetical or quoted)
+SELECT ?graph
+WHERE {
+    ?desc a cg:ContextDescriptor ;
+        cg:describes ?graph ;
+        cg:hasFacet ?sf .
+
+    ?sf a cg:SemioticFacet ;
+        cg:modalStatus cg:Asserted .
+}</code></pre>
+
+<h3>Extension Functions (Informative)</h3>
+
+<p>
+  <em>This section is non-normative.</em> Implementations <span class="rfc2119">MAY</span> provide
+  the following SPARQL extension functions for convenience:
+</p>
+
+<table>
+  <thead><tr><th>Function</th><th>Signature</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>cg:effectiveContext</code></td>
+      <td><code>(tripleOrGraph: IRI) → ContextDescriptor</code></td>
+      <td>Returns the effective (composed) Context Descriptor for a triple term or Named Graph, applying the inheritance/override rules.</td>
+    </tr>
+    <tr>
+      <td><code>cg:hasContextType</code></td>
+      <td><code>(graph: IRI, type: IRI) → xsd:boolean</code></td>
+      <td>Returns <code>true</code> if the graph's effective context includes a facet of the given type.</td>
+    </tr>
+    <tr>
+      <td><code>cg:temporalOverlaps</code></td>
+      <td><code>(graph: IRI, instant: xsd:dateTime) → xsd:boolean</code></td>
+      <td>Returns <code>true</code> if the graph's temporal facet interval contains the given instant.</td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  9. SOLID INTEGRATION                                          -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="solid-integration">Solid Protocol Integration</h2>
+
+<p>
+  <em>This section is non-normative.</em>
+</p>
+
+<p>
+  In a Solid [<a href="https://solidproject.org/TR/protocol">Solid Protocol</a>] deployment,
+  Context Graphs integrate as follows:
+</p>
+
+<p>
+  <strong>Storage.</strong> Context Descriptors <span class="rfc2119">SHOULD</span> be stored
+  as RDF resources within the same Solid Pod as the graphs they describe. The recommended
+  container structure is:
+</p>
+
+<pre><code>/pod-root/
+  .well-known/
+    context-graphs        ← Context manifest (index of all descriptors)
+  data/
+    observations/
+      2026-Q1.trig        ← Named Graph data
+      2026-Q1.ctx.ttl     ← Context Descriptor for this graph
+  context/
+    descriptors/          ← LDP Container for all descriptors</code></pre>
+
+<p>
+  <strong>Discovery.</strong> A Solid server <span class="rfc2119">SHOULD</span> serve the
+  context manifest at <code>.well-known/context-graphs</code> as a TriG or JSON-LD resource
+  containing all Context&ndash;Graph Bindings for the pod.
+</p>
+
+<p>
+  <strong>Notifications.</strong> When a Context Descriptor is created, updated, or invalidated,
+  the Solid server <span class="rfc2119">SHOULD</span> emit a notification via the Solid
+  Notifications Protocol. The notification body <span class="rfc2119">SHOULD</span> include the
+  IRI of the affected descriptor and the change type (<code>as:Create</code>, <code>as:Update</code>,
+  <code>as:Delete</code>).
+</p>
+
+<p>
+  <strong>Access Control alignment.</strong> When an Access Control Facet is present on a Context
+  Descriptor, its <code>acl:Authorization</code> resources <span class="rfc2119">SHOULD</span>
+  be consistent with the WAC <code>.acl</code> resources governing the described graph's storage
+  container. Inconsistencies between the facet's access declarations and the server's enforced
+  ACLs <span class="rfc2119">MUST</span> be resolved in favor of the server's ACLs.
+</p>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  10. SECURITY AND PRIVACY                                      -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="security">Security and Privacy Considerations</h2>
+
+<h3>Context Descriptor Integrity</h3>
+<p>
+  Context Descriptors make claims about graphs (provenance, authorship, trust level) that
+  consuming systems may rely upon for access control or policy decisions. Implementations
+  <span class="rfc2119">SHOULD</span> verify the integrity of Context Descriptors using the
+  Trust Facet's proof mechanisms. Unsigned or self-asserted descriptors <span class="rfc2119">MUST NOT</span>
+  be treated as authoritative without additional verification.
+</p>
+
+<h3>Metadata Leakage</h3>
+<p>
+  Context Descriptors may reveal sensitive information even when the described graph's content
+  is access-controlled. For example, a Temporal Facet reveals <em>when</em> data was generated;
+  an Agent Facet reveals <em>who</em> generated it; a Federation Facet reveals <em>where</em> it
+  is stored. Implementations <span class="rfc2119">SHOULD</span> apply access controls to Context
+  Descriptors with at least the same level of restriction as the graphs they describe.
+</p>
+
+<h3>Context Injection</h3>
+<p>
+  In federated environments, a malicious participant may inject false Context Descriptors to
+  misrepresent the provenance, trust level, or temporal validity of graphs. Consumers
+  <span class="rfc2119">MUST</span> verify that the <code>cg:describes</code> target graph
+  actually exists and is reachable, and <span class="rfc2119">SHOULD</span> verify that the
+  descriptor's <code>cg:origin</code> (if present) is authoritative for the described graph.
+</p>
+
+<h3>Epistemic Confidence Manipulation</h3>
+<p>
+  The <code>cg:epistemicConfidence</code> property in the Semiotic Facet is self-reported and
+  <span class="rfc2119">MUST NOT</span> be used as the sole basis for trust decisions. It is
+  intended for informational use within systems that aggregate and display confidence metadata,
+  not as a security mechanism.
+</p>
+
+<h3>GDPR and Data Protection</h3>
+<p>
+  The <code>cg:consentBasis</code> property on the Access Control Facet is provided for
+  documentation purposes. It does not constitute a legal compliance mechanism. Implementations
+  operating in regulated jurisdictions <span class="rfc2119">MUST</span> ensure that their
+  data processing practices comply with applicable law independently of Context Graph metadata.
+</p>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  11. COMPLETE EXAMPLES                                         -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="examples">Complete Examples</h2>
+
+<p><em>This section is non-normative.</em></p>
+
+<h3>Example 1: Sensor Data with Full Context</h3>
+
+<pre><code>@prefix cg:    &lt;https://ns.foxximediums.com/context-graphs#&gt; .
+@prefix prov:  &lt;http://www.w3.org/ns/prov#&gt; .
+@prefix time:  &lt;http://www.w3.org/2006/time#&gt; .
+@prefix xsd:   &lt;http://www.w3.org/2001/XMLSchema#&gt; .
+@prefix dcat:  &lt;http://www.w3.org/ns/dcat#&gt; .
+@prefix as:    &lt;https://www.w3.org/ns/activitystreams#&gt; .
+@prefix ex:    &lt;https://example.org/&gt; .
+
+# ── Context Descriptor ────────────────────────────────────────
+
+ex:ctx-sensor-2026Q1 a cg:ContextDescriptor ;
+    cg:version 1 ;
+    cg:describes ex:graph-sensor-2026Q1 ;
+    cg:validFrom "2026-03-17T00:00:00Z"^^xsd:dateTime ;
+
+    # Temporal Facet
+    cg:hasFacet [
+        a cg:TemporalFacet ;
+        cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
+        cg:validUntil "2026-03-31T23:59:59Z"^^xsd:dateTime ;
+        cg:temporalResolution "PT1H"^^xsd:duration ;
+    ] ;
+
+    # Provenance Facet
+    cg:hasFacet [
+        a cg:ProvenanceFacet ;
+        prov:wasGeneratedBy [
+            a prov:Activity ;
+            prov:wasAssociatedWith ex:agent-etl-v3 ;
+            prov:startedAtTime "2026-03-17T06:00:00Z"^^xsd:dateTime ;
+            prov:endedAtTime "2026-03-17T06:45:00Z"^^xsd:dateTime ;
+            prov:used ex:raw-sensor-dump-20260317
+        ] ;
+        prov:generatedAtTime "2026-03-17T06:45:00Z"^^xsd:dateTime ;
+        prov:wasDerivedFrom ex:raw-sensor-dump-20260317 ;
+    ] ;
+
+    # Agent Facet
+    cg:hasFacet [
+        a cg:AgentFacet ;
+        cg:assertingAgent [
+            a prov:SoftwareAgent, as:Application ;
+            rdfs:label "Sensor ETL Pipeline v3.2" ;
+            cg:agentIdentity &lt;did:web:example.org:agents:etl-v3&gt;
+        ] ;
+        cg:agentRole cg:Author ;
+    ] ;
+
+    # Semiotic Facet
+    cg:hasFacet [
+        a cg:SemioticFacet ;
+        cg:modalStatus cg:Asserted ;
+        cg:epistemicConfidence "0.95"^^xsd:double ;
+        cg:interpretationFrame &lt;https://schema.org/Observation&gt; ;
+        cg:signSystem &lt;http://qudt.org/2.1/vocab/unit&gt; ;
+    ] ;
+
+    # Federation Facet
+    cg:hasFacet [
+        a cg:FederationFacet ;
+        cg:origin &lt;https://pod.example.org/sensors/2026Q1&gt; ;
+        cg:storageEndpoint &lt;https://pod.example.org/sensors/&gt; ;
+        cg:syncProtocol cg:SolidNotifications ;
+        cg:lastSynced "2026-03-17T07:00:00Z"^^xsd:dateTime ;
+    ] ;
+
+    # Trust Facet
+    cg:hasFacet [
+        a cg:TrustFacet ;
+        cg:trustLevel cg:SelfAsserted ;
+        cg:issuer &lt;did:web:example.org&gt; ;
+    ] .
+
+# ── The Described Named Graph ─────────────────────────────────
+
+GRAPH ex:graph-sensor-2026Q1 {
+    ex:sensor-7  ex:temperature  "22.4"^^xsd:double .
+    ex:sensor-7  ex:humidity     "0.65"^^xsd:double .
+    ex:sensor-12 ex:temperature  "19.1"^^xsd:double .
+}</code></pre>
+
+<h3>Example 2: Federated Context Composition</h3>
+
+<pre><code>@prefix cg: &lt;https://ns.foxximediums.com/context-graphs#&gt; .
+@prefix ex: &lt;https://example.org/&gt; .
+
+# Alice's context descriptor (from her Solid Pod)
+ex:ctx-alice a cg:ContextDescriptor ;
+    cg:describes ex:graph-shared-research ;
+    cg:hasFacet [
+        a cg:TemporalFacet ;
+        cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime ;
+        cg:validUntil "2026-06-30T23:59:59Z"^^xsd:dateTime ;
+    ] ;
+    cg:hasFacet [
+        a cg:TrustFacet ;
+        cg:trustLevel cg:CryptographicallyVerified ;
+        cg:issuer &lt;did:web:alice.example.org&gt; ;
+    ] .
+
+# Bob's context descriptor (from his Solid Pod)
+ex:ctx-bob a cg:ContextDescriptor ;
+    cg:describes ex:graph-shared-research ;
+    cg:hasFacet [
+        a cg:TemporalFacet ;
+        cg:validFrom "2026-03-01T00:00:00Z"^^xsd:dateTime ;
+        cg:validUntil "2026-12-31T23:59:59Z"^^xsd:dateTime ;
+    ] ;
+    cg:hasFacet [
+        a cg:TrustFacet ;
+        cg:trustLevel cg:ThirdPartyAttested ;
+        cg:issuer &lt;did:web:bob.example.org&gt; ;
+    ] .
+
+# Composed: intersection reveals shared temporal window and common trust
+ex:ctx-composed a cg:ComposedDescriptor ;
+    cg:compositionOp cg:intersection ;
+    cg:operand ex:ctx-alice, ex:ctx-bob ;
+    cg:describes ex:graph-shared-research ;
+    # Effective temporal: 2026-03-01 to 2026-06-30 (overlap)
+    # Effective trust: both trust facets preserved (no common issuer)
+    cg:hasFacet [
+        a cg:TemporalFacet ;
+        cg:validFrom "2026-03-01T00:00:00Z"^^xsd:dateTime ;
+        cg:validUntil "2026-06-30T23:59:59Z"^^xsd:dateTime ;
+    ] .</code></pre>
+
+<h3>Example 3: JSON-LD Compact Serialization</h3>
+
+<pre><code>{
+  "@context": "https://ns.foxximediums.com/context-graphs/v1",
+  "@id": "urn:cg:desc:quickstart-1",
+  "@type": "ContextDescriptor",
+  "version": 0,
+  "describes": "urn:graph:my-observations",
+  "validFrom": "2026-03-17T00:00:00Z",
+  "hasFacet": [
+    {
+      "@type": "TemporalFacet",
+      "validFrom": "2026-01-01T00:00:00Z",
+      "validUntil": "2026-03-31T23:59:59Z"
+    },
+    {
+      "@type": "ProvenanceFacet",
+      "wasGeneratedBy": {
+        "@type": "prov:Activity",
+        "generatedAtTime": "2026-03-17T08:00:00Z"
+      },
+      "wasDerivedFrom": "https://data.example.org/raw/input.csv"
+    },
+    {
+      "@type": "SemioticFacet",
+      "modalStatus": "cg:Asserted",
+      "epistemicConfidence": 0.88
+    }
+  ]
+}</code></pre>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  12. REFERENCES                                                -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+
+<h2 id="references">References</h2>
+
+<h3>Normative References</h3>
+
+<dl class="spec-terms">
+  <dt>[RDF12-CONCEPTS]</dt>
+  <dd>Olaf Hartig; Pierre-Antoine Champin; Andy Seaborne. <em>RDF 1.2 Concepts and Abstract Syntax.</em>
+  W3C Working Draft, 3 March 2026. <a href="https://www.w3.org/TR/rdf12-concepts/">https://www.w3.org/TR/rdf12-concepts/</a></dd>
+
+  <dt>[RDF12-SEMANTICS]</dt>
+  <dd>Patrick J. Hayes; Peter F. Patel-Schneider. <em>RDF 1.2 Semantics.</em>
+  W3C Working Draft. <a href="https://www.w3.org/TR/rdf12-semantics/">https://w3c.github.io/rdf-semantics/spec/</a></dd>
+
+  <dt>[RDF12-SCHEMA]</dt>
+  <dd>Dan Brickley; R.V. Guha. <em>RDF 1.2 Schema.</em>
+  W3C Working Draft. <a href="https://w3c.github.io/rdf-schema/spec/">https://w3c.github.io/rdf-schema/spec/</a></dd>
+
+  <dt>[SPARQL12-QUERY]</dt>
+  <dd>Andy Seaborne; Steven Harris. <em>SPARQL 1.2 Query Language.</em>
+  W3C Working Draft. <a href="https://w3c.github.io/sparql-query/spec/">https://w3c.github.io/sparql-query/spec/</a></dd>
+
+  <dt>[JSON-LD11]</dt>
+  <dd>Gregg Kellogg; Pierre-Antoine Champin; Dave Longley. <em>JSON-LD 1.1.</em>
+  W3C Recommendation, 16 July 2020. <a href="https://www.w3.org/TR/json-ld11/">https://www.w3.org/TR/json-ld11/</a></dd>
+
+  <dt>[SHACL]</dt>
+  <dd>Holger Knublauch; Dimitris Kontokostas. <em>Shapes Constraint Language (SHACL).</em>
+  W3C Recommendation, 20 July 2017. <a href="https://www.w3.org/TR/shacl/">https://www.w3.org/TR/shacl/</a></dd>
+
+  <dt>[PROV-O]</dt>
+  <dd>Timothy Lebo; Satya Sahoo; Deborah McGuinness. <em>PROV-O: The PROV Ontology.</em>
+  W3C Recommendation, 30 April 2013. <a href="https://www.w3.org/TR/prov-o/">https://www.w3.org/TR/prov-o/</a></dd>
+
+  <dt>[OWL-TIME]</dt>
+  <dd>Simon Cox; Chris Little. <em>Time Ontology in OWL.</em>
+  W3C Recommendation, 19 October 2017. <a href="https://www.w3.org/TR/owl-time/">https://www.w3.org/TR/owl-time/</a></dd>
+
+  <dt>[VC-DATA-MODEL-2.0]</dt>
+  <dd>Manu Sporny et al. <em>Verifiable Credentials Data Model v2.0.</em>
+  W3C Recommendation, 2024. <a href="https://www.w3.org/TR/vc-data-model-2.0/">https://www.w3.org/TR/vc-data-model-2.0/</a></dd>
+
+  <dt>[DID-CORE]</dt>
+  <dd>Manu Sporny; Dave Longley; Markus Sabadello; Drummond Reed; Orie Steele; Christopher Allen. <em>Decentralized Identifiers (DIDs) v1.0.</em>
+  W3C Recommendation, 19 July 2022. <a href="https://www.w3.org/TR/did-core/">https://www.w3.org/TR/did-core/</a></dd>
+
+  <dt>[RFC2119]</dt>
+  <dd>S. Bradner. <em>Key words for use in RFCs to Indicate Requirement Levels.</em>
+  IETF RFC 2119, March 1997. <a href="https://www.rfc-editor.org/rfc/rfc2119">https://www.rfc-editor.org/rfc/rfc2119</a></dd>
+
+  <dt>[RFC8174]</dt>
+  <dd>B. Leiba. <em>Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words.</em>
+  IETF RFC 8174, May 2017. <a href="https://www.rfc-editor.org/rfc/rfc8174">https://www.rfc-editor.org/rfc/rfc8174</a></dd>
+</dl>
+
+<h3>Informative References</h3>
+
+<dl class="spec-terms">
+  <dt>[ACTIVITY-STREAMS-2.0]</dt>
+  <dd>James M Snell; Evan Prodromou. <em>Activity Streams 2.0.</em>
+  W3C Recommendation, 23 May 2017. <a href="https://www.w3.org/TR/activitystreams-core/">https://www.w3.org/TR/activitystreams-core/</a></dd>
+
+  <dt>[WEB-ANNOTATION]</dt>
+  <dd>Robert Sanderson; Paolo Ciccarese; Benjamin Young. <em>Web Annotation Data Model.</em>
+  W3C Recommendation, 23 February 2017. <a href="https://www.w3.org/TR/annotation-model/">https://www.w3.org/TR/annotation-model/</a></dd>
+
+  <dt>[VOCAB-DCAT-3]</dt>
+  <dd>Riccardo Albertoni et al. <em>Data Catalog Vocabulary (DCAT) - Version 3.</em>
+  W3C Recommendation, 2024. <a href="https://www.w3.org/TR/vocab-dcat-3/">https://www.w3.org/TR/vocab-dcat-3/</a></dd>
+
+  <dt>[LDP]</dt>
+  <dd>Steve Speicher; John Arwe; Ashok Malhotra. <em>Linked Data Platform 1.0.</em>
+  W3C Recommendation, 26 February 2015. <a href="https://www.w3.org/TR/ldp/">https://www.w3.org/TR/ldp/</a></dd>
+
+  <dt>[SOLID-PROTOCOL]</dt>
+  <dd>Sarven Capadisli; Tim Berners-Lee; Ruben Verborgh; Kjetil Kjernsmo. <em>Solid Protocol.</em>
+  Editor's Draft. <a href="https://solidproject.org/TR/protocol">https://solidproject.org/TR/protocol</a></dd>
+
+  <dt>[WAC]</dt>
+  <dd>Sarven Capadisli. <em>Web Access Control.</em>
+  Editor's Draft. <a href="https://solidproject.org/TR/wac">https://solidproject.org/TR/wac</a></dd>
+
+  <dt>[DCTERMS]</dt>
+  <dd>Dublin Core Metadata Initiative. <em>DCMI Metadata Terms.</em>
+  <a href="https://www.dublincore.org/specifications/dublin-core/dcmi-terms/">https://www.dublincore.org/specifications/dublin-core/dcmi-terms/</a></dd>
+</dl>
+
+<hr>
+
+<footer style="text-align: center; color: #888; font-size: 0.85em; padding: 2em 0;">
+  <p>Context Graphs 1.0 &mdash; Specification Draft &mdash; 17 March 2026</p>
+  <p>Copyright &copy; 2026 Mark Spivey / Foxxi Mediums Inc. Published under the
+  <a href="https://creativecommons.org/licenses/by/4.0/" style="color:#888">CC BY 4.0</a> license.</p>
+  <p style="font-size: 0.9em; margin-top: 0.5em;">
+    This specification reuses and profiles vocabulary from W3C Recommendations (RDF 1.2, SPARQL 1.2, PROV-O,
+    OWL-Time, SHACL, JSON-LD 1.1, Verifiable Credentials 2.0, Activity Streams 2.0, DCAT 3, LDP, Web Annotation)
+    and the Solid Protocol. Use of these vocabularies does not imply W3C endorsement of this document.
+  </p>
+</footer>
+
+</body>
+</html>

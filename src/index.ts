@@ -4,7 +4,7 @@
  * Reference implementation of Context Graphs 1.0 — a compositional
  * framework for typed graph contexts over RDF 1.2 Named Graphs.
  *
- * Spec: https://spec.foxximediums.com/context-graphs/
+ * Spec: https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html
  * Author: Mark Spivey <mark.spivey@xwisee.com>
  * License: CC-BY-4.0
  *
@@ -16,7 +16,7 @@
  *   .describes('urn:graph:observations-2026-Q1')
  *   .temporal({ validFrom: '2026-01-01T00:00:00Z', validUntil: '2026-03-31T23:59:59Z' })
  *   .asserted(0.95)
- *   .selfAsserted('did:web:foxximediums.com')
+ *   .selfAsserted('did:web:context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io')
  *   .build();
  *
  * const result = validate(desc);
@@ -150,6 +150,10 @@ export {
   publishPodDirectory,
   POD_DIRECTORY_PATH,
   resolveWebFinger,
+  didWebToUrl,
+  resolveDidWeb,
+  extractPublicKey,
+  findStorageEndpoint,
 } from './solid/index.js';
 
 export type {
@@ -170,4 +174,8 @@ export type {
   RegistryOptions,
   WebFingerResult,
   WebFingerLink,
+  DidDocument,
+  VerificationMethod,
+  ServiceEndpoint,
+  DidResolutionResult,
 } from './solid/index.js';

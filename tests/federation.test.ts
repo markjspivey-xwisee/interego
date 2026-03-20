@@ -110,22 +110,22 @@ describe('WebFinger', () => {
       headers: { get: () => null },
       text: async () => '',
       json: async () => ({
-        subject: 'acct:markj@foxximediums.com',
+        subject: 'acct:markj@context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io',
         links: [
           {
             rel: 'http://www.w3.org/ns/solid/terms#storage',
-            href: 'https://pod.foxximediums.com/markj/',
+            href: 'https://context-graphs-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/',
           },
         ],
       }),
     });
 
-    const result = await resolveWebFinger('acct:markj@foxximediums.com', {
+    const result = await resolveWebFinger('acct:markj@context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io', {
       fetch: mockFetch,
     });
 
-    expect(result.subject).toBe('acct:markj@foxximediums.com');
-    expect(result.podUrl).toBe('https://pod.foxximediums.com/markj/');
+    expect(result.subject).toBe('acct:markj@context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io');
+    expect(result.podUrl).toBe('https://context-graphs-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/');
     expect(result.links).toHaveLength(1);
   });
 

@@ -42,8 +42,8 @@ const WEBID_REL = 'http://www.w3.org/ns/solid/terms#oidcIssuer';
  *
  * @example
  * ```ts
- * const result = await resolveWebFinger('acct:markj@foxximediums.com');
- * console.log(result.podUrl); // "https://pod.foxximediums.com/markj/"
+ * const result = await resolveWebFinger('acct:markj@context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io');
+ * console.log(result.podUrl); // "https://context-graphs-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/"
  * ```
  */
 export async function resolveWebFinger(

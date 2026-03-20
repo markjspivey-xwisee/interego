@@ -967,7 +967,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: 'object' as const,
         properties: {
-          resource: { type: 'string', description: 'WebFinger resource (e.g. "acct:markj@foxximediums.com" or a WebID URL)' },
+          resource: { type: 'string', description: 'WebFinger resource (e.g. "acct:markj@context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io" or a WebID URL)' },
         },
         required: ['resource'],
       },

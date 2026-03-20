@@ -78,7 +78,7 @@ describe('ContextDescriptor Builder', () => {
         temporalResolution: 'P1D',
       })
       .asserted(0.95)
-      .selfAsserted('did:web:foxximediums.com' as IRI)
+      .selfAsserted('did:web:context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io' as IRI)
       .generatedBy('urn:agent:etl' as IRI, {
         derivedFrom: ['urn:data:raw.csv' as IRI],
       })
@@ -469,7 +469,7 @@ describe('JSON-LD Serialization', () => {
 describe('Namespaces', () => {
   it('expand resolves prefixed names', () => {
     expect(expand('cg:ContextDescriptor'))
-      .toBe('https://ns.foxximediums.com/context-graphs#ContextDescriptor');
+      .toBe('https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#ContextDescriptor');
     expect(expand('prov:Entity'))
       .toBe('http://www.w3.org/ns/prov#Entity');
   });

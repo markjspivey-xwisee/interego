@@ -49,7 +49,7 @@ function testDescriptor(id = 'urn:cg:test-solid') {
 
 // ── Sample manifest ─────────────────────────────────────────
 
-const SAMPLE_MANIFEST = `@prefix cg: <https://ns.foxximediums.com/context-graphs#> .
+const SAMPLE_MANIFEST = `@prefix cg: <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 <https://alice.pod/context-graphs/desc-1.ttl> a cg:ManifestEntry ;
@@ -88,7 +88,7 @@ describe('parseManifest', () => {
 
   it('returns empty array for empty manifest', () => {
     expect(parseManifest('')).toEqual([]);
-    expect(parseManifest('@prefix cg: <https://ns.foxximediums.com/context-graphs#> .')).toEqual([]);
+    expect(parseManifest('@prefix cg: <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#> .')).toEqual([]);
   });
 
   it('handles entries without temporal bounds', () => {

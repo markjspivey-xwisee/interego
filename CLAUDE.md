@@ -4,7 +4,7 @@
 
 Reference implementation of **Context Graphs 1.0**, a specification by Mark Spivey / Foxxi Mediums Inc. that defines a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
 
-**Spec:** `context-graphs-1.0-wd.html` (co-located or at https://spec.foxximediums.com/context-graphs/)
+**Spec:** `context-graphs-1.0-wd.html` (co-located or at https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html)
 
 ## Architecture
 
