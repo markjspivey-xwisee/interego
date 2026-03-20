@@ -3,286 +3,299 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Context Graphs 1.0 — Agent Federation Monitor</title>
+<title>Context Graphs — Federation Monitor</title>
 <style>
   :root {
     --bg: #0d1117; --surface: #161b22; --border: #30363d;
     --text: #e6edf3; --dim: #8b949e;
-    --claude: #d2a8ff; --claude-bg: rgba(210,168,255,0.06);
-    --codex: #79c0ff;  --codex-bg: rgba(121,192,255,0.06);
-    --sys: #ffa657;    --sys-bg: rgba(255,166,87,0.06);
-    --live: #56d364;   --live-bg: rgba(86,211,100,0.10);
-    --err: #f85149;
-    --accent: #58a6ff;
+    --accent: #58a6ff; --live: #56d364; --warn: #ffa657; --err: #f85149;
     --mono: 'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
 
-  /* ── Header ─────────────────────────────────────────── */
-  header { background:var(--surface); border-bottom:1px solid var(--border); padding:14px 24px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:100; }
-  header h1 { font-size:15px; font-weight:600; display:flex; align-items:center; gap:10px; }
-  header h1 .sub { color:var(--dim); font-weight:400; font-size:13px; }
+  header { background:var(--surface); border-bottom:1px solid var(--border); padding:12px 20px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:100; }
+  header h1 { font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px; }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--err); transition:all 0.3s; flex-shrink:0; }
   .dot.on { background:var(--live); box-shadow:0 0 8px var(--live); }
-  .hdr-right { display:flex; align-items:center; gap:12px; }
-  .phase-label { font-size:12px; color:var(--dim); font-family:var(--mono); }
-  button { font-family:inherit; font-size:12px; padding:6px 16px; border-radius:6px; border:1px solid var(--border); background:var(--surface); color:var(--text); cursor:pointer; transition:all 0.15s; }
-  button:hover { border-color:var(--accent); color:var(--accent); }
-  button:disabled { opacity:0.35; cursor:not-allowed; }
-  button.go { background:var(--accent); color:#fff; border-color:var(--accent); }
-  button.go:hover { background:#4090e0; }
+  .hdr-info { font-size:11px; color:var(--dim); font-family:var(--mono); display:flex; gap:16px; }
 
-  /* ── Layout ─────────────────────────────────────────── */
-  .layout { display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:1px; background:var(--border); height:calc(100vh - 53px); }
-  .panel { background:var(--bg); display:flex; flex-direction:column; min-height:0; overflow:hidden; }
-  .panel-hdr { background:var(--surface); padding:8px 14px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--dim); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; flex-shrink:0; }
-  .badge { background:var(--border); color:var(--dim); font-size:10px; padding:1px 6px; border-radius:10px; font-weight:500; }
-  .panel-body { flex:1; overflow-y:auto; overflow-x:hidden; }
+  .layout { display:grid; grid-template-columns:320px 1fr; height:calc(100vh - 49px); }
 
-  /* ── Agent cards (top-right) ────────────────────────── */
-  .agents { display:flex; flex-direction:column; gap:1px; background:var(--border); height:100%; }
-  .agent-card { flex:1; padding:14px 16px; background:var(--bg); display:flex; flex-direction:column; gap:6px; }
-  .agent-card .name { font-weight:700; font-size:14px; }
-  .agent-card.claude .name { color:var(--claude); }
-  .agent-card.codex .name { color:var(--codex); }
-  .agent-card .meta { font-size:11px; color:var(--dim); font-family:var(--mono); line-height:1.5; }
-  .agent-card .status { font-size:11px; margin-top:auto; padding-top:6px; }
-  .agent-card .status span { padding:2px 8px; border-radius:4px; font-family:var(--mono); font-size:10px; }
-  .idle { background:rgba(139,148,158,0.1); color:var(--dim); }
-  .active { background:rgba(86,211,100,0.12); color:var(--live); }
-  .done { background:rgba(88,166,255,0.1); color:var(--accent); }
+  /* ── Sidebar: Pods & Agents ─────────────────────────── */
+  .sidebar { background:var(--surface); border-right:1px solid var(--border); overflow-y:auto; }
+  .sidebar-hdr { padding:10px 14px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--dim); border-bottom:1px solid var(--border); display:flex; justify-content:space-between; }
 
-  /* ── Timeline (left, full height) ───────────────────── */
-  .timeline { grid-row:1/3; }
-  .entry { padding:10px 14px; border-bottom:1px solid var(--border); font-size:12px; animation:fadeIn 0.2s ease; line-height:1.45; }
-  @keyframes fadeIn { from{opacity:0;transform:translateY(-3px)} to{opacity:1;transform:translateY(0)} }
-  .entry:hover { background:rgba(255,255,255,0.015); }
-  .entry.claude { border-left:3px solid var(--claude); }
-  .entry.codex { border-left:3px solid var(--codex); }
-  .entry.system { border-left:3px solid var(--sys); }
-  .entry.notification { border-left:3px solid var(--live); background:var(--live-bg); }
-  .entry.error { border-left:3px solid var(--err); }
-  .entry .ts { font-family:var(--mono); font-size:9px; color:var(--dim); }
-  .entry .who { font-weight:600; font-size:10px; text-transform:uppercase; letter-spacing:0.04em; display:inline-block; margin-right:6px; }
-  .entry.claude .who { color:var(--claude); }
-  .entry.codex .who { color:var(--codex); }
-  .entry.system .who { color:var(--sys); }
-  .entry.notification .who { color:var(--live); }
-  .entry.error .who { color:var(--err); }
-  .entry .msg { margin-top:3px; }
-  .entry .msg code { font-family:var(--mono); font-size:11px; color:var(--accent); background:rgba(88,166,255,0.08); padding:1px 4px; border-radius:3px; }
-  .entry .msg a { color:var(--accent); text-decoration:none; font-family:var(--mono); font-size:11px; }
-  .entry .msg a:hover { text-decoration:underline; }
-  .chips { display:flex; flex-wrap:wrap; gap:3px; margin-top:5px; }
-  .chip { font-size:9px; padding:1px 7px; border-radius:10px; border:1px solid var(--border); font-family:var(--mono); }
+  .pod-card { border-bottom:1px solid var(--border); }
+  .pod-hdr { padding:10px 14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; }
+  .pod-hdr:hover { background:rgba(255,255,255,0.02); }
+  .pod-name { font-weight:700; font-size:13px; color:var(--accent); }
+  .pod-count { font-size:10px; color:var(--dim); font-family:var(--mono); }
+  .pod-details { padding:0 14px 10px; display:none; }
+  .pod-details.open { display:block; }
+  .pod-owner { font-size:11px; color:var(--dim); margin-bottom:6px; }
+  .pod-owner strong { color:var(--text); font-weight:500; }
+
+  .agent-row { display:flex; align-items:center; gap:6px; padding:4px 0; font-size:11px; }
+  .agent-dot { width:6px; height:6px; border-radius:50%; background:var(--live); flex-shrink:0; }
+  .agent-id { font-family:var(--mono); font-size:10px; color:var(--text); word-break:break-all; }
+  .agent-scope { font-size:9px; padding:1px 5px; border-radius:8px; background:rgba(86,211,100,0.1); color:var(--live); font-family:var(--mono); }
+  .agent-label { font-size:10px; color:var(--dim); }
+
+  .desc-row { padding:5px 0; border-top:1px solid rgba(255,255,255,0.04); margin-top:4px; cursor:pointer; }
+  .desc-row:hover { color:var(--accent); }
+  .desc-graph { font-size:10px; font-family:var(--mono); color:var(--accent); word-break:break-all; }
+  .desc-meta { font-size:9px; color:var(--dim); margin-top:2px; }
+  .facet-chips { display:flex; flex-wrap:wrap; gap:2px; margin-top:3px; }
+  .chip { font-size:8px; padding:1px 5px; border-radius:8px; border:1px solid var(--border); font-family:var(--mono); }
   .chip.Temporal{border-color:#f0883e;color:#f0883e} .chip.Provenance{border-color:#d2a8ff;color:#d2a8ff}
   .chip.Agent{border-color:#79c0ff;color:#79c0ff} .chip.Semiotic{border-color:#ff7b72;color:#ff7b72}
   .chip.Trust{border-color:#56d364;color:#56d364} .chip.Federation{border-color:#ffa657;color:#ffa657}
 
-  /* ── Detail (bottom-right) ──────────────────────────── */
-  .detail-empty { display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim); font-size:12px; padding:30px; text-align:center; line-height:1.7; }
-  .cblock { border-top:1px solid var(--border); }
-  .cblock .chdr { padding:6px 12px; background:rgba(255,255,255,0.02); font-size:10px; color:var(--dim); cursor:pointer; user-select:none; display:flex; justify-content:space-between; border-bottom:1px solid var(--border); }
-  .cblock .chdr:hover { background:rgba(255,255,255,0.04); }
-  .cblock pre { padding:10px 12px; font-family:var(--mono); font-size:10px; line-height:1.5; overflow:auto; max-height:250px; white-space:pre-wrap; word-break:break-word; }
-  .cblock pre.hide { display:none; }
+  .no-pods { padding:30px; text-align:center; color:var(--dim); font-size:12px; line-height:1.7; }
 
-  /* ── Composition viz ────────────────────────────────── */
-  .comp { padding:16px; text-align:center; }
-  .comp-row { display:flex; justify-content:center; align-items:center; gap:12px; }
-  .comp-box { padding:8px 14px; border:1px solid var(--border); border-radius:8px; font-size:11px; min-width:130px; text-align:center; }
-  .comp-box.cb { border-color:var(--claude); }
-  .comp-box.cx { border-color:var(--codex); }
-  .comp-box.res { border-color:var(--live); border-width:2px; }
-  .comp-box .lbl { font-weight:700; font-size:10px; text-transform:uppercase; }
-  .comp-box.cb .lbl { color:var(--claude); }
-  .comp-box.cx .lbl { color:var(--codex); }
-  .comp-box.res .lbl { color:var(--live); }
-  .comp-box .sub { font-family:var(--mono); font-size:9px; color:var(--dim); margin-top:3px; }
-  .comp-sym { font-family:var(--mono); font-size:20px; color:var(--dim); }
+  /* ── Main: Activity Feed + Inspector ────────────────── */
+  .main { display:grid; grid-template-rows:1fr 1fr; }
+  .panel { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+  .panel-hdr { background:var(--surface); padding:8px 14px; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; color:var(--dim); border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .badge { background:var(--border); color:var(--dim); font-size:10px; padding:1px 6px; border-radius:10px; font-weight:500; }
+  .panel-body { flex:1; overflow-y:auto; }
 
-  .pulse { animation:pulse 0.5s ease; }
-  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(86,211,100,0.4)} 70%{box-shadow:0 0 0 10px rgba(86,211,100,0)} 100%{box-shadow:0 0 0 0 rgba(86,211,100,0)} }
+  /* Activity feed */
+  .entry { padding:8px 14px; border-bottom:1px solid rgba(255,255,255,0.03); font-size:11px; animation:fadeIn 0.15s ease; line-height:1.4; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(-2px)} to{opacity:1;transform:translateY(0)} }
+  .entry .ts { font-family:var(--mono); font-size:9px; color:var(--dim); }
+  .entry .tag { font-size:9px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; display:inline-block; margin:0 6px; padding:1px 5px; border-radius:3px; }
+  .tag.desc-add { background:rgba(86,211,100,0.12); color:var(--live); }
+  .tag.desc-rm { background:rgba(248,81,73,0.12); color:var(--err); }
+  .tag.agent-add { background:rgba(88,166,255,0.1); color:var(--accent); }
+  .tag.system { background:rgba(255,166,87,0.08); color:var(--warn); }
+  .entry .body { color:var(--text); font-family:var(--mono); font-size:10px; }
+  .entry a { color:var(--accent); text-decoration:none; cursor:pointer; }
+  .entry a:hover { text-decoration:underline; }
 
-  @media(max-width:900px) { .layout{grid-template-columns:1fr;grid-template-rows:auto;} }
+  /* Inspector */
+  .inspector { border-top:1px solid var(--border); }
+  .insp-empty { display:flex; align-items:center; justify-content:center; height:100%; color:var(--dim); font-size:12px; text-align:center; line-height:1.7; padding:20px; }
+  .insp-content { padding:0; }
+  .insp-content pre { padding:12px 14px; font-family:var(--mono); font-size:10px; line-height:1.5; white-space:pre-wrap; word-break:break-word; overflow:auto; max-height:100%; }
+
+  @media(max-width:900px) { .layout{grid-template-columns:1fr;} .sidebar{max-height:40vh;} }
 </style>
 </head>
 <body>
 
 <header>
-  <h1><span class="dot" id="dot"></span> Context Graphs <span class="sub">Agent Federation Monitor</span></h1>
-  <div class="hdr-right">
-    <span class="phase-label" id="phase"></span>
-    <button class="go" id="btnRun" onclick="run()">Run Scenario</button>
-    <button id="btnReplay" onclick="replay()" disabled>Replay</button>
+  <h1><span class="dot" id="dot"></span> Context Graphs <span style="color:var(--dim);font-weight:400;font-size:12px;margin-left:4px">Federation Monitor</span></h1>
+  <div class="hdr-info">
+    <span id="cssInfo">CSS: connecting...</span>
+    <span id="podCount">0 pods</span>
+    <span id="descCount">0 descriptors</span>
   </div>
 </header>
 
 <div class="layout">
-  <!-- Timeline (left, spans both rows) -->
-  <div class="panel timeline">
-    <div class="panel-hdr">Event Stream <span class="badge" id="evtN">0</span></div>
-    <div class="panel-body" id="tl"></div>
-  </div>
-
-  <!-- Agent cards (top-right) -->
-  <div class="panel" style="padding:0;">
-    <div class="panel-hdr">Agents</div>
-    <div class="agents">
-      <div class="agent-card claude" id="cardClaude">
-        <div class="name">Claude Code</div>
-        <div class="meta">Developer: Alice &bull; did:web:alice.dev<br>Pod: /alice/ &bull; Solid Notifications<br>Role: Author &mdash; architecture analysis</div>
-        <div class="status"><span class="idle" id="stClaude">idle</span></div>
-      </div>
-      <div class="agent-card codex" id="cardCodex">
-        <div class="name">Codex CLI</div>
-        <div class="meta">Developer: Bob &bull; did:web:bob.dev<br>Pod: /bob/ &bull; Solid Notifications<br>Role: Curator &mdash; dependency audit</div>
-        <div class="status"><span class="idle" id="stCodex">idle</span></div>
-      </div>
+  <!-- Sidebar: Pods -->
+  <div class="sidebar">
+    <div class="sidebar-hdr"><span>Pods & Agents</span><span id="lastPoll"></span></div>
+    <div id="podList">
+      <div class="no-pods">Connecting to Solid server...<br>Pods will appear here as agents publish context.</div>
     </div>
   </div>
 
-  <!-- Detail / Composition (bottom-right) -->
-  <div class="panel">
-    <div class="panel-hdr">Inspector <span class="badge" style="cursor:pointer" id="fmtBtn" onclick="toggleFmt()">Turtle</span></div>
-    <div class="panel-body" id="detail">
-      <div class="detail-empty">Press <strong>Run Scenario</strong> to start.<br><br>Two AI agents will autonomously publish and discover<br>context-annotated knowledge graphs through a live<br>Community Solid Server &mdash; all real HTTP and WebSocket.</div>
+  <!-- Main -->
+  <div class="main">
+    <!-- Activity feed -->
+    <div class="panel">
+      <div class="panel-hdr">Activity <span class="badge" id="actN">0</span></div>
+      <div class="panel-body" id="feed"></div>
+    </div>
+
+    <!-- Inspector -->
+    <div class="panel inspector">
+      <div class="panel-hdr">Inspector</div>
+      <div class="panel-body" id="inspector">
+        <div class="insp-empty">Click a descriptor or agent to inspect.<br>Activity appears as agents use MCP tools to publish and discover context.</div>
+      </div>
     </div>
   </div>
 </div>
 
 <script>
-let evtN=0, fmt='turtle', lastData={};
-const tl=document.getElementById('tl'), detail=document.getElementById('detail');
+let actN = 0;
+const feed = document.getElementById('feed');
+const inspector = document.getElementById('inspector');
+const podList = document.getElementById('podList');
+let podState = {};
 
-// SSE
-const es=new EventSource('/events');
-es.onmessage=e=>handle(JSON.parse(e.data));
-es.onopen=()=>document.getElementById('dot').classList.add('on');
-es.onerror=()=>document.getElementById('dot').classList.remove('on');
-
-function handle(ev) {
-  evtN++; document.getElementById('evtN').textContent=evtN;
-
-  // Phase label
-  if(ev.action==='phase'&&ev.data) document.getElementById('phase').textContent='Phase '+ev.data.phase+': '+ev.data.title;
-  if(ev.action==='scenario-complete') { document.getElementById('phase').textContent='Complete'; document.getElementById('btnReplay').disabled=false; }
-  if(ev.action==='css-stopped') document.getElementById('phase').textContent='';
-
-  // Agent status
-  if(ev.type==='claude') setStatus('Claude',ev.action);
-  if(ev.type==='codex') setStatus('Codex',ev.action);
-
-  // Timeline
-  addEntry(ev);
-
-  // Detail panel
-  if(ev.data&&(ev.data.turtle||ev.data.jsonld)) { lastData=ev.data; showDetail(ev.data); }
-  if(ev.action==='composed') showComposition(ev.data);
-}
-
-function setStatus(who,action) {
-  const el=document.getElementById('st'+who);
-  if(['analyzing','discovering','composing','publishing'].includes(action)) { el.className='active'; el.textContent=action; }
-  else if(['published','revision-published','composed','verified','discovered','rediscovered','subscribed'].includes(action)) { el.className='done'; el.textContent=action; }
-  else if(action==='scenario-complete') { el.className='idle'; el.textContent='idle'; }
-}
-
-// Labels
-const L={
-  'connected':'SSE stream connected','css-starting':'Starting Solid server...','css-ready':'Solid server online',
-  'pods-ready':'Pod containers provisioned','css-stopped':'Solid server stopped',
-  'phase':'','scenario-start':'Scenario starting','scenario-complete':'Scenario complete',
-  'subscribed':'WebSocket subscription established','subscribe-failed':'WebSocket subscription failed',
-  'analyzing':'Analyzing codebase...','discovering':'Discovering context on remote pod...',
-  'descriptor-built':'Context Descriptor assembled','published':'Published to Solid pod',
-  'verified':'Round-trip verification passed','discovered':'Manifest discovered',
-  'filtered':'Filtered manifest','fetched-descriptor':'Fetched full descriptor from pod',
-  'composing':'Composing contexts...','composed':'Context composed (intersection)',
-  'publishing':'Publishing to own pod...','revision-built':'Revised descriptor assembled (v2)',
-  'revision-published':'Revision published to pod','rediscovered':'Re-discovered updated manifest',
-  'ws-event':'LIVE NOTIFICATION','action-failed':'Error','scenario-failed':'Scenario failed',
+// ── SSE Connection ─────────────────────────────────────
+const es = new EventSource('/events');
+es.onopen = () => {
+  document.getElementById('dot').classList.add('on');
+};
+es.onerror = () => {
+  document.getElementById('dot').classList.remove('on');
+};
+es.onmessage = (e) => {
+  const ev = JSON.parse(e.data);
+  handleEvent(ev);
 };
 
-function addEntry(ev) {
-  if(ev.action==='phase'||ev.action==='connected') return; // skip meta
-  const d=document.createElement('div');
-  d.className='entry '+ev.type;
-  const t=new Date(ev.timestamp).toLocaleTimeString('en-US',{hour12:false,fractionalSecondDigits:2});
-  const who=ev.agent||ev.type.charAt(0).toUpperCase()+ev.type.slice(1);
-  let msg=L[ev.action]||ev.action;
+function handleEvent(ev) {
+  switch (ev.type) {
+    case 'system':
+      if (ev.data?.action === 'connected') {
+        document.getElementById('cssInfo').textContent = 'CSS: ' + shortUrl(ev.data.css);
+        if (ev.data.pods) { podState = ev.data.pods; renderPods(); }
+      }
+      break;
 
-  if(ev.action==='published'&&ev.data) msg+=`<br><a href="#" onclick="fetchPod('${ev.data.descriptorUrl}');return false">${shortUrl(ev.data.descriptorUrl)}</a>`;
-  if(ev.action==='revision-published'&&ev.data) msg+=`<br><a href="#" onclick="fetchPod('${ev.data.descriptorUrl}');return false">${shortUrl(ev.data.descriptorUrl)}</a>`;
-  if(ev.action==='verified'&&ev.data) msg+=` &mdash; ${ev.data.bytes} bytes`;
-  if(ev.action==='discovered'&&ev.data) { msg+=` &mdash; ${ev.data.count} descriptor(s)`; if(ev.data.fromAgent) msg+=` from <strong>${ev.data.fromAgent}</strong>`; }
-  if(ev.action==='rediscovered'&&ev.data) msg+=` &mdash; ${ev.data.count} descriptor(s)`;
-  if(ev.action==='filtered'&&ev.data) msg+=` (${ev.data.filter}) &mdash; ${ev.data.count} match`;
-  if(ev.action==='ws-event'&&ev.data) { msg=`<strong>${ev.data.type}</strong> on <code>${shortUrl(ev.data.resource)}</code>`; d.classList.add('pulse'); }
-  if(ev.action==='descriptor-built'&&ev.data) { msg+=` &mdash; ${ev.data.facetCount} facets`; msg+=chips(ev.data.facetTypes||[]); }
-  if(ev.action==='revision-built'&&ev.data) { msg+=`<br>supersedes <code>${shortId(ev.data.supersedes)}</code>, derived from <code>${shortId(ev.data.derivedFrom)}</code>`; }
-  if(ev.action==='composed'&&ev.data) { msg+=` &mdash; ${ev.data.facetCount} facets survived`; msg+=chips(ev.data.facetTypes||[]); }
-  if(ev.action==='subscribed'&&ev.data) msg+=`<br>Topic: <code>${shortUrl(ev.data.topic)}</code>`;
-  if(ev.action==='subscribe-failed'&&ev.data) msg+=`: ${ev.data.error}`;
-  if(ev.action==='analyzing'&&ev.data) msg=`${msg} <code>${ev.data.task}</code>`;
-  if(ev.action==='pods-ready'&&ev.data) { msg+='<br>'; for(const p of ev.data.pods) msg+=`${p.agent} (${p.developer}) &rarr; <code>${shortUrl(p.pod)}</code><br>`; }
-  if(ev.action==='scenario-complete'&&ev.data) { msg+=`<br>Descriptors: Claude Code=${ev.data.totalDescriptors['Claude Code']}, Codex CLI=${ev.data.totalDescriptors['Codex CLI']}`; }
-  if(ev.action==='scenario-failed'&&ev.data) msg=String(ev.data);
+    case 'pod_update':
+      podState = ev.data;
+      renderPods();
+      updateCounts();
+      document.getElementById('lastPoll').textContent = new Date().toLocaleTimeString('en-US', { hour12: false });
+      break;
 
-  d.innerHTML=`<span class="ts">${t}</span> <span class="who">${who}</span><div class="msg">${msg}</div>`;
-  tl.prepend(d);
-}
+    case 'descriptor_added':
+      addActivity(ev.timestamp, 'desc-add', 'Published',
+        `<a onclick="inspect('${ev.data.url}')">${shortUrl(ev.data.url)}</a> on <strong>${ev.pod}</strong>` +
+        (ev.data.describes?.length ? `<br>Describes: ${ev.data.describes.map(g => '<code>' + shortId(g) + '</code>').join(', ')}` : '') +
+        chips(ev.data.facetTypes || [])
+      );
+      break;
 
-function chips(types) { if(!types.length) return ''; let h='<div class="chips">'; for(const t of types) h+=`<span class="chip ${t}">${t}</span>`; return h+'</div>'; }
-function shortUrl(u) { return (u||'').replace('http://localhost:3456/',''); }
-function shortId(u) { return (u||'').split(':').slice(-1)[0]; }
-function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    case 'descriptor_removed':
+      addActivity(ev.timestamp, 'desc-rm', 'Removed',
+        `<a>${shortUrl(ev.data.url)}</a> from <strong>${ev.pod}</strong>`
+      );
+      break;
 
-// Detail
-function showDetail(data) {
-  let h='';
-  if(data.turtle) h+=cblock('Turtle',data.turtle,fmt!=='turtle');
-  if(data.jsonld) h+=cblock('JSON-LD',JSON.stringify(data.jsonld,null,2),fmt!=='jsonld');
-  if(data.graphContent) h+=cblock('Named Graph',data.graphContent,true);
-  detail.innerHTML=h;
-}
-function cblock(label,content,hide) {
-  const id='c'+Math.random().toString(36).slice(2);
-  return `<div class="cblock"><div class="chdr" onclick="document.getElementById('${id}').classList.toggle('hide')"><span>${label}</span><span>${hide?'+':'-'}</span></div><pre id="${id}" class="${hide?'hide':''}">${esc(content)}</pre></div>`;
-}
-function toggleFmt() { fmt=fmt==='turtle'?'jsonld':'turtle'; document.getElementById('fmtBtn').textContent=fmt==='turtle'?'Turtle':'JSON-LD'; if(Object.keys(lastData).length) showDetail(lastData); }
-function showComposition(data) {
-  const tf=data.temporalOverlap;
-  const tr=tf?tf.validFrom?.slice(0,10)+' \u2014 '+tf.validUntil?.slice(0,10):'none';
-  let h=`<div class="comp">
-    <div class="comp-row"><div class="comp-box cb"><div class="lbl">Claude Code</div><div class="sub">${shortId(data.operands[0])}</div></div>
-    <span class="comp-sym">\u2229</span>
-    <div class="comp-box cx"><div class="lbl">Codex CLI</div><div class="sub">${shortId(data.operands[1])}</div></div></div>
-    <div class="comp-sym" style="margin:8px 0">\u2193</div>
-    <div style="display:flex;justify-content:center"><div class="comp-box res"><div class="lbl">Composed</div><div class="sub">${data.facetCount} facets &bull; ${tr}</div>${chips(data.facetTypes)}</div></div></div>`;
-  if(data.turtle) h+=cblock('Composed Turtle',data.turtle,true);
-  if(data.jsonld) h+=cblock('Composed JSON-LD',JSON.stringify(data.jsonld,null,2),false);
-  detail.innerHTML=h;
-}
-async function fetchPod(url) {
-  const r=await fetch('/pod/'+url.replace('http://localhost:3456/','')); const t=await r.text();
-  detail.innerHTML=cblock(shortUrl(url),t,false);
+    case 'agent_registered':
+      addActivity(ev.timestamp, 'agent-add', 'Agent',
+        `<strong>${ev.data.label || ev.data.id}</strong> registered on <strong>${ev.pod}</strong> [${ev.data.scope}]`
+      );
+      break;
+
+    case 'error':
+      addActivity(ev.timestamp, 'system', 'Error', String(ev.data));
+      break;
+  }
 }
 
-// Controls
-async function run() {
-  document.getElementById('btnRun').disabled=true;
-  document.getElementById('btnReplay').disabled=true;
-  tl.innerHTML=''; evtN=0; document.getElementById('evtN').textContent='0';
-  detail.innerHTML='<div class="detail-empty">Starting...</div>';
-  document.getElementById('stClaude').className='idle'; document.getElementById('stClaude').textContent='idle';
-  document.getElementById('stCodex').className='idle'; document.getElementById('stCodex').textContent='idle';
-  await fetch('/run',{method:'POST'});
+// ── Render Pods ─────────────────────────────────────────
+function renderPods() {
+  const entries = Object.entries(podState);
+  if (entries.length === 0) {
+    podList.innerHTML = '<div class="no-pods">No pods found yet.<br>Pods appear when agents publish context.</div>';
+    return;
+  }
+
+  let html = '';
+  for (const [url, pod] of entries) {
+    const p = pod;
+    const id = 'pod-' + p.name;
+    const descCount = p.descriptors?.length || 0;
+    const agentCount = p.agents?.length || 0;
+
+    html += `<div class="pod-card">`;
+    html += `<div class="pod-hdr" onclick="togglePod('${id}')">`;
+    html += `<span class="pod-name">/${p.name}/</span>`;
+    html += `<span class="pod-count">${descCount} desc · ${agentCount} agents</span>`;
+    html += `</div>`;
+    html += `<div class="pod-details" id="${id}">`;
+
+    // Owner
+    if (p.owner) {
+      html += `<div class="pod-owner">Owner: <strong>${p.owner.name || ''}</strong> ${shortUrl(p.owner.webId)}</div>`;
+    }
+
+    // Agents
+    if (p.agents?.length) {
+      for (const a of p.agents) {
+        html += `<div class="agent-row">`;
+        html += `<span class="agent-dot"></span>`;
+        html += `<span class="agent-id">${a.label || shortId(a.id)}</span>`;
+        html += `<span class="agent-scope">${a.scope}</span>`;
+        html += `</div>`;
+        if (a.label) {
+          html += `<div style="margin-left:14px"><span class="agent-label">${shortId(a.id)}</span></div>`;
+        }
+      }
+    }
+
+    // Descriptors
+    if (p.descriptors?.length) {
+      for (const d of p.descriptors) {
+        html += `<div class="desc-row" onclick="inspect('${d.url}')">`;
+        for (const g of d.describes) {
+          html += `<div class="desc-graph">${shortId(g)}</div>`;
+        }
+        html += `<div class="facet-chips">${chipsHtml(d.facetTypes || [])}</div>`;
+        if (d.validFrom) {
+          html += `<div class="desc-meta">${d.validFrom.slice(0,19)} — ${d.validUntil?.slice(0,19) || '...'}</div>`;
+        }
+        html += `</div>`;
+      }
+    }
+
+    html += `</div></div>`;
+  }
+
+  podList.innerHTML = html;
 }
-async function replay() {
-  await fetch('/stop',{method:'POST'});
-  setTimeout(run,600);
+
+function togglePod(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('open');
+}
+
+// ── Activity Feed ───────────────────────────────────────
+function addActivity(ts, tagClass, tagText, body) {
+  actN++;
+  document.getElementById('actN').textContent = actN;
+
+  const d = document.createElement('div');
+  d.className = 'entry';
+  const t = new Date(ts).toLocaleTimeString('en-US', { hour12: false, fractionalSecondDigits: 1 });
+  d.innerHTML = `<span class="ts">${t}</span><span class="tag ${tagClass}">${tagText}</span><span class="body">${body}</span>`;
+  feed.prepend(d);
+}
+
+// ── Inspector ───────────────────────────────────────────
+async function inspect(url) {
+  inspector.innerHTML = '<div class="insp-empty">Loading...</div>';
+  try {
+    // Proxy through our server
+    const relPath = url.replace(/^https?:\/\/[^/]+\//, '');
+    const resp = await fetch('/api/resource/' + encodeURIComponent(relPath));
+    const text = await resp.text();
+    inspector.innerHTML = `<div class="insp-content"><pre>${esc(text)}</pre></div>`;
+  } catch (err) {
+    inspector.innerHTML = `<div class="insp-empty">Failed to fetch: ${err.message}</div>`;
+  }
+}
+
+// ── Helpers ─────────────────────────────────────────────
+function updateCounts() {
+  const entries = Object.values(podState);
+  const totalPods = entries.length;
+  const totalDescs = entries.reduce((sum, p) => sum + (p.descriptors?.length || 0), 0);
+  document.getElementById('podCount').textContent = totalPods + ' pod' + (totalPods !== 1 ? 's' : '');
+  document.getElementById('descCount').textContent = totalDescs + ' descriptor' + (totalDescs !== 1 ? 's' : '');
+}
+
+function shortUrl(u) { return (u || '').replace(/^https?:\/\/[^/]+\//, '/'); }
+function shortId(u) {
+  if (!u) return '';
+  const parts = u.split(/[/:]/);
+  return parts.slice(-2).join(':');
+}
+function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function chips(types) { return chipsHtml(types); }
+function chipsHtml(types) {
+  if (!types.length) return '';
+  return '<div class="facet-chips" style="display:inline-flex;margin-left:4px">' + types.map(t => `<span class="chip ${t}">${t}</span>`).join('') + '</div>';
 }
 </script>
 </body>
