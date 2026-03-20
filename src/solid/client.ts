@@ -102,6 +102,55 @@ function wrapAsTriG(
 }
 
 /**
+ * Build the Hydra Collection header for the manifest.
+ * The manifest is a hydra:Collection with hypermedia affordances.
+ *
+ * Affordances declared:
+ *   hydra:operation → PUT (publish new context)
+ *   cg:canDiscover  → GET the manifest
+ *   cg:canSubscribe → WebSocket via Solid Notifications
+ *
+ * DPROD alignment:
+ *   Each manifest is also a dprod:DataProduct with an outputPort
+ *   (the manifest itself as a DCAT distribution).
+ */
+function manifestHeaderTurtle(podUrl: string): string {
+  const manifestUrl = `${podUrl}${MANIFEST_PATH}`;
+  return [
+    `# Context Graphs Manifest — Hydra-aware, DPROD-aligned`,
+    ``,
+    `<${manifestUrl}> a hydra:Collection, cg:DataProduct ;`,
+    `    hydra:manages [`,
+    `        hydra:property cg:describes ;`,
+    `        hydra:object cg:ManifestEntry`,
+    `    ] ;`,
+    `    # HATEOAS affordances — what agents can do with this manifest`,
+    `    hydra:operation [`,
+    `        a hydra:Operation ;`,
+    `        hydra:method "GET" ;`,
+    `        hydra:title "Discover context descriptors" ;`,
+    `        hydra:expects <http://www.w3.org/ns/hydra/core#Resource> ;`,
+    `        hydra:returns cg:ManifestEntry`,
+    `    ] ;`,
+    `    hydra:operation [`,
+    `        a hydra:Operation ;`,
+    `        hydra:method "PUT" ;`,
+    `        hydra:title "Publish new context descriptor" ;`,
+    `        hydra:expects cg:ContextDescriptor ;`,
+    `        hydra:returns cg:ManifestEntry`,
+    `    ] ;`,
+    `    # Affordance declarations for agent capability discovery`,
+    `    cg:affordance cg:canDiscover, cg:canSubscribe ;`,
+    `    # DPROD: this manifest is a data product output port`,
+    `    cg:outputPort [`,
+    `        a dcat:Distribution ;`,
+    `        dcat:mediaType "text/turtle" ;`,
+    `        dcat:accessURL <${manifestUrl}>`,
+    `    ] .`,
+  ].join('\n');
+}
+
+/**
  * Build a Turtle manifest entry for a published descriptor.
  */
 function manifestEntryTurtle(
@@ -320,7 +369,7 @@ export async function publish(
       manifestBody = `${existing.trimEnd()}\n\n${newEntry}\n`;
     }
   } else {
-    manifestBody = `${turtlePrefixes(['cg', 'xsd'])}\n\n${newEntry}\n`;
+    manifestBody = `${turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
   }
 
   const manifestResp = await fetchFn(manifestUrl, {

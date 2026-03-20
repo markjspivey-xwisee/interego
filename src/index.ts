@@ -74,6 +74,8 @@ export type {
   OwnerProfileData,
   AgentDelegationCredential,
   DelegationVerification,
+  PodDirectoryEntry,
+  PodDirectoryData,
   ValidationResult,
   ValidationViolation,
 } from './model/index.js';
@@ -91,7 +93,7 @@ export {
 
 // ── Namespaces ───────────────────────────────────────────────
 export {
-  CG, RDF, RDFS, XSD, OWL, PROV, TIME, DCT, AS, SHACL, ACL, VC, DID, DCAT, LDP, SOLID, OA,
+  CG, RDF, RDFS, XSD, OWL, PROV, TIME, DCT, AS, SHACL, ACL, VC, DID, DCAT, LDP, SOLID, OA, HYDRA, DPROD, FOAF,
   PREFIXES,
   CGClass,
   CGProp,
@@ -142,6 +144,12 @@ export {
   verifyAgentDelegation,
   AGENT_REGISTRY_PATH,
   CREDENTIALS_PATH,
+  podDirectoryToTurtle,
+  parsePodDirectory,
+  fetchPodDirectory,
+  publishPodDirectory,
+  POD_DIRECTORY_PATH,
+  resolveWebFinger,
 } from './solid/index.js';
 
 export type {
@@ -160,4 +168,6 @@ export type {
   SubscribeOptions,
   ContextGraphsManifest,
   RegistryOptions,
+  WebFingerResult,
+  WebFingerLink,
 } from './solid/index.js';

@@ -323,6 +323,26 @@ export interface DelegationVerification {
   readonly reason?: string;
 }
 
+// ── Pod Directory (§8 Federation Discovery) ──────────────────
+
+/** A single entry in a pod directory graph. */
+export interface PodDirectoryEntry {
+  /** The pod's URL (Solid storage root). */
+  readonly podUrl: IRI;
+  /** The pod owner's WebID. */
+  readonly owner?: IRI;
+  /** Human-readable label for this pod. */
+  readonly label?: string;
+}
+
+/** A directory of known pods, itself publishable as a context graph. */
+export interface PodDirectoryData {
+  /** The directory's IRI. */
+  readonly id: IRI;
+  /** All pods listed in this directory. */
+  readonly entries: readonly PodDirectoryEntry[];
+}
+
 // ── Validation Result ────────────────────────────────────────
 
 export interface ValidationViolation {

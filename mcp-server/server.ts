@@ -1,30 +1,29 @@
 #!/usr/bin/env tsx
 /**
- * @foxxi/context-graphs-mcp
+ * @foxxi/context-graphs-mcp v0.3.0
  *
- * MCP server that gives AI coding agents (Claude Code, Codex, etc.)
- * the ability to publish, discover, and compose context-annotated
- * knowledge graphs through decentralized Solid pods.
+ * MCP server for federated context-annotated knowledge graphs.
  *
  * Identity model:
- *   The pod belongs to the OWNER (a human or org, identified by WebID).
- *   The agent is a DELEGATE that acts on the owner's behalf.
- *   The agent registry on the pod declares which agents are authorized.
+ *   Pod belongs to the OWNER (human/org, identified by WebID).
+ *   Agent is a DELEGATE acting on the owner's behalf.
  *   Descriptors carry: wasAttributedTo → owner, wasAssociatedWith → agent.
  *
- * Tools:
- *   publish_context     — Write a context descriptor + graph to your pod
- *   discover_context    — Find descriptors on any pod, with filters
- *   get_descriptor      — Fetch a specific descriptor's full Turtle
- *   subscribe_to_pod    — Watch a pod for changes via WebSocket
- *   get_pod_status      — Check what's on a pod
- *   register_agent      — Add an agent to the owner's registry
- *   revoke_agent        — Revoke an agent's delegation
- *   verify_agent        — Check if an agent is authorized on a pod
+ * Federation:
+ *   Supports multiple pods across multiple CSS instances.
+ *   Three discovery approaches: known pods list, directory graphs, WebFinger.
  *
- * Lifecycle:
- *   On first tool call, auto-starts a local Community Solid Server
- *   and provisions the owner's pod + agent registry.
+ * Config (env vars, all backwards compatible):
+ *   CG_HOME_POD      — Full URL of the agent's home pod (takes precedence)
+ *   CG_BASE_URL      — CSS base URL (fallback, combined with CG_POD_NAME)
+ *   CG_POD_NAME      — Pod name on the CSS (fallback)
+ *   CG_AGENT_ID      — Agent identity IRI
+ *   CG_OWNER_WEBID   — Owner's WebID
+ *   CG_OWNER_NAME    — Owner's display name
+ *   CG_DID           — Agent's DID
+ *   CG_KNOWN_PODS    — Comma-separated pod URLs for auto-discovery
+ *   CG_DIRECTORY_URL  — URL of a PodDirectory graph to auto-load
+ *   CG_PORT          — CSS port for local startup (default 3456)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -59,40 +58,64 @@ import {
   addAuthorizedAgent,
   removeAuthorizedAgent,
   createDelegationCredential,
+  fetchPodDirectory,
+  publishPodDirectory,
+  resolveWebFinger,
 } from '@foxxi/context-graphs';
 
 import type {
   IRI,
   ContextDescriptorData,
   OwnerProfileData,
+  PodDirectoryData,
+  PodDirectoryEntry,
   FetchFn,
   WebSocketConstructor,
   Subscription,
   ContextChangeEvent,
+  ManifestEntry,
 } from '@foxxi/context-graphs';
+
+import { PodRegistry, type KnownPod } from './pod-registry.js';
 
 // ── Config ──────────────────────────────────────────────────
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CSS_PORT = parseInt(process.env['CG_PORT'] ?? '3456');
+const POD_NAME = process.env['CG_POD_NAME'] ?? 'agent';
+
+// Home pod: explicit CG_HOME_POD, or computed from CG_BASE_URL + CG_POD_NAME
 const BASE_URL = process.env['CG_BASE_URL'] ?? `http://localhost:${CSS_PORT}/`;
-const MY_POD_NAME = process.env['CG_POD_NAME'] ?? 'agent';
-const MY_POD = `${BASE_URL}${MY_POD_NAME}/`;
+const HOME_POD = process.env['CG_HOME_POD'] ?? `${BASE_URL}${POD_NAME}/`;
+
 const MY_AGENT_ID = (process.env['CG_AGENT_ID'] ?? 'urn:agent:claude-code:local') as IRI;
-const MY_OWNER_WEBID = (process.env['CG_OWNER_WEBID'] ?? `https://id.example.com/${MY_POD_NAME}/profile#me`) as IRI;
+const MY_OWNER_WEBID = (process.env['CG_OWNER_WEBID'] ?? `https://id.example.com/${POD_NAME}/profile#me`) as IRI;
 const MY_OWNER_NAME = process.env['CG_OWNER_NAME'] ?? undefined;
-const MY_DID = (process.env['CG_DID'] ?? `did:web:${MY_POD_NAME}.local`) as IRI;
+const MY_DID = (process.env['CG_DID'] ?? `did:web:${POD_NAME}.local`) as IRI;
+
+const KNOWN_PODS_RAW = process.env['CG_KNOWN_PODS'] ?? '';
+const DIRECTORY_URL = process.env['CG_DIRECTORY_URL'] ?? undefined;
+
 const CSS_CONFIG = resolve(__dirname, '..', 'examples', 'multi-agent', 'css-config.json');
 const CSS_BIN = resolve(__dirname, 'node_modules', '.bin', 'community-solid-server');
 
 // ── State ───────────────────────────────────────────────────
 
+const podRegistry = new PodRegistry();
 let cssProcess: ChildProcess | null = null;
 let cssReady = false;
 let registryInitialized = false;
-let mySubscriptions: Map<string, Subscription> = new Map();
 let notificationLog: ContextChangeEvent[] = [];
 let lastPublishedDescriptor: ContextDescriptorData | null = null;
+
+// Initialize pod registry from config
+podRegistry.add({ url: HOME_POD, isHome: true, discoveredVia: 'config' });
+if (KNOWN_PODS_RAW) {
+  for (const raw of KNOWN_PODS_RAW.split(',')) {
+    const url = raw.trim();
+    if (url) podRegistry.add({ url, isHome: false, discoveredVia: 'config' });
+  }
+}
 
 // ── Logging (stderr only — stdout is MCP protocol) ──────────
 
@@ -119,18 +142,26 @@ const solidFetch: FetchFn = async (url, init) => {
 async function ensureCSS(): Promise<void> {
   if (cssReady) return;
 
-  // Check if CSS is already running externally
+  const homePod = podRegistry.getHome()!;
+  const homeUrl = new URL(homePod.url);
+
+  // Check if CSS is already running
   try {
-    const resp = await fetch(BASE_URL);
+    const resp = await fetch(homePod.url);
     if (resp.ok || resp.status < 500) {
       cssReady = true;
-      log(`CSS already running at ${BASE_URL}`);
+      log(`CSS reachable at ${homePod.url}`);
       await ensurePod();
       return;
     }
   } catch { /* not running */ }
 
-  log(`Starting CSS on port ${CSS_PORT}...`);
+  // Only start local CSS if home pod is localhost
+  if (homeUrl.hostname !== 'localhost' && homeUrl.hostname !== '127.0.0.1') {
+    throw new Error(`Cannot reach CSS at ${homePod.url} — remote server must be started independently`);
+  }
+
+  log(`Starting local CSS on port ${CSS_PORT}...`);
 
   return new Promise((res, rej) => {
     const proc = spawn(CSS_BIN, [
@@ -151,12 +182,12 @@ async function ensureCSS(): Promise<void> {
     const poll = setInterval(async () => {
       if (started) { clearInterval(poll); return; }
       try {
-        const resp = await fetch(BASE_URL);
+        const resp = await fetch(homePod.url);
         if (resp.ok || resp.status < 500) {
           clearInterval(poll);
           started = true;
           cssReady = true;
-          log(`CSS ready at ${BASE_URL}`);
+          log(`CSS ready at ${homePod.url}`);
           await ensurePod();
           res();
         }
@@ -168,7 +199,8 @@ async function ensureCSS(): Promise<void> {
 }
 
 async function ensurePod(): Promise<void> {
-  await fetch(MY_POD, {
+  const homePod = podRegistry.getHome()!;
+  await fetch(homePod.url, {
     method: 'PUT',
     headers: {
       'Content-Type': 'text/turtle',
@@ -176,23 +208,20 @@ async function ensurePod(): Promise<void> {
     },
     body: '',
   });
-  log(`Pod ready: ${MY_POD}`);
+  log(`Pod ready: ${homePod.url}`);
 }
 
-/**
- * Ensure the agent registry exists on the pod and this agent is registered.
- */
 async function ensureRegistry(): Promise<void> {
   if (registryInitialized) return;
+  const homePod = podRegistry.getHome()!;
 
-  let profile = await readAgentRegistry(MY_POD, { fetch: solidFetch });
+  let profile = await readAgentRegistry(homePod.url, { fetch: solidFetch });
 
   if (!profile) {
     log(`Creating agent registry for owner ${MY_OWNER_WEBID}`);
     profile = createOwnerProfile(MY_OWNER_WEBID, MY_OWNER_NAME);
   }
 
-  // Check if this agent is already registered
   const existing = profile.authorizedAgents.find(a => a.agentId === MY_AGENT_ID && !a.revoked);
   if (!existing) {
     log(`Registering agent ${MY_AGENT_ID} on behalf of ${MY_OWNER_WEBID}`);
@@ -208,12 +237,11 @@ async function ensureRegistry(): Promise<void> {
       validFrom: new Date().toISOString(),
     });
 
-    await writeAgentRegistry(profile, MY_POD, { fetch: solidFetch });
+    await writeAgentRegistry(profile, homePod.url, { fetch: solidFetch });
 
-    // Also write a delegation credential
     const agent = profile.authorizedAgents.find(a => a.agentId === MY_AGENT_ID)!;
-    const credential = createDelegationCredential(profile, agent, MY_POD as IRI);
-    await writeDelegationCredential(credential, MY_POD, { fetch: solidFetch });
+    const credential = createDelegationCredential(profile, agent, homePod.url as IRI);
+    await writeDelegationCredential(credential, homePod.url, { fetch: solidFetch });
     log(`Delegation credential written for ${MY_AGENT_ID}`);
   }
 
@@ -222,8 +250,7 @@ async function ensureRegistry(): Promise<void> {
 }
 
 function stopCSS(): void {
-  for (const [, sub] of mySubscriptions) sub.unsubscribe();
-  mySubscriptions.clear();
+  podRegistry.unsubscribeAll();
   if (cssProcess) {
     cssProcess.kill('SIGTERM');
     cssProcess = null;
@@ -247,18 +274,17 @@ async function toolPublishContext(args: {
   await ensureCSS();
   await ensureRegistry();
 
-  const podUrl = args.target_pod ?? MY_POD;
-  const descId = (args.descriptor_id ?? `urn:cg:${MY_POD_NAME}:${Date.now()}`) as IRI;
+  const homePod = podRegistry.getHome()!;
+  const podUrl = args.target_pod ?? homePod.url;
+  const descId = (args.descriptor_id ?? `urn:cg:${POD_NAME}:${Date.now()}`) as IRI;
   const now = new Date().toISOString();
 
-  // Build descriptor with proper owner/agent delegation
   const builder = ContextDescriptor.create(descId)
     .describes(args.graph_iri as IRI)
     .temporal({
       validFrom: args.valid_from ?? now,
       validUntil: args.valid_until,
     })
-    // Owner attribution: wasAttributedTo → owner, wasAssociatedWith → agent
     .delegatedBy(MY_OWNER_WEBID, MY_AGENT_ID, { endedAt: now })
     .semiotic({
       modalStatus: (args.modal_status as 'Asserted' | 'Hypothetical') ?? 'Asserted',
@@ -328,7 +354,6 @@ async function toolDiscoverContext(args: {
 
   const lines: string[] = [`Found ${entries.length} descriptor(s) on ${args.pod_url}:`, ''];
 
-  // Check delegation if requested
   if (args.verify_delegation) {
     const profile = await readAgentRegistry(args.pod_url, { fetch: solidFetch });
     if (profile) {
@@ -339,7 +364,7 @@ async function toolDiscoverContext(args: {
       }
       lines.push('');
     } else {
-      lines.push('  ⚠ No agent registry found — delegation unverifiable');
+      lines.push('  No agent registry found — delegation unverifiable');
       lines.push('');
     }
   }
@@ -352,17 +377,18 @@ async function toolDiscoverContext(args: {
     lines.push('');
   }
 
+  // Touch the pod in registry
+  podRegistry.touch(args.pod_url);
+
   return lines.join('\n');
 }
 
 async function toolGetDescriptor(args: { url: string }): Promise<string> {
   await ensureCSS();
-
   const resp = await fetch(args.url, { headers: { 'Accept': 'text/turtle' } });
   if (!resp.ok) {
     return `Failed to fetch ${args.url}: ${resp.status} ${resp.statusText}`;
   }
-
   const turtle = await resp.text();
   return `Descriptor at ${args.url} (${turtle.length} bytes):\n\n${turtle}`;
 }
@@ -371,18 +397,18 @@ async function toolGetPodStatus(args: { pod_url?: string }): Promise<string> {
   await ensureCSS();
   await ensureRegistry();
 
-  const podUrl = args.pod_url ?? MY_POD;
-  const isMyPod = podUrl === MY_POD;
+  const homePod = podRegistry.getHome()!;
+  const podUrl = args.pod_url ?? homePod.url;
+  const isHome = podUrl === homePod.url;
 
   const lines: string[] = [
     `Pod: ${podUrl}`,
-    `Owner: ${isMyPod ? MY_OWNER_WEBID : '(check registry)'}`,
-    `Agent: ${isMyPod ? MY_AGENT_ID : '(this is a remote pod)'}`,
-    `CSS: ${cssReady ? 'running' : 'stopped'} at ${BASE_URL}`,
+    `Owner: ${isHome ? MY_OWNER_WEBID : '(check registry)'}`,
+    `Agent: ${isHome ? MY_AGENT_ID : '(remote pod)'}`,
+    `CSS: ${cssReady ? 'running' : 'stopped'}`,
     '',
   ];
 
-  // Check agent registry
   try {
     const profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
     if (profile) {
@@ -391,8 +417,7 @@ async function toolGetPodStatus(args: { pod_url?: string }): Promise<string> {
       const active = profile.authorizedAgents.filter(a => !a.revoked);
       lines.push(`  Agents: ${active.length} active`);
       for (const a of active) {
-        const label = a.label ? ` — ${a.label}` : '';
-        lines.push(`    ${a.agentId} [${a.scope}]${label}`);
+        lines.push(`    ${a.agentId} [${a.scope}]${a.label ? ` — ${a.label}` : ''}`);
       }
     } else {
       lines.push('Registry: not found');
@@ -403,7 +428,6 @@ async function toolGetPodStatus(args: { pod_url?: string }): Promise<string> {
 
   lines.push('');
 
-  // Descriptors
   try {
     const entries = await discover(podUrl, undefined, { fetch: solidFetch });
     lines.push(`Descriptors: ${entries.length}`);
@@ -430,7 +454,8 @@ async function toolGetPodStatus(args: { pod_url?: string }): Promise<string> {
 async function toolSubscribeToPod(args: { pod_url: string }): Promise<string> {
   await ensureCSS();
 
-  if (mySubscriptions.has(args.pod_url)) {
+  const existing = podRegistry.get(args.pod_url);
+  if (existing?.subscription) {
     return `Already subscribed to ${args.pod_url}`;
   }
 
@@ -443,8 +468,8 @@ async function toolSubscribeToPod(args: { pod_url: string }): Promise<string> {
       WebSocket: WebSocket as unknown as WebSocketConstructor,
     });
 
-    mySubscriptions.set(args.pod_url, sub);
-    return `Subscribed to ${args.pod_url} via WebSocket. Will receive live notifications when context changes.`;
+    podRegistry.setSubscription(args.pod_url, sub);
+    return `Subscribed to ${args.pod_url} via WebSocket.`;
   } catch (err) {
     return `Failed to subscribe to ${args.pod_url}: ${(err as Error).message}`;
   }
@@ -455,11 +480,15 @@ async function toolRegisterAgent(args: {
   label?: string;
   scope?: string;
   valid_until?: string;
+  pod_url?: string;
 }): Promise<string> {
   await ensureCSS();
   await ensureRegistry();
 
-  let profile = await readAgentRegistry(MY_POD, { fetch: solidFetch });
+  const homePod = podRegistry.getHome()!;
+  const podUrl = args.pod_url ?? homePod.url;
+
+  let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
   if (!profile) {
     profile = createOwnerProfile(MY_OWNER_WEBID, MY_OWNER_NAME);
   }
@@ -480,32 +509,34 @@ async function toolRegisterAgent(args: {
     return (err as Error).message;
   }
 
-  await writeAgentRegistry(profile, MY_POD, { fetch: solidFetch });
+  await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
 
-  // Write delegation credential
   const agent = profile.authorizedAgents.find(a => a.agentId === args.agent_id)!;
-  const credential = createDelegationCredential(profile, agent, MY_POD as IRI);
-  const credUrl = await writeDelegationCredential(credential, MY_POD, { fetch: solidFetch });
+  const credential = createDelegationCredential(profile, agent, podUrl as IRI);
+  const credUrl = await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
 
   return [
     `Registered agent ${args.agent_id}`,
     `  Delegated by: ${MY_OWNER_WEBID}`,
     `  Scope: ${scope}`,
     `  Credential: ${credUrl}`,
-    `  Registry: ${MY_POD}agents`,
+    `  Registry: ${podUrl}agents`,
   ].join('\n');
 }
 
-async function toolRevokeAgent(args: { agent_id: string }): Promise<string> {
+async function toolRevokeAgent(args: { agent_id: string; pod_url?: string }): Promise<string> {
   await ensureCSS();
 
-  let profile = await readAgentRegistry(MY_POD, { fetch: solidFetch });
+  const homePod = podRegistry.getHome()!;
+  const podUrl = args.pod_url ?? homePod.url;
+
+  let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
   if (!profile) {
     return 'No agent registry found on this pod.';
   }
 
   profile = removeAuthorizedAgent(profile, args.agent_id as IRI);
-  await writeAgentRegistry(profile, MY_POD, { fetch: solidFetch });
+  await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
 
   return `Revoked delegation for ${args.agent_id}. Agent can no longer act on behalf of ${MY_OWNER_WEBID}.`;
 }
@@ -539,16 +570,223 @@ async function toolVerifyAgent(args: {
   }
 }
 
+// ── NEW: Multi-pod federation tools ──────────────────────────
+
+async function toolDiscoverAll(args: {
+  facet_type?: string;
+  valid_from?: string;
+  valid_until?: string;
+  verify_delegation?: boolean;
+}): Promise<string> {
+  await ensureCSS();
+
+  const pods = podRegistry.list();
+  const allResults: Array<{ pod: KnownPod; entries: ManifestEntry[]; error?: string }> = [];
+
+  await Promise.allSettled(pods.map(async (pod) => {
+    try {
+      const filter: Record<string, unknown> = {};
+      if (args.facet_type) filter.facetType = args.facet_type;
+      if (args.valid_from) filter.validFrom = args.valid_from;
+      if (args.valid_until) filter.validUntil = args.valid_until;
+
+      const entries = await discover(
+        pod.url,
+        Object.keys(filter).length > 0 ? filter as Parameters<typeof discover>[1] : undefined,
+        { fetch: solidFetch },
+      );
+      podRegistry.touch(pod.url);
+      allResults.push({ pod, entries });
+    } catch (err) {
+      allResults.push({ pod, entries: [], error: (err as Error).message });
+    }
+  }));
+
+  const totalEntries = allResults.reduce((sum, r) => sum + r.entries.length, 0);
+  const lines: string[] = [
+    `Discovered ${totalEntries} descriptor(s) across ${pods.length} pod(s):`,
+    '',
+  ];
+
+  for (const r of allResults) {
+    const tag = r.pod.isHome ? ' [HOME]' : '';
+    const label = r.pod.label ? ` (${r.pod.label})` : '';
+    lines.push(`${r.pod.url}${tag}${label}`);
+
+    if (r.error) {
+      lines.push(`  Error: ${r.error}`);
+    } else if (r.entries.length === 0) {
+      lines.push(`  (no descriptors)`);
+    } else {
+      for (const entry of r.entries) {
+        lines.push(`  ${entry.descriptorUrl}`);
+        lines.push(`    Describes: ${entry.describes.join(', ')}`);
+        lines.push(`    Facets: ${entry.facetTypes.join(', ')}`);
+      }
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+async function toolSubscribeAll(_args: Record<string, never>): Promise<string> {
+  await ensureCSS();
+
+  const pods = podRegistry.list();
+  const results: string[] = [];
+  let subscribed = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const pod of pods) {
+    if (pod.subscription) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      const sub = await subscribe(pod.url, (event: ContextChangeEvent) => {
+        notificationLog.push(event);
+        log(`[notification] ${event.type} on ${event.resource}`);
+      }, {
+        fetch: solidFetch,
+        WebSocket: WebSocket as unknown as WebSocketConstructor,
+      });
+      podRegistry.setSubscription(pod.url, sub);
+      subscribed++;
+    } catch (err) {
+      results.push(`  Failed: ${pod.url} — ${(err as Error).message}`);
+      failed++;
+    }
+  }
+
+  return [
+    `Subscribe all: ${subscribed} new, ${skipped} already subscribed, ${failed} failed`,
+    ...results,
+  ].join('\n');
+}
+
+async function toolListKnownPods(_args: Record<string, never>): Promise<string> {
+  const pods = podRegistry.list();
+  if (pods.length === 0) return 'No known pods.';
+
+  const lines: string[] = [`Known pods (${pods.length}):`, ''];
+
+  for (const pod of pods) {
+    const flags: string[] = [];
+    if (pod.isHome) flags.push('HOME');
+    if (pod.subscription) flags.push('SUBSCRIBED');
+    const flagStr = flags.length > 0 ? ` [${flags.join(', ')}]` : '';
+    const label = pod.label ? ` — ${pod.label}` : '';
+
+    lines.push(`  ${pod.url}${flagStr}${label}`);
+    lines.push(`    Via: ${pod.discoveredVia}${pod.owner ? ` | Owner: ${pod.owner}` : ''}`);
+    if (pod.lastSeen) lines.push(`    Last seen: ${pod.lastSeen}`);
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+async function toolAddPod(args: {
+  pod_url: string;
+  label?: string;
+  owner?: string;
+}): Promise<string> {
+  podRegistry.add({
+    url: args.pod_url,
+    label: args.label,
+    owner: args.owner as IRI | undefined,
+    isHome: false,
+    discoveredVia: 'manual',
+  });
+  return `Added ${args.pod_url} to pod registry (${podRegistry.size} pods total)`;
+}
+
+async function toolRemovePod(args: { pod_url: string }): Promise<string> {
+  const removed = podRegistry.remove(args.pod_url);
+  if (removed) {
+    return `Removed ${args.pod_url} from pod registry (${podRegistry.size} pods remaining)`;
+  }
+  const pod = podRegistry.get(args.pod_url);
+  if (pod?.isHome) {
+    return `Cannot remove home pod ${args.pod_url}`;
+  }
+  return `Pod ${args.pod_url} not found in registry`;
+}
+
+async function toolDiscoverDirectory(args: { directory_url: string }): Promise<string> {
+  const directory = await fetchPodDirectory(args.directory_url, { fetch: solidFetch });
+  let added = 0;
+  for (const entry of directory.entries) {
+    if (!podRegistry.get(entry.podUrl)) added++;
+    podRegistry.add({
+      url: entry.podUrl,
+      label: entry.label,
+      owner: entry.owner,
+      isHome: false,
+      discoveredVia: 'directory',
+    });
+  }
+  return `Imported ${directory.entries.length} pod(s) from directory (${added} new). Registry: ${podRegistry.size} pods.`;
+}
+
+async function toolPublishDirectory(args: {
+  directory_id?: string;
+}): Promise<string> {
+  await ensureCSS();
+  await ensureRegistry();
+
+  const homePod = podRegistry.getHome()!;
+  const entries: PodDirectoryEntry[] = podRegistry.list().map(p => ({
+    podUrl: p.url as IRI,
+    owner: p.owner,
+    label: p.label,
+  }));
+
+  const directory: PodDirectoryData = {
+    id: (args.directory_id ?? `urn:directory:${POD_NAME}`) as IRI,
+    entries,
+  };
+
+  const url = await publishPodDirectory(directory, homePod.url, { fetch: solidFetch });
+  return `Published directory with ${entries.length} pod(s) to ${url}`;
+}
+
+async function toolResolveWebfinger(args: { resource: string }): Promise<string> {
+  const result = await resolveWebFinger(args.resource, { fetch: solidFetch });
+
+  if (result.podUrl) {
+    podRegistry.add({
+      url: result.podUrl,
+      isHome: false,
+      discoveredVia: 'webfinger',
+    });
+  }
+
+  return [
+    `WebFinger resolution for ${args.resource}:`,
+    `  Subject: ${result.subject}`,
+    result.podUrl ? `  Pod URL: ${result.podUrl} (added to registry)` : '  Pod URL: not found in JRD links',
+    result.webId ? `  WebID: ${result.webId}` : '',
+    `  Links: ${result.links.length}`,
+    ...result.links.map(l => `    ${l.rel} -> ${l.href}`),
+  ].filter(Boolean).join('\n');
+}
+
 // ── MCP Server ──────────────────────────────────────────────
 
 const mcpServer = new Server(
-  { name: '@foxxi/context-graphs-mcp', version: '0.2.0' },
+  { name: '@foxxi/context-graphs-mcp', version: '0.3.0' },
   { capabilities: { tools: {}, resources: {} } },
 );
 
-// Tools
+// ── Tool Definitions ────────────────────────────────────────
+
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
+    // ── Core tools ──
     {
       name: 'publish_context',
       description: 'Publish a context-annotated knowledge graph to your Solid pod on behalf of the pod owner. The descriptor includes owner attribution (wasAttributedTo → owner, wasAssociatedWith → agent), semiotic frame, trust with delegation credential, and federation metadata.',
@@ -563,14 +801,14 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           task_description: { type: 'string', description: 'What task produced this context (for provenance)' },
           valid_from: { type: 'string', description: 'ISO 8601 start of validity (default: now)' },
           valid_until: { type: 'string', description: 'ISO 8601 end of validity (optional)' },
-          target_pod: { type: 'string', description: 'Pod URL to publish to (default: your own pod)' },
+          target_pod: { type: 'string', description: 'Pod URL to publish to (default: home pod)' },
         },
         required: ['graph_iri', 'graph_content'],
       },
     },
     {
       name: 'discover_context',
-      description: 'Discover context descriptors published on any Solid pod. Optionally verify the agent delegation chain to confirm the pod owner authorized the publishing agent.',
+      description: 'Discover context descriptors on a specific Solid pod. Optionally verify the agent delegation chain.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -578,14 +816,14 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           facet_type: { type: 'string', enum: ['Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation'], description: 'Filter by facet type' },
           valid_from: { type: 'string', description: 'Filter: valid at or after this datetime' },
           valid_until: { type: 'string', description: 'Filter: valid at or before this datetime' },
-          verify_delegation: { type: 'boolean', description: 'If true, also fetch and display the agent registry to verify delegation' },
+          verify_delegation: { type: 'boolean', description: 'If true, also fetch the agent registry to verify delegation' },
         },
         required: ['pod_url'],
       },
     },
     {
       name: 'get_descriptor',
-      description: 'Fetch the full Turtle content of a specific context descriptor from a Solid pod.',
+      description: 'Fetch the full Turtle content of a specific context descriptor.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -596,7 +834,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'subscribe_to_pod',
-      description: 'Subscribe to live notifications from a Solid pod via WebSocket.',
+      description: 'Subscribe to live WebSocket notifications from a Solid pod.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -607,55 +845,138 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'get_pod_status',
-      description: 'Check the current status of a Solid pod — owner, authorized agents, descriptors, and recent notifications.',
+      description: 'Check a Solid pod — owner, agents, descriptors, notifications.',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          pod_url: { type: 'string', description: 'Pod URL to check (default: your own pod)' },
+          pod_url: { type: 'string', description: 'Pod URL (default: home pod)' },
         },
       },
     },
+    // ── Delegation tools ──
     {
       name: 'register_agent',
-      description: 'Register a new AI agent as authorized to act on behalf of the pod owner. Writes to the agent registry and creates a delegation credential.',
+      description: 'Register an AI agent as authorized to act on behalf of the pod owner.',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          agent_id: { type: 'string', description: 'The agent identity IRI (e.g. urn:agent:anthropic:claude-code:desktop)' },
-          label: { type: 'string', description: 'Human-readable label (e.g. "Claude Code (Desktop)")' },
+          agent_id: { type: 'string', description: 'Agent identity IRI' },
+          label: { type: 'string', description: 'Human-readable label' },
           scope: { type: 'string', enum: ['ReadWrite', 'ReadOnly', 'PublishOnly', 'DiscoverOnly'], description: 'Delegation scope (default: ReadWrite)' },
-          valid_until: { type: 'string', description: 'ISO 8601 expiration date (optional)' },
+          valid_until: { type: 'string', description: 'ISO 8601 expiration (optional)' },
+          pod_url: { type: 'string', description: 'Pod URL (default: home pod)' },
         },
         required: ['agent_id'],
       },
     },
     {
       name: 'revoke_agent',
-      description: 'Revoke an agent\'s delegation. The agent will no longer be authorized to act on the pod owner\'s behalf.',
+      description: "Revoke an agent's delegation.",
       inputSchema: {
         type: 'object' as const,
         properties: {
-          agent_id: { type: 'string', description: 'The agent identity IRI to revoke' },
+          agent_id: { type: 'string', description: 'Agent identity IRI to revoke' },
+          pod_url: { type: 'string', description: 'Pod URL (default: home pod)' },
         },
         required: ['agent_id'],
       },
     },
     {
       name: 'verify_agent',
-      description: 'Verify that a specific agent is authorized on a pod by checking the pod\'s agent registry. Use this before trusting context from another pod.',
+      description: "Verify an agent is authorized on a pod by checking the agent registry.",
       inputSchema: {
         type: 'object' as const,
         properties: {
-          agent_id: { type: 'string', description: 'The agent identity IRI to verify' },
-          pod_url: { type: 'string', description: 'The pod URL to check against' },
+          agent_id: { type: 'string', description: 'Agent identity IRI to verify' },
+          pod_url: { type: 'string', description: 'Pod URL to check' },
         },
         required: ['agent_id', 'pod_url'],
+      },
+    },
+    // ── Multi-pod federation tools ──
+    {
+      name: 'discover_all',
+      description: 'Fan out discovery across ALL known pods in the registry. Returns aggregated results from every pod.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          facet_type: { type: 'string', enum: ['Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation'], description: 'Filter by facet type' },
+          valid_from: { type: 'string', description: 'Filter: valid at or after this datetime' },
+          valid_until: { type: 'string', description: 'Filter: valid at or before this datetime' },
+        },
+      },
+    },
+    {
+      name: 'subscribe_all',
+      description: 'Subscribe to WebSocket notifications from ALL known pods.',
+      inputSchema: { type: 'object' as const, properties: {} },
+    },
+    {
+      name: 'list_known_pods',
+      description: 'List all pods in the federation registry — home pod, configured pods, directory-discovered pods, WebFinger-resolved pods.',
+      inputSchema: { type: 'object' as const, properties: {} },
+    },
+    {
+      name: 'add_pod',
+      description: 'Manually add a Solid pod URL to the federation registry.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          pod_url: { type: 'string', description: 'Solid pod URL to add' },
+          label: { type: 'string', description: 'Human-readable label' },
+          owner: { type: 'string', description: "Pod owner's WebID" },
+        },
+        required: ['pod_url'],
+      },
+    },
+    {
+      name: 'remove_pod',
+      description: 'Remove a pod from the federation registry (cannot remove home pod).',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          pod_url: { type: 'string', description: 'Pod URL to remove' },
+        },
+        required: ['pod_url'],
+      },
+    },
+    {
+      name: 'discover_directory',
+      description: 'Fetch a PodDirectory graph from a URL and import all listed pods into the registry. Directories are RDF graphs listing known pods.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          directory_url: { type: 'string', description: 'URL of the PodDirectory resource' },
+        },
+        required: ['directory_url'],
+      },
+    },
+    {
+      name: 'publish_directory',
+      description: 'Publish the current pod registry as a PodDirectory graph on your home pod. Other agents can fetch this to discover your known pods.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          directory_id: { type: 'string', description: 'IRI for the directory (default: auto-generated)' },
+        },
+      },
+    },
+    {
+      name: 'resolve_webfinger',
+      description: 'Resolve a WebFinger identifier (acct:user@domain or WebID URL) to discover a Solid pod URL via RFC 7033. Adds the discovered pod to the registry.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          resource: { type: 'string', description: 'WebFinger resource (e.g. "acct:markj@foxximediums.com" or a WebID URL)' },
+        },
+        required: ['resource'],
       },
     },
   ],
 }));
 
-// Tool dispatch
+// ── Tool Dispatch ───────────────────────────────────────────
+
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
@@ -687,6 +1008,31 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'verify_agent':
         result = await toolVerifyAgent(args as Parameters<typeof toolVerifyAgent>[0]);
         break;
+      // Multi-pod federation
+      case 'discover_all':
+        result = await toolDiscoverAll(args as Parameters<typeof toolDiscoverAll>[0]);
+        break;
+      case 'subscribe_all':
+        result = await toolSubscribeAll(args as Record<string, never>);
+        break;
+      case 'list_known_pods':
+        result = await toolListKnownPods(args as Record<string, never>);
+        break;
+      case 'add_pod':
+        result = await toolAddPod(args as Parameters<typeof toolAddPod>[0]);
+        break;
+      case 'remove_pod':
+        result = await toolRemovePod(args as Parameters<typeof toolRemovePod>[0]);
+        break;
+      case 'discover_directory':
+        result = await toolDiscoverDirectory(args as Parameters<typeof toolDiscoverDirectory>[0]);
+        break;
+      case 'publish_directory':
+        result = await toolPublishDirectory(args as Parameters<typeof toolPublishDirectory>[0]);
+        break;
+      case 'resolve_webfinger':
+        result = await toolResolveWebfinger(args as Parameters<typeof toolResolveWebfinger>[0]);
+        break;
       default:
         result = `Unknown tool: ${name}`;
     }
@@ -700,56 +1046,100 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// Resources
+// ── Resources ───────────────────────────────────────────────
+
 mcpServer.setRequestHandler(ListResourcesRequestSchema, async () => ({
   resources: [
     {
-      uri: `solid://${MY_POD_NAME}/manifest`,
-      name: 'My Pod Manifest',
-      description: `Context descriptors published to ${MY_POD}`,
+      uri: `solid://${POD_NAME}/manifest`,
+      name: 'Home Pod Manifest',
+      description: `Context descriptors on ${HOME_POD}`,
       mimeType: 'text/turtle',
     },
     {
-      uri: `solid://${MY_POD_NAME}/agents`,
+      uri: `solid://${POD_NAME}/agents`,
       name: 'Agent Registry',
       description: `Authorized agents for ${MY_OWNER_WEBID}`,
       mimeType: 'text/turtle',
+    },
+    {
+      uri: 'solid://registry/pods',
+      name: 'Pod Registry',
+      description: 'All known pods in the federation',
+      mimeType: 'application/json',
     },
   ],
 }));
 
 mcpServer.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  if (request.params.uri === `solid://${MY_POD_NAME}/manifest`) {
+  const homePod = podRegistry.getHome()!;
+
+  if (request.params.uri === `solid://${POD_NAME}/manifest`) {
     try {
       await ensureCSS();
-      const resp = await fetch(`${MY_POD}.well-known/context-graphs`, { headers: { 'Accept': 'text/turtle' } });
+      const resp = await fetch(`${homePod.url}.well-known/context-graphs`, { headers: { 'Accept': 'text/turtle' } });
       const body = resp.ok ? await resp.text() : '# No manifest yet';
       return { contents: [{ uri: request.params.uri, mimeType: 'text/turtle', text: body }] };
     } catch {
-      return { contents: [{ uri: request.params.uri, mimeType: 'text/turtle', text: '# Solid server not running' }] };
+      return { contents: [{ uri: request.params.uri, mimeType: 'text/turtle', text: '# Solid server not reachable' }] };
     }
   }
-  if (request.params.uri === `solid://${MY_POD_NAME}/agents`) {
+
+  if (request.params.uri === `solid://${POD_NAME}/agents`) {
     try {
       await ensureCSS();
-      const resp = await fetch(`${MY_POD}agents`, { headers: { 'Accept': 'text/turtle' } });
+      const resp = await fetch(`${homePod.url}agents`, { headers: { 'Accept': 'text/turtle' } });
       const body = resp.ok ? await resp.text() : '# No agent registry yet';
       return { contents: [{ uri: request.params.uri, mimeType: 'text/turtle', text: body }] };
     } catch {
-      return { contents: [{ uri: request.params.uri, mimeType: 'text/turtle', text: '# Solid server not running' }] };
+      return { contents: [{ uri: request.params.uri, mimeType: 'text/turtle', text: '# Solid server not reachable' }] };
     }
   }
+
+  if (request.params.uri === 'solid://registry/pods') {
+    const pods = podRegistry.list();
+    const json = JSON.stringify(pods.map(p => ({
+      url: p.url,
+      label: p.label,
+      owner: p.owner,
+      isHome: p.isHome,
+      discoveredVia: p.discoveredVia,
+      subscribed: !!p.subscription,
+      lastSeen: p.lastSeen,
+    })), null, 2);
+    return { contents: [{ uri: request.params.uri, mimeType: 'application/json', text: json }] };
+  }
+
   throw new Error(`Unknown resource: ${request.params.uri}`);
 });
 
 // ── Start ───────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  log('Starting Context Graphs MCP server v0.2.0...');
+  log('Starting Context Graphs MCP server v0.3.0...');
   log(`Owner: ${MY_OWNER_WEBID}${MY_OWNER_NAME ? ` (${MY_OWNER_NAME})` : ''}`);
   log(`Agent: ${MY_AGENT_ID}`);
-  log(`DID: ${MY_DID}`);
-  log(`Pod: ${MY_POD}`);
+  log(`Home pod: ${HOME_POD}`);
+  log(`Known pods: ${podRegistry.size}`);
+
+  // Auto-load directory if configured
+  if (DIRECTORY_URL) {
+    try {
+      const directory = await fetchPodDirectory(DIRECTORY_URL, { fetch: solidFetch });
+      for (const entry of directory.entries) {
+        podRegistry.add({
+          url: entry.podUrl,
+          label: entry.label,
+          owner: entry.owner,
+          isHome: false,
+          discoveredVia: 'directory',
+        });
+      }
+      log(`Loaded ${directory.entries.length} pod(s) from directory ${DIRECTORY_URL}`);
+    } catch (err) {
+      log(`Warning: could not load directory ${DIRECTORY_URL}: ${(err as Error).message}`);
+    }
+  }
 
   const transport = new StdioServerTransport();
   await mcpServer.connect(transport);

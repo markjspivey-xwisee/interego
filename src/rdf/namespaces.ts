@@ -27,6 +27,9 @@ export const DCAT = 'http://www.w3.org/ns/dcat#' as const;
 export const LDP  = 'http://www.w3.org/ns/ldp#' as const;
 export const SOLID = 'http://www.w3.org/ns/solid/terms#' as const;
 export const OA   = 'http://www.w3.org/ns/oa#' as const;
+export const HYDRA = 'http://www.w3.org/ns/hydra/core#' as const;
+export const DPROD = 'https://dprod.org/ns/dprod#' as const;
+export const FOAF = 'http://xmlns.com/foaf/0.1/' as const;
 
 // ── Prefix Map ───────────────────────────────────────────────
 
@@ -48,6 +51,9 @@ export const PREFIXES = {
   ldp:   LDP,
   solid: SOLID,
   oa:    OA,
+  hydra: HYDRA,
+  dprod: DPROD,
+  foaf:  FOAF,
 } as const;
 
 export type PrefixKey = keyof typeof PREFIXES;
@@ -68,6 +74,9 @@ export const CGClass = {
   FederationFacet:     `${CG}FederationFacet`,
   ContextType:         `${CG}ContextType`,
   CompositionOperator: `${CG}CompositionOperator`,
+  PodDirectory:        `${CG}PodDirectory`,
+  DataProduct:         `${CG}DataProduct`,
+  Affordance:          `${CG}Affordance`,
 } as const;
 
 /** All CG-namespaced property IRIs */
@@ -107,6 +116,16 @@ export const CGProp = {
   syncProtocol:         `${CG}syncProtocol`,
   replicaOf:            `${CG}replicaOf`,
   lastSynced:           `${CG}lastSynced`,
+  hasPod:               `${CG}hasPod`,
+  podUrl:               `${CG}podUrl`,
+  // Affordance & DPROD alignment
+  affordance:           `${CG}affordance`,
+  canPublish:           `${CG}canPublish`,
+  canDiscover:          `${CG}canDiscover`,
+  canSubscribe:         `${CG}canSubscribe`,
+  dataProduct:          `${CG}dataProduct`,
+  outputPort:           `${CG}outputPort`,
+  inputPort:            `${CG}inputPort`,
 } as const;
 
 /** Named individuals: Context Types */
