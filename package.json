@@ -1,0 +1,86 @@
+{
+  "name": "@foxxi/context-graphs",
+  "version": "0.1.0",
+  "description": "Reference implementation of Context Graphs 1.0 — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs",
+  "author": "Mark Spivey <mark.spivey@xwisee.com> (https://foxximediums.com)",
+  "license": "CC-BY-4.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./model": {
+      "import": "./dist/model/index.js",
+      "types": "./dist/model/index.d.ts"
+    },
+    "./rdf": {
+      "import": "./dist/rdf/index.js",
+      "types": "./dist/rdf/index.d.ts"
+    },
+    "./validation": {
+      "import": "./dist/validation/index.js",
+      "types": "./dist/validation/index.d.ts"
+    },
+    "./sparql": {
+      "import": "./dist/sparql/index.js",
+      "types": "./dist/sparql/index.d.ts"
+    },
+    "./solid": {
+      "import": "./dist/solid/index.js",
+      "types": "./dist/solid/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/ tests/",
+    "clean": "rm -rf dist/",
+    "prepublishOnly": "npm run clean && npm run build && npm run test"
+  },
+  "keywords": [
+    "rdf",
+    "rdf-star",
+    "named-graphs",
+    "context",
+    "provenance",
+    "prov-o",
+    "shacl",
+    "json-ld",
+    "sparql",
+    "solid",
+    "linked-data",
+    "semantic-web",
+    "category-theory",
+    "composition",
+    "federation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/foxximediums/context-graphs.git"
+  },
+  "homepage": "https://spec.foxximediums.com/context-graphs/",
+  "bugs": {
+    "url": "https://github.com/foxximediums/context-graphs/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "eslint": "^9.0.0"
+  }
+}

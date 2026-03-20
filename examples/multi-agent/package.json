@@ -1,0 +1,16 @@
+{
+  "name": "context-graphs-multi-agent-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx run.ts"
+  },
+  "dependencies": {
+    "@foxxi/context-graphs": "file:../../",
+    "@solid/community-server": "^7.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.0.0",
+    "ws": "^8.19.0"
+  }
+}

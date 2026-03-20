@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+{src/
+
+# MCP server dependencies (installed separately)
+mcp-server/node_modules/
+
+# Example dependencies
+examples/*/node_modules/
+examples/*/solid-data/
+
+# OS
+.DS_Store
+Thumbs.db

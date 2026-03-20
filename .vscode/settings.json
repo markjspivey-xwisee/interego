@@ -1,0 +1,13 @@
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "search.exclude": {
+    "dist/**": true,
+    "node_modules/**": true
+  },
+  "files.exclude": {
+    "dist": true
+  }
+}
