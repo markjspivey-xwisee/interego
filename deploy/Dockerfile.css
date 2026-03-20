@@ -1,0 +1,21 @@
+FROM node:20-slim
+
+WORKDIR /app
+
+# Install Community Solid Server
+RUN npm install -g @solid/community-server@7
+
+# Copy CSS config
+COPY examples/multi-agent/css-config.json /app/css-config.json
+
+# CSS stores data in /data (can be mounted as volume for persistence)
+RUN mkdir -p /data
+
+EXPOSE 3456
+
+# Use shell form so env vars are expanded at runtime
+CMD community-solid-server \
+  -c /app/css-config.json \
+  -p 3456 \
+  -l info \
+  --baseUrl "${CSS_BASE_URL:-http://localhost:3456/}"

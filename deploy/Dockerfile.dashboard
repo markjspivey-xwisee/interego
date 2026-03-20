@@ -1,0 +1,25 @@
+FROM node:20-slim
+
+WORKDIR /lib
+
+# Build the context-graphs library first
+COPY package.json tsconfig.json ./
+COPY src/ ./src/
+RUN npm install && npx tsc
+
+WORKDIR /app
+
+# Copy dashboard package.json, fix file: dep
+COPY examples/dashboard/package.json ./package.json.template
+RUN sed 's|"file:../../"|"file:///lib"|g' package.json.template > package.json && rm package.json.template
+RUN npm install
+
+COPY examples/dashboard/ ./
+COPY examples/multi-agent/css-config.json /app/css-config.json
+
+EXPOSE 4000
+
+ENV CSS_URL=http://css:3456
+ENV PORT=4000
+
+CMD ["npx", "tsx", "server.ts"]

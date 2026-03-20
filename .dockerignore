@@ -1,0 +1,7 @@
+node_modules
+mcp-server/node_modules
+examples/*/node_modules
+deploy/mcp-relay/node_modules
+.git
+{src
+*.tsbuildinfo
