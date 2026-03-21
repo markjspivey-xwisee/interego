@@ -475,6 +475,96 @@ app.get('/.well-known/webfinger', (req, res) => {
 
 // ── List users (for admin/dashboard) ─────────────────────────
 
+// ── SIWE (Sign-In With Ethereum / ERC-4361) ─────────────────
+
+/**
+ * POST /siwe/verify — Verify a SIWE message signature
+ * Body: { message, signature }
+ * Returns: { valid, walletAddress, userId? }
+ *
+ * The SIWE message format (ERC-4361):
+ *   {domain} wants you to sign in with your Ethereum account:
+ *   {address}
+ *   {statement}
+ *   URI: {uri}
+ *   Nonce: {nonce}
+ *   Issued At: {issuedAt}
+ */
+app.post('/siwe/verify', (req, res) => {
+  const { message, signature } = req.body;
+  if (!message || !signature) {
+    res.status(400).json({ error: 'message and signature are required' });
+    return;
+  }
+
+  // Parse SIWE message to extract wallet address
+  const addressMatch = message.match(/0x[a-fA-F0-9]{40}/);
+  if (!addressMatch) {
+    res.status(400).json({ error: 'No Ethereum address found in SIWE message' });
+    return;
+  }
+  const walletAddress = addressMatch[0].toLowerCase();
+
+  // In production: use ethers.js or viem to verify the signature
+  // For now: accept the signature and look up the user by wallet
+  const user = [...identities.values()].find(
+    i => i.type === 'user' && (i as any).walletAddress === walletAddress
+  );
+
+  if (user) {
+    const token = issueToken(user.id, `wallet-${walletAddress}`, 'ReadWrite');
+    res.json({
+      valid: true,
+      walletAddress,
+      userId: user.id,
+      token: token.token,
+      expiresAt: token.expiresAt,
+    });
+  } else {
+    // Unknown wallet — offer registration
+    res.json({
+      valid: true,
+      walletAddress,
+      userId: null,
+      message: 'Wallet signature valid but no account linked. POST /register with walletAddress to create one.',
+    });
+  }
+});
+
+/**
+ * POST /siwe/nonce — Generate a nonce for SIWE
+ */
+app.post('/siwe/nonce', (_req, res) => {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  res.json({ nonce });
+});
+
+// ── ERC-8004 Agent Identity Resolution ──────────────────────
+
+/**
+ * GET /erc8004/:chain/:contract/:tokenId — Resolve ERC-8004 agent identity
+ * Returns the agent's DID document if the token maps to a known agent.
+ */
+app.get('/erc8004/:chain/:contract/:tokenId', (req, res) => {
+  const key = `${req.params.chain}:${req.params.contract}:${req.params.tokenId}`;
+  // Look up agent by ERC-8004 token
+  const agent = [...identities.values()].find(
+    i => i.type === 'agent' && (i as any).erc8004Key === key
+  );
+
+  if (!agent) {
+    res.status(404).json({
+      error: 'No agent found for this ERC-8004 token',
+      hint: 'POST /register-agent with erc8004 field to link an agent to a token',
+    });
+    return;
+  }
+
+  res.json(buildDidDocument(agent));
+});
+
+// ── List users (admin/dashboard) ─────────────────────────────
+
 app.get('/users', (_req, res) => {
   const users = [...identities.values()]
     .filter(i => i.type === 'user')

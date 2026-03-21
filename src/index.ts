@@ -141,6 +141,23 @@ export type {
   NaturalityWitness,
   LatticeLawProof,
   SignMorphism,
+  // Activity & Session (§9)
+  AgentPlatform,
+  ExecutionMode,
+  ToolCallRecord,
+  GitContext,
+  ActivityTrace,
+  // Identity Anchoring (§10)
+  ERC8004Identity,
+  SIWEProof,
+  IPFSAnchor,
+  BlockchainAnchor,
+  OpenBadgeCredential,
+  LERSRecord,
+  IdentityAnchors,
+  // Payment (§11)
+  PaymentRequirement,
+  PaymentReceipt,
 } from './model/index.js';
 
 export type { CounterfactualResult } from './model/causality.js';
@@ -221,6 +238,11 @@ export {
   resolveDidWeb,
   extractPublicKey,
   findStorageEndpoint,
+  // IPFS Anchoring
+  computeCid,
+  computeLatticeCids,
+  pinToIPFS,
+  computeDescriptorAnchor,
 } from './solid/index.js';
 
 export type {

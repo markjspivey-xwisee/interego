@@ -451,7 +451,44 @@ app.use((_req, res, next) => {
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', css: CSS_URL, tools: Object.keys(TOOLS).length });
+  res.json({ status: 'ok', css: CSS_URL, tools: Object.keys(TOOLS).length, auth: 'bearer-token', x402: true });
+});
+
+// ── X402 Payment Required ───────────────────────────────────
+// Descriptors can optionally require payment. The relay returns
+// HTTP 402 with X-Payment-Required headers per the X402 spec.
+
+const PAYMENT_REQUIRED_PODS = new Map<string, { amount: string; currency: string; address: string }>();
+
+app.post('/x402/set-price', async (req, res) => {
+  const auth = await verifyBearerToken(req.headers.authorization);
+  if (!auth.authenticated) { res.status(401).json({ error: auth.error }); return; }
+
+  const { pod_url, amount, currency, address } = req.body;
+  if (!pod_url || !amount || !currency || !address) {
+    res.status(400).json({ error: 'pod_url, amount, currency, and address are required' });
+    return;
+  }
+  PAYMENT_REQUIRED_PODS.set(pod_url, { amount, currency, address });
+  res.json({ set: true, pod: pod_url, amount, currency });
+});
+
+app.get('/x402/price/:podName', (req, res) => {
+  const podUrl = `${CSS_URL}${req.params.podName}/`;
+  const price = PAYMENT_REQUIRED_PODS.get(podUrl);
+  if (!price) {
+    res.json({ paymentRequired: false, pod: podUrl });
+  } else {
+    res.status(402).json({
+      paymentRequired: true,
+      pod: podUrl,
+      ...price,
+      x402: {
+        version: '1',
+        accepts: [{ network: 'ethereum', token: price.currency, amount: price.amount, address: price.address }],
+      },
+    });
+  }
 });
 
 // List tools

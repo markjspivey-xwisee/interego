@@ -38,3 +38,6 @@ export type { WebFingerResult, WebFingerLink } from './webfinger.js';
 // ── DID Resolution ─────────────────────────────────────────
 export { didWebToUrl, resolveDidWeb, extractPublicKey, findStorageEndpoint } from './did.js';
 export type { DidDocument, VerificationMethod, ServiceEndpoint, DidResolutionResult } from './did.js';
+
+// ── IPFS Anchoring ──────────────────────────────────────────
+export { computeCid, computeLatticeCids, pinToIPFS, computeDescriptorAnchor } from './ipfs.js';

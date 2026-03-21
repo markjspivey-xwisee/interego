@@ -188,6 +188,13 @@ export interface TrustFacetData {
   readonly proofMechanism?: IRI;
   readonly trustLevel?: TrustLevel;
   readonly revocationStatus?: IRI;
+  // Multi-standard identity anchoring
+  readonly identityAnchors?: IdentityAnchors;
+  // Activity trace (session/prompt metadata)
+  readonly activityTrace?: ActivityTrace;
+  // Payment metadata (X402)
+  readonly paymentRequirement?: PaymentRequirement;
+  readonly paymentReceipt?: PaymentReceipt;
 }
 
 /**
@@ -603,4 +610,176 @@ export interface ValidationViolation {
 export interface ValidationResult {
   readonly conforms: boolean;
   readonly violations: readonly ValidationViolation[];
+}
+
+// ═════════════════════════════════════════════════════════════
+//  Activity Trace & Session Metadata (§9)
+// ═════════════════════════════════════════════════════════════
+
+/** Platform where the agent is running. */
+export type AgentPlatform =
+  | 'claude-code-vscode'
+  | 'claude-code-cli'
+  | 'claude-desktop'
+  | 'openai-codex'
+  | 'openclaw'
+  | 'custom-agent'
+  | 'autonomous';
+
+/** Execution mode of the agent. */
+export type ExecutionMode = 'interactive' | 'autonomous' | 'scheduled' | 'event-triggered';
+
+/** A record of a tool call within an activity trace. */
+export interface ToolCallRecord {
+  readonly toolName: string;
+  readonly timestamp: string;
+  readonly durationMs?: number;
+  readonly inputHash?: string;    // hash of input (not content — privacy)
+  readonly outputHash?: string;
+  readonly success: boolean;
+}
+
+/** Git context at the time of activity. */
+export interface GitContext {
+  readonly repo?: string;
+  readonly branch?: string;
+  readonly commit?: string;
+  readonly dirty?: boolean;
+}
+
+/**
+ * Activity trace — captures the full context of how a descriptor was produced.
+ * Covers human-prompted, autonomous, and scheduled agents.
+ */
+export interface ActivityTrace {
+  // Session
+  readonly sessionId?: string;
+  readonly platform: AgentPlatform;
+  readonly modelId?: string;
+
+  // Human-in-the-loop
+  readonly humanPrompted: boolean;
+  readonly humanApproved: boolean;
+  readonly promptHash?: string;         // hash of prompt (privacy-preserving)
+
+  // Tool chain
+  readonly toolCalls?: readonly ToolCallRecord[];
+
+  // Environment
+  readonly gitContext?: GitContext;
+  readonly workspacePath?: string;
+
+  // Autonomous agent specifics
+  readonly taskId?: string;
+  readonly triggerEvent?: string;
+  readonly executionMode: ExecutionMode;
+
+  // Continuous attestation (for autonomous agents)
+  readonly attestationSignature?: string;
+  readonly attestationTimestamp?: string;
+}
+
+// ═════════════════════════════════════════════════════════════
+//  Identity Anchoring (§10 — Multi-Standard)
+// ═════════════════════════════════════════════════════════════
+
+/** ERC-8004 on-chain agent identity. */
+export interface ERC8004Identity {
+  readonly tokenId: string;              // NFT token ID
+  readonly contractAddress: string;      // ERC-8004 contract
+  readonly chain: string;                // e.g. 'ethereum:mainnet', 'polygon:mainnet'
+  readonly owner: string;                // wallet address of the human owner
+}
+
+/** ERC-4361 Sign-In With Ethereum proof. */
+export interface SIWEProof {
+  readonly walletAddress: string;
+  readonly signature: string;
+  readonly message: string;              // the SIWE message that was signed
+  readonly chainId: number;
+  readonly nonce: string;
+  readonly issuedAt: string;
+  readonly expirationTime?: string;
+}
+
+/** IPFS content anchor. */
+export interface IPFSAnchor {
+  readonly cid: string;                  // content identifier (CIDv1)
+  readonly gateway?: string;             // preferred gateway URL
+  readonly pinned: boolean;              // is it pinned to a pinning service?
+  readonly pinnedAt?: string;
+  readonly pinService?: string;          // e.g. 'pinata', 'web3.storage', 'infura'
+}
+
+/** Blockchain timestamp anchor. */
+export interface BlockchainAnchor {
+  readonly chain: string;                // e.g. 'ethereum:mainnet'
+  readonly transactionHash: string;
+  readonly blockNumber: number;
+  readonly blockTimestamp: string;
+  readonly contentHash: string;          // hash of the descriptor that was anchored
+}
+
+/** Open Badge 3.0 capability credential. */
+export interface OpenBadgeCredential {
+  readonly badgeUrl: IRI;
+  readonly issuer: IRI;
+  readonly issuanceDate: string;
+  readonly credentialSubject: IRI;       // the agent or human this badge is about
+  readonly achievementType: string;      // e.g. 'CausalReasoningCertified'
+  readonly evidence?: readonly IRI[];
+}
+
+/** IEEE LERS (Learning & Employment Record). */
+export interface LERSRecord {
+  readonly recordId: IRI;
+  readonly issuer: IRI;
+  readonly competency: string;
+  readonly assessmentDate: string;
+  readonly level: string;                // e.g. 'proficient', 'expert'
+}
+
+/**
+ * Identity anchors — multi-standard identity/verification proofs
+ * attached to the Trust facet.
+ */
+export interface IdentityAnchors {
+  // Blockchain identity
+  readonly erc8004?: ERC8004Identity;
+  readonly siwe?: SIWEProof;
+
+  // Content persistence
+  readonly ipfs?: IPFSAnchor;
+  readonly blockchain?: BlockchainAnchor;
+
+  // Capability credentials
+  readonly openBadges?: readonly OpenBadgeCredential[];
+  readonly lers?: readonly LERSRecord[];
+
+  // W3C standards (complement existing WebID + DID + VC)
+  readonly additionalVCs?: readonly IRI[];
+}
+
+// ═════════════════════════════════════════════════════════════
+//  X402 Payment Metadata (§11 — Agentic Commerce)
+// ═════════════════════════════════════════════════════════════
+
+/** Payment requirement for accessing a context descriptor. */
+export interface PaymentRequirement {
+  readonly required: boolean;
+  readonly amount?: string;              // e.g. '0.001'
+  readonly currency?: string;            // e.g. 'ETH', 'USD', 'USDC'
+  readonly paymentNetwork?: string;      // e.g. 'ethereum:mainnet', 'lightning', 'stripe'
+  readonly paymentAddress?: string;      // wallet address or payment endpoint
+  readonly x402Endpoint?: string;        // X402 payment negotiation URL
+}
+
+/** Receipt proving payment was made. */
+export interface PaymentReceipt {
+  readonly transactionHash?: string;
+  readonly paidAt: string;
+  readonly amount: string;
+  readonly currency: string;
+  readonly payer: string;                // agent/wallet that paid
+  readonly payee: string;               // pod owner who received
 }

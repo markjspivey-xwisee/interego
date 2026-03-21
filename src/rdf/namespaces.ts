@@ -85,6 +85,20 @@ export const CGClass = {
   ProjectionFacet:     `${CG}ProjectionFacet`,
   ExternalBinding:     `${CG}ExternalBinding`,
   VocabularyMapping:   `${CG}VocabularyMapping`,
+  // Activity & Session
+  ActivityTrace:       `${CG}ActivityTrace`,
+  ToolCallRecord:      `${CG}ToolCallRecord`,
+  // Identity Anchoring
+  IdentityAnchor:      `${CG}IdentityAnchor`,
+  ERC8004Identity:     `${CG}ERC8004Identity`,
+  SIWEProof:           `${CG}SIWEProof`,
+  IPFSAnchor:          `${CG}IPFSAnchor`,
+  BlockchainAnchor:    `${CG}BlockchainAnchor`,
+  OpenBadgeCredential: `${CG}OpenBadgeCredential`,
+  LERSRecord:          `${CG}LERSRecord`,
+  // Payment
+  PaymentRequirement:  `${CG}PaymentRequirement`,
+  PaymentReceipt:      `${CG}PaymentReceipt`,
 } as const;
 
 /** All CG-namespaced property IRIs */
@@ -160,6 +174,46 @@ export const CGProp = {
   selective:            `${CG}selective`,
   exposedEntity:        `${CG}exposedEntity`,
   hiddenEntity:         `${CG}hiddenEntity`,
+  // Activity & Session (§9)
+  activityTrace:        `${CG}activityTrace`,
+  sessionId:            `${CG}sessionId`,
+  platform:             `${CG}platform`,
+  modelId:              `${CG}modelId`,
+  humanPrompted:        `${CG}humanPrompted`,
+  humanApproved:        `${CG}humanApproved`,
+  promptHash:           `${CG}promptHash`,
+  toolCall:             `${CG}toolCall`,
+  toolName:             `${CG}toolName`,
+  executionMode:        `${CG}executionMode`,
+  taskId:               `${CG}taskId`,
+  triggerEvent:         `${CG}triggerEvent`,
+  attestationSignature: `${CG}attestationSignature`,
+  // Identity Anchoring (§10)
+  identityAnchors:      `${CG}identityAnchors`,
+  erc8004Token:         `${CG}erc8004Token`,
+  contractAddress:      `${CG}contractAddress`,
+  chain:                `${CG}chain`,
+  walletAddress:        `${CG}walletAddress`,
+  walletSignature:      `${CG}walletSignature`,
+  ipfsCid:              `${CG}ipfsCid`,
+  pinnedAt:             `${CG}pinnedAt`,
+  pinService:           `${CG}pinService`,
+  transactionHash:      `${CG}transactionHash`,
+  blockNumber:          `${CG}blockNumber`,
+  contentHash:          `${CG}contentHash`,
+  openBadge:            `${CG}openBadge`,
+  achievementType:      `${CG}achievementType`,
+  lersRecord:           `${CG}lersRecord`,
+  competency:           `${CG}competency`,
+  assessmentDate:       `${CG}assessmentDate`,
+  // Payment (§11 — X402)
+  paymentRequired:      `${CG}paymentRequired`,
+  paymentAmount:        `${CG}paymentAmount`,
+  paymentCurrency:      `${CG}paymentCurrency`,
+  paymentNetwork:       `${CG}paymentNetwork`,
+  paymentAddress:       `${CG}paymentAddress`,
+  x402Endpoint:         `${CG}x402Endpoint`,
+  paymentReceipt:       `${CG}paymentReceipt`,
 } as const;
 
 /** Named individuals: Context Types */
