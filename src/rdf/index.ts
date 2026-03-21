@@ -1,5 +1,5 @@
 export * from './namespaces.js';
-export { toTurtle, toTurtleDocument, type SerializerOptions } from './serializer.js';
+export { toTurtle, toTurtleDocument, toTripleAnnotationTurtle, toTripleAnnotationDocument, type SerializerOptions } from './serializer.js';
 export {
   toJsonLd,
   toJsonLdString,

@@ -30,6 +30,7 @@ export const OA   = 'http://www.w3.org/ns/oa#' as const;
 export const HYDRA = 'http://www.w3.org/ns/hydra/core#' as const;
 export const DPROD = 'https://dprod.org/ns/dprod#' as const;
 export const FOAF = 'http://xmlns.com/foaf/0.1/' as const;
+export const SKOS = 'http://www.w3.org/2004/02/skos/core#' as const;
 
 // ── Prefix Map ───────────────────────────────────────────────
 
@@ -81,6 +82,9 @@ export const CGClass = {
   StructuralCausalModel: `${CG}StructuralCausalModel`,
   CausalVariable:      `${CG}CausalVariable`,
   CausalEdge:          `${CG}CausalEdge`,
+  ProjectionFacet:     `${CG}ProjectionFacet`,
+  ExternalBinding:     `${CG}ExternalBinding`,
+  VocabularyMapping:   `${CG}VocabularyMapping`,
 } as const;
 
 /** All CG-namespaced property IRIs */
@@ -145,6 +149,17 @@ export const CGProp = {
   causalConfidence:     `${CG}causalConfidence`,
   counterfactualTarget: `${CG}counterfactualTarget`,
   counterfactualEvidence: `${CG}counterfactualEvidence`,
+  // Projection / Vocabulary Translation
+  binding:              `${CG}binding`,
+  bindingStrength:      `${CG}bindingStrength`,
+  targetVocabulary:     `${CG}targetVocabulary`,
+  vocabularyMapping:    `${CG}vocabularyMapping`,
+  mappingType:          `${CG}mappingType`,
+  mappingRelationship:  `${CG}mappingRelationship`,
+  boundaryShapes:       `${CG}boundaryShapes`,
+  selective:            `${CG}selective`,
+  exposedEntity:        `${CG}exposedEntity`,
+  hiddenEntity:         `${CG}hiddenEntity`,
 } as const;
 
 /** Named individuals: Context Types */
@@ -157,6 +172,7 @@ export const CGContextType = {
   Trust:          `${CG}Trust`,
   Federation:     `${CG}Federation`,
   Causal:         `${CG}Causal`,
+  Projection:     `${CG}Projection`,
 } as const;
 
 /** Named individuals: Composition Operators */

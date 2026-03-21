@@ -102,6 +102,10 @@ export type {
   StructuralCausalModel,
   CausalIntervention,
   CounterfactualQuery,
+  ProjectionFacetData,
+  ExternalBinding,
+  VocabularyMapping,
+  BindingStrength,
   ValidationResult,
   ValidationViolation,
 } from './model/index.js';
@@ -112,6 +116,8 @@ export type { CounterfactualResult } from './model/causality.js';
 export {
   toTurtle,
   toTurtleDocument,
+  toTripleAnnotationTurtle,
+  toTripleAnnotationDocument,
   toJsonLd,
   toJsonLdString,
   fromJsonLd,
@@ -121,7 +127,7 @@ export {
 
 // ── Namespaces ───────────────────────────────────────────────
 export {
-  CG, RDF, RDFS, XSD, OWL, PROV, TIME, DCT, AS, SHACL, ACL, VC, DID, DCAT, LDP, SOLID, OA, HYDRA, DPROD, FOAF,
+  CG, RDF, RDFS, XSD, OWL, PROV, TIME, DCT, AS, SHACL, ACL, VC, DID, DCAT, LDP, SOLID, OA, HYDRA, DPROD, FOAF, SKOS,
   PREFIXES,
   CGClass,
   CGProp,

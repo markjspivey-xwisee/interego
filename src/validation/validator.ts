@@ -18,6 +18,7 @@ import type {
   TrustFacetData,
   AccessControlFacetData,
   CausalFacetData,
+  ProjectionFacetData,
   ValidationResult,
   ValidationViolation,
   ComposedDescriptorData,
@@ -269,9 +270,51 @@ function validateFacet(
     case 'Trust':         return validateTrustFacet(f, path);
     case 'AccessControl': return validateAccessControlFacet(f, path);
     case 'Causal':        return validateCausalFacet(f, path);
+    case 'Projection':    return validateProjectionFacet(f, path);
     default:
       return [];
   }
+}
+
+const VALID_BINDING_STRENGTHS = new Set(['Exact', 'Strong', 'Approximate', 'Weak']);
+const VALID_MAPPING_TYPES = new Set(['class', 'property']);
+const VALID_MAPPING_RELATIONSHIPS = new Set(['exact', 'broader', 'narrower', 'related']);
+
+function validateProjectionFacet(
+  f: ProjectionFacetData,
+  path: string
+): ValidationViolation[] {
+  const v: ValidationViolation[] = [];
+
+  if (f.bindings) {
+    for (let i = 0; i < f.bindings.length; i++) {
+      const b = f.bindings[i]!;
+      if (!b.source) v.push(violation(`${path}/bindings[${i}]/source`, 'Binding must have a source IRI'));
+      if (!b.target) v.push(violation(`${path}/bindings[${i}]/target`, 'Binding must have a target IRI'));
+      if (!VALID_BINDING_STRENGTHS.has(b.strength)) {
+        v.push(violation(`${path}/bindings[${i}]/strength`, `Invalid binding strength "${b.strength}". Must be one of: ${[...VALID_BINDING_STRENGTHS].join(', ')}`));
+      }
+      if (b.confidence !== undefined && (b.confidence < 0 || b.confidence > 1)) {
+        v.push(violation(`${path}/bindings[${i}]/confidence`, `confidence must be in [0.0, 1.0], got ${b.confidence}`));
+      }
+    }
+  }
+
+  if (f.vocabularyMappings) {
+    for (let i = 0; i < f.vocabularyMappings.length; i++) {
+      const m = f.vocabularyMappings[i]!;
+      if (!m.source) v.push(violation(`${path}/vocabularyMappings[${i}]/source`, 'Mapping must have a source IRI'));
+      if (!m.target) v.push(violation(`${path}/vocabularyMappings[${i}]/target`, 'Mapping must have a target IRI'));
+      if (!VALID_MAPPING_TYPES.has(m.mappingType)) {
+        v.push(violation(`${path}/vocabularyMappings[${i}]/mappingType`, `Invalid mapping type "${m.mappingType}"`));
+      }
+      if (!VALID_MAPPING_RELATIONSHIPS.has(m.relationship)) {
+        v.push(violation(`${path}/vocabularyMappings[${i}]/relationship`, `Invalid relationship "${m.relationship}"`));
+      }
+    }
+  }
+
+  return v;
 }
 
 // ── Main Validator ───────────────────────────────────────────

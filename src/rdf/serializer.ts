@@ -18,7 +18,11 @@ import type {
   TrustFacetData,
   FederationFacetData,
   CausalFacetData,
+  ProjectionFacetData,
   ComposedDescriptorData,
+  TripleContextAnnotation,
+  TripleTerm,
+  Literal,
 } from '../model/types.js';
 
 import {
@@ -270,6 +274,51 @@ function serializeCausalFacet(f: CausalFacetData): string {
   return bnode(props);
 }
 
+function serializeProjectionFacet(f: ProjectionFacetData): string {
+  const props: string[] = ['a cg:ProjectionFacet'];
+
+  if (f.targetVocabulary) props.push(`cg:targetVocabulary ${iri(f.targetVocabulary)}`);
+  if (f.boundaryShapes) props.push(`cg:boundaryShapes ${iri(f.boundaryShapes)}`);
+  if (f.selective !== undefined) props.push(`cg:selective ${literal(f.selective)}`);
+
+  if (f.bindings) {
+    for (const b of f.bindings) {
+      const bProps: string[] = [
+        'a cg:ExternalBinding',
+        `cg:describes ${iri(b.source)}`,
+        `cg:binding ${iri(b.target)}`,
+        `cg:bindingStrength cg:${b.strength}`,
+      ];
+      if (b.confidence !== undefined) bProps.push(`cg:epistemicConfidence ${literal(b.confidence)}`);
+      if (b.targetVocabulary) bProps.push(`cg:targetVocabulary ${iri(b.targetVocabulary)}`);
+      if (b.assertedBy) bProps.push(`prov:wasAttributedTo ${iri(b.assertedBy)}`);
+      props.push(`cg:binding ${bnode(bProps)}`);
+    }
+  }
+
+  if (f.vocabularyMappings) {
+    for (const m of f.vocabularyMappings) {
+      const mProps: string[] = [
+        'a cg:VocabularyMapping',
+        `cg:describes ${iri(m.source)}`,
+        `cg:binding ${iri(m.target)}`,
+        `cg:mappingType "${m.mappingType}"`,
+        `cg:mappingRelationship "${m.relationship}"`,
+      ];
+      props.push(`cg:vocabularyMapping ${bnode(mProps)}`);
+    }
+  }
+
+  if (f.exposedEntities) {
+    for (const e of f.exposedEntities) props.push(`cg:exposedEntity ${iri(e)}`);
+  }
+  if (f.hiddenEntities) {
+    for (const e of f.hiddenEntities) props.push(`cg:hiddenEntity ${iri(e)}`);
+  }
+
+  return bnode(props);
+}
+
 function serializeFacet(f: ContextFacetData): string {
   switch (f.type) {
     case 'Temporal':      return serializeTemporalFacet(f);
@@ -280,6 +329,7 @@ function serializeFacet(f: ContextFacetData): string {
     case 'Trust':         return serializeTrustFacet(f);
     case 'Federation':    return serializeFederationFacet(f);
     case 'Causal':        return serializeCausalFacet(f);
+    case 'Projection':    return serializeProjectionFacet(f);
     default:
       throw new Error(`Unknown facet type: ${(f as ContextFacetData).type}`);
   }
@@ -389,6 +439,94 @@ export function toTurtleDocument(
   const first = toTurtle(descriptors[0]!, { ...options, prefixes: true });
   const rest = descriptors.slice(1).map(d =>
     toTurtle(d, { ...options, prefixes: false })
+  );
+
+  return [first, ...rest].join('\n');
+}
+
+// ── RDF 1.2 Triple Annotation Serialization ──────────────────
+
+/**
+ * Serialize a triple term (subject predicate object) to Turtle.
+ */
+function serializeTripleTerm(t: TripleTerm): string {
+  const obj = typeof t.object === 'string'
+    ? iri(t.object)
+    : serializeLiteral(t.object as Literal);
+  return `${iri(t.subject)} ${iri(t.predicate)} ${obj}`;
+}
+
+function serializeLiteral(lit: Literal): string {
+  if (lit.language) return `"${lit.value}"@${lit.language}`;
+  if (lit.datatype) return `"${lit.value}"^^<${lit.datatype}>`;
+  return `"${lit.value}"`;
+}
+
+/**
+ * Serialize a TripleContextAnnotation using RDF 1.2 annotation syntax.
+ *
+ * RDF 1.2 annotations attach metadata directly to triples using the
+ * `{| ... |}` syntax, avoiding intermediate reification resources:
+ *
+ * ```turtle
+ * <subject> <predicate> <object> {|
+ *     prov:wasAttributedTo <agent> ;
+ *     cg:epistemicConfidence "0.95"^^xsd:double
+ * |} .
+ * ```
+ *
+ * Each facet in the annotation is serialized as properties inside the
+ * annotation block.
+ */
+export function toTripleAnnotationTurtle(
+  annotation: TripleContextAnnotation,
+  options: SerializerOptions = {},
+): string {
+  const { prefixes = true } = options;
+  const lines: string[] = [];
+
+  if (prefixes) {
+    lines.push(turtlePrefixes());
+    lines.push('');
+  }
+
+  const tripleStr = serializeTripleTerm(annotation.triple);
+
+  if (annotation.facets.length === 0) {
+    lines.push(`${tripleStr} .`);
+    return lines.join('\n') + '\n';
+  }
+
+  // Collect annotation properties from all facets
+  const annotationProps: string[] = [];
+  for (const facet of annotation.facets) {
+    // Flatten the facet serialization into annotation properties
+    const facetStr = serializeFacet(facet);
+    annotationProps.push(`cg:hasFacet ${facetStr}`);
+  }
+
+  lines.push(`${tripleStr} {|`);
+  for (let i = 0; i < annotationProps.length; i++) {
+    const terminator = i === annotationProps.length - 1 ? '' : ' ;';
+    lines.push(`    ${annotationProps[i]}${terminator}`);
+  }
+  lines.push('|} .');
+
+  return lines.join('\n') + '\n';
+}
+
+/**
+ * Serialize multiple triple annotations as a Turtle document.
+ */
+export function toTripleAnnotationDocument(
+  annotations: readonly TripleContextAnnotation[],
+  options: SerializerOptions = {},
+): string {
+  if (annotations.length === 0) return '';
+
+  const first = toTripleAnnotationTurtle(annotations[0]!, { ...options, prefixes: true });
+  const rest = annotations.slice(1).map(a =>
+    toTripleAnnotationTurtle(a, { ...options, prefixes: false })
   );
 
   return [first, ...rest].join('\n');

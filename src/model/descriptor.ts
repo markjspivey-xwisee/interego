@@ -22,6 +22,10 @@ import type {
   CausalIntervention,
   CounterfactualQuery,
   StructuralCausalModel,
+  ProjectionFacetData,
+  ExternalBinding,
+  VocabularyMapping,
+  BindingStrength,
   AgentRole,
 } from './types.js';
 
@@ -280,6 +284,55 @@ export class ContextDescriptor {
       origin,
       endpointURL,
     });
+  }
+
+  // ── Projection Facet (§5.9) ────────────────────────────────
+
+  projection(opts: Omit<ProjectionFacetData, 'type'>): this {
+    this._facets.push({ type: 'Projection', ...opts });
+    return this;
+  }
+
+  /**
+   * Convenience: bind an internal entity to an external IRI.
+   */
+  bindsTo(source: IRI, target: IRI, strength: BindingStrength = 'Strong', confidence?: number): this {
+    const existing = this._facets.find(f => f.type === 'Projection') as ProjectionFacetData | undefined;
+    const binding: ExternalBinding = { source, target, strength, confidence };
+    if (existing) {
+      // Append to existing projection facet
+      const idx = this._facets.indexOf(existing);
+      this._facets[idx] = {
+        ...existing,
+        bindings: [...(existing.bindings ?? []), binding],
+      };
+    } else {
+      this._facets.push({ type: 'Projection', bindings: [binding] });
+    }
+    return this;
+  }
+
+  /**
+   * Convenience: add a vocabulary mapping.
+   */
+  mapsVocabulary(
+    source: IRI,
+    target: IRI,
+    mappingType: 'class' | 'property',
+    relationship: 'exact' | 'broader' | 'narrower' | 'related' = 'exact',
+  ): this {
+    const mapping: VocabularyMapping = { source, target, mappingType, relationship };
+    const existing = this._facets.find(f => f.type === 'Projection') as ProjectionFacetData | undefined;
+    if (existing) {
+      const idx = this._facets.indexOf(existing);
+      this._facets[idx] = {
+        ...existing,
+        vocabularyMappings: [...(existing.vocabularyMappings ?? []), mapping],
+      };
+    } else {
+      this._facets.push({ type: 'Projection', vocabularyMappings: [mapping] });
+    }
+    return this;
   }
 
   // ── Causal Facet (§5.8 — Pearl's Causality) ──────────────

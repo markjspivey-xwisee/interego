@@ -41,7 +41,9 @@ export type ContextTypeName =
   | 'Semiotic'
   | 'Trust'
   | 'Federation'
-  | 'Causal';
+  | 'Causal'
+  | 'Projection';
+
 
 // ── Modal Status (Semiotic Facet §5.5) ───────────────────────
 
@@ -329,6 +331,87 @@ export interface CausalFacetData {
   readonly causalConfidence?: number;
 }
 
+// ── Binding Strength (Projection Facet) ─────────────────────
+
+/**
+ * How strongly an external binding couples two representations.
+ *
+ *   Exact      — owl:sameAs-level identity (use with caution)
+ *   Strong     — skos:exactMatch; same referent, independent representations
+ *   Approximate — skos:closeMatch; similar but not identical
+ *   Weak       — skos:relatedMatch; related but distinct concepts
+ */
+export type BindingStrength = 'Exact' | 'Strong' | 'Approximate' | 'Weak';
+
+/**
+ * An external binding — a link from an internal entity to an external IRI
+ * in another vocabulary/ontology/knowledge graph.
+ */
+export interface ExternalBinding {
+  /** The internal entity IRI being bound. */
+  readonly source: IRI;
+  /** The external entity IRI being bound to. */
+  readonly target: IRI;
+  /** How strong the binding is. */
+  readonly strength: BindingStrength;
+  /** The external vocabulary/namespace this binding targets. */
+  readonly targetVocabulary?: IRI;
+  /** Confidence in this binding (0.0–1.0). */
+  readonly confidence?: number;
+  /** Who asserted this binding. */
+  readonly assertedBy?: IRI;
+}
+
+/**
+ * A vocabulary mapping — translates predicates/classes from one namespace to another.
+ */
+export interface VocabularyMapping {
+  /** Source predicate or class IRI. */
+  readonly source: IRI;
+  /** Target predicate or class IRI in the external vocabulary. */
+  readonly target: IRI;
+  /** Whether this is a class mapping or property mapping. */
+  readonly mappingType: 'class' | 'property';
+  /** Semantic relationship: exact, broader, narrower, related. */
+  readonly relationship: 'exact' | 'broader' | 'narrower' | 'related';
+}
+
+/**
+ * Projection Facet (§5.9)
+ *
+ * Declares how a context translates across vocabulary and
+ * organizational boundaries. When a consuming agent operates in a
+ * different ontological frame than the producing agent, the
+ * Projection facet carries the mappings needed to bridge them.
+ *
+ * Three capabilities:
+ *   1. External bindings — link internal entities to external IRIs
+ *      with typed binding strength (Exact/Strong/Approximate/Weak)
+ *   2. Vocabulary mappings — translate predicates and classes between
+ *      namespaces (exact/broader/narrower/related per SKOS)
+ *   3. Selective exposure — declare which parts of the graph are
+ *      visible across the boundary (SHACL shapes as filter)
+ *
+ * Profiles: SKOS mapping relations, OWL alignment, SSSOM
+ */
+export interface ProjectionFacetData {
+  readonly type: 'Projection';
+  /** External bindings from internal entities to external IRIs. */
+  readonly bindings?: readonly ExternalBinding[];
+  /** Vocabulary mappings for cross-ontology translation. */
+  readonly vocabularyMappings?: readonly VocabularyMapping[];
+  /** The target vocabulary/ontology this projection translates to. */
+  readonly targetVocabulary?: IRI;
+  /** SHACL shapes IRI defining the projection boundary (what's exposed). */
+  readonly boundaryShapes?: IRI;
+  /** Whether this projection exposes the full graph or a filtered subset. */
+  readonly selective?: boolean;
+  /** IRIs of entities explicitly exposed (if selective). */
+  readonly exposedEntities?: readonly IRI[];
+  /** IRIs of entities explicitly hidden (if selective). */
+  readonly hiddenEntities?: readonly IRI[];
+}
+
 // ── Discriminated Union of all Facets ────────────────────────
 
 export type ContextFacetData =
@@ -339,7 +422,8 @@ export type ContextFacetData =
   | SemioticFacetData
   | TrustFacetData
   | FederationFacetData
-  | CausalFacetData;
+  | CausalFacetData
+  | ProjectionFacetData;
 
 // ── Context Descriptor (§3.1) ────────────────────────────────
 

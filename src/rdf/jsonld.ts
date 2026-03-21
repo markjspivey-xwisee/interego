@@ -19,6 +19,7 @@ import type {
   TrustFacetData,
   FederationFacetData,
   CausalFacetData,
+  ProjectionFacetData,
   ComposedDescriptorData,
   ModalStatus,
 } from '../model/types.js';
@@ -254,9 +255,36 @@ function serializeFacet(f: ContextFacetData): Record<string, unknown> {
     case 'Trust':         return serializeTrustFacet(f);
     case 'Federation':    return serializeFederationFacet(f);
     case 'Causal':        return serializeCausalFacet(f);
+    case 'Projection':    return serializeProjectionFacet(f);
     default:
       throw new Error(`Unknown facet type: ${(f as ContextFacetData).type}`);
   }
+}
+
+function serializeProjectionFacet(f: ProjectionFacetData): Record<string, unknown> {
+  const result: Record<string, unknown> = { '@type': 'cg:ProjectionFacet' };
+  if (f.targetVocabulary) result['cg:targetVocabulary'] = { '@id': f.targetVocabulary };
+  if (f.boundaryShapes) result['cg:boundaryShapes'] = { '@id': f.boundaryShapes };
+  if (f.selective !== undefined) result['cg:selective'] = f.selective;
+  if (f.bindings) {
+    result['cg:binding'] = f.bindings.map(b => ({
+      '@type': 'cg:ExternalBinding',
+      'cg:describes': { '@id': b.source },
+      'cg:binding': { '@id': b.target },
+      'cg:bindingStrength': `cg:${b.strength}`,
+      ...(b.confidence !== undefined ? { 'cg:epistemicConfidence': b.confidence } : {}),
+    }));
+  }
+  if (f.vocabularyMappings) {
+    result['cg:vocabularyMapping'] = f.vocabularyMappings.map(m => ({
+      '@type': 'cg:VocabularyMapping',
+      'cg:describes': { '@id': m.source },
+      'cg:binding': { '@id': m.target },
+      'cg:mappingType': m.mappingType,
+      'cg:mappingRelationship': m.relationship,
+    }));
+  }
+  return result;
 }
 
 // ── Main Serializer ──────────────────────────────────────────
