@@ -48,6 +48,26 @@ export {
   executeMerge,
   asSign,
   fromSign,
+  // Category theory — presheaf, naturality, lattice laws
+  toPresheaf,
+  fromPresheaf,
+  verifyUnionNaturality,
+  verifyIntersectionNaturality,
+  verifyIdempotence,
+  verifyCommutativity,
+  verifyAssociativity,
+  verifyAbsorption,
+  verifyBoundedLattice,
+  // Semiotic — Sign functor, adjunction, field functor
+  phi,
+  psi,
+  signUnion,
+  signIntersection,
+  adjunctionUnit,
+  adjunctionCounit,
+  verifyAdjunction,
+  semioticField,
+  verifySemioticFieldFunctoriality,
 } from './model/index.js';
 
 // ── Causality (Pearl's SCM Framework) ───────────────────────
@@ -117,6 +137,10 @@ export type {
   Sign,
   MergeStrategy,
   FacetRegistryEntry,
+  DescriptorPresheaf,
+  NaturalityWitness,
+  LatticeLawProof,
+  SignMorphism,
 } from './model/index.js';
 
 export type { CounterfactualResult } from './model/causality.js';
