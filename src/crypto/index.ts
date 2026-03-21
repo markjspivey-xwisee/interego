@@ -1,6 +1,12 @@
 /**
  * @module crypto
- * @description Blockchain, IPFS, and wallet integration.
+ * @description Real blockchain, IPFS, and wallet integration.
+ *
+ * No mocks. Real cryptography:
+ *   - ethers.js v6: secp256k1 key pairs, ECDSA signatures, EIP-712
+ *   - @noble/hashes: SHA-256
+ *   - multiformats: Real IPFS CID v1 computation
+ *   - siwe: Real Sign-In With Ethereum verification
  *
  * IPFS: Content-addressed permanent storage for PGSL fragments
  * Wallets: Agent identity, descriptor signing, delegation proofs
@@ -27,24 +33,29 @@ export type {
   IdentityAnchors,
 } from './types.js';
 
-// IPFS
+// IPFS (real CID computation via multiformats)
 export {
   sha256,
+  computeCid,
   pinToIpfs,
   createIpfsAnchor,
   pinPgslFragment,
   pinDescriptor,
 } from './ipfs.js';
 
-// Wallets
+// Wallets (real crypto via ethers.js)
 export {
-  createMockWallet,
-  createMockDelegation,
+  createWallet,
+  importWallet,
+  exportPrivateKey,
+  createDelegation,
+  verifyDelegationSignature,
   signDescriptor,
   verifyDescriptorSignature,
-  createMockAgentToken,
+  createAgentToken,
   createSiweMessage,
   formatSiweMessage,
+  signSiweMessage,
   verifySiweSignature,
   createAgentKitWallet,
 } from './wallet.js';

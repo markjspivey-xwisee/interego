@@ -79,8 +79,14 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0",
-    "eslint": "^9.0.0"
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.0.1",
+    "ethers": "^6.16.0",
+    "multiformats": "^13.4.2",
+    "siwe": "^3.0.0"
   }
 }

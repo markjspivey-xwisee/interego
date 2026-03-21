@@ -25,7 +25,7 @@ export interface IpfsPinResult {
   readonly size: number;
   readonly url: string;             // gateway URL: ipfs://CID or https://gateway/ipfs/CID
   readonly pinnedAt: string;        // ISO timestamp
-  readonly provider: 'pinata' | 'web3storage' | 'local' | 'mock';
+  readonly provider: 'pinata' | 'web3storage' | 'local';
 }
 
 /** IPFS anchor on a descriptor or PGSL fragment */
@@ -38,7 +38,7 @@ export interface IpfsAnchor {
 
 /** Configuration for IPFS pinning service */
 export interface IpfsConfig {
-  readonly provider: 'pinata' | 'web3storage' | 'mock';
+  readonly provider: 'pinata' | 'web3storage' | 'local';
   readonly apiKey?: string;
   readonly apiSecret?: string;
   readonly gateway?: string;        // default: https://gateway.pinata.cloud/ipfs/
