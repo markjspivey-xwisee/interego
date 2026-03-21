@@ -807,13 +807,15 @@ async function toolResolveWebfinger(args: { resource: string }): Promise<string>
  * registers their first agent, and gets a bearer token.
  */
 async function toolSetupIdentity(args: {
-  name: string;
+  name?: string;
+  owner_name?: string;
   user_id?: string;
   agent_name?: string;
 }): Promise<string> {
-  const userId = args.user_id ?? args.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const name = args.name ?? args.owner_name ?? MY_OWNER_NAME ?? 'Agent User';
+  const userId = args.user_id ?? name.toLowerCase().replace(/[^a-z0-9]/g, '');
   const agentId = `claude-code-${userId}`;
-  const agentName = args.agent_name ?? `Claude Code (${args.name})`;
+  const agentName = args.agent_name ?? `Claude Code (${name})`;
 
   // 1. Register on identity server
   let registerResult: any;
@@ -822,7 +824,7 @@ async function toolSetupIdentity(args: {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: args.name,
+        name,
         userId,
         agentId,
         agentName,
@@ -855,7 +857,7 @@ async function toolSetupIdentity(args: {
   });
 
   // 3. Write agent registry on the pod
-  const profile = createOwnerProfile(registerResult.webId as IRI, args.name);
+  const profile = createOwnerProfile(registerResult.webId as IRI, name);
   const profileWithAgent = addAuthorizedAgent(profile, {
     agentId: `urn:agent:anthropic:${agentId}` as IRI,
     delegatedBy: registerResult.webId as IRI,
@@ -874,7 +876,7 @@ async function toolSetupIdentity(args: {
   return [
     `Identity created successfully!`,
     ``,
-    `  Name: ${args.name}`,
+    `  Name: ${name}`,
     `  User ID: ${userId}`,
     `  WebID: ${registerResult.webId}`,
     `  DID: ${registerResult.did}`,
@@ -888,7 +890,7 @@ async function toolSetupIdentity(args: {
     `  CG_POD_NAME="${userId}"`,
     `  CG_AGENT_ID="urn:agent:anthropic:${agentId}"`,
     `  CG_OWNER_WEBID="${registerResult.webId}"`,
-    `  CG_OWNER_NAME="${args.name}"`,
+    `  CG_OWNER_NAME="${name}"`,
     `  CG_BASE_URL="${BASE_URL}"`,
     ``,
     `Your pod is ready. Other agents can discover your context at:`,
