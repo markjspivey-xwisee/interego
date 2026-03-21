@@ -110,6 +110,8 @@ const MY_DID = (process.env['CG_DID'] ?? `did:web:${POD_NAME}.local`) as IRI;
 
 const KNOWN_PODS_RAW = process.env['CG_KNOWN_PODS'] ?? '';
 const DIRECTORY_URL = process.env['CG_DIRECTORY_URL'] ?? undefined;
+const IDENTITY_SERVER_URL = process.env['CG_IDENTITY_URL']
+  ?? 'https://context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 
 const CSS_CONFIG = resolve(__dirname, '..', 'examples', 'multi-agent', 'css-config.json');
 const CSS_BIN = resolve(__dirname, 'node_modules', '.bin', 'community-solid-server');
@@ -797,6 +799,103 @@ async function toolResolveWebfinger(args: { resource: string }): Promise<string>
   ].filter(Boolean).join('\n');
 }
 
+// ── Onboarding Tool Implementation ──────────────────────────
+
+/**
+ * setup_identity — first-time onboarding for a human.
+ * Creates their identity on the identity server, provisions their pod,
+ * registers their first agent, and gets a bearer token.
+ */
+async function toolSetupIdentity(args: {
+  name: string;
+  user_id?: string;
+  agent_name?: string;
+}): Promise<string> {
+  const userId = args.user_id ?? args.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const agentId = `claude-code-${userId}`;
+  const agentName = args.agent_name ?? `Claude Code (${args.name})`;
+
+  // 1. Register on identity server
+  let registerResult: any;
+  try {
+    const resp = await fetch(`${IDENTITY_SERVER_URL}/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: args.name,
+        userId,
+        agentId,
+        agentName,
+        scope: 'ReadWrite',
+      }),
+    });
+    registerResult = await resp.json();
+    if (!resp.ok) {
+      return [
+        `Registration failed: ${registerResult.error}`,
+        registerResult.error?.includes('already exists')
+          ? `User '${userId}' is already registered. Use your existing token.`
+          : '',
+      ].filter(Boolean).join('\n');
+    }
+  } catch (err) {
+    return `Cannot reach identity server at ${IDENTITY_SERVER_URL}: ${(err as Error).message}`;
+  }
+
+  // 2. Provision pod on CSS
+  await ensureCSS();
+  const podUrl = `${BASE_URL}${userId}/`;
+  await solidFetch(podUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'text/turtle',
+      'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+    },
+    body: '',
+  });
+
+  // 3. Write agent registry on the pod
+  const profile = createOwnerProfile(registerResult.webId as IRI, args.name);
+  const profileWithAgent = addAuthorizedAgent(profile, {
+    agentId: `urn:agent:anthropic:${agentId}` as IRI,
+    delegatedBy: registerResult.webId as IRI,
+    label: agentName,
+    isSoftwareAgent: true,
+    scope: 'ReadWrite',
+    validFrom: new Date().toISOString(),
+  });
+  await writeAgentRegistry(profileWithAgent, podUrl, { fetch: solidFetch });
+
+  // 4. Write delegation credential
+  const agent = profileWithAgent.authorizedAgents.find(a => a.agentId === `urn:agent:anthropic:${agentId}`)!;
+  const credential = createDelegationCredential(profileWithAgent, agent, podUrl as IRI);
+  await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
+
+  return [
+    `Identity created successfully!`,
+    ``,
+    `  Name: ${args.name}`,
+    `  User ID: ${userId}`,
+    `  WebID: ${registerResult.webId}`,
+    `  DID: ${registerResult.did}`,
+    `  Pod: ${registerResult.podUrl}`,
+    `  Agent: ${agentId}`,
+    `  Agent DID: ${registerResult.agentDid}`,
+    `  Token: ${registerResult.token}`,
+    `  Expires: ${registerResult.expiresAt}`,
+    ``,
+    `To configure another Claude Code instance:`,
+    `  CG_POD_NAME="${userId}"`,
+    `  CG_AGENT_ID="urn:agent:anthropic:${agentId}"`,
+    `  CG_OWNER_WEBID="${registerResult.webId}"`,
+    `  CG_OWNER_NAME="${args.name}"`,
+    `  CG_BASE_URL="${BASE_URL}"`,
+    ``,
+    `Your pod is ready. Other agents can discover your context at:`,
+    `  ${registerResult.podUrl}.well-known/context-graphs`,
+  ].join('\n');
+}
+
 // ── PGSL Tool Implementations ───────────────────────────────
 
 async function toolPgslIngest(args: {
@@ -1102,6 +1201,20 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['resource'],
       },
     },
+    // ── Onboarding ──
+    {
+      name: 'setup_identity',
+      description: 'First-time onboarding: creates your identity (WebID, DID, Ed25519 keys), provisions your Solid pod, registers your agent with delegation credentials, and returns a bearer token. Run this once when setting up a new human user.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          name: { type: 'string', description: 'Human-readable name (e.g. "Sarah Chen")' },
+          user_id: { type: 'string', description: 'Short identifier (e.g. "sarah") — auto-derived from name if omitted' },
+          agent_name: { type: 'string', description: 'Label for the agent (e.g. "Claude Code (Sarah)")' },
+        },
+        required: ['name'],
+      },
+    },
     // ── PGSL tools ──
     {
       name: 'pgsl_ingest',
@@ -1208,6 +1321,10 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'resolve_webfinger':
         result = await toolResolveWebfinger(args as Parameters<typeof toolResolveWebfinger>[0]);
+        break;
+      // Onboarding
+      case 'setup_identity':
+        result = await toolSetupIdentity(args as Parameters<typeof toolSetupIdentity>[0]);
         break;
       // PGSL
       case 'pgsl_ingest':

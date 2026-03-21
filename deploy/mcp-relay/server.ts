@@ -54,9 +54,57 @@ import type {
 
 const PORT = parseInt(process.env['PORT'] ?? '8080');
 const CSS_URL = process.env['CSS_URL'] ?? 'http://localhost:3456/';
+const IDENTITY_URL = process.env['IDENTITY_URL'] ?? 'http://localhost:8090';
 
 function log(msg: string): void {
   console.log(`[mcp-relay] ${msg}`);
+}
+
+// ── Auth Middleware ──────────────────────────────────────────
+
+// Tools that require authentication (write operations)
+const AUTH_REQUIRED_TOOLS = new Set([
+  'publish_context', 'register_agent', 'revoke_agent',
+  'publish_directory',
+]);
+
+// Tools that are public (read operations)
+const PUBLIC_TOOLS = new Set([
+  'discover_context', 'get_descriptor', 'get_pod_status',
+  'subscribe_to_pod', 'discover_all', 'list_known_pods',
+  'add_pod', 'remove_pod', 'discover_directory', 'resolve_webfinger',
+  'verify_agent',
+]);
+
+interface AuthResult {
+  authenticated: boolean;
+  userId?: string;
+  agentId?: string;
+  scope?: string;
+  error?: string;
+}
+
+async function verifyBearerToken(authHeader: string | undefined): Promise<AuthResult> {
+  if (!authHeader?.startsWith('Bearer ')) {
+    return { authenticated: false, error: 'Bearer token required' };
+  }
+  const token = authHeader.slice(7);
+
+  try {
+    const resp = await fetch(`${IDENTITY_URL}/tokens/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (!resp.ok) return { authenticated: false, error: `Identity server error: ${resp.status}` };
+    const data = await resp.json() as { valid: boolean; userId?: string; agentId?: string; scope?: string; reason?: string };
+    if (data.valid) {
+      return { authenticated: true, userId: data.userId, agentId: data.agentId, scope: data.scope };
+    }
+    return { authenticated: false, error: data.reason ?? 'Invalid token' };
+  } catch (err) {
+    return { authenticated: false, error: `Cannot reach identity server: ${(err as Error).message}` };
+  }
 }
 
 // ── Fetch wrapper ───────────────────────────────────────────
@@ -411,12 +459,30 @@ app.get('/tools', (_req, res) => {
   res.json(Object.entries(TOOLS).map(([name, { description }]) => ({ name, description })));
 });
 
-// Call a tool directly via REST
+// Call a tool directly via REST (auth enforced on write operations)
 app.post('/tool/:name', async (req, res) => {
-  const tool = TOOLS[req.params.name];
+  const toolName = req.params.name;
+  const tool = TOOLS[toolName];
   if (!tool) {
-    res.status(404).json({ error: `Unknown tool: ${req.params.name}` });
+    res.status(404).json({ error: `Unknown tool: ${toolName}` });
     return;
+  }
+
+  // Auth check for write operations
+  if (AUTH_REQUIRED_TOOLS.has(toolName)) {
+    const auth = await verifyBearerToken(req.headers.authorization);
+    if (!auth.authenticated) {
+      res.status(401).json({
+        error: 'Authentication required for write operations',
+        detail: auth.error,
+        hint: `POST ${IDENTITY_URL}/register to create an account and get a token`,
+      });
+      return;
+    }
+    // Inject authenticated identity into args if not provided
+    if (!req.body.agent_id) req.body.agent_id = auth.agentId;
+    if (!req.body.owner_webid) req.body.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
+    if (!req.body.pod_name) req.body.pod_name = auth.userId;
   }
 
   try {

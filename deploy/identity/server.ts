@@ -1,14 +1,27 @@
 #!/usr/bin/env tsx
 /**
- * Context Graphs Identity Server
+ * Context Graphs Identity Server v2
  *
- * Serves real, dereferenceable identity documents:
- *   - DID Documents (did:web resolution per W3C DID Core)
- *   - WebID Profiles (Turtle, for Solid-OIDC)
- *   - WebFinger (RFC 7033)
+ * Serves identity documents + issues bearer tokens for pod access.
+ * Supports dynamic registration — any human can onboard.
  *
- * On first start, generates Ed25519 keypairs for the owner and each agent.
- * Keys are stored in memory (ephemeral) — in production, use a key vault.
+ * Endpoints:
+ *   Identity:
+ *     GET  /.well-known/did.json          — Server DID
+ *     GET  /users/:id/did.json            — User DID document
+ *     GET  /agents/:id/did.json           — Agent DID document
+ *     GET  /users/:id/profile             — WebID profile (Turtle)
+ *     GET  /agents/:id/profile            — Agent profile (Turtle)
+ *     GET  /.well-known/webfinger         — RFC 7033
+ *
+ *   Auth:
+ *     POST /register                      — Register new human + first agent
+ *     POST /register-agent                — Register additional agent for existing user
+ *     POST /tokens                        — Issue bearer token for agent
+ *     POST /tokens/verify                 — Verify a bearer token
+ *
+ *   Health:
+ *     GET  /health
  */
 
 import express from 'express';
@@ -18,9 +31,11 @@ import * as crypto from 'node:crypto';
 
 const PORT = parseInt(process.env['PORT'] ?? '8090');
 const BASE_URL = process.env['BASE_URL'] ?? `http://localhost:${PORT}`;
-const CSS_URL = process.env['CSS_URL'] ?? 'https://context-graphs-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/';
+const CSS_URL = process.env['CSS_URL'] ?? 'https://context-graphs-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/';
 const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#';
-const SPEC_URL = 'https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html';
+const TOKEN_TTL_SECONDS = 86400; // 24 hours
+
+function log(msg: string) { console.log(`[identity] ${msg}`); }
 
 // ── Key Generation ──────────────────────────────────────────
 
@@ -33,33 +48,83 @@ interface KeyPair {
 function generateEd25519(): KeyPair {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
   const pubRaw = publicKey.export({ type: 'spki', format: 'der' });
-  // Ed25519 public key is last 32 bytes of the SPKI DER
   const rawKey = pubRaw.subarray(pubRaw.length - 32);
-  // Multibase: 'z' prefix + base58btc (we use base64url for simplicity since Node lacks base58)
   const publicKeyMultibase = 'z' + rawKey.toString('base64url');
   return { publicKeyMultibase, privateKey, publicKey };
 }
 
-// Pre-generate keys for owner + agents
-const keys: Record<string, KeyPair> = {};
-const IDENTITIES = [
-  { id: 'markj', type: 'user', name: 'Mark J' },
-  { id: 'claude-code-vscode', type: 'agent', name: 'Claude Code (VS Code)' },
-  { id: 'claude-code-desktop', type: 'agent', name: 'Claude Code (Desktop)' },
-];
+// ── Dynamic Identity Registry ───────────────────────────────
 
-for (const identity of IDENTITIES) {
-  keys[identity.id] = generateEd25519();
-  console.log(`[identity] Generated Ed25519 key for ${identity.id}: ${keys[identity.id]!.publicKeyMultibase.slice(0, 20)}...`);
+interface Identity {
+  id: string;
+  type: 'user' | 'agent';
+  name: string;
+  owner?: string;        // for agents: the user who owns them
+  scope?: string;
+  createdAt: string;
+}
+
+interface TokenRecord {
+  token: string;
+  userId: string;
+  agentId: string;
+  scope: string;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+// In-memory stores (production: use a database or key vault)
+const identities: Map<string, Identity> = new Map();
+const keys: Map<string, KeyPair> = new Map();
+const tokens: Map<string, TokenRecord> = new Map();
+
+// Seed with markj + agents
+function seedIdentity(id: string, type: 'user' | 'agent', name: string, owner?: string, scope?: string) {
+  identities.set(id, { id, type, name, owner, scope, createdAt: new Date().toISOString() });
+  keys.set(id, generateEd25519());
+  log(`Seeded ${type} identity: ${id} (${name})`);
+}
+
+seedIdentity('markj', 'user', 'Mark J');
+seedIdentity('claude-code-vscode', 'agent', 'Claude Code (VS Code)', 'markj', 'ReadWrite');
+seedIdentity('claude-code-desktop', 'agent', 'Claude Code (Desktop)', 'markj', 'ReadWrite');
+
+// ── Token Management ────────────────────────────────────────
+
+function issueToken(userId: string, agentId: string, scope: string): TokenRecord {
+  const token = `cg_${crypto.randomBytes(32).toString('base64url')}`;
+  const now = new Date();
+  const record: TokenRecord = {
+    token,
+    userId,
+    agentId,
+    scope,
+    issuedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + TOKEN_TTL_SECONDS * 1000).toISOString(),
+  };
+  tokens.set(token, record);
+  log(`Issued token for ${agentId} (user: ${userId}, scope: ${scope}, expires: ${record.expiresAt})`);
+  return record;
+}
+
+function verifyToken(token: string): { valid: boolean; record?: TokenRecord; reason?: string } {
+  const record = tokens.get(token);
+  if (!record) return { valid: false, reason: 'Token not found' };
+  if (new Date(record.expiresAt) < new Date()) {
+    tokens.delete(token);
+    return { valid: false, reason: 'Token expired' };
+  }
+  return { valid: true, record };
 }
 
 // ── DID Document Builder ────────────────────────────────────
 
-function buildDidDocument(identity: typeof IDENTITIES[0]): object {
-  const kp = keys[identity.id]!;
+function buildDidDocument(identity: Identity): object {
+  const kp = keys.get(identity.id)!;
   const path = identity.type === 'user' ? `users:${identity.id}` : `agents:${identity.id}`;
   const did = `did:web:${new URL(BASE_URL).host}:${path}`;
   const keyId = `${did}#key-1`;
+  const owner = identity.owner ?? identity.id;
 
   const doc: Record<string, unknown> = {
     '@context': [
@@ -68,44 +133,32 @@ function buildDidDocument(identity: typeof IDENTITIES[0]): object {
     ],
     id: did,
     controller: identity.type === 'agent'
-      ? `did:web:${new URL(BASE_URL).host}:users:markj`
+      ? `did:web:${new URL(BASE_URL).host}:users:${owner}`
       : did,
-    verificationMethod: [
-      {
-        id: keyId,
-        type: 'Ed25519VerificationKey2020',
-        controller: did,
-        publicKeyMultibase: kp.publicKeyMultibase,
-      },
-    ],
+    verificationMethod: [{
+      id: keyId,
+      type: 'Ed25519VerificationKey2020',
+      controller: did,
+      publicKeyMultibase: kp.publicKeyMultibase,
+    }],
     authentication: [keyId],
     assertionMethod: [keyId],
   };
 
-  // Agents link to their controller (owner)
+  const podUrl = `${CSS_URL}${owner}/`;
+
   if (identity.type === 'agent') {
-    doc['service'] = [
-      {
-        id: `${did}#solid-pod`,
-        type: 'SolidStorage',
-        serviceEndpoint: `${CSS_URL}markj/`,
-      },
-    ];
+    doc['service'] = [{
+      id: `${did}#solid-pod`,
+      type: 'SolidStorage',
+      serviceEndpoint: podUrl,
+    }];
   } else {
-    // Owner links to pod and agents
     doc['service'] = [
-      {
-        id: `${did}#solid-pod`,
-        type: 'SolidStorage',
-        serviceEndpoint: `${CSS_URL}markj/`,
-      },
-      {
-        id: `${did}#context-graphs`,
-        type: 'ContextGraphsManifest',
-        serviceEndpoint: `${CSS_URL}markj/.well-known/context-graphs`,
-      },
+      { id: `${did}#solid-pod`, type: 'SolidStorage', serviceEndpoint: podUrl },
+      { id: `${did}#context-graphs`, type: 'ContextGraphsManifest', serviceEndpoint: `${podUrl}.well-known/context-graphs` },
     ];
-    doc['alsoKnownAs'] = [`${BASE_URL}/users/markj/profile`];
+    doc['alsoKnownAs'] = [`${BASE_URL}/users/${identity.id}/profile`];
   }
 
   return doc;
@@ -113,12 +166,11 @@ function buildDidDocument(identity: typeof IDENTITIES[0]): object {
 
 // ── WebID Profile Builder ───────────────────────────────────
 
-function buildWebIdProfile(identity: typeof IDENTITIES[0]): string {
+function buildWebIdProfile(identity: Identity): string {
   const profileUrl = `${BASE_URL}/users/${identity.id}/profile`;
-  const did = `did:web:${new URL(BASE_URL).host}:users:${identity.id}`;
-  const podUrl = `${CSS_URL}markj/`;
+  const podUrl = `${CSS_URL}${identity.id}/`;
 
-  const agents = IDENTITIES.filter(i => i.type === 'agent');
+  const agents = [...identities.values()].filter(i => i.type === 'agent' && i.owner === identity.id);
 
   return [
     `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
@@ -126,19 +178,20 @@ function buildWebIdProfile(identity: typeof IDENTITIES[0]): string {
     `@prefix cg: <${ONTOLOGY_URL}> .`,
     `@prefix prov: <http://www.w3.org/ns/prov#> .`,
     `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .`,
-    `@prefix cert: <http://www.w3.org/ns/auth/cert#> .`,
     ``,
     `<${profileUrl}#me>`,
     `    a foaf:Person ;`,
     `    foaf:name "${identity.name}" ;`,
     `    solid:oidcIssuer <${BASE_URL}> ;`,
     `    solid:storage <${podUrl}> ;`,
-    `    cg:authorizedAgent`,
-    ...agents.map((a, i) => {
-      const comma = i < agents.length - 1 ? ',' : ';';
-      return `        <${BASE_URL}/agents/${a.id}/profile#agent>${comma}`;
-    }),
-    `    rdfs:seeAlso <${did}> .`,
+    ...(agents.length > 0 ? [
+      `    cg:authorizedAgent`,
+      ...agents.map((a, i) => {
+        const sep = i < agents.length - 1 ? ',' : ';';
+        return `        <${BASE_URL}/agents/${a.id}/profile#agent>${sep}`;
+      }),
+    ] : []),
+    `    rdfs:seeAlso <did:web:${new URL(BASE_URL).host}:users:${identity.id}> .`,
     ``,
     ...agents.map(a => [
       `<${BASE_URL}/agents/${a.id}/profile#agent>`,
@@ -146,7 +199,7 @@ function buildWebIdProfile(identity: typeof IDENTITIES[0]): string {
       `    rdfs:label "${a.name}" ;`,
       `    cg:agentIdentity <did:web:${new URL(BASE_URL).host}:agents:${a.id}> ;`,
       `    cg:delegatedBy <${profileUrl}#me> ;`,
-      `    cg:scope "ReadWrite" .`,
+      `    cg:scope "${a.scope ?? 'ReadWrite'}" .`,
       ``,
     ].join('\n')),
   ].join('\n');
@@ -155,25 +208,181 @@ function buildWebIdProfile(identity: typeof IDENTITIES[0]): string {
 // ── Express App ─────────────────────────────────────────────
 
 const app = express();
+app.use(express.json());
 
 app.use((_req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Accept');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Accept, Content-Type, Authorization');
   next();
 });
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', identities: IDENTITIES.length, base: BASE_URL });
+  res.json({
+    status: 'ok',
+    users: [...identities.values()].filter(i => i.type === 'user').length,
+    agents: [...identities.values()].filter(i => i.type === 'agent').length,
+    activeTokens: tokens.size,
+    base: BASE_URL,
+  });
 });
 
-// ── DID Documents ───────────────────────────────────────────
+// ── Registration ─────────────────────────────────────────────
 
-// Server-level DID: did:web:{host}
+/**
+ * POST /register — Register a new human + their first agent
+ * Body: { name: "Sarah", userId: "sarah", agentId: "claude-code-sarah", agentName: "Claude Code (Sarah)" }
+ * Returns: { token, userId, agentId, webId, did, podUrl }
+ */
+app.post('/register', (req, res) => {
+  const { name, userId, agentId, agentName, scope } = req.body;
+  if (!name || !userId || !agentId) {
+    res.status(400).json({ error: 'name, userId, and agentId are required' });
+    return;
+  }
+
+  if (identities.has(userId)) {
+    res.status(409).json({ error: `User '${userId}' already exists` });
+    return;
+  }
+
+  // Create user identity
+  seedIdentity(userId, 'user', name);
+
+  // Create agent identity
+  const agentLabel = agentName ?? `Agent (${agentId})`;
+  seedIdentity(agentId, 'agent', agentLabel, userId, scope ?? 'ReadWrite');
+
+  // Issue token for the agent
+  const tokenRecord = issueToken(userId, agentId, scope ?? 'ReadWrite');
+
+  const host = new URL(BASE_URL).host;
+  res.status(201).json({
+    registered: true,
+    userId,
+    agentId,
+    token: tokenRecord.token,
+    expiresAt: tokenRecord.expiresAt,
+    webId: `${BASE_URL}/users/${userId}/profile#me`,
+    did: `did:web:${host}:users:${userId}`,
+    agentDid: `did:web:${host}:agents:${agentId}`,
+    podUrl: `${CSS_URL}${userId}/`,
+    identityServer: BASE_URL,
+  });
+  log(`Registered new user: ${userId} (${name}) with agent ${agentId}`);
+});
+
+/**
+ * POST /register-agent — Register additional agent for existing user
+ * Body: { userId, agentId, agentName, scope }
+ * Requires: Authorization header with valid token for that user
+ */
+app.post('/register-agent', (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Bearer token required' });
+    return;
+  }
+
+  const tokenResult = verifyToken(authHeader.slice(7));
+  if (!tokenResult.valid) {
+    res.status(401).json({ error: tokenResult.reason });
+    return;
+  }
+
+  const { userId, agentId, agentName, scope } = req.body;
+  if (tokenResult.record!.userId !== userId) {
+    res.status(403).json({ error: 'Token does not belong to this user' });
+    return;
+  }
+
+  if (!agentId) {
+    res.status(400).json({ error: 'agentId is required' });
+    return;
+  }
+
+  if (identities.has(agentId)) {
+    res.status(409).json({ error: `Agent '${agentId}' already exists` });
+    return;
+  }
+
+  const agentLabel = agentName ?? `Agent (${agentId})`;
+  seedIdentity(agentId, 'agent', agentLabel, userId, scope ?? 'ReadWrite');
+  const tokenRecord = issueToken(userId, agentId, scope ?? 'ReadWrite');
+
+  const host = new URL(BASE_URL).host;
+  res.status(201).json({
+    registered: true,
+    agentId,
+    token: tokenRecord.token,
+    expiresAt: tokenRecord.expiresAt,
+    agentDid: `did:web:${host}:agents:${agentId}`,
+  });
+  log(`Registered new agent: ${agentId} for user ${userId}`);
+});
+
+// ── Token Management ─────────────────────────────────────────
+
+/**
+ * POST /tokens — Issue a new bearer token
+ * Body: { userId, agentId }
+ * Returns: { token, expiresAt }
+ */
+app.post('/tokens', (req, res) => {
+  const { userId, agentId } = req.body;
+  if (!userId || !agentId) {
+    res.status(400).json({ error: 'userId and agentId are required' });
+    return;
+  }
+
+  const user = identities.get(userId);
+  if (!user || user.type !== 'user') {
+    res.status(404).json({ error: `User '${userId}' not found` });
+    return;
+  }
+
+  const agent = identities.get(agentId);
+  if (!agent || agent.type !== 'agent' || agent.owner !== userId) {
+    res.status(403).json({ error: `Agent '${agentId}' is not authorized for user '${userId}'` });
+    return;
+  }
+
+  const record = issueToken(userId, agentId, agent.scope ?? 'ReadWrite');
+  res.json({ token: record.token, expiresAt: record.expiresAt, scope: record.scope });
+});
+
+/**
+ * POST /tokens/verify — Verify a bearer token
+ * Body: { token }
+ * Returns: { valid, userId?, agentId?, scope?, reason? }
+ */
+app.post('/tokens/verify', (req, res) => {
+  const { token } = req.body;
+  if (!token) {
+    res.status(400).json({ error: 'token is required' });
+    return;
+  }
+
+  const result = verifyToken(token);
+  if (result.valid) {
+    res.json({
+      valid: true,
+      userId: result.record!.userId,
+      agentId: result.record!.agentId,
+      scope: result.record!.scope,
+      expiresAt: result.record!.expiresAt,
+    });
+  } else {
+    res.json({ valid: false, reason: result.reason });
+  }
+});
+
+// ── DID Documents ────────────────────────────────────────────
+
 app.get('/.well-known/did.json', (_req, res) => {
   const serverDid = `did:web:${new URL(BASE_URL).host}`;
-  const kp = keys['markj']!;
+  const kp = keys.get('markj')!;
   res.json({
     '@context': ['https://www.w3.org/ns/did/v1'],
     id: serverDid,
@@ -187,34 +396,32 @@ app.get('/.well-known/did.json', (_req, res) => {
   });
 });
 
-// User DID: did:web:{host}:users:{id}
 app.get('/users/:id/did.json', (req, res) => {
-  const identity = IDENTITIES.find(i => i.id === req.params.id && i.type === 'user');
-  if (!identity) { res.status(404).json({ error: 'Not found' }); return; }
+  const identity = identities.get(req.params.id);
+  if (!identity || identity.type !== 'user') { res.status(404).json({ error: 'Not found' }); return; }
   res.json(buildDidDocument(identity));
 });
 
-// Agent DID: did:web:{host}:agents:{id}
 app.get('/agents/:id/did.json', (req, res) => {
-  const identity = IDENTITIES.find(i => i.id === req.params.id && i.type === 'agent');
-  if (!identity) { res.status(404).json({ error: 'Not found' }); return; }
+  const identity = identities.get(req.params.id);
+  if (!identity || identity.type !== 'agent') { res.status(404).json({ error: 'Not found' }); return; }
   res.json(buildDidDocument(identity));
 });
 
 // ── WebID Profiles ──────────────────────────────────────────
 
 app.get('/users/:id/profile', (req, res) => {
-  const identity = IDENTITIES.find(i => i.id === req.params.id && i.type === 'user');
-  if (!identity) { res.status(404).json({ error: 'Not found' }); return; }
+  const identity = identities.get(req.params.id);
+  if (!identity || identity.type !== 'user') { res.status(404).json({ error: 'Not found' }); return; }
   res.setHeader('Content-Type', 'text/turtle');
   res.send(buildWebIdProfile(identity));
 });
 
-// Agent profiles (lightweight)
 app.get('/agents/:id/profile', (req, res) => {
-  const identity = IDENTITIES.find(i => i.id === req.params.id && i.type === 'agent');
-  if (!identity) { res.status(404).json({ error: 'Not found' }); return; }
+  const identity = identities.get(req.params.id);
+  if (!identity || identity.type !== 'agent') { res.status(404).json({ error: 'Not found' }); return; }
   const did = `did:web:${new URL(BASE_URL).host}:agents:${identity.id}`;
+  const owner = identity.owner ?? 'unknown';
   res.setHeader('Content-Type', 'text/turtle');
   res.send([
     `@prefix cg: <${ONTOLOGY_URL}> .`,
@@ -225,8 +432,8 @@ app.get('/agents/:id/profile', (req, res) => {
     `    a cg:AuthorizedAgent, prov:SoftwareAgent ;`,
     `    rdfs:label "${identity.name}" ;`,
     `    cg:agentIdentity <${did}> ;`,
-    `    cg:delegatedBy <${BASE_URL}/users/markj/profile#me> ;`,
-    `    cg:scope "ReadWrite" .`,
+    `    cg:delegatedBy <${BASE_URL}/users/${owner}/profile#me> ;`,
+    `    cg:scope "${identity.scope ?? 'ReadWrite'}" .`,
   ].join('\n'));
 });
 
@@ -236,7 +443,6 @@ app.get('/.well-known/webfinger', (req, res) => {
   const resource = req.query.resource as string;
   if (!resource) { res.status(400).json({ error: 'resource parameter required' }); return; }
 
-  // Parse acct: URI or URL
   let userId: string | null = null;
   if (resource.startsWith('acct:')) {
     const parts = resource.slice(5).split('@');
@@ -249,11 +455,10 @@ app.get('/.well-known/webfinger', (req, res) => {
     } catch { /* ignore */ }
   }
 
-  const identity = userId ? IDENTITIES.find(i => i.id === userId && i.type === 'user') : null;
-  if (!identity) { res.status(404).json({ error: 'Unknown resource' }); return; }
+  const identity = userId ? identities.get(userId) : null;
+  if (!identity || identity.type !== 'user') { res.status(404).json({ error: 'Unknown resource' }); return; }
 
   const host = new URL(BASE_URL).host;
-
   res.json({
     subject: `acct:${identity.id}@${host}`,
     aliases: [
@@ -261,34 +466,42 @@ app.get('/.well-known/webfinger', (req, res) => {
       `did:web:${host}:users:${identity.id}`,
     ],
     links: [
-      {
-        rel: 'http://www.w3.org/ns/solid/terms#storage',
-        href: `${CSS_URL}markj/`,
-      },
-      {
-        rel: 'http://webfinger.net/rel/profile-page',
-        href: `${BASE_URL}/users/${identity.id}/profile`,
-      },
-      {
-        rel: 'self',
-        type: 'application/activity+json',
-        href: `${BASE_URL}/users/${identity.id}/profile`,
-      },
+      { rel: 'http://www.w3.org/ns/solid/terms#storage', href: `${CSS_URL}${identity.id}/` },
+      { rel: 'http://webfinger.net/rel/profile-page', href: `${BASE_URL}/users/${identity.id}/profile` },
+      { rel: 'self', type: 'application/activity+json', href: `${BASE_URL}/users/${identity.id}/profile` },
     ],
   });
+});
+
+// ── List users (for admin/dashboard) ─────────────────────────
+
+app.get('/users', (_req, res) => {
+  const users = [...identities.values()]
+    .filter(i => i.type === 'user')
+    .map(u => ({
+      id: u.id,
+      name: u.name,
+      agents: [...identities.values()].filter(a => a.type === 'agent' && a.owner === u.id).map(a => a.id),
+      createdAt: u.createdAt,
+    }));
+  res.json(users);
 });
 
 // ── Start ───────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`[identity] Context Graphs Identity Server started on port ${PORT}`);
-  console.log(`[identity] Base URL: ${BASE_URL}`);
-  console.log(`[identity] Endpoints:`);
-  console.log(`[identity]   GET /.well-known/did.json          — Server DID document`);
-  console.log(`[identity]   GET /users/:id/did.json            — User DID document`);
-  console.log(`[identity]   GET /agents/:id/did.json           — Agent DID document`);
-  console.log(`[identity]   GET /users/:id/profile             — WebID profile (Turtle)`);
-  console.log(`[identity]   GET /agents/:id/profile            — Agent profile (Turtle)`);
-  console.log(`[identity]   GET /.well-known/webfinger         — RFC 7033 WebFinger`);
-  console.log(`[identity]   GET /health                        — Health check`);
+  log(`Context Graphs Identity Server v2 started on port ${PORT}`);
+  log(`Base URL: ${BASE_URL}`);
+  log(`CSS URL: ${CSS_URL}`);
+  log(`Endpoints:`);
+  log(`  POST /register                      — Register new human + first agent`);
+  log(`  POST /register-agent                — Register additional agent`);
+  log(`  POST /tokens                        — Issue bearer token`);
+  log(`  POST /tokens/verify                 — Verify bearer token`);
+  log(`  GET  /users                         — List registered users`);
+  log(`  GET  /users/:id/did.json            — User DID document`);
+  log(`  GET  /agents/:id/did.json           — Agent DID document`);
+  log(`  GET  /users/:id/profile             — WebID profile`);
+  log(`  GET  /.well-known/webfinger         — WebFinger`);
+  log(`  GET  /health                        — Health check`);
 });
