@@ -41,3 +41,19 @@ export type { DidDocument, VerificationMethod, ServiceEndpoint, DidResolutionRes
 
 // ── IPFS Anchoring ──────────────────────────────────────────
 export { computeCid, computeLatticeCids, pinToIPFS, computeDescriptorAnchor } from './ipfs.js';
+
+// ── Zero-Copy Anchor Receipts ────────────────────────────────
+export {
+  writeAnchor,
+  writeAnchors,
+  readAnchors,
+} from './anchors.js';
+
+export type {
+  IpfsAnchorReceipt,
+  SignatureAnchorReceipt,
+  EncryptionAnchorReceipt,
+  PgslAnchorReceipt,
+  ActivityAnchorReceipt,
+  AnchorReceipt,
+} from './anchors.js';

@@ -243,6 +243,10 @@ export {
   computeLatticeCids,
   pinToIPFS,
   computeDescriptorAnchor,
+  // Zero-Copy Anchor Receipts
+  writeAnchor,
+  writeAnchors,
+  readAnchors,
 } from './solid/index.js';
 
 export type {
@@ -267,6 +271,12 @@ export type {
   VerificationMethod,
   ServiceEndpoint,
   DidResolutionResult,
+  IpfsAnchorReceipt,
+  SignatureAnchorReceipt,
+  EncryptionAnchorReceipt,
+  PgslAnchorReceipt,
+  ActivityAnchorReceipt,
+  AnchorReceipt,
 } from './solid/index.js';
 
 // ── PGSL (Poly-Granular Sequence Lattice) ───────────────────
