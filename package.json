@@ -84,6 +84,7 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
     "@huggingface/transformers": "^3.8.1",
     "@noble/hashes": "^2.0.1",
     "ethers": "^6.16.0",
