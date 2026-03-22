@@ -443,7 +443,7 @@ async function toolPublishContext(args: {
 
   try {
     const slug = result.descriptorUrl.split('/').pop()?.replace('.ttl', '');
-    const anchorUrl = `${pod}anchors/${slug}.json`;
+    const anchorUrl = `${podUrl}anchors/${slug}.json`;
     log(`Writing anchor to ${anchorUrl}`);
     const anchorResp = await fetch(anchorUrl, {
       method: 'PUT',
