@@ -234,3 +234,58 @@ export interface IdentityAnchors {
   // Descriptor signature
   readonly descriptorSignature?: SignedDescriptor;
 }
+
+// ═════════════════════════════════════════════════════════════
+//  Universal Wallet / External Credentials
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * A W3C Verifiable Credential from any issuer — not just our delegation VCs.
+ * Supports Open Badges 3.0, IEEE LERS, government IDs, university creds, etc.
+ */
+export interface ExternalCredential {
+  readonly type: ExternalCredentialType;
+  readonly issuer: string;              // DID or URL of the issuing authority
+  readonly credentialUrl: string;       // URL where the VC can be fetched
+  readonly subjectId: string;           // DID of the credential subject
+  readonly issuedAt: string;
+  readonly expiresAt?: string;
+  readonly credentialType: string[];    // VC type array e.g. ["VerifiableCredential", "OpenBadgeCredential"]
+  readonly claims: Record<string, unknown>;  // extracted claims
+  readonly verified?: boolean;          // has the signature been checked?
+  readonly verifiedAt?: string;
+}
+
+export type ExternalCredentialType =
+  | 'W3C_VC'                // Generic W3C Verifiable Credential
+  | 'OpenBadge'             // Open Badges 3.0
+  | 'IEEE_LERS'             // IEEE Learning & Employment Record
+  | 'UniversityDegree'      // Academic credential
+  | 'GovernmentID'          // Government-issued identity
+  | 'ProfessionalCert'      // Professional certification
+  | 'AgentCapability';      // Agent capability attestation
+
+/**
+ * A Universal Wallet that can hold credentials from any standard.
+ * Implements the W3C Universal Wallet specification conceptually.
+ */
+export interface UniversalWallet {
+  readonly ownerId: string;             // DID of the wallet owner
+  readonly credentials: readonly ExternalCredential[];
+  readonly ethereumAddress?: string;    // optional linked Ethereum wallet
+  readonly webId?: string;              // optional linked WebID
+  readonly did: string;                 // the wallet's own DID
+}
+
+/**
+ * Result of presenting a credential for trust evaluation.
+ * The trust facet can consume this to make trust decisions.
+ */
+export interface CredentialPresentation {
+  readonly credential: ExternalCredential;
+  readonly presentedBy: string;         // DID of the presenter
+  readonly presentedAt: string;
+  readonly purpose: string;             // why it was presented (e.g. "publish_authorization")
+  readonly accepted: boolean;           // did the consuming agent accept it?
+  readonly trustImpact: 'raise' | 'lower' | 'neutral';  // how it affected trust evaluation
+}

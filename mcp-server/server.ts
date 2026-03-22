@@ -113,6 +113,25 @@ const DIRECTORY_URL = process.env['CG_DIRECTORY_URL'] ?? undefined;
 const IDENTITY_SERVER_URL = process.env['CG_IDENTITY_URL']
   ?? 'https://context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 
+// Local mode: detect when running without cloud services
+const IS_LOCAL = BASE_URL.includes('localhost') || BASE_URL.includes('127.0.0.1');
+const IS_CLOUD = !IS_LOCAL;
+
+// Progressive tool tiers
+const TOOL_TIER = process.env['CG_TOOL_TIER'] ?? 'all';
+const CORE_TOOLS = new Set(['publish_context', 'discover_context', 'get_descriptor', 'get_pod_status', 'subscribe_to_pod']);
+const FEDERATION_TOOLS = new Set(['register_agent', 'revoke_agent', 'verify_agent', 'discover_all', 'subscribe_all', 'list_known_pods', 'add_pod', 'remove_pod', 'discover_directory', 'publish_directory', 'resolve_webfinger']);
+const CRYPTO_TOOLS = new Set(['setup_identity', 'link_wallet', 'check_balance']);
+const PGSL_TOOLS = new Set(['pgsl_ingest', 'pgsl_resolve', 'pgsl_lattice_status', 'pgsl_meet', 'pgsl_to_turtle']);
+
+function isToolEnabled(toolName: string): boolean {
+  if (TOOL_TIER === 'all') return true;
+  if (TOOL_TIER === 'core') return CORE_TOOLS.has(toolName);
+  if (TOOL_TIER === 'standard') return CORE_TOOLS.has(toolName) || FEDERATION_TOOLS.has(toolName);
+  if (TOOL_TIER === 'full') return CORE_TOOLS.has(toolName) || FEDERATION_TOOLS.has(toolName) || CRYPTO_TOOLS.has(toolName);
+  return true; // unknown tier = all
+}
+
 const CSS_CONFIG = resolve(__dirname, '..', 'examples', 'multi-agent', 'css-config.json');
 const CSS_BIN = resolve(__dirname, 'node_modules', '.bin', 'community-solid-server');
 
@@ -233,6 +252,8 @@ async function ensurePod(): Promise<void> {
     body: '',
   });
   log(`Pod ready: ${homePod.url}`);
+  // Auto-bootstrap: ensure agent is registered on the pod
+  await ensureRegistry();
 }
 
 async function ensureRegistry(): Promise<void> {
@@ -803,8 +824,10 @@ async function toolResolveWebfinger(args: { resource: string }): Promise<string>
 
 /**
  * setup_identity — first-time onboarding for a human.
- * Creates their identity on the identity server, provisions their pod,
- * registers their first agent, and gets a bearer token.
+ *
+ * Two modes:
+ *   Cloud: registers on the identity server, provisions pod, gets bearer token.
+ *   Local: provisions pod + registry locally, no internet needed.
  */
 async function toolSetupIdentity(args: {
   name?: string;
@@ -817,7 +840,65 @@ async function toolSetupIdentity(args: {
   const agentId = `claude-code-${userId}`;
   const agentName = args.agent_name ?? `Claude Code (${name})`;
 
-  // 1. Register on identity server
+  await ensureCSS();
+  const podUrl = `${BASE_URL}${userId}/`;
+
+  // ── Local mode: no identity server needed ──────────────────
+  if (IS_LOCAL) {
+    // Provision pod
+    await solidFetch(podUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'text/turtle',
+        'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+      },
+      body: '',
+    });
+
+    const webId = `${podUrl}profile#me` as IRI;
+    const agentIri = `urn:agent:anthropic:${agentId}` as IRI;
+
+    // Write agent registry
+    const profile = createOwnerProfile(webId, name);
+    const profileWithAgent = addAuthorizedAgent(profile, {
+      agentId: agentIri,
+      delegatedBy: webId,
+      label: agentName,
+      isSoftwareAgent: true,
+      scope: 'ReadWrite',
+      validFrom: new Date().toISOString(),
+    });
+    await writeAgentRegistry(profileWithAgent, podUrl, { fetch: solidFetch });
+
+    const agent = profileWithAgent.authorizedAgents.find(a => a.agentId === agentIri)!;
+    const credential = createDelegationCredential(profileWithAgent, agent, podUrl as IRI);
+    await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
+
+    return [
+      `Identity created (local mode)!`,
+      ``,
+      `  Name: ${name}`,
+      `  User ID: ${userId}`,
+      `  WebID: ${webId}`,
+      `  Pod: ${podUrl}`,
+      `  Agent: ${agentIri}`,
+      `  Mode: LOCAL (no internet required)`,
+      ``,
+      `To configure another Claude Code instance:`,
+      `  CG_POD_NAME="${userId}"`,
+      `  CG_AGENT_ID="${agentIri}"`,
+      `  CG_OWNER_WEBID="${webId}"`,
+      `  CG_OWNER_NAME="${name}"`,
+      `  CG_BASE_URL="${BASE_URL}"`,
+      ``,
+      `Your pod is ready. Discover context at:`,
+      `  ${podUrl}.well-known/context-graphs`,
+      ``,
+      `To switch to cloud mode later, set CG_BASE_URL to a remote CSS.`,
+    ].join('\n');
+  }
+
+  // ── Cloud mode: register on identity server ──────────────────
   let registerResult: any;
   try {
     const resp = await fetch(`${IDENTITY_SERVER_URL}/register`, {
@@ -841,12 +922,10 @@ async function toolSetupIdentity(args: {
       ].filter(Boolean).join('\n');
     }
   } catch (err) {
-    return `Cannot reach identity server at ${IDENTITY_SERVER_URL}: ${(err as Error).message}`;
+    return `Cannot reach identity server at ${IDENTITY_SERVER_URL}: ${(err as Error).message}\n\nTip: Set CG_BASE_URL to http://localhost:3456/ to use local mode without internet.`;
   }
 
-  // 2. Provision pod on CSS
-  await ensureCSS();
-  const podUrl = `${BASE_URL}${userId}/`;
+  // Provision pod on CSS
   await solidFetch(podUrl, {
     method: 'PUT',
     headers: {
@@ -856,7 +935,7 @@ async function toolSetupIdentity(args: {
     body: '',
   });
 
-  // 3. Write agent registry on the pod
+  // Write agent registry
   const profile = createOwnerProfile(registerResult.webId as IRI, name);
   const profileWithAgent = addAuthorizedAgent(profile, {
     agentId: `urn:agent:anthropic:${agentId}` as IRI,
@@ -868,7 +947,6 @@ async function toolSetupIdentity(args: {
   });
   await writeAgentRegistry(profileWithAgent, podUrl, { fetch: solidFetch });
 
-  // 4. Write delegation credential
   const agent = profileWithAgent.authorizedAgents.find(a => a.agentId === `urn:agent:anthropic:${agentId}`)!;
   const credential = createDelegationCredential(profileWithAgent, agent, podUrl as IRI);
   await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
@@ -885,6 +963,7 @@ async function toolSetupIdentity(args: {
     `  Agent DID: ${registerResult.agentDid}`,
     `  Token: ${registerResult.token}`,
     `  Expires: ${registerResult.expiresAt}`,
+    `  Mode: CLOUD (${IDENTITY_SERVER_URL})`,
     ``,
     `To configure another Claude Code instance:`,
     `  CG_POD_NAME="${userId}"`,
@@ -1130,7 +1209,7 @@ const mcpServer = new Server(
 // ── Tool Definitions ────────────────────────────────────────
 
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
+  tools: ([
     // ── Core tools ──
     {
       name: 'publish_context',
@@ -1399,7 +1478,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: 'Serialize the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance — all as typed RDF resources with the pgsl: vocabulary.',
       inputSchema: { type: 'object' as const, properties: {} },
     },
-  ],
+  ] as Array<{name: string; description: string; inputSchema: object}>).filter(t => isToolEnabled(t.name)),
 }));
 
 // ── Tool Dispatch ───────────────────────────────────────────

@@ -34,6 +34,10 @@ export type {
   X402PaymentOption,
   X402PaymentReceipt,
   IdentityAnchors,
+  ExternalCredential,
+  ExternalCredentialType,
+  UniversalWallet,
+  CredentialPresentation,
 } from './types.js';
 
 export { CHAIN_CONFIGS } from './types.js';

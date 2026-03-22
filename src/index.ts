@@ -413,4 +413,8 @@ export type {
   X402PaymentRequired,
   X402PaymentOption,
   X402PaymentReceipt,
+  ExternalCredential,
+  ExternalCredentialType,
+  UniversalWallet,
+  CredentialPresentation,
 } from './crypto/index.js';
