@@ -468,3 +468,39 @@ export type {
   ZKProof,
   SelectiveDisclosure,
 } from './crypto/index.js';
+
+// ── SDK (3-line developer API) ───────────────────────────────
+export { ContextGraphsSDK } from './sdk.js';
+export type {
+  ContextGraphsConfig,
+  PublishOptions as SDKPublishOptions,
+  SearchOptions,
+  SearchResult,
+  PublishResult as SDKPublishResult,
+} from './sdk.js';
+
+// ── Extractors (multi-format content extraction) ─────────────
+export {
+  extract,
+  detectFormat,
+} from './extractors/index.js';
+export type {
+  ExtractionResult,
+  TextChunk,
+  SourceFormat,
+} from './extractors/index.js';
+
+// ── Connectors (Notion, Slack, Web → pod sync) ──────────────
+export {
+  createConnector,
+  createNotionConnector,
+  createSlackConnector,
+  createWebConnector,
+} from './connectors/index.js';
+export type {
+  ConnectorType,
+  ConnectorConfig,
+  ConnectorEvent,
+  Connector,
+  SyncState,
+} from './connectors/index.js';
