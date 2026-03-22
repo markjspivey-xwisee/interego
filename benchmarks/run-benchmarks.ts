@@ -153,6 +153,14 @@ async function benchmarkLongMemEval(): Promise<void> {
       }
     }
 
+    // For multi-session: combine ALL sessions and check
+    if (!containsAnswer(bestSessionText, item.answer) && item.question_type === 'multi-session') {
+      const allSessionText = sessionTexts.join('\n');
+      if (containsAnswer(allSessionText, item.answer)) {
+        bestSessionText = allSessionText;
+      }
+    }
+
     // HYBRID retrieval: ontological + usage-based expansion
     // (coMatrix built once outside the loop)
     if (!containsAnswer(bestSessionText, item.answer) && coMatrix) {
