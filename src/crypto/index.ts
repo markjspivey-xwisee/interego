@@ -72,3 +72,55 @@ export {
   verifySiweSignature,
   createAgentKitWallet,
 } from './wallet.js';
+
+// E2E Encryption (real NaCl / tweetnacl)
+export {
+  generateKeyPair,
+  generateContentKey,
+  encryptContent,
+  decryptContent,
+  wrapKeyForRecipient,
+  unwrapKey,
+  createEncryptedEnvelope,
+  openEncryptedEnvelope,
+  reEncryptForRecipients,
+  envelopeToJson,
+  envelopeFromJson,
+} from './encryption.js';
+
+export type {
+  EncryptionKeyPair,
+  ContentKey,
+  EncryptedContent,
+  WrappedKey,
+  EncryptedEnvelope,
+} from './encryption.js';
+
+// Zero-Knowledge Proofs
+export {
+  commit,
+  verifyCommitment,
+  proveConfidenceAboveThreshold,
+  verifyConfidenceProof,
+  buildMerkleTree,
+  generateMerkleProof,
+  verifyMerkleProof,
+  proveDelegationMembership,
+  verifyDelegationMembership,
+  proveTemporalOrdering,
+  verifyTemporalProof,
+  proveFragmentMembership,
+  verifyFragmentMembership,
+  createSelectiveDisclosure,
+} from './zk/index.js';
+
+export type {
+  Commitment,
+  RangeProof,
+  MerkleProof,
+  MerklePathElement,
+  TemporalProof,
+  FragmentMembershipProof,
+  ZKProof,
+  SelectiveDisclosure,
+} from './zk/index.js';
