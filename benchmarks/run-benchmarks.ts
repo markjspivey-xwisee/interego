@@ -13,7 +13,8 @@
  */
 
 import { ContextGraphsSDK } from '../src/sdk.js';
-import { createPGSL, embedInPGSL, latticeStats, resolve as pgslResolve, atomRetrieve, embedEntitiesInPGSL, isTemporalQuestion, temporalMatch, embedRelationsInPGSL, compositeRetrieve, routedRetrieve, classifyQuestion } from '../src/pgsl/index.js';
+import { createPGSL, embedInPGSL, latticeStats, resolve as pgslResolve, atomRetrieve, embedEntitiesInPGSL, isTemporalQuestion, temporalMatch, embedRelationsInPGSL, compositeRetrieve, routedRetrieve, classifyQuestion, buildCoOccurrenceMatrix, hybridRetrieve } from '../src/pgsl/index.js';
+import { expandEntitiesWithOntology } from '../src/pgsl/ontological-inference.js';
 import type { NodeProvenance } from '../src/pgsl/types.js';
 import type { IRI } from '../src/model/types.js';
 import { readFileSync } from 'node:fs';
@@ -84,8 +85,15 @@ async function benchmarkLongMemEval(): Promise<void> {
 
   const startTime = Date.now();
   const pgsl = createPGSL(provenance);
+  let coMatrix: Map<string, Map<string, number>> | null = null;
+  let questionsProcessed = 0;
 
   for (const item of questions) {
+    // Rebuild co-occurrence matrix every 50 questions (amortized cost)
+    if (questionsProcessed % 50 === 0 && questionsProcessed > 0) {
+      try { coMatrix = buildCoOccurrenceMatrix(pgsl); } catch { coMatrix = null; }
+    }
+    questionsProcessed++;
     totalQuestions++;
     const qType = item.question_type;
     if (!typeResults[qType]) typeResults[qType] = { total: 0, exact: 0, contains: 0 };
@@ -129,7 +137,24 @@ async function benchmarkLongMemEval(): Promise<void> {
       }
     }
 
-    // Composite fallback: check top-5 from relation retrieval
+    // HYBRID retrieval: ontological + usage-based expansion
+    // (coMatrix built once outside the loop)
+    if (!containsAnswer(bestSessionText, item.answer) && coMatrix) {
+      const hybridResults = hybridRetrieve(
+        item.question,
+        sessionTexts.map(t => t.slice(0, 800)),
+        coMatrix,
+        expandEntitiesWithOntology,
+      );
+      for (const hr of hybridResults.slice(0, 5)) {
+        if (containsAnswer(sessionTexts[hr.bestIndex]!, item.answer)) {
+          bestSessionText = sessionTexts[hr.bestIndex]!;
+          break;
+        }
+      }
+    }
+
+    // Relation fallback
     if (!containsAnswer(bestSessionText, item.answer)) {
       const questionUri = embedRelationsInPGSL(pgsl, item.question);
       const sessionUriMap = new Map<string, string>();

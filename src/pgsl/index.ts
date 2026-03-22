@@ -85,3 +85,16 @@ export type {
   QuestionType,
   RoutedRetrievalResult,
 } from './question-router.js';
+export {
+  buildCoOccurrenceMatrix,
+  getCoOccurringAtoms,
+  yonedaEmbedding,
+  yonedaSimilarity,
+  detectEmergentSynonyms,
+  usageExpand,
+  usageBasedSimilarity,
+  hybridRetrieve,
+} from './usage-semantics.js';
+export type {
+  CoOccurrence,
+} from './usage-semantics.js';
