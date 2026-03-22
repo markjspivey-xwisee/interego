@@ -48,12 +48,60 @@ export interface IpfsConfig {
 //  Wallets (Coinbase AgentKit / Generic)
 // ═════════════════════════════════════════════════════════════
 
+/** Chain configuration */
+export type ChainMode = 'local' | 'base-sepolia' | 'base';
+
+export interface ChainConfig {
+  readonly mode: ChainMode;
+  readonly chainId: number;
+  readonly rpcUrl?: string;
+  readonly blockExplorer?: string;
+  readonly faucetUrl?: string;           // testnet only
+  readonly paymasterUrl?: string;        // ERC-4337 paymaster
+  readonly gasModel: 'human-pays' | 'agent-independent' | 'sponsored';
+}
+
+/** Pre-configured chain settings */
+export const CHAIN_CONFIGS: Record<ChainMode, ChainConfig> = {
+  local: {
+    mode: 'local',
+    chainId: 0,
+    gasModel: 'human-pays',
+  },
+  'base-sepolia': {
+    mode: 'base-sepolia',
+    chainId: 84532,
+    rpcUrl: 'https://sepolia.base.org',
+    blockExplorer: 'https://sepolia.basescan.org',
+    faucetUrl: 'https://faucet.quicknode.com/base/sepolia',
+    gasModel: 'sponsored',
+  },
+  base: {
+    mode: 'base',
+    chainId: 8453,
+    rpcUrl: 'https://mainnet.base.org',
+    blockExplorer: 'https://basescan.org',
+    gasModel: 'human-pays',
+  },
+};
+
+/** Wallet balance info */
+export interface WalletBalance {
+  readonly address: string;
+  readonly chainId: number;
+  readonly balance: string;            // in ETH (human-readable)
+  readonly balanceWei: string;         // in wei
+  readonly funded: boolean;            // balance > 0
+  readonly sufficient: boolean;        // enough for typical operations
+  readonly fundingInstructions?: string;
+}
+
 /** A blockchain wallet (human or agent) */
 export interface Wallet {
   readonly address: string;         // 0x... Ethereum address
   readonly type: 'human' | 'agent';
-  readonly provider: 'agentkit' | 'external' | 'mock';
-  readonly chainId: number;         // 1 = mainnet, 84532 = base-sepolia
+  readonly provider: 'agentkit' | 'external' | 'ethers';
+  readonly chainId: number;         // 0 = local, 84532 = base-sepolia, 8453 = base
   readonly label?: string;
 }
 

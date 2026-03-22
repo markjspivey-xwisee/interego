@@ -140,7 +140,7 @@ describe('Real Wallets', () => {
     const wallet = await createWallet('agent', 'Claude Code');
     expect(wallet.address.startsWith('0x')).toBe(true);
     expect(wallet.type).toBe('agent');
-    expect(wallet.chainId).toBe(84532); // Base Sepolia
+    expect(wallet.chainId).toBe(0); // local mode default
   });
 
   it('different wallets have different addresses (real randomness)', async () => {

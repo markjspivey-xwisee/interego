@@ -26,6 +26,7 @@
 
 import express from 'express';
 import * as crypto from 'node:crypto';
+import { ethers } from 'ethers';
 
 // ── Config ──────────────────────────────────────────────────
 
@@ -505,8 +506,18 @@ app.post('/siwe/verify', (req, res) => {
   }
   const walletAddress = addressMatch[0].toLowerCase();
 
-  // In production: use ethers.js or viem to verify the signature
-  // For now: accept the signature and look up the user by wallet
+  // Verify the signature using ethers.js — real ECDSA recovery
+  try {
+    const recovered = ethers.verifyMessage(message, signature);
+    if (recovered.toLowerCase() !== walletAddress) {
+      res.status(401).json({ valid: false, error: `Signature mismatch: expected ${walletAddress}, recovered ${recovered.toLowerCase()}` });
+      return;
+    }
+  } catch (err) {
+    res.status(401).json({ valid: false, error: `Signature verification failed: ${(err as Error).message}` });
+    return;
+  }
+
   const user = [...identities.values()].find(
     i => i.type === 'user' && (i as any).walletAddress === walletAddress
   );
@@ -575,6 +586,243 @@ app.get('/users', (_req, res) => {
       createdAt: u.createdAt,
     }));
   res.json(users);
+});
+
+// ── Wallet Linking ──────────────────────────────────────────
+
+/**
+ * POST /wallet/link — Link an existing Ethereum wallet to a user account.
+ * Body: { userId, walletAddress, siweMessage, signature }
+ * The user signs a SIWE message proving they own the wallet.
+ */
+app.post('/wallet/link', (req, res) => {
+  const { userId, walletAddress, siweMessage, signature } = req.body;
+  if (!userId || !walletAddress || !siweMessage || !signature) {
+    res.status(400).json({ error: 'userId, walletAddress, siweMessage, and signature are required' });
+    return;
+  }
+
+  const user = identities.get(userId);
+  if (!user || user.type !== 'user') {
+    res.status(404).json({ error: `User '${userId}' not found` });
+    return;
+  }
+
+  // Verify the SIWE signature with real ECDSA recovery
+  try {
+    const recovered = ethers.verifyMessage(siweMessage, signature);
+    if (recovered.toLowerCase() !== walletAddress.toLowerCase()) {
+      res.status(401).json({ error: `Signature mismatch: expected ${walletAddress}, recovered ${recovered}` });
+      return;
+    }
+  } catch (err) {
+    res.status(401).json({ error: `Signature verification failed: ${(err as Error).message}` });
+    return;
+  }
+
+  // Link the wallet to the user
+  (user as any).walletAddress = walletAddress.toLowerCase();
+  log(`Linked wallet ${walletAddress} to user ${userId}`);
+
+  res.json({
+    linked: true,
+    userId,
+    walletAddress: walletAddress.toLowerCase(),
+    message: 'Wallet linked. You can now use SIWE to authenticate.',
+  });
+});
+
+/**
+ * GET /wallet/status/:userId — Check if a user has a linked wallet
+ */
+app.get('/wallet/status/:userId', (req, res) => {
+  const user = identities.get(req.params.userId);
+  if (!user || user.type !== 'user') {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  const walletAddress = (user as any).walletAddress;
+  res.json({
+    userId: user.id,
+    hasWallet: !!walletAddress,
+    walletAddress: walletAddress ?? null,
+  });
+});
+
+// ── Wallet Connect Web Page ─────────────────────────────────
+
+/**
+ * GET /connect — Web page for connecting an existing Ethereum wallet.
+ * Uses MetaMask/Coinbase Wallet/WalletConnect to sign a SIWE message.
+ */
+app.get('/connect', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connect Wallet — Context Graphs</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:#0a0a0f; color:#e0e0e8; display:flex; justify-content:center; align-items:center; min-height:100vh; }
+  .card { background:#12121a; border:1px solid #2a2a3a; border-radius:12px; padding:32px; max-width:480px; width:100%; }
+  h1 { font-size:1.4rem; margin-bottom:8px; }
+  p { color:#888; margin-bottom:20px; font-size:0.9rem; line-height:1.5; }
+  input { width:100%; padding:10px 14px; border:1px solid #2a2a3a; border-radius:8px; background:#0a0a0f; color:#e0e0e8; font-size:0.9rem; margin-bottom:12px; }
+  button { width:100%; padding:12px; border:none; border-radius:8px; font-size:0.95rem; cursor:pointer; margin-bottom:10px; }
+  .primary { background:#6366f1; color:white; }
+  .primary:hover { background:#818cf8; }
+  .secondary { background:#1a1a2e; color:#e0e0e8; border:1px solid #2a2a3a; }
+  .secondary:hover { background:#22223a; }
+  .status { padding:12px; border-radius:8px; margin-top:16px; font-size:0.85rem; display:none; }
+  .status.success { display:block; background:#0a2a0a; border:1px solid #2a6a2a; color:#6ae66a; }
+  .status.error { display:block; background:#2a0a0a; border:1px solid #6a2a2a; color:#e66a6a; }
+  .status.info { display:block; background:#0a0a2a; border:1px solid #2a2a6a; color:#6a6ae6; }
+  .step { margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid #1a1a2a; }
+  .step:last-child { border-bottom:none; }
+  label { display:block; font-size:0.8rem; color:#888; margin-bottom:4px; }
+  code { background:#1a1a2e; padding:2px 6px; border-radius:4px; font-size:0.85rem; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Connect Wallet to Context Graphs</h1>
+  <p>Link your Ethereum wallet to your Context Graphs identity. This proves you own the wallet via a SIWE (Sign-In With Ethereum) signature.</p>
+
+  <div class="step">
+    <label>Your User ID</label>
+    <input id="userId" placeholder="e.g. markj" />
+  </div>
+
+  <div id="step-metamask" class="step">
+    <button class="primary" onclick="connectMetaMask()">Connect with MetaMask / Browser Wallet</button>
+    <p style="margin-top:8px;margin-bottom:0;">Your wallet will prompt you to sign a message. No transaction, no gas, no cost.</p>
+  </div>
+
+  <div id="step-manual" class="step">
+    <label>Or paste wallet address + signature manually (for CLI users)</label>
+    <input id="manualAddress" placeholder="0x..." />
+    <input id="manualSignature" placeholder="Signature (0x...)" />
+    <button class="secondary" onclick="linkManual()">Link Wallet</button>
+  </div>
+
+  <div id="status" class="status"></div>
+</div>
+
+<script>
+const BASE = window.location.origin;
+
+function setStatus(msg, type) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status ' + type;
+}
+
+async function connectMetaMask() {
+  if (!window.ethereum) {
+    setStatus('No wallet detected. Install MetaMask or use the manual flow below.', 'error');
+    return;
+  }
+
+  const userId = document.getElementById('userId').value.trim();
+  if (!userId) { setStatus('Enter your User ID first.', 'error'); return; }
+
+  try {
+    setStatus('Requesting wallet connection...', 'info');
+    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const address = accounts[0];
+
+    // Get nonce from server
+    const nonceResp = await fetch(BASE + '/siwe/nonce', { method: 'POST' });
+    const { nonce } = await nonceResp.json();
+
+    // Build SIWE message
+    const domain = window.location.host;
+    const uri = window.location.origin;
+    const issuedAt = new Date().toISOString();
+    const siweMessage = domain + ' wants you to sign in with your Ethereum account:\\n'
+      + address + '\\n\\n'
+      + 'Link wallet to Context Graphs identity: ' + userId + '\\n\\n'
+      + 'URI: ' + uri + '\\n'
+      + 'Version: 1\\n'
+      + 'Chain ID: 1\\n'
+      + 'Nonce: ' + nonce + '\\n'
+      + 'Issued At: ' + issuedAt;
+
+    setStatus('Please sign the message in your wallet...', 'info');
+
+    // Request signature
+    const signature = await window.ethereum.request({
+      method: 'personal_sign',
+      params: [siweMessage, address],
+    });
+
+    // Send to server
+    const linkResp = await fetch(BASE + '/wallet/link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        walletAddress: address,
+        siweMessage,
+        signature,
+      }),
+    });
+    const result = await linkResp.json();
+
+    if (result.linked) {
+      setStatus('Wallet ' + address + ' linked to ' + userId + ' successfully! You can close this page.', 'success');
+    } else {
+      setStatus('Link failed: ' + (result.error || 'Unknown error'), 'error');
+    }
+  } catch (err) {
+    setStatus('Error: ' + err.message, 'error');
+  }
+}
+
+async function linkManual() {
+  const userId = document.getElementById('userId').value.trim();
+  const address = document.getElementById('manualAddress').value.trim();
+  const signature = document.getElementById('manualSignature').value.trim();
+
+  if (!userId || !address || !signature) {
+    setStatus('Fill in all fields: User ID, wallet address, and signature.', 'error');
+    return;
+  }
+
+  // Build the same SIWE message the CLI would build
+  const domain = window.location.host;
+  const siweMessage = domain + ' wants you to sign in with your Ethereum account:\\n'
+    + address + '\\n\\n'
+    + 'Link wallet to Context Graphs identity: ' + userId + '\\n\\n'
+    + 'URI: ' + window.location.origin + '\\n'
+    + 'Version: 1\\n'
+    + 'Chain ID: 1\\n'
+    + 'Nonce: manual\\n'
+    + 'Issued At: ' + new Date().toISOString();
+
+  try {
+    const resp = await fetch(BASE + '/wallet/link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, walletAddress: address, siweMessage, signature }),
+    });
+    const result = await resp.json();
+
+    if (result.linked) {
+      setStatus('Wallet ' + address + ' linked to ' + userId + '!', 'success');
+    } else {
+      setStatus('Link failed: ' + (result.error || 'Unknown error'), 'error');
+    }
+  } catch (err) {
+    setStatus('Error: ' + err.message, 'error');
+  }
+}
+</script>
+</body>
+</html>`);
 });
 
 // ── Start ───────────────────────────────────────────────────

@@ -21,6 +21,9 @@ export type {
   IpfsPinResult,
   IpfsAnchor,
   IpfsConfig,
+  ChainMode,
+  ChainConfig,
+  WalletBalance,
   Wallet,
   WalletDelegation,
   SignedDescriptor,
@@ -32,6 +35,8 @@ export type {
   X402PaymentReceipt,
   IdentityAnchors,
 } from './types.js';
+
+export { CHAIN_CONFIGS } from './types.js';
 
 // IPFS (real CID computation via multiformats)
 export {
@@ -45,6 +50,10 @@ export {
 
 // Wallets (real crypto via ethers.js)
 export {
+  setChain,
+  getChainConfig,
+  checkBalance,
+  getConnectedSigner,
   createWallet,
   importWallet,
   exportPrivateKey,

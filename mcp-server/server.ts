@@ -898,6 +898,120 @@ async function toolSetupIdentity(args: {
   ].join('\n');
 }
 
+// ── Wallet Tool Implementations ─────────────────────────────
+
+async function toolLinkWallet(args: {
+  wallet_address: string;
+  signature?: string;
+}): Promise<string> {
+  const address = args.wallet_address;
+  const userId = POD_NAME;
+
+  if (!args.signature) {
+    // Generate SIWE message for the user to sign offline
+    const domain = new URL(IDENTITY_SERVER_URL).host;
+    const nonce = Math.random().toString(36).slice(2, 18);
+    const siweMessage = [
+      `${domain} wants you to sign in with your Ethereum account:`,
+      address,
+      '',
+      `Link wallet to Context Graphs identity: ${userId}`,
+      '',
+      `URI: ${IDENTITY_SERVER_URL}`,
+      `Version: 1`,
+      `Chain ID: 1`,
+      `Nonce: ${nonce}`,
+      `Issued At: ${new Date().toISOString()}`,
+    ].join('\n');
+
+    return [
+      `Sign this message with your wallet to link it to your identity.`,
+      ``,
+      `Message to sign:`,
+      `─────────────────────────────────────`,
+      siweMessage,
+      `─────────────────────────────────────`,
+      ``,
+      `How to sign:`,
+      `  • cast: cast wallet sign --private-key <key> "${siweMessage.replace(/\n/g, '\\n')}"`,
+      `  • Web: Open ${IDENTITY_SERVER_URL}/connect and use MetaMask`,
+      ``,
+      `Then call link_wallet again with your wallet_address and signature.`,
+    ].join('\n');
+  }
+
+  // Verify and link
+  const domain = new URL(IDENTITY_SERVER_URL).host;
+  const siweMessage = [
+    `${domain} wants you to sign in with your Ethereum account:`,
+    address,
+    '',
+    `Link wallet to Context Graphs identity: ${userId}`,
+    '',
+    `URI: ${IDENTITY_SERVER_URL}`,
+    `Version: 1`,
+    `Chain ID: 1`,
+    `Nonce: manual`,
+    `Issued At: ${new Date().toISOString()}`,
+  ].join('\n');
+
+  try {
+    const resp = await fetch(`${IDENTITY_SERVER_URL}/wallet/link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        walletAddress: address,
+        siweMessage,
+        signature: args.signature,
+      }),
+    });
+    const result = await resp.json() as any;
+
+    if (result.linked) {
+      return [
+        `Wallet linked successfully!`,
+        `  Address: ${address}`,
+        `  User: ${userId}`,
+        `  You can now use SIWE to authenticate from any device.`,
+      ].join('\n');
+    }
+    return `Link failed: ${result.error}`;
+  } catch (err) {
+    return `Cannot reach identity server: ${(err as Error).message}`;
+  }
+}
+
+async function toolCheckBalance(args: { address?: string }): Promise<string> {
+  const { checkBalance, getChainConfig } = await import('@foxxi/context-graphs');
+  const chain = getChainConfig();
+
+  if (chain.mode === 'local') {
+    return [
+      `Chain mode: local (no blockchain connection)`,
+      `  No balance checking needed — all crypto operations are off-chain.`,
+      `  Set CG_CHAIN=base-sepolia or CG_CHAIN=base for on-chain operations.`,
+    ].join('\n');
+  }
+
+  const address = args.address ?? MY_DID; // TODO: use stored wallet address
+  const balance = await checkBalance(address);
+
+  const lines = [
+    `Wallet: ${balance.address}`,
+    `Chain: ${chain.mode} (${chain.chainId})`,
+    `Balance: ${balance.balance} ETH`,
+    `Funded: ${balance.funded ? 'Yes' : 'No'}`,
+    `Sufficient for operations: ${balance.sufficient ? 'Yes' : 'No'}`,
+  ];
+
+  if (balance.fundingInstructions) {
+    lines.push('', balance.fundingInstructions);
+  }
+
+  return lines.join('\n');
+}
+
 // ── PGSL Tool Implementations ───────────────────────────────
 
 async function toolPgslIngest(args: {
@@ -1217,6 +1331,28 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['name'],
       },
     },
+    {
+      name: 'link_wallet',
+      description: 'Link an existing Ethereum wallet to your identity. Generates a SIWE message for you to sign offline (with cast, ethers CLI, or MetaMask). Alternatively, open the web connect page at the identity server to sign in browser.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          wallet_address: { type: 'string', description: 'Your Ethereum wallet address (0x...)' },
+          signature: { type: 'string', description: 'SIWE signature (0x...) — if you already signed offline. Omit to get the message to sign.' },
+        },
+        required: ['wallet_address'],
+      },
+    },
+    {
+      name: 'check_balance',
+      description: 'Check the ETH balance of a wallet on the active chain. Returns balance, funding status, and instructions if unfunded.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          address: { type: 'string', description: 'Wallet address to check (default: your wallet)' },
+        },
+      },
+    },
     // ── PGSL tools ──
     {
       name: 'pgsl_ingest',
@@ -1327,6 +1463,12 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Onboarding
       case 'setup_identity':
         result = await toolSetupIdentity(args as Parameters<typeof toolSetupIdentity>[0]);
+        break;
+      case 'link_wallet':
+        result = await toolLinkWallet(args as Parameters<typeof toolLinkWallet>[0]);
+        break;
+      case 'check_balance':
+        result = await toolCheckBalance(args as { address?: string });
         break;
       // PGSL
       case 'pgsl_ingest':

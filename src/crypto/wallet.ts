@@ -23,17 +23,119 @@ import { ethers } from 'ethers';
 import type { IRI } from '../model/types.js';
 import type {
   Wallet,
+  WalletBalance,
   WalletDelegation,
   SignedDescriptor,
   AgentIdentityToken,
   SiweMessage,
   SiweVerification,
+  ChainMode,
+  ChainConfig,
 } from './types.js';
+import { CHAIN_CONFIGS } from './types.js';
 import { sha256 } from './ipfs.js';
 
 // ── Private key storage (in-memory for this process) ─────────
 
 const walletKeys = new Map<string, ethers.HDNodeWallet | ethers.Wallet>();
+
+// ── Chain provider management ────────────────────────────────
+
+let activeChainConfig: ChainConfig = CHAIN_CONFIGS.local;
+let provider: ethers.JsonRpcProvider | null = null;
+
+/**
+ * Set the active chain. Call once at startup based on CG_CHAIN env var.
+ */
+export function setChain(mode: ChainMode): ChainConfig {
+  activeChainConfig = CHAIN_CONFIGS[mode];
+  if (mode !== 'local' && activeChainConfig.rpcUrl) {
+    provider = new ethers.JsonRpcProvider(activeChainConfig.rpcUrl);
+  } else {
+    provider = null;
+  }
+  return activeChainConfig;
+}
+
+/**
+ * Get the active chain config.
+ */
+export function getChainConfig(): ChainConfig {
+  return activeChainConfig;
+}
+
+/**
+ * Check a wallet's balance on the active chain.
+ * Returns balance info with funding instructions if needed.
+ */
+export async function checkBalance(address: string): Promise<WalletBalance> {
+  if (!provider || activeChainConfig.mode === 'local') {
+    return {
+      address,
+      chainId: activeChainConfig.chainId,
+      balance: 'N/A',
+      balanceWei: '0',
+      funded: true, // local mode doesn't need funds
+      sufficient: true,
+    };
+  }
+
+  const balanceWei = await provider.getBalance(address);
+  const balance = ethers.formatEther(balanceWei);
+  const funded = balanceWei > 0n;
+  // ~0.001 ETH is enough for many operations on L2
+  const sufficient = balanceWei >= ethers.parseEther('0.0005');
+
+  let fundingInstructions: string | undefined;
+  if (!funded) {
+    if (activeChainConfig.mode === 'base-sepolia') {
+      fundingInstructions = [
+        `Your wallet ${address} has 0 ETH on Base Sepolia (testnet).`,
+        ``,
+        `To fund it (free):`,
+        `  1. Go to: ${activeChainConfig.faucetUrl}`,
+        `  2. Paste your address: ${address}`,
+        `  3. Request testnet ETH`,
+        ``,
+        `Or use Coinbase AgentKit (CDP keys) for gas sponsorship — no ETH needed.`,
+      ].join('\n');
+    } else if (activeChainConfig.mode === 'base') {
+      fundingInstructions = [
+        `Your wallet ${address} has 0 ETH on Base (mainnet).`,
+        ``,
+        `To fund it:`,
+        `  • Send ETH on Base to: ${address}`,
+        `  • From: Coinbase, MetaMask, or any Base-compatible wallet`,
+        `  • Minimum recommended: 0.001 ETH (~$0.003 at current gas prices)`,
+        ``,
+        `Gas costs on Base L2:`,
+        `  • Mint ERC-8004 agent token: ~0.0001 ETH`,
+        `  • Anchor descriptor on-chain: ~0.00005 ETH`,
+        `  • EIP-712 delegation: FREE (off-chain signature)`,
+      ].join('\n');
+    }
+  }
+
+  return {
+    address,
+    chainId: activeChainConfig.chainId,
+    balance,
+    balanceWei: balanceWei.toString(),
+    funded,
+    sufficient,
+    fundingInstructions,
+  };
+}
+
+/**
+ * Get a connected signer (wallet + provider) for on-chain transactions.
+ * Only works when chain mode is not 'local'.
+ */
+export function getConnectedSigner(address: string): ethers.Wallet | ethers.HDNodeWallet | null {
+  const wallet = walletKeys.get(address);
+  if (!wallet || !provider) return null;
+  return wallet.connect(provider);
+}
 
 // ═════════════════════════════════════════════════════════════
 //  Real Wallet Creation
@@ -46,18 +148,18 @@ const walletKeys = new Map<string, ethers.HDNodeWallet | ethers.Wallet>();
 export async function createWallet(
   type: 'human' | 'agent',
   label: string,
-  chainId: number = 84532,
+  chainId?: number,
 ): Promise<Wallet> {
   const ethersWallet = ethers.Wallet.createRandom();
-
-  // Store the private key so we can sign with it later
   walletKeys.set(ethersWallet.address, ethersWallet);
+
+  const resolvedChainId = chainId ?? activeChainConfig.chainId;
 
   return {
     address: ethersWallet.address,
     type,
-    provider: type === 'agent' ? 'agentkit' : 'external',
-    chainId,
+    provider: 'ethers',
+    chainId: resolvedChainId,
     label,
   };
 }
@@ -69,7 +171,7 @@ export function importWallet(
   privateKey: string,
   type: 'human' | 'agent',
   label: string,
-  chainId: number = 84532,
+  chainId?: number,
 ): Wallet {
   const ethersWallet = new ethers.Wallet(privateKey);
   walletKeys.set(ethersWallet.address, ethersWallet);
@@ -77,8 +179,8 @@ export function importWallet(
   return {
     address: ethersWallet.address,
     type,
-    provider: type === 'agent' ? 'agentkit' : 'external',
-    chainId,
+    provider: 'ethers',
+    chainId: chainId ?? activeChainConfig.chainId,
     label,
   };
 }
