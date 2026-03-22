@@ -35,6 +35,9 @@ import {
   fetchPodDirectory,
   publishPodDirectory,
   resolveWebFinger,
+  pinToIpfs,
+  cryptoComputeCid,
+  toTurtle,
 } from '@foxxi/context-graphs';
 
 import type {
@@ -55,6 +58,25 @@ import type {
 const PORT = parseInt(process.env['PORT'] ?? '8080');
 const CSS_URL = process.env['CSS_URL'] ?? 'http://localhost:3456/';
 const IDENTITY_URL = process.env['IDENTITY_URL'] ?? 'http://localhost:8090';
+
+// Org-level IPFS/CDP keys — used as defaults when users don't provide their own
+const ORG_IPFS_PROVIDER = (process.env['IPFS_PROVIDER'] ?? 'local') as 'pinata' | 'web3storage' | 'local';
+const ORG_IPFS_API_KEY = process.env['IPFS_API_KEY'] ?? '';
+const ORG_CDP_API_KEY_NAME = process.env['CDP_API_KEY_NAME'] ?? '';
+const ORG_CDP_API_KEY_PRIVATE = process.env['CDP_API_KEY_PRIVATE'] ?? '';
+
+/**
+ * Resolve IPFS config: user override (from request headers) > org default > local
+ */
+function resolveIpfsConfig(req: any): { provider: 'pinata' | 'web3storage' | 'local'; apiKey: string } {
+  const userProvider = req.headers?.['x-ipfs-provider'] as string | undefined;
+  const userKey = req.headers?.['x-ipfs-api-key'] as string | undefined;
+
+  if (userProvider && userKey) {
+    return { provider: userProvider as any, apiKey: userKey };
+  }
+  return { provider: ORG_IPFS_PROVIDER, apiKey: ORG_IPFS_API_KEY };
+}
 
 function log(msg: string): void {
   console.log(`[mcp-relay] ${msg}`);
@@ -176,6 +198,22 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
 
   const result = await publish(descriptor, args.graph_content as string, podUrl, { fetch: solidFetch });
 
+  // Pin to IPFS if configured (org-level or user override)
+  const ipfsConfig = resolveIpfsConfig(args._req ?? {});
+  let ipfs: { cid?: string; url?: string; provider?: string } = {};
+  if (ipfsConfig.provider !== 'local' && ipfsConfig.apiKey) {
+    try {
+      const turtle = toTurtle(descriptor);
+      const pinResult = await pinToIpfs(turtle, `descriptor-${descriptor.id}`, ipfsConfig, solidFetch);
+      ipfs = { cid: pinResult.cid, url: pinResult.url, provider: pinResult.provider };
+    } catch (err) {
+      ipfs = { cid: `error: ${(err as Error).message}` };
+    }
+  } else {
+    const turtle = toTurtle(descriptor);
+    ipfs = { cid: cryptoComputeCid(turtle), provider: 'local' };
+  }
+
   return JSON.stringify({
     published: true,
     owner: ownerWebId,
@@ -184,6 +222,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     descriptorUrl: result.descriptorUrl,
     graphUrl: result.graphUrl,
     manifestUrl: result.manifestUrl,
+    ipfs,
   });
 }
 
@@ -523,7 +562,7 @@ app.post('/tool/:name', async (req, res) => {
   }
 
   try {
-    const result = await tool.handler(req.body);
+    const result = await tool.handler({ ...req.body, _req: req });
     res.json(JSON.parse(result));
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
