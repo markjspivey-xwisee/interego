@@ -426,6 +426,7 @@ async function toolPublishContext(args: {
   }
 
   // Write anchor receipt to pod (zero-copy: only metadata, not content)
+  log(`Building anchor receipt for ${result.descriptorUrl}`);
   const anchor = {
     descriptorUrl: result.descriptorUrl,
     graphUrl: result.graphUrl,
@@ -434,7 +435,7 @@ async function toolPublishContext(args: {
     publishedBy: MY_AGENT_ID,
     onBehalfOf: MY_OWNER_WEBID,
     ipfs: ipfsCid ? { cid: ipfsCid, url: ipfsUrl, provider: ipfsProvider } : undefined,
-    contentHash: sha256(turtle),
+    contentHash: typeof sha256 === 'function' ? sha256(turtle) : 'unavailable',
     facetTypes: descriptor.facets.map(f => f.type),
     confidence: (descriptor.facets.find(f => f.type === 'Semiotic') as any)?.epistemicConfidence,
     modalStatus: (descriptor.facets.find(f => f.type === 'Semiotic') as any)?.modalStatus,
@@ -444,7 +445,7 @@ async function toolPublishContext(args: {
     const slug = result.descriptorUrl.split('/').pop()?.replace('.ttl', '');
     const anchorUrl = `${pod}anchors/${slug}.json`;
     log(`Writing anchor to ${anchorUrl}`);
-    const anchorResp = await solidFetch(anchorUrl, {
+    const anchorResp = await fetch(anchorUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(anchor, null, 2),
@@ -452,11 +453,12 @@ async function toolPublishContext(args: {
     if (anchorResp.ok) {
       lines.push(`  Anchor: ${anchorUrl}`);
     } else {
-      log(`Anchor write failed: ${anchorResp.status} ${anchorResp.statusText}`);
+      const errText = await anchorResp.text().catch(() => '');
+      log(`Anchor write failed: ${anchorResp.status} ${anchorResp.statusText} ${errText}`);
       lines.push(`  Anchor: failed (${anchorResp.status})`);
     }
   } catch (err) {
-    log(`Anchor write error: ${(err as Error).message}`);
+    log(`Anchor write error: ${(err as Error).message}\n${(err as Error).stack}`);
   }
 
   lines.push('', 'Turtle:', turtle);
