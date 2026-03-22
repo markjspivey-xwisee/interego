@@ -61,6 +61,11 @@ import {
   fetchPodDirectory,
   publishPodDirectory,
   resolveWebFinger,
+  // IPFS
+  pinToIpfs,
+  pinDescriptor,
+  cryptoComputeCid,
+  sha256,
   // PGSL
   createPGSL,
   mintAtom,
@@ -112,6 +117,11 @@ const KNOWN_PODS_RAW = process.env['CG_KNOWN_PODS'] ?? '';
 const DIRECTORY_URL = process.env['CG_DIRECTORY_URL'] ?? undefined;
 const IDENTITY_SERVER_URL = process.env['CG_IDENTITY_URL']
   ?? 'https://context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+
+// IPFS config
+const IPFS_PROVIDER = (process.env['CG_IPFS_PROVIDER'] ?? 'local') as 'pinata' | 'web3storage' | 'local';
+const IPFS_API_KEY = process.env['CG_IPFS_API_KEY'] ?? '';
+const IPFS_CONFIG = { provider: IPFS_PROVIDER, apiKey: IPFS_API_KEY } as const;
 
 // Local mode: detect when running without cloud services
 const IS_LOCAL = BASE_URL.includes('localhost') || BASE_URL.includes('127.0.0.1');
@@ -368,7 +378,7 @@ async function toolPublishContext(args: {
   const result = await publish(descriptor, args.graph_content, podUrl, { fetch: solidFetch });
   lastPublishedDescriptor = descriptor;
 
-  return [
+  const lines = [
     `Published to ${podUrl}`,
     `  Owner: ${MY_OWNER_WEBID}`,
     `  Agent: ${MY_AGENT_ID}`,
@@ -378,10 +388,26 @@ async function toolPublishContext(args: {
     `  Facets: ${descriptor.facets.map(f => f.type).join(', ')}`,
     `  Confidence: ${args.confidence ?? 0.85}`,
     args.task_description ? `  Task: ${args.task_description}` : '',
-    '',
-    'Turtle:',
-    toTurtle(descriptor),
-  ].filter(Boolean).join('\n');
+  ];
+
+  // Pin to IPFS if configured
+  if (IPFS_PROVIDER !== 'local') {
+    try {
+      const turtle = toTurtle(descriptor);
+      const pinResult = await pinToIpfs(turtle, `descriptor-${descriptor.id}`, IPFS_CONFIG, solidFetch);
+      lines.push(`  IPFS: ${pinResult.cid}`);
+      lines.push(`  IPFS URL: ${pinResult.url}`);
+      lines.push(`  IPFS Provider: ${pinResult.provider}`);
+    } catch (err) {
+      lines.push(`  IPFS: failed — ${(err as Error).message}`);
+    }
+  } else {
+    const cid = cryptoComputeCid(toTurtle(descriptor));
+    lines.push(`  CID (local): ${cid}`);
+  }
+
+  lines.push('', 'Turtle:', toTurtle(descriptor));
+  return lines.filter(Boolean).join('\n');
 }
 
 async function toolDiscoverContext(args: {
