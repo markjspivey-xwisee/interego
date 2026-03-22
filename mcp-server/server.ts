@@ -66,7 +66,6 @@ import {
   pinToIpfs,
   pinDescriptor,
   cryptoComputeCid,
-  sha256,
   // PGSL
   createPGSL,
   mintAtom,
