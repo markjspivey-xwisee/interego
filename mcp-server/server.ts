@@ -442,13 +442,22 @@ async function toolPublishContext(args: {
 
   try {
     const slug = result.descriptorUrl.split('/').pop()?.replace('.ttl', '');
-    await solidFetch(`${pod}anchors/${slug}.json`, {
+    const anchorUrl = `${pod}anchors/${slug}.json`;
+    log(`Writing anchor to ${anchorUrl}`);
+    const anchorResp = await solidFetch(anchorUrl, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(anchor, null, 2),
     });
-    lines.push(`  Anchor: ${pod}anchors/${slug}.json`);
-  } catch { /* best effort */ }
+    if (anchorResp.ok) {
+      lines.push(`  Anchor: ${anchorUrl}`);
+    } else {
+      log(`Anchor write failed: ${anchorResp.status} ${anchorResp.statusText}`);
+      lines.push(`  Anchor: failed (${anchorResp.status})`);
+    }
+  } catch (err) {
+    log(`Anchor write error: ${(err as Error).message}`);
+  }
 
   lines.push('', 'Turtle:', turtle);
   return lines.filter(Boolean).join('\n');
