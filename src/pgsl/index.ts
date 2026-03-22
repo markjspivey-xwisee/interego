@@ -98,3 +98,11 @@ export {
 export type {
   CoOccurrence,
 } from './usage-semantics.js';
+export {
+  parseTemporalQuestion,
+  advancedTemporalRetrieve,
+} from './advanced-temporal.js';
+export type {
+  TemporalQuestionParsed,
+  AdvancedTemporalResult,
+} from './advanced-temporal.js';

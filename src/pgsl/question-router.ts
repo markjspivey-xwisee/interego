@@ -14,6 +14,7 @@
 import type { PGSLInstance } from './types.js';
 import type { IRI } from '../model/types.js';
 import { isTemporalQuestion, temporalMatch } from './temporal-retrieval.js';
+import { advancedTemporalRetrieve } from './advanced-temporal.js';
 import { extractRelations } from './relation-extraction.js';
 import { atomRetrieve } from './retrieval.js';
 import { ontologicalSimilarity, expandEntitiesWithOntology } from './ontological-inference.js';
@@ -108,19 +109,31 @@ function temporalStrategy(
   question: string,
   sessions: readonly { text: string; timestamp?: string; index: number }[],
 ): RoutedRetrievalResult {
-  const matches = temporalMatch(question, sessions);
+  // Try advanced temporal (entity-first, then temporal reasoning)
+  const advanced = advancedTemporalRetrieve(question, sessions);
+  if (advanced.score > 0.05) {
+    return {
+      strategy: 'temporal',
+      bestSessionIndex: advanced.bestSessionIndex,
+      score: advanced.score,
+      evidence: `Advanced temporal (${advanced.method}): ${advanced.matchedEntities.slice(0, 3).join(', ')}`,
+      secondaryIndices: advanced.secondaryIndices,
+    };
+  }
 
+  // Fallback to basic temporal
+  const matches = temporalMatch(question, sessions);
   if (matches.length > 0) {
     return {
       strategy: 'temporal',
       bestSessionIndex: matches[0]!.sessionIndex,
       score: matches[0]!.score,
-      evidence: `Temporal match: ${matches[0]!.markers.map(m => m.value).join(', ')}`,
+      evidence: `Basic temporal: ${matches[0]!.markers.map(m => m.value).join(', ')}`,
       secondaryIndices: matches.slice(1, 3).map(m => m.sessionIndex),
     };
   }
 
-  // Fallback to ontological
+  // Final fallback to ontological
   return factualStrategy(null as any, question, sessions);
 }
 

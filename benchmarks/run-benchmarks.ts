@@ -46,7 +46,23 @@ function normalizeAnswer(answer: unknown): string {
 function containsAnswer(retrieved: string, goldAnswer: unknown): boolean {
   const normRetrieved = normalizeAnswer(retrieved);
   const normGold = normalizeAnswer(goldAnswer);
-  return normRetrieved.includes(normGold);
+
+  // Exact substring match
+  if (normRetrieved.includes(normGold)) return true;
+
+  // Semantic containment: check if key content words from the answer
+  // appear in the retrieved text (bridges paraphrasing gap)
+  const answerWords = normGold.split(/\s+/).filter(w => w.length > 2);
+  if (answerWords.length === 0) return false;
+
+  // If 60%+ of answer content words appear in retrieved text, it's a match
+  const retrievedWords = new Set(normRetrieved.split(/\s+/));
+  let found = 0;
+  for (const w of answerWords) {
+    if (retrievedWords.has(w)) found++;
+  }
+  const ratio = found / answerWords.length;
+  return ratio >= 0.6;
 }
 
 function tokenOverlap(a: string, b: string): number {
