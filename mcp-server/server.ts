@@ -262,6 +262,17 @@ async function ensurePod(): Promise<void> {
     },
     body: '',
   });
+  // Ensure sub-containers exist
+  for (const sub of ['anchors/']) {
+    await fetch(`${homePod.url}${sub}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'text/turtle',
+        'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+      },
+      body: '',
+    }).catch(() => {});
+  }
   log(`Pod ready: ${homePod.url}`);
   // Auto-bootstrap: ensure agent is registered on the pod
   await ensureRegistry();
