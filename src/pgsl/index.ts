@@ -63,3 +63,12 @@ export type {
   TemporalMarker,
   TemporalMatch,
 } from './temporal-retrieval.js';
+export {
+  extractRelations,
+  embedRelationsInPGSL,
+  compositeRetrieve,
+} from './relation-extraction.js';
+export type {
+  Relation,
+  RelationExtractionResult,
+} from './relation-extraction.js';

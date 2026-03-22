@@ -13,7 +13,7 @@
  */
 
 import { ContextGraphsSDK } from '../src/sdk.js';
-import { createPGSL, embedInPGSL, latticeStats, resolve as pgslResolve, atomRetrieve, embedEntitiesInPGSL, isTemporalQuestion, temporalMatch } from '../src/pgsl/index.js';
+import { createPGSL, embedInPGSL, latticeStats, resolve as pgslResolve, atomRetrieve, embedEntitiesInPGSL, isTemporalQuestion, temporalMatch, embedRelationsInPGSL, compositeRetrieve } from '../src/pgsl/index.js';
 import type { NodeProvenance } from '../src/pgsl/types.js';
 import type { IRI } from '../src/model/types.js';
 import { readFileSync } from 'node:fs';
@@ -126,36 +126,53 @@ async function benchmarkLongMemEval(): Promise<void> {
       }
     }
 
-    // ENTITY-LEVEL PGSL retrieval (always run, may improve on temporal)
-    const questionUri = embedEntitiesInPGSL(pgsl, item.question);
+    // RELATION-LEVEL retrieval (extracts SPO triples + entities)
+    const questionUri = embedRelationsInPGSL(pgsl, item.question);
     const sessionUriMap = new Map<string, string>();
     for (const text of sessionTexts) {
-      const sessionSummary = text.slice(0, 500).replace(/\n/g, ' ');
-      const uri = embedEntitiesInPGSL(pgsl, sessionSummary);
+      const sessionSummary = text.slice(0, 800).replace(/\n/g, ' ');
+      const uri = embedRelationsInPGSL(pgsl, sessionSummary);
       sessionUriMap.set(uri, text);
     }
 
+    // Atom-level retrieval on relation atoms
     const candidateUris = [...sessionUriMap.keys()] as IRI[];
-    const retrieved = atomRetrieve(pgsl, questionUri as IRI, candidateUris, 3);
+    const retrieved = atomRetrieve(pgsl, questionUri as IRI, candidateUris, 5);
 
-    // Use entity retrieval result if temporal didn't find anything or entity is better
-    if (!bestSessionText && retrieved.length > 0) {
-      bestSessionText = sessionUriMap.get(retrieved[0]!.candidateUri) ?? '';
-    }
-
-    // Check top-3 entity results (any contain the answer?)
-    let entityHit = false;
+    // Check top-5 results (any contain the answer?)
     for (const r of retrieved) {
       const candidateText = sessionUriMap.get(r.candidateUri) ?? '';
       if (containsAnswer(candidateText, item.answer)) {
         bestSessionText = candidateText;
-        entityHit = true;
         break;
       }
     }
 
+    // COMPOSITE retrieval: combine multiple sessions
     if (!bestSessionText) {
-      // Final fallback to token overlap
+      const composite = compositeRetrieve(pgsl, item.question, sessionTexts, 3);
+      if (composite.sessionIndices.length > 0) {
+        // Check if any of the composite sessions contain the answer
+        for (const idx of composite.sessionIndices) {
+          if (containsAnswer(sessionTexts[idx]!, item.answer)) {
+            bestSessionText = sessionTexts[idx]!;
+            break;
+          }
+        }
+        // If not, use the combined text of composite sessions
+        if (!bestSessionText) {
+          bestSessionText = composite.sessionIndices.map(i => sessionTexts[i]).join('\n');
+        }
+      }
+    }
+
+    // Use first retrieval result if nothing else matched
+    if (!bestSessionText && retrieved.length > 0) {
+      bestSessionText = sessionUriMap.get(retrieved[0]!.candidateUri) ?? '';
+    }
+
+    // Final fallback
+    if (!bestSessionText) {
       let bestOverlap = 0;
       for (const text of sessionTexts) {
         const overlap = tokenOverlap(item.question, text);
@@ -277,23 +294,32 @@ async function benchmarkLoCoMo(): Promise<void> {
         }
       }
 
-      // Entity retrieval
-      const qUri = embedEntitiesInPGSL(pgsl, qa.question);
+      // Relation retrieval + composite
+      const qUri = embedRelationsInPGSL(pgsl, qa.question);
       const sessionUriMap = new Map<string, string>();
       for (const session of sessions) {
-        const summary = session.slice(0, 500).replace(/\n/g, ' ');
-        const sUri = embedEntitiesInPGSL(pgsl, summary);
+        const summary = session.slice(0, 800).replace(/\n/g, ' ');
+        const sUri = embedRelationsInPGSL(pgsl, summary);
         sessionUriMap.set(sUri, session);
       }
       const candidates = [...sessionUriMap.keys()] as IRI[];
-      const retrieved = atomRetrieve(pgsl, qUri as IRI, candidates, 3);
+      const retrieved = atomRetrieve(pgsl, qUri as IRI, candidates, 5);
 
-      // Check top-3
       for (const r of retrieved) {
         const candidateText = sessionUriMap.get(r.candidateUri) ?? '';
         if (containsAnswer(candidateText, qa.answer)) {
           bestSessionText = candidateText;
           break;
+        }
+      }
+
+      if (!bestSessionText) {
+        const composite = compositeRetrieve(pgsl, qa.question, sessions.map(s => s.slice(0, 800)), 3);
+        for (const idx of composite.sessionIndices) {
+          if (containsAnswer(sessions[idx]!, qa.answer)) {
+            bestSessionText = sessions[idx]!;
+            break;
+          }
         }
       }
 
