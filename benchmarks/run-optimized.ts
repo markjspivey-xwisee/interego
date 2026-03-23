@@ -27,24 +27,27 @@ async function answerTemporal(sessions: string[], question: string): Promise<str
   const full = sessions.map((s, i) => `=== Session ${i + 1} ===\n${s}`).join('\n\n');
   const resp = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 200,
-    messages: [{ role: 'user', content: `Read ALL sessions. Answer this temporal question.
+    max_tokens: 800,
+    messages: [{ role: 'user', content: `You are answering a question about timing, dates, or ordering of events from a user's conversation history.
 
-RULES:
-- Give ONLY the answer on line 1 — a number, date, time, or name
-- No "Looking through..." or "Based on..."
-- For "how many days between X and Y" → just the number of days
-- For "which came first" → just the name
-- For "how long" → just the duration
-- For "how old was I when" → just the age
+INSTRUCTIONS:
+- Read ALL sessions completely
+- Pay careful attention to dates, times, day names, and temporal phrases like "first", "before", "after"
+- For "how many days between X and Y" — find exact dates for both events, then calculate the difference
+- For "which came first" — find dates for both, compare
+- For "what time" — find the specific time mentioned
+- For "how long" — find the specific duration mentioned
+- For "how old was I when" — find the user's birth year/age and the event date
+- Give ONLY the specific answer (number, date, time, or event name)
 
+CONVERSATION HISTORY:
 ${full}
 
 Question: ${question}
 
 Answer:` }],
   });
-  return resp.content[0].type === 'text' ? resp.content[0].text.split('\n')[0]!.trim() : '';
+  return resp.content[0].type === 'text' ? resp.content[0].text : '';
 }
 
 async function answerMultiSession(sessions: string[], question: string): Promise<string> {
@@ -98,22 +101,25 @@ async function answerKnowledgeUpdate(sessions: string[], question: string): Prom
   const full = sessions.map((s, i) => `=== Session ${i + 1} ===\n${s}`).join('\n\n');
   const resp = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 200,
-    messages: [{ role: 'user', content: `Read ALL sessions. Find the MOST RECENT/CURRENT value for what's asked about.
+    max_tokens: 400,
+    messages: [{ role: 'user', content: `You are answering a question about the user's CURRENT state, which may have been updated over time.
 
-RULES:
-- If something was updated, use the NEW value
-- If multiple values exist, use the LATEST one
-- Give ONLY the answer — a specific value, number, or yes/no
-- No explanation needed
+INSTRUCTIONS:
+- Read ALL sessions completely
+- Look for information that was UPDATED or CORRECTED later in the conversation
+- If there are contradictions between sessions, use the MOST RECENT information
+- For "do I still" or "am I still" — check if the status changed
+- For "how many now" — check if the count was updated
+- Give ONLY the current/latest answer
 
+CONVERSATION HISTORY:
 ${full}
 
 Question: ${question}
 
 Answer:` }],
   });
-  return resp.content[0].type === 'text' ? resp.content[0].text.split('\n')[0]!.trim() : '';
+  return resp.content[0].type === 'text' ? resp.content[0].text : '';
 }
 
 async function answerPreference(sessions: string[], question: string): Promise<string> {
