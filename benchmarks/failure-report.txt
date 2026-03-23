@@ -1,0 +1,286 @@
+[temporal-reasoning] wrong number
+  Q: How long have I been working before I started my current job at NovaTech?
+  Gold: 4 years and 9 months
+  Ours: 5 years and 9 months
+
+[temporal-reasoning] wrong fact
+  Q: Which book did I finish reading first, 'The Hate U Give' or 'The Nightingale'?
+  Gold: 'The Hate U Give'
+  Ours: The Nightingale
+
+[temporal-reasoning] wrong fact
+  Q: How many months ago did I book the Airbnb in San Francisco?
+  Gold: Five months ago
+  Ours: 3 months
+
+[temporal-reasoning] wrong fact
+  Q: How long did I take to finish 'The Seven Husbands of Evelyn Hugo' and 'The Nightingale' combined?
+  Gold: 5.5 weeks
+  Ours: Looking through the conversation history, I can find the specific timeframes mentioned:
+
+- "The Seven Husbands of Evelyn Hugo": 2.5 weeks (mentioned in Session 3)
+- "The Nightingale": 3 weeks (mention
+
+[temporal-reasoning] wrong fact
+  Q: How long had I been a member of 'Book Lovers Unite' when I attended the meetup?
+  Gold: Two weeks
+  Ours: Looking at the conversation history, I can see there are two different references to "Book Lovers Unite":
+
+1. In Session 1, you mentioned attending a meetup "organized by Book Lovers Unite last week" 
+
+[temporal-reasoning] wrong fact
+  Q: Which airline did I fly with the most in March and April?
+  Gold: United Airlines
+  Ours: Looking through the conversation history for March and April flights:
+
+**March:**
+- Session 1: United Airlines business trip to Chicago (March 10th-12th)
+- Session 2: Southwest Airlines direct flight 
+
+[multi-session] wrong fact
+  Q: How many items of clothing do I need to pick up or return from a store?
+  Gold: 3
+  Ours: Let me look through all the conversation sessions to find every item mentioned that needs to be picked up or returned from a store.
+
+**Session 1:**
+- Navy blue blazer - mentioned needing to pick up fr
+
+[multi-session] wrong fact
+  Q: How many projects have I led or am currently leading?
+  Gold: 2
+  Ours: Looking through all the conversation sessions to find instances where you mentioned leading projects:
+
+**Session 1:**
+- No mention of leading projects
+
+**Session 2:**
+- You mentioned: "I led the data 
+
+[multi-session] wrong fact
+  Q: How many weeks did it take me to watch all the Marvel Cinematic Universe movies and the main Star Wars films?
+  Gold: 3.5 weeks
+  Ours: Looking through both sessions to find the timeframes mentioned:
+
+**Session 1:**
+- Marvel Cinematic Universe movies (22 movies): watched in "two weeks"
+
+**Session 2:**
+- Star Wars main films marathon: 
+
+[multi-session] wrong fact
+  Q: How much total money have I spent on bike-related expenses since the start of the year?
+  Gold: $185
+  Ours: Looking through all sessions to find bike-related expenses with dollar amounts:
+
+**Session 1:**
+- Bike lights: $40
+
+**Session 2:**
+- Bell Zephyr helmet: $120
+
+**Session 3:**
+- No additional expenses m
+
+[multi-session] wrong fact
+  Q: How many different doctors did I visit?
+  Gold: I visited three different doctors: a primary care physician, an ENT specialist, and a dermatologist.
+  Ours: Let me review all the conversation sessions to find every instance where you mentioned visiting or seeing a doctor.
+
+**Session 1:**
+- Dr. Patel (for nasal spray prescription)
+- Dr. Lee (dermatologist 
+
+[multi-session] wrong fact
+  Q: How many weddings have I attended in this year?
+  Gold: I attended three weddings. The couples were Rachel and Mike, Emily and Sarah, and Jen and Tom.
+  Ours: Looking through all the sessions, I need to find every instance where you mentioned attending a wedding.
+
+**Session 1:**
+- You mentioned your cousin's wedding at a vineyard in August (you were a bride
+
+[multi-session] wrong fact
+  Q: How many pieces of furniture did I buy, assemble, sell, or fix in the past few months?
+  Gold: 4
+  Ours: Let me look through all the conversation sessions to find every piece of furniture that was bought, assembled, sold, or fixed.
+
+**Session 1:**
+- Bought a new coffee table (mentioned as "just got")
+- O
+
+[multi-session] wrong fact
+  Q: How many times did I bake something in the past two weeks?
+  Gold: 4
+  Ours: Looking through all sessions to find every instance of baking in the past two weeks:
+
+**Session 1:**
+- Tuesday: Tried a new sourdough bread recipe (mentioned multiple times)
+- Recent chocolate cake fo
+
+[multi-session] wrong fact
+  Q: How many properties did I view before making an offer on the townhouse in the Brookside neighborhood?
+  Gold: I viewed four properties before making an offer on the townhouse in the Brookside neighborhood. The reasons I didn't make an offer on them were: the kitchen of the bungalow needed serious renovation, 
+  Ours: Looking through all the sessions to find every property viewing mentioned:
+
+**Session 1:**
+- 1-bedroom condo viewed on February 10th (noise from highway was a deal-breaker)
+
+**Session 2:**
+- 3-bedroom
+
+[multi-session] wrong fact
+  Q: How many hours of jogging and yoga did I do last week?
+  Gold: 0.5 hours
+  Ours: Looking through all the conversation sessions for your jogging and yoga activities from last week:
+
+**Jogging:**
+- Session 1: You mentioned planning to do workouts during lunch break, but no specific 
+
+[multi-session] wrong fact
+  Q: Which grocery store did I spend the most money at in the past month?
+  Gold: Thrive Market
+  Ours: Looking through all conversation sessions to find grocery store spending amounts:
+
+**Session 1:**
+- Trader Joe's: ~$80 (split between user and sister, so user's portion would be around $40)
+
+**Session
+
+[multi-session] wrong fact
+  Q: How much more did I spend on accommodations per night in Hawaii compared to Tokyo?
+  Gold: $270
+  Ours: Looking through both sessions to find accommodation costs:
+
+**Session 1 (Maui/Hawaii trip):**
+- Luxurious resort in Maui: "costs over $300 per night"
+- This is mentioned multiple times, confirming ove
+
+[multi-session] wrong fact
+  Q: How many doctor's appointments did I go to in March?
+  Gold: 2
+  Ours: Looking through all the conversation sessions to find every doctor's appointment in March:
+
+**Session 1:**
+- March 3rd: Appointment with primary care physician Dr. Smith (diagnosed with bronchitis)
+
+*
+
+[multi-session] wrong fact
+  Q: How many health-related devices do I use in a day?
+  Gold: 4
+  Ours: Looking through all the conversation sessions to find every health-related device mentioned:
+
+**Session 1:**
+- Fitbit (for guided breathing sessions and step tracking)
+
+**Session 2:**  
+- Fitbit Versa
+
+[knowledge-update] wrong fact
+  Q: What was the amount I was pre-approved for when I got my mortgage from Wells Fargo?
+  Gold: $400,000
+  Ours: Based on the conversation history, there is conflicting information about your pre-approval amount. In Session 1, you clearly stated that you "got pre-approved for $350,000 from Wells Fargo." However,
+
+[single-session-preference] preference format mismatch
+  Q: Can you suggest some accessories that would complement my current photography setup?
+  Gold: The user would prefer suggestions of Sony-compatible accessories or high-quality photography gear that can enhance their photography experience. They may not prefer suggestions of other brands' equipm
+  Ours: The user would prefer responses that focus on specific photography equipment recommendations with detailed technical specifications and practical comparisons. They show a strong preference for Sony ca
+
+[single-session-preference] preference format mismatch
+  Q: Can you suggest some activities that I can do in the evening?
+  Gold: The user would prefer suggestions that involve relaxing activities that can be done in the evening, preferably before 9:30 pm. They would not prefer suggestions that involve using their phone or watch
+  Ours: The user would prefer responses that provide structured, detailed schedules and recommendations with specific timeframes and practical implementation tips. They appreciate step-by-step guidance, espec
+
+[single-session-preference] preference format mismatch
+  Q: My kitchen's becoming a bit of a mess again. Any tips for keeping it clean?
+  Gold: The user would prefer responses that acknowledge and build upon their existing efforts to organize their kitchen, such as utilizing their new utensil holder to keep countertops clutter-free. They woul
+  Ours: The user would prefer responses that provide practical, hands-on kitchen maintenance and DIY solutions with detailed step-by-step instructions. They appreciate comprehensive troubleshooting guidance t
+
+[single-session-preference] preference format mismatch
+  Q: I've been struggling with my slow cooker recipes. Any advice on getting better results?
+  Gold: The user would prefer responses that provide tips and advice specifically tailored to their slow cooker experiences, utilizing their recent success with beef stew and interest in making yogurt in the 
+  Ours: The user would prefer responses that focus on practical, detailed cooking instructions with step-by-step guidance, particularly for slow cooker recipes and plant-based/vegan cooking. They appreciate s
+
+[single-session-preference] preference format mismatch
+  Q: What should I serve for dinner this weekend with my homegrown ingredients?
+  Gold: The user would prefer dinner suggestions that incorporate their homegrown cherry tomatoes and herbs like basil and mint, highlighting recipes that showcase their garden produce. They might not prefer 
+  Ours: The user would prefer responses that focus on practical gardening advice and natural, organic approaches to pest control, with specific actionable tips rather than just theoretical information. They a
+
+[single-session-preference] preference format mismatch
+  Q: I've been feeling a bit stuck with my paintings lately. Do you have any ideas on how I can find new inspiration?
+  Gold: The user would prefer responses that build upon their existing sources of inspiration, such as revisiting Instagram art accounts or exploring new techniques from online tutorials. They might also appr
+  Ours: The user would prefer responses that focus on practical, actionable advice for acrylic painting techniques, with specific brand recommendations and detailed step-by-step instructions. They are interes
+
+[single-session-preference] preference format mismatch
+  Q: I've been having trouble with the battery life on my phone lately. Any tips?
+  Gold: The user would prefer responses that build upon their previous mention of purchasing a portable power bank, such as suggestions on how to optimize its use, like ensuring it's fully charged before use.
+  Ours: The user would prefer responses that provide practical, actionable advice with specific product recommendations and detailed comparisons. They appreciate comprehensive information that includes multip
+
+[single-session-preference] preference format mismatch
+  Q: I'm thinking of inviting my colleagues over for a small gathering. Any tips on what to bake?
+  Gold: The user would prefer baking suggestions that take into account their previous success with the lemon poppyseed cake, such as variations of that recipe or other desserts that share similar qualities. 
+  Ours: The user would prefer responses that focus on baking recipes with detailed ingredient lists, step-by-step instructions, and practical tips for storage and preparation. They appear to be an experienced
+
+[single-session-preference] preference format mismatch
+  Q: I'm getting excited about my visit to the music store this weekend. Any tips on what to look for in a new guitar?
+  Gold: The user would prefer responses that highlight the differences between Fender Stratocaster and Gibson Les Paul electric guitars, such as the feel of the neck, weight, and sound profile. They might not
+  Ours: The user would prefer responses that focus on detailed, technical guitar knowledge with practical playing applications. They show interest in specific guitar models (Fender Stratocaster vs Gibson Les 
+
+[single-session-preference] preference format mismatch
+  Q: I was thinking of trying a new coffee creamer recipe. Any recommendations?
+  Gold: The user would prefer responses that suggest variations on their existing almond milk, vanilla extract, and honey creamer recipe or new ideas that align with their goals of reducing sugar intake and s
+  Ours: The user would prefer responses that focus on healthy, homemade alternatives with practical customization options and ingredient substitutions. They are particularly interested in reducing sugar intak
+
+[single-session-preference] preference format mismatch
+  Q: I've been sneezing quite a bit lately. Do you think it might be my living room?
+  Gold: The user would prefer responses that consider the potential impact of their cat, Luna, and her shedding on their sneezing, as well as the recent deep clean of the living room and its possible effect o
+  Ours: The user would prefer responses that focus on practical, step-by-step troubleshooting and actionable solutions for household problems. They appreciate detailed explanations that cover multiple potenti
+
+[single-session-preference] preference format mismatch
+  Q: I've been feeling nostalgic lately. Do you think it would be a good idea to attend my high school reunion?
+  Gold: The user would prefer responses that draw upon their personal experiences and memories, specifically their positive high school experiences such as being part of the debate team and taking advanced pl
+  Ours: The user would prefer responses that acknowledge their personal experiences and educational journey, with practical, structured advice that includes specific resource recommendations. They appreciate 
+
+[single-session-preference] preference format mismatch
+  Q: I'm trying to decide whether to buy a NAS device now or wait. What do you think?
+  Gold: The user would prefer responses that take into account their current home network storage capacity issues and recent reliance on external hard drives, highlighting the potential benefits of a NAS devi
+  Ours: The user would prefer responses that provide practical, beginner-friendly advice about NAS devices with detailed explanations of technical concepts, specific product recommendations organized by price
+
+[single-session-preference] preference format mismatch
+  Q: I've got some free time tonight, any documentary recommendations?
+  Gold: The user would prefer documentary recommendations that are similar in style and theme to 'Our Planet', 'Free Solo', and 'Tiger King', which they have previously enjoyed. They might not prefer recommen
+  Ours: The user would prefer documentary recommendations that focus on nature and wildlife documentaries, particularly those featuring coral reefs and marine ecosystems, with an emphasis on environmental con
+
+[single-session-preference] preference format mismatch
+  Q: I noticed my bike seems to be performing even better during my Sunday group rides. Could there be a reason for this?
+  Gold: The user would prefer responses that reference specific details from their previous interactions, such as the replacement of the bike's chain and cassette, and the use of a new Garmin bike computer. T
+  Ours: The user would prefer responses that focus on practical cycling advice with specific brand mentions (especially Garmin and Specialized), detailed step-by-step instructions, and comprehensive coverage 
+
+[single-session-preference] preference format mismatch
+  Q: Can you suggest some useful accessories for my phone?
+  Gold: The user would prefer suggestions of accessories that are compatible with an iPhone 13 Pro, such as high-quality screen protectors, durable cases, portable power banks, or phone wallet cases. They may
+  Ours: The user would prefer responses that focus on iPhone 13 Pro-specific accessories from well-established, reputable brands like Anker, Mophie, OtterBox, and Spigen. They appreciate detailed brand compar
+
+[single-session-preference] preference format mismatch
+  Q: Can you suggest some activities I can do during my commute to work?
+  Gold: The user would prefer suggestions related to listening to new podcasts or audiobooks, especially the genre beyond true crime or self-improvement, such as history. They may not be interested in activit
+  Ours: The user would prefer responses that focus on commute-friendly activities that complement their established interests in history, science, and educational content. They would likely appreciate suggest
+
+[single-session-preference] preference format mismatch
+  Q: I’m a bit anxious about getting around Tokyo. Do you have any helpful tips?
+  Gold: The user would prefer responses that utilize their existing resources, such as their Suica card and TripIt app, to provide personalized tips for navigating Tokyo's public transportation. They might no
+  Ours: The user would prefer responses that provide detailed, practical travel guidance for Tokyo with specific step-by-step instructions, including transportation routes using the Suica card, exact walking 
+
+[single-session-assistant] wrong fact
+  Q: I was going through our previous conversation about political propaganda and humor, and I was wondering if you could remind me of that Soviet cartoon you mentioned that mocked Western culture?
+  Gold: Nu, pogodi!
+  Ours: The Soviet cartoon the assistant mentioned was "Nu, pogodi!" which mocked Western culture and portrayed the Soviet Union as superior.
+
+[single-session-user] wrong fact
+  Q: Where did I redeem a $5 coupon on coffee creamer?
+  Gold: Target
+  Ours: In your email inbox.
+
+[single-session-user] wrong fact
+  Q: What did I buy for my sister's birthday gift?
+  Gold: a yellow dress
+  Ours: A yellow dress and a pair of earrings to match.

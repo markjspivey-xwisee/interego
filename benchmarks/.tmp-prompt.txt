@@ -1,0 +1,7 @@
+Is this answer semantically equivalent to the gold answer? Numbers must match. Core meaning counts. Answer ONLY "yes" or "no".
+
+Question: What color did I repaint my bedroom walls?
+Generated: Light/lighter shade of gray.
+Gold: a lighter shade of gray
+
+Correct:
