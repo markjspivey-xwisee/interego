@@ -26,6 +26,24 @@ async function llm(prompt: string, mt = 500) {
 
 function ft(sessions: string[]) { return sessions.map((s, i) => `=== Session ${i + 1} ===\n${s}`).join('\n\n'); }
 
+// Split a session into chunks of ~4000 chars at sentence boundaries
+function chunkSession(text: string, maxChunk = 4000): string[] {
+  if (text.length <= maxChunk) return [text];
+  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+  const chunks: string[] = [];
+  let current = '';
+  for (const s of sentences) {
+    if (current.length + s.length > maxChunk && current.length > 0) {
+      chunks.push(current);
+      current = s;
+    } else {
+      current += s;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
 // Fixed judge: handles **yes**, YES, "yes", etc.
 async function judge(q: string, gen: string, gold: string, qtype: string): Promise<boolean> {
   // Preference gets a more generous judge
@@ -52,12 +70,12 @@ Correct?`, 10);
   return clean.startsWith('yes');
 }
 
-// TEMPORAL: Agentic (proven 100%)
+// TEMPORAL: Agentic decomposition (proven 100% without chunking)
 async function answerTemporal(sessions: string[], q: string): Promise<string> {
-  const plan = await llm(`Question: "${q}"\nExtraction tasks needed? JSON: [{"what": "desc", "type": "date|duration|number"}]`, 300);
+  const plan = await llm(`Question: "${q}"\nWhat specific pieces of temporal information need to be extracted? JSON: [{"what": "desc", "type": "date|duration|number"}]`, 300);
   let tasks: any[] = [];
   try { const m = plan.match(/\[[\s\S]*\]/); if (m) tasks = JSON.parse(m[0]); } catch {}
-  if (!tasks.length) tasks = [{ what: 'temporal info', type: 'date' }];
+  if (!tasks.length) tasks = [{ what: 'relevant dates and temporal info', type: 'date' }];
 
   const exts: string[] = [];
   for (const t of tasks.slice(0, 4)) {
@@ -67,53 +85,47 @@ async function answerTemporal(sessions: string[], q: string): Promise<string> {
   return llm(`Using ONLY these extracted facts, answer the question.\nGive ONLY the specific answer — a number, date, time, duration, or name. Nothing else.\n\n${exts.join('\n')}\n\nQ: ${q}\nA:`, 100);
 }
 
-// MULTI-SESSION: Two-pass + VERIFICATION
+// MULTI-SESSION: CHUNKED extraction + aggregation + verification
 async function answerMulti(sessions: string[], q: string): Promise<string> {
-  // Pass 1: Extract per session
-  const exts: string[] = [];
-  for (let i = 0; i < sessions.length; i++) {
-    const r = await llm(`Extract EVERY piece of information relevant to: "${q}"\nBe specific — include exact numbers, names, items.\nIf nothing relevant, say "Nothing relevant in this session."\n\nSession:\n${sessions[i]}\n\nRelevant items/facts:`, 500);
-    exts.push(`Session ${i + 1}:\n${r}`);
+  // Pass 1: Extract from EVERY chunk of EVERY session
+  const allExtractions: string[] = [];
+  for (let si = 0; si < sessions.length; si++) {
+    const chunks = chunkSession(sessions[si]!);
+    const sessionExts: string[] = [];
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const r = await llm(`Extract EVERY piece of information relevant to: "${q}"\nInclude exact numbers, names, items, amounts, dates.\nIf nothing relevant, say "Nothing."\n\nText (Session ${si + 1}, part ${ci + 1}/${chunks.length}):\n${chunks[ci]}\n\nRelevant:`, 400);
+      if (!r.toLowerCase().includes('nothing') && r.trim().length > 5) {
+        sessionExts.push(r.trim());
+      }
+    }
+    if (sessionExts.length > 0) {
+      allExtractions.push(`Session ${si + 1}:\n${sessionExts.join('\n')}`);
+    }
   }
 
-  // Pass 2: Aggregate
-  const agg = await llm(`Combine all findings from all sessions to answer this question.
+  // Pass 2: Aggregate all extractions
+  const agg = await llm(`Combine ALL findings to answer the question.
 
-${exts.join('\n\n')}
+${allExtractions.join('\n\n')}
 
 Question: ${q}
 
 INSTRUCTIONS:
-1. List EVERY relevant item found across ALL sessions
-2. Remove duplicates (same item mentioned in multiple sessions)
-3. Count, sum, or compare as needed
-4. State the answer clearly
+1. List EVERY unique item/fact found
+2. Remove exact duplicates
+3. Count, sum, or compare as the question requires
+4. End with: FINAL ANSWER: [answer]
 
-FINAL ANSWER:`, 600);
+Work:`, 600);
 
-  // Pass 3: Verify — does the answer make sense?
   const finalMatch = agg.match(/FINAL ANSWER:\s*(.+)/i);
   const candidate = finalMatch ? finalMatch[1]!.trim() : agg.split('\n').pop()?.trim() || agg;
 
-  const verify = await llm(`Verify this answer is correct by checking it against the raw sessions.
-
-Question: ${q}
-Candidate answer: ${candidate}
-
-Sessions (verify against these):
-${ft(sessions).slice(0, 4000)}
-
-Is "${candidate}" correct? If not, what should it be? Give ONLY the correct answer:`, 200);
-
-  // If verification gives a different answer, use it
-  const verifyClean = verify.trim();
-  if (verifyClean.toLowerCase().includes('correct') || verifyClean.toLowerCase().includes('yes')) {
-    return candidate;
-  }
-  // Take the verification answer if it's concise
-  if (verifyClean.length < 100 && !verifyClean.toLowerCase().includes('not correct')) {
-    return verifyClean;
-  }
+  // Pass 3: Quick verification
+  const verify = await llm(`Question: ${q}\nCandidate: ${candidate}\n\nIs this correct based on these sessions? If wrong, give the right answer. If correct, say "correct".\n\n${ft(sessions).slice(0, 6000)}\n\nVerdict:`, 100);
+  const vc = verify.trim().toLowerCase();
+  if (vc.includes('correct') || vc.startsWith('yes')) return candidate;
+  if (verify.trim().length < 80) return verify.trim();
   return candidate;
 }
 
