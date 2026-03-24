@@ -76,11 +76,11 @@ function buildKnowledgeGraph(sessions: string[]): KnowledgeGraph {
   const cooccurrence = new Map<string, Set<string>>();
 
   for (let i = 0; i < sessions.length; i++) {
-    // Ingest into PGSL
-    embedInPGSL(pgsl, sessions[i]!);
-
-    // Extract entities
+    // Extract entities + ingest into PGSL
     const ents = extractEntities(sessions[i]!);
+    const entityText = ents.nounPhrases.join(' ');
+    if (entityText.length > 0) embedInPGSL(pgsl, entityText);
+
     for (const e of ents.allEntities) {
       if (!entities.has(e)) entities.set(e, new Set());
       entities.get(e)!.add(i);
@@ -229,36 +229,37 @@ async function main() {
         if (!typeResults[qType]) typeResults[qType] = { t: 0, c: 0 };
         typeResults[qType].t++;
 
-        // STRUCTURAL QUERY
+        // STRUCTURAL QUERY — find relevant facts and sessions
         const query = queryKG(kg, qa.question);
-        let answer = deriveAnswer(query, qa.question);
 
-        if (answer) {
-          structural++;
-        } else {
-          // LLM FALLBACK — but with matched facts as context, not raw sessions
-          llmFallback++;
-          const factsContext = query.matchedFacts.length > 0
-            ? 'Matched facts:\n' + query.matchedFacts.map(f => `  ${f.subject} ${f.predicate} ${f.object} [session ${f.session + 1}]`).join('\n')
-            : '';
-          const chainsContext = query.chainedFacts.length > 0
-            ? '\nFact chains (multi-hop):\n' + query.chainedFacts.slice(0, 5).map(chain =>
-                chain.map(f => `${f.subject} → ${f.predicate} → ${f.object}`).join(' → ')).join('\n')
-            : '';
-          const sessionsContext = query.relevantSessions.length > 0
-            ? '\nRelevant sessions:\n' + query.relevantSessions.map(i => `=== Session ${i + 1} ===\n${sessionTexts[i]}`).join('\n\n')
-            : sessionTexts.map((s, i) => `=== Session ${i + 1} ===\n${s}`).join('\n\n');
+        // Build focused context from our system's output
+        const factsContext = query.matchedFacts.length > 0
+          ? 'Extracted facts (from knowledge graph):\n' + query.matchedFacts.slice(0, 30).map(f =>
+              `  ${f.subject} ${f.predicate} ${f.object} [session ${f.session + 1}]: "${f.source.slice(0, 100)}"`).join('\n')
+          : '';
+        const chainsContext = query.chainedFacts.length > 0
+          ? '\nMulti-hop chains:\n' + query.chainedFacts.slice(0, 10).map(chain =>
+              chain.map(f => `${f.subject} → ${f.predicate} → ${f.object}`).join(' THEN ')).join('\n')
+          : '';
 
-          answer = llm(`Answer this question using the extracted knowledge and conversation sessions.
+        // Give LLM the RELEVANT sessions (from our structural query), not all sessions
+        const relevantSessionTexts = query.relevantSessions.length > 0
+          ? query.relevantSessions.map(i => `=== Session ${i + 1} ===\n${sessionTexts[i]}`).join('\n\n')
+          : sessionTexts.map((s, i) => `=== Session ${i + 1} ===\n${s}`).join('\n\n');
+
+        if (query.matchedFacts.length > 0) structural++;
+        else llmFallback++;
+
+        const answer = llm(`Answer this question. Use the extracted facts first, then verify against the sessions.
 
 ${factsContext}${chainsContext}
 
-${sessionsContext}
+${relevantSessionTexts}
 
 Question: ${qa.question}
 
 Give ONLY the specific answer:`);
-        }
+
 
         try {
           const ok = judge(qa.question, answer, goldAnswer);

@@ -1,15 +1,9 @@
-Does the generated answer convey the same core information as the gold answer?
-- Numbers must be equal
-- Yes/no must agree
-- Key entities/facts must match
-- For descriptions of preferences: the main preference theme must match
+Same core info? Numbers match? Just "yes" or "no".
+Q: Which country do Calvin and Dave want to meet in?
+Gen: **Boston** (United States)
 
-Answer with just "yes" or "no".
+Based on the sessions, Calvin and Dave repeatedly discuss meeting up when Calvin comes to Boston. For example, in Session 15, Calvin says "My tour ends soon and I'm heading to Boston. Maybe we can meet up then!" and Dave responds "Sounds great! Fill me in on the details when you have them and let's meet up when you're here."
 
-Question: Which country do Calvin and Dave want to meet in?
-Generated: The user would prefer a **direct, concise factual answer** — just the country name with minimal explanation, since this is a straightforward reading comprehension question with a clear answer from the conversation.
-
-The answer is: **The United States** (specifically in **Boston**). Throughout the conversations, Calvin repeatedly mentions his upcoming trip to Boston, and Dave (who lives in Boston) offers to show him around, take him to his favorite spots, and attend his performances. They make plans to meet up in Boston multiple times across the sessions.
+So the country is the **United States** (specifically in Boston).
 Gold: United States
-
 Correct?
