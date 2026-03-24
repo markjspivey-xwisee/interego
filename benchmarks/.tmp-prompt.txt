@@ -1,4 +1,4 @@
-Same core info? Numbers match? Just "yes" or "no".
+Same core info? Numbers must match. Yes/no must agree. Just "yes" or "no".
 Q: What color did I repaint my bedroom walls?
 Gen: A lighter shade of gray.
 Gold: a lighter shade of gray
