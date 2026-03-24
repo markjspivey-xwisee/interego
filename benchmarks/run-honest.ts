@@ -181,41 +181,58 @@ async function main() {
     console.log(`\nThis is the HONEST score — no gold labels, neutral judge.`);
 
   } else if (BENCHMARK === 'locomo') {
-    const data = JSON.parse(readFileSync(resolve(__dirname, 'locomo/data/locomo10.json'), 'utf-8'));
-    // LoCoMo format is different — need to parse it
-    console.log(`\n=== HONEST VERIFICATION — LoCoMo ===`);
-    console.log(`Dataset entries: ${Array.isArray(data) ? data.length : 'object'}`);
+    const data = JSON.parse(readFileSync(resolve(__dirname, 'locomo/data/locomo10.json'), 'utf-8')) as any[];
+    console.log(`\n=== HONEST VERIFICATION — LoCoMo (${data.length} conversations) ===`);
+    console.log(`Model: ${MODEL} | Cost: $0 (subscription)\n`);
 
-    // LoCoMo is structured as conversations with QA pairs
     let correct = 0, total = 0;
-    const items = Array.isArray(data) ? data : Object.values(data);
-    const sample = items.slice(0, Math.min(LIMIT, items.length));
+    const typeResults: Record<string, { t: number; c: number }> = {};
 
-    for (const item of sample as any[]) {
-      if (!item.questions && !item.qa_pairs) continue;
-      const qaPairs = item.questions || item.qa_pairs || [];
-      const sessions = item.conversations || item.sessions || item.dialog || [];
-      const sessionTexts = Array.isArray(sessions)
-        ? sessions.map((s: any) => typeof s === 'string' ? s : JSON.stringify(s))
-        : [JSON.stringify(sessions)];
+    for (const conv of data) {
+      // Build session texts from conversation
+      const sessionTexts: string[] = [];
+      const convData = conv.conversation;
+      const sessionKeys = Object.keys(convData).filter((k: string) => k.startsWith('session_') && !k.includes('date'));
 
-      for (const qa of (Array.isArray(qaPairs) ? qaPairs : [qaPairs]).slice(0, 3)) {
-        if (!qa.question || !qa.answer) continue;
+      for (const sk of sessionKeys) {
+        const session = convData[sk];
+        if (Array.isArray(session)) {
+          const text = session.map((turn: any) => `${turn.speaker}: ${turn.text}`).join('\n');
+          sessionTexts.push(text);
+        }
+      }
+
+      // Process QA pairs
+      const qaEntries = Object.values(conv.qa) as any[];
+      const sampled = qaEntries.slice(0, Math.ceil(LIMIT / data.length));
+
+      for (const qa of sampled) {
+        if (!qa.question) continue;
         total++;
         if (total > LIMIT) break;
 
+        const goldAnswer = typeof qa.answer === 'string' ? qa.answer
+          : Array.isArray(qa.answer) ? qa.answer.join(', ')
+          : String(qa.answer);
+        const qType = String(qa.question_type || qa.category || 'unknown');
+        if (!typeResults[qType]) typeResults[qType] = { t: 0, c: 0 };
+        typeResults[qType].t++;
+
         try {
           const ans = answer(sessionTexts, qa.question);
-          const ok = judge(qa.question, ans, String(qa.answer));
-          if (ok) correct++;
+          const ok = judge(qa.question, ans, goldAnswer);
+          if (ok) { correct++; typeResults[qType].c++; }
         } catch {}
 
-        if (total % 10 === 0) console.log(`  ${total}: ${(100 * correct / total).toFixed(0)}%`);
+        if (total % 10 === 0) console.log(`  ${total}/${LIMIT}: ${(100 * correct / total).toFixed(0)}%`);
       }
       if (total > LIMIT) break;
     }
 
     console.log(`\n=== LoCoMo RESULTS: ${correct}/${total} (${(100 * correct / total).toFixed(1)}%) ===`);
+    for (const [type, r] of Object.entries(typeResults)) {
+      console.log(`  Type ${type}: ${r.c}/${r.t} (${(100 * r.c / r.t).toFixed(0)}%)`);
+    }
   }
 }
 

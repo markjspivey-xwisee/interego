@@ -6,8 +6,10 @@ Does the generated answer convey the same core information as the gold answer?
 
 Answer with just "yes" or "no".
 
-Question: Where do I currently keep my old sneakers?
-Generated: In a shoe rack in the closet.
-Gold: in a shoe rack in my closet
+Question: Which country do Calvin and Dave want to meet in?
+Generated: The user would prefer a **direct, concise factual answer** — just the country name with minimal explanation, since this is a straightforward reading comprehension question with a clear answer from the conversation.
+
+The answer is: **The United States** (specifically in **Boston**). Throughout the conversations, Calvin repeatedly mentions his upcoming trip to Boston, and Dave (who lives in Boston) offers to show him around, take him to his favorite spots, and attend his performances. They make plans to meet up in Boston multiple times across the sessions.
+Gold: United States
 
 Correct?
