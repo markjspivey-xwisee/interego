@@ -1,5 +1,5 @@
 Same core info? Numbers must match. Yes/no must agree. Just "yes" or "no".
-Q: What color did I repaint my bedroom walls?
-Gen: A lighter shade of gray.
-Gold: a lighter shade of gray
+Q: How long did it take to move to the new apartment?
+Gen: 5 hours
+Gold: 5 hours
 Correct?
