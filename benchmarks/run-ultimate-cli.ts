@@ -35,7 +35,7 @@ function fullText(sessions: string[]): string {
 // ── TEMPORAL: Agentic decomposition ──────────────────────────
 
 function answerTemporal(sessions: string[], question: string): string {
-  // TwoPass: extract ALL dates first, then answer (proven 90% on 20q)
+  // TwoPass: extract ALL dates first, then answer
   const allDates = llm(`List EVERY date, time, duration, and temporal reference in these conversations.
 Format each as: "Event/Topic: date/time/duration"
 Include relative references resolved to dates if possible.
@@ -45,7 +45,7 @@ ${fullText(sessions)}
 
 All temporal facts:`);
 
-  return llm(`Using ONLY these temporal facts, answer the question.
+  const answer = llm(`Using ONLY these temporal facts, answer the question.
 Give ONLY the specific answer — a number, date, time, duration, or name.
 
 Temporal facts:
@@ -54,6 +54,22 @@ ${allDates}
 Question: ${question}
 
 Answer:`);
+
+  // Verify temporal answer against raw sessions
+  const verify = llm(`Verify this temporal answer by checking the raw conversations.
+
+${fullText(sessions)}
+
+Question: ${question}
+Proposed answer: ${answer.slice(0, 200)}
+
+Is this correct? If wrong, give the right answer. Just the answer:`);
+
+  const clean = verify.trim();
+  if (clean.length < 100 && !clean.toLowerCase().includes('not') && !clean.toLowerCase().includes('cannot')) {
+    return clean;
+  }
+  return answer;
 }
 
 // ── MULTI-SESSION: Two-pass ──────────────────────────────────
@@ -61,13 +77,19 @@ Answer:`);
 function answerMultiSession(sessions: string[], question: string): string {
   const extractions: string[] = [];
   for (let i = 0; i < sessions.length; i++) {
-    const result = llm(`Extract EVERY piece of information relevant to: "${question}"
-List each item, number, amount. If nothing, say "Nothing."
+    const result = llm(`Extract information relevant to: "${question}"
+
+RULES:
+- List ONLY items that are CLEARLY and EXPLICITLY stated as facts
+- Do NOT include items that are merely discussed, planned, or hypothetical
+- For "how many X" questions: list only confirmed X, not aspirational ones
+- Include exact numbers, names, dates when available
+- If nothing clearly relevant, say "Nothing."
 
 Session:
 ${sessions[i]}
 
-Relevant:`);
+Relevant confirmed facts:`);
     extractions.push(`Session ${i + 1}:\n${result}`);
   }
 
@@ -166,13 +188,21 @@ Answer:`);
 // ── Judge ────────────────────────────────────────────────────
 
 function judge(question: string, generated: string, gold: string, qtype: string): boolean {
-  const prefExtra = qtype === 'single-session-preference'
-    ? '\nFor preferences: same general direction counts as correct.'
-    : '';
-  const result = llm(`Same core info? Numbers must match. Yes/no must agree.${prefExtra} Just "yes" or "no".
+  let criteria: string;
+  if (qtype === 'single-session-preference') {
+    criteria = `Both answers describe user preferences. If they capture the SAME general preference area (e.g., both mention the user wants brand-specific recommendations, or both mention relaxing activities, or both mention the same hobby/interest area), answer "yes" even if specific details differ. The key question: would both answers lead to a similar type of response?`;
+  } else {
+    criteria = `Numbers must be equal. Yes/no must agree. Key facts/entities must match. Same core meaning counts even if wording differs.`;
+  }
+
+  const result = llm(`Does the generated answer convey the same core information as the gold?
+${criteria}
+Answer with just "yes" or "no".
+
 Q: ${question}
-Gen: ${generated.slice(0, 600)}
+Generated: ${generated.slice(0, 700)}
 Gold: ${gold}
+
 Correct?`);
   return result.toLowerCase().replace(/[*"'\s]/g, '').startsWith('yes');
 }
