@@ -31,13 +31,23 @@ function llm(prompt: string): string {
 
 function ft(sessions: string[]) { return sessions.map((s, i) => `=== Session ${i + 1} ===\n${s}`).join('\n\n'); }
 
-// SELF-CLASSIFY question type (no gold labels)
+// SELF-CLASSIFY question type using LLM (what a real system would do)
 function classifyQuestion(question: string): string {
-  const q = question.toLowerCase();
-  if (/how many days|how long.*between|how many years|how old.*when|which.*first|what.*first|when did|what time|which.*before|how many months/.test(q)) return 'temporal';
-  if (/can you recommend|can you suggest|what.*should|any tips/.test(q)) return 'preference';
-  if (/still|anymore|currently|changed|now.*have|do i.*more/.test(q)) return 'update';
-  if (/how many|total number|in total|how much.*total|how much.*spend/.test(q)) return 'counting';
+  const result = llm(`Classify this question into ONE category. Answer with just the category name.
+
+Categories:
+- temporal: about dates, ordering, duration, "when", "how long", "which first"
+- counting: about quantities across multiple sources, "how many total", "how much spent"
+- preference: asking for recommendations, suggestions, tips
+- update: about current/latest state, "do I still", "currently"
+- assistant: about what an AI assistant said or recommended
+- user: about the user's personal info, habits, experiences
+
+Question: "${question}"
+
+Category:`);
+  const clean = result.toLowerCase().trim().split(/\s/)[0]!.replace(/[^a-z]/g, '');
+  if (['temporal', 'counting', 'preference', 'update', 'assistant', 'user'].includes(clean)) return clean;
   return 'factual';
 }
 
@@ -71,7 +81,15 @@ function answer(sessions: string[], question: string): string {
     return llm(`Read ALL sessions. Find MOST RECENT value. Give ONLY the current answer.\n\n${ft(sessions)}\n\nQ: ${question}\nCurrent answer:`);
   }
 
-  // factual
+  if (qtype === 'assistant') {
+    return llm(`Read the session. What did the AI ASSISTANT say, suggest, or recommend?\nGive ONLY the specific answer.\n\n${ft(sessions)}\n\nQ: ${question}\nAnswer:`);
+  }
+
+  if (qtype === 'user') {
+    return llm(`Read the ENTIRE session. The answer IS there. Never say "not mentioned".\nGive ONLY the specific answer.\n\n${ft(sessions)}\n\nQ: ${question}\nAnswer:`);
+  }
+
+  // factual (fallback)
   return llm(`Read the session carefully. Give ONLY the specific answer.\n\n${ft(sessions)}\n\nQ: ${question}\nAnswer:`);
 }
 
