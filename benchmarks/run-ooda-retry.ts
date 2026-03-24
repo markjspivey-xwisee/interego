@@ -27,22 +27,18 @@ async function llm(prompt: string, mt = 500, system?: string) {
 
 function ft(sessions: string[]) { return sessions.map((s, i) => `=== Session ${i + 1} ===\n${s}`).join('\n\n'); }
 
-// Detect uncertain answers that should trigger a retry
+// Detect GENUINELY uncertain answers (conservative — only retry clear failures)
 function isUncertain(answer: string): boolean {
   const a = answer.toLowerCase();
   return (
     a.includes('not mentioned') ||
     a.includes('not specified') ||
     a.includes('not provided') ||
-    a.includes('not found') ||
     a.includes('no information') ||
     a.includes('cannot determine') ||
     a.includes('unable to find') ||
     a.includes('does not mention') ||
-    a.includes('i don\'t see') ||
-    a.includes('looking through') || // verbose start = didn't find direct answer
-    a.length > 500 || // too verbose = uncertain
-    a.length < 2 // too short = empty
+    a.length < 2 // empty answer
   );
 }
 
