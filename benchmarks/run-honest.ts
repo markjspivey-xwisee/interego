@@ -45,10 +45,10 @@ Categories:
 
 Question: "${question}"
 
-Category (one word):`, 10);
+Category (one word):`);
   const clean = result.toLowerCase().trim().split(/[\s,.;:]/)[0]!.replace(/[^a-z]/g, '');
   if (['temporal', 'counting', 'preference', 'update', 'assistant', 'user'].includes(clean)) return clean;
-  return 'user'; // default to user (most common) instead of factual
+  return 'factual';
 }
 
 // ANSWER based on self-classified type

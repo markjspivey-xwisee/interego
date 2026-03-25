@@ -1,15 +1,13 @@
-Does the generated answer convey the same core information as the gold answer?
+Classify this question into exactly ONE category. Answer with ONLY the category word.
 
-Rules:
-- Numbers must be equal (3 = 3, not 3 ≠ 4)
-- Yes/no must agree
-- Key entities/facts must match
-- For preference descriptions: if both describe preferences in the same general area (e.g., both mention the user wants brand-specific tech recommendations, or both mention relaxing activities), answer "yes" even if specific details differ
+Categories:
+- temporal: questions about WHEN something happened, how long between events, which came first, ordering of events, duration, dates, times
+- counting: questions needing to COUNT or SUM items/amounts across multiple conversations ("how many total", "how much did I spend", "total number")
+- preference: questions asking for RECOMMENDATIONS, SUGGESTIONS, or TIPS ("can you recommend", "can you suggest", "any tips", "what should I")
+- update: questions about whether something CHANGED or what the CURRENT/LATEST state is ("do I still", "currently", "anymore", "now")
+- assistant: questions about what the AI ASSISTANT said, suggested, or recommended in a past conversation
+- user: questions about the USER's personal info, habits, experiences, possessions
 
-Answer with just "yes" or "no".
+Question: "What was the first issue I had with my new car after its first service?"
 
-Question: What was the first issue I had with my new car after its first service?
-Generated: GPS system issue on 3/22 (March 22nd), one week after the car was first serviced on March 15th.
-Gold: GPS system not functioning correctly
-
-Correct?
+Category (one word):
