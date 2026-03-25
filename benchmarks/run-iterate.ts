@@ -26,22 +26,27 @@ function llm(prompt: string): string {
   } catch { return 'ERROR'; }
 }
 
-function ft(sessions: string[]) { return sessions.map((s, i) => `=== Session ${i + 1} ===\n${s}`).join('\n\n'); }
+function ft(sessions: string[], dates?: string[]) {
+  return sessions.map((s, i) => {
+    const dateStr = dates?.[i] ? ` (Date: ${dates[i]})` : '';
+    return `=== Session ${i + 1}${dateStr} ===\n${s}`;
+  }).join('\n\n');
+}
 
 // ONE universal prompt — no classifier needed
-function answer(sessions: string[], question: string): string {
+function answer(sessions: string[], question: string, dates?: string[]): string {
   return llm(`You are an expert memory analyst. Read ALL sessions carefully and answer the question.
 
 RULES:
 1. Read EVERY session completely. The answer IS in the text.
 2. Never say "not mentioned" — search harder.
 3. For counting/totals: list each item from each session, then count.
-4. For dates/ordering: find exact dates, then compare or calculate.
+4. For dates/ordering: find exact dates, then compare or calculate. USE THE SESSION DATES shown in headers to resolve relative references like "today", "yesterday", "last week".
 5. For updates: use the MOST RECENT value only.
 6. For recommendations/suggestions: start with "The user would prefer" and describe what KIND of response they want.
 7. Give ONLY the specific answer — no explanation unless counting.
 
-${ft(sessions)}
+${ft(sessions, dates)}
 
 Question: ${question}
 
@@ -72,7 +77,8 @@ for (let i = START; i < data.length; i++) {
   const sessions: string[] = item.haystack_sessions.map((s: any) =>
     typeof s === 'string' ? s : Array.isArray(s) ? s.map((t: any) => typeof t === 'string' ? t : (t.content || t.text || '')).join(' ') : JSON.stringify(s));
 
-  const ans = answer(sessions, item.question);
+  const dates = item.haystack_dates as string[] | undefined;
+  const ans = answer(sessions, item.question, dates);
   const ok = judge(item.question, ans, String(item.answer));
 
   if (ok) {

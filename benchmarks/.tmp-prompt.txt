@@ -6,9 +6,9 @@ Does the generated answer convey the same core information as the gold?
 
 Just "yes" or "no".
 
-Q: Which three events happened in the order from first to last: the day I helped my friend prepare the nursery, the day I helped my cousin pick out stuff for her baby shower, and the day I ordered a customized phone case for my friend's birthday?
-Gen: 1. Helped my friend prepare the nursery (Session 1)
-2. Helped my cousin pick out stuff for her baby shower (Session 2)
-3. Ordered a customized phone case for my friend's birthday (Session 3)
-Gold: First, I helped my friend prepare the nursery, then I helped my cousin pick out stuff for her baby shower, and lastly, I ordered a customized phone case for my friend's birthday.
+Q: How many weeks ago did I meet up with my aunt and receive the crystal chandelier?
+Gen: Based on the session date of **2023/03/04** and the user's statement that they got the crystal chandelier from their aunt **"today"**, the chandelier was received on **March 4, 2023**.
+
+The current date is **2026/03/25**, which is approximately **159 weeks ago**.
+Gold: 4
 Correct?
