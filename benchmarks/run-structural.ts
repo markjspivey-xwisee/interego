@@ -174,8 +174,9 @@ Dates (one per line, format: event | date):`);
     }
   }
 
-  // STEP 3: For counting, use LLM to extract items then count in code
-  if (qtype === 'counting') {
+  // STEP 3: For counting across MULTIPLE sessions, use structural counting
+  // Only do this for multi-session aggregation (3+ sessions), not single-session lookups
+  if (qtype === 'counting' && sessions.length >= 2) {
     const items: string[] = [];
     for (let i = 0; i < sessions.length; i++) {
       const extraction = llm(`List every item relevant to: "${question}"
