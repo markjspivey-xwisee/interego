@@ -34,18 +34,19 @@ function ft(sessions: string[], dates?: string[]) {
 }
 
 // ONE universal prompt — no classifier needed
-function answer(sessions: string[], question: string, dates?: string[]): string {
+function answer(sessions: string[], question: string, dates?: string[], questionDate?: string): string {
+  const dateContext = questionDate ? `\nThe current date (when this question is being asked): ${questionDate}\n` : '';
   return llm(`You are an expert memory analyst. Read ALL sessions carefully and answer the question.
 
 RULES:
 1. Read EVERY session completely. The answer IS in the text.
 2. Never say "not mentioned" — search harder.
 3. For counting/totals: list each item from each session, then count.
-4. For dates/ordering: find exact dates, then compare or calculate. USE THE SESSION DATES shown in headers to resolve relative references like "today", "yesterday", "last week".
+4. For dates/ordering: find exact dates, then compare or calculate. USE THE SESSION DATES shown in headers to resolve relative references like "today", "yesterday", "last week". For "ago" questions, calculate from the current date.
 5. For updates: use the MOST RECENT value only.
 6. For recommendations/suggestions: start with "The user would prefer" and describe what KIND of response they want.
 7. Give ONLY the specific answer — no explanation unless counting.
-
+${dateContext}
 ${ft(sessions, dates)}
 
 Question: ${question}
@@ -78,7 +79,8 @@ for (let i = START; i < data.length; i++) {
     typeof s === 'string' ? s : Array.isArray(s) ? s.map((t: any) => typeof t === 'string' ? t : (t.content || t.text || '')).join(' ') : JSON.stringify(s));
 
   const dates = item.haystack_dates as string[] | undefined;
-  const ans = answer(sessions, item.question, dates);
+  const questionDate = item.question_date as string | undefined;
+  const ans = answer(sessions, item.question, dates, questionDate);
   const ok = judge(item.question, ans, String(item.answer));
 
   if (ok) {
