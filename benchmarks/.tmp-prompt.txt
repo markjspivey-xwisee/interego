@@ -7,7 +7,7 @@ Does the generated answer convey the same core information as the gold?
 
 Just "yes" or "no".
 
-Q: What degree did I graduate with?
-Gen: Business Administration
-Gold: Business Administration
+Q: How many days passed between the day I started playing along to my favorite songs on my old keyboard and the day I discovered a bluegrass band?
+Gen: 6 days
+Gold: 6 days. 7 days (including the last day) is also acceptable.
 Correct?
