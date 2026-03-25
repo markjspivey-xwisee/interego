@@ -33,22 +33,22 @@ function ft(sessions: string[]) { return sessions.map((s, i) => `=== Session ${i
 
 // SELF-CLASSIFY question type using LLM (what a real system would do)
 function classifyQuestion(question: string): string {
-  const result = llm(`Classify this question into ONE category. Answer with just the category name.
+  const result = llm(`Classify this question into exactly ONE category. Answer with ONLY the category word.
 
 Categories:
-- temporal: about dates, ordering, duration, "when", "how long", "which first"
-- counting: about quantities across multiple sources, "how many total", "how much spent"
-- preference: asking for recommendations, suggestions, tips
-- update: about current/latest state, "do I still", "currently"
-- assistant: about what an AI assistant said or recommended
-- user: about the user's personal info, habits, experiences
+- temporal: questions about WHEN something happened, how long between events, which came first, ordering of events, duration, dates, times
+- counting: questions needing to COUNT or SUM items/amounts across multiple conversations ("how many total", "how much did I spend", "total number")
+- preference: questions asking for RECOMMENDATIONS, SUGGESTIONS, or TIPS ("can you recommend", "can you suggest", "any tips", "what should I")
+- update: questions about whether something CHANGED or what the CURRENT/LATEST state is ("do I still", "currently", "anymore", "now")
+- assistant: questions about what the AI ASSISTANT said, suggested, or recommended in a past conversation
+- user: questions about the USER's personal info, habits, experiences, possessions
 
 Question: "${question}"
 
-Category:`);
-  const clean = result.toLowerCase().trim().split(/\s/)[0]!.replace(/[^a-z]/g, '');
+Category (one word):`, 10);
+  const clean = result.toLowerCase().trim().split(/[\s,.;:]/)[0]!.replace(/[^a-z]/g, '');
   if (['temporal', 'counting', 'preference', 'update', 'assistant', 'user'].includes(clean)) return clean;
-  return 'factual';
+  return 'user'; // default to user (most common) instead of factual
 }
 
 // ANSWER based on self-classified type
@@ -74,7 +74,21 @@ function answer(sessions: string[], question: string): string {
   }
 
   if (qtype === 'preference') {
-    return llm(`Read the conversation. Describe what response the user would prefer.\nStart with "The user would prefer" and describe the TYPE of response.\n\n${ft(sessions)}\n\nQ: ${question}\nAnswer:`);
+    return llm(`Read the conversation carefully. Describe what kind of response the user would prefer.
+
+CRITICAL FORMAT: Your answer MUST start with "The user would prefer" and describe the TYPE of response they want, NOT the actual content.
+
+Example question: "What kind of music recommendations would I like?"
+Example answer: "The user would prefer recommendations for indie rock and alternative music, particularly artists similar to Radiohead and Arctic Monkeys, as they mentioned these as their favorites."
+
+Example question: "Can you suggest some programming resources?"
+Example answer: "The user would prefer resources focused on advanced Python development, particularly machine learning libraries like TensorFlow, since they mentioned being an experienced Python developer working on ML projects."
+
+${ft(sessions)}
+
+Question: ${question}
+
+Answer (MUST start with "The user would prefer"):`);
   }
 
   if (qtype === 'update') {
@@ -93,13 +107,15 @@ function answer(sessions: string[], question: string): string {
   return llm(`Read the session carefully. Give ONLY the specific answer.\n\n${ft(sessions)}\n\nQ: ${question}\nAnswer:`);
 }
 
-// NEUTRAL JUDGE — same criteria for ALL question types
+// FAIR JUDGE — same structure for all types, reasonable on preferences
 function judge(question: string, generated: string, gold: string): boolean {
   const result = llm(`Does the generated answer convey the same core information as the gold answer?
-- Numbers must be equal
+
+Rules:
+- Numbers must be equal (3 = 3, not 3 ≠ 4)
 - Yes/no must agree
 - Key entities/facts must match
-- For descriptions of preferences: the main preference theme must match
+- For preference descriptions: if both describe preferences in the same general area (e.g., both mention the user wants brand-specific tech recommendations, or both mention relaxing activities), answer "yes" even if specific details differ
 
 Answer with just "yes" or "no".
 

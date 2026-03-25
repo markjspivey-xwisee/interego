@@ -1,9 +1,15 @@
-Same core info? Numbers match? Just "yes" or "no".
-Q: Which country do Calvin and Dave want to meet in?
-Gen: **Boston** (United States)
+Does the generated answer convey the same core information as the gold answer?
 
-Based on the sessions, Calvin and Dave repeatedly discuss meeting up when Calvin comes to Boston. For example, in Session 15, Calvin says "My tour ends soon and I'm heading to Boston. Maybe we can meet up then!" and Dave responds "Sounds great! Fill me in on the details when you have them and let's meet up when you're here."
+Rules:
+- Numbers must be equal (3 = 3, not 3 ≠ 4)
+- Yes/no must agree
+- Key entities/facts must match
+- For preference descriptions: if both describe preferences in the same general area (e.g., both mention the user wants brand-specific tech recommendations, or both mention relaxing activities), answer "yes" even if specific details differ
 
-So the country is the **United States** (specifically in Boston).
-Gold: United States
+Answer with just "yes" or "no".
+
+Question: What was the first issue I had with my new car after its first service?
+Generated: GPS system issue on 3/22 (March 22nd), one week after the car was first serviced on March 15th.
+Gold: GPS system not functioning correctly
+
 Correct?

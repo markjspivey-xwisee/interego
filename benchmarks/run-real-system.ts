@@ -86,16 +86,37 @@ function buildKnowledgeGraph(sessions: string[]): KnowledgeGraph {
       entities.get(e)!.add(i);
     }
 
-    // Extract relations
-    const rels = extractRelations(sessions[i]!);
-    for (const r of rels.relations) {
-      facts.push({
-        subject: r.subject,
-        predicate: r.predicate,
-        object: r.object,
-        session: i,
-        source: r.source || '',
-      });
+    // Extract relations — use LLM for better quality
+    const useRegex = process.env['EXTRACT_MODE'] !== 'llm';
+    if (useRegex) {
+      const rels = extractRelations(sessions[i]!);
+      for (const r of rels.relations) {
+        facts.push({ subject: r.subject, predicate: r.predicate, object: r.object, session: i, source: r.source || '' });
+      }
+    } else {
+      // LLM-assisted extraction (better quality, slower)
+      try {
+        const llmFacts = llm(`Extract key facts from this conversation as subject-predicate-object triples.
+Format: one triple per line as "subject | predicate | object"
+Examples: "Caroline | went to | LGBTQ support group", "Melanie | painted | sunrise"
+Extract ALL facts about: events, activities, preferences, relationships, dates, places.
+
+${sessions[i]!.slice(0, 4000)}
+
+Facts:`);
+        for (const line of llmFacts.split('\n')) {
+          const parts = line.split('|').map(p => p.trim());
+          if (parts.length >= 3) {
+            facts.push({ subject: parts[0]!, predicate: parts[1]!, object: parts[2]!, session: i, source: line });
+          }
+        }
+      } catch {
+        // Fallback to regex
+        const rels = extractRelations(sessions[i]!);
+        for (const r of rels.relations) {
+          facts.push({ subject: r.subject, predicate: r.predicate, object: r.object, session: i, source: r.source || '' });
+        }
+      }
     }
 
     // Build co-occurrence within this session
