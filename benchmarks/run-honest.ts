@@ -196,6 +196,86 @@ async function main() {
     console.log(`\nMisclassified: ${misclassified}/${total} (${(100 * misclassified / total).toFixed(0)}%)`);
     console.log(`\nThis is the HONEST score — no gold labels, neutral judge.`);
 
+  } else if (BENCHMARK === 'locomo-universal') {
+    // LoCoMo with the universal prompt (same as LongMemEval 94%)
+    const data = JSON.parse(readFileSync(resolve(__dirname, 'locomo/data/locomo10.json'), 'utf-8')) as any[];
+    console.log(`\n=== UNIVERSAL PROMPT — LoCoMo (${data.length} conversations) ===`);
+    console.log(`Same approach as 94% LongMemEval | Model: ${MODEL} | $0\n`);
+
+    let correct = 0, total = 0;
+    const typeResults: Record<string, { t: number; c: number }> = {};
+
+    for (const conv of data) {
+      const sessionTexts: string[] = [];
+      const convData = conv.conversation;
+      const sessionKeys = Object.keys(convData).filter((k: string) => k.startsWith('session_') && !k.includes('date'));
+      const sessionDates: string[] = [];
+
+      for (const sk of sessionKeys) {
+        const session = convData[sk];
+        const dateKey = sk + '_date_time';
+        if (convData[dateKey]) sessionDates.push(convData[dateKey]);
+        if (Array.isArray(session)) {
+          sessionTexts.push(session.map((turn: any) => `${turn.speaker}: ${turn.text}`).join('\n'));
+        }
+      }
+
+      const qaEntries = Object.values(conv.qa) as any[];
+      const sampled = qaEntries.slice(0, Math.ceil(LIMIT / data.length));
+
+      for (const qa of sampled) {
+        if (!qa.question) continue;
+        total++;
+        if (total > LIMIT) break;
+
+        const goldAnswer = typeof qa.answer === 'string' ? qa.answer
+          : Array.isArray(qa.answer) ? qa.answer.join(', ')
+          : String(qa.answer);
+        const qType = String(qa.question_type || 'unknown');
+        if (!typeResults[qType]) typeResults[qType] = { t: 0, c: 0 };
+        typeResults[qType].t++;
+
+        // Universal prompt — same as LongMemEval 94%
+        const ft = sessionTexts.map((s, i) => {
+          const dateStr = sessionDates[i] ? ` (Date: ${sessionDates[i]})` : '';
+          return `=== Session ${i + 1}${dateStr} ===\n${s}`;
+        }).join('\n\n');
+
+        const ans = llm(`You are an expert memory analyst. Read ALL sessions carefully and answer the question.
+
+RULES:
+1. Read EVERY session completely. The answer IS in the text.
+2. Never say "not mentioned" — search harder.
+3. For counting/totals: list each item from each session, then count.
+4. For dates/ordering: find exact dates, then compare or calculate. USE THE SESSION DATES shown in headers.
+5. For updates: use the MOST RECENT value only.
+6. Give ONLY the specific answer — no explanation unless counting.
+
+${ft}
+
+Question: ${qa.question}
+
+Answer:`);
+
+        const ok = llm(`Same core info? Numbers match? Just "yes" or "no".
+Q: ${qa.question}
+Gen: ${ans.slice(0, 700)}
+Gold: ${goldAnswer}
+Correct?`).toLowerCase().replace(/[*"'\s]/g, '').startsWith('yes');
+
+        if (ok) { correct++; typeResults[qType].c++; }
+
+        if (total % 10 === 0) console.log(`  ${total}/${LIMIT}: ${(100 * correct / total).toFixed(0)}%`);
+      }
+      if (total > LIMIT) break;
+    }
+
+    console.log(`\n=== LoCoMo RESULTS: ${correct}/${total} (${(100 * correct / total).toFixed(1)}%) ===`);
+    for (const [type, r] of Object.entries(typeResults)) {
+      console.log(`  Type ${type}: ${r.c}/${r.t} (${(100 * r.c / r.t).toFixed(0)}%)`);
+    }
+    console.log(`\nPrior LoCoMo: 52% (raw LLM) | LongMemEval: 94%`);
+
   } else if (BENCHMARK === 'locomo') {
     const data = JSON.parse(readFileSync(resolve(__dirname, 'locomo/data/locomo10.json'), 'utf-8')) as any[];
     console.log(`\n=== HONEST VERIFICATION — LoCoMo (${data.length} conversations) ===`);

@@ -1,12 +1,5 @@
-Does the generated answer convey the same core information as the gold?
-- Numbers must match
-- Yes/no must agree
-- Key facts must match
-- For preferences: same general theme = correct
-
-Just "yes" or "no".
-
-Q: How much will I save by taking the bus from the airport to my hotel instead of a taxi?
-Gen: $40 to $50. The taxi was quoted at $60, and the airport bus fare is $10-$20.
-Gold: The information provided is not enough. You did not mention how much will the bus take.
+Same core info? Numbers match? Just "yes" or "no".
+Q: Which country do Calvin and Dave want to meet in?
+Gen: The United States (specifically in **Boston**).
+Gold: United States
 Correct?
