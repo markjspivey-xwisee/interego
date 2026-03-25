@@ -6,7 +6,7 @@ Does the generated answer convey the same core information as the gold?
 
 Just "yes" or "no".
 
-Q: What time do I usually go to the gym?
-Gen: 7:00 pm on Mondays, Wednesdays, and Fridays.
-Gold: 6:00 pm
+Q: I was looking back at our previous conversation about Caribbean dishes and I was wondering, what was the name of that Jamaican dish you recommended I try with snapper that has fruit in it?
+Gen: Escovitch Fish.
+Gold: Grilled Snapper with Mango Salsa
 Correct?
