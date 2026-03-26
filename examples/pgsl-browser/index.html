@@ -201,13 +201,51 @@ function renderNodeList(nodes) {
 
 async function setFocus(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
-  focusChain = [uri];
-  const resp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri})});
-  focusData = await resp.json();
+  const node = allNodes.find(n => n.uri === uri);
+
+  if (node && node.level > 0 && node.kind === 'Fragment') {
+    // Fragment: decompose into leaf atoms for the chain
+    const resp = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.node && data.node.items && data.node.items.length > 1) {
+        // Resolve each item to get its leaf atoms
+        const items = data.node.items;
+        // For L1 wrappers, unwrap to the atom
+        const chainUris = [];
+        for (const itemUri of items) {
+          const itemNode = allNodes.find(n => n.uri === itemUri);
+          if (itemNode && itemNode.kind === 'Fragment' && itemNode.level === 1) {
+            // L1 wrapper — find the atom inside
+            const atomResp = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: itemUri}) });
+            if (atomResp.ok) {
+              const atomData = await atomResp.json();
+              if (atomData.node && atomData.node.items && atomData.node.items.length === 1) {
+                chainUris.push(atomData.node.items[0]);
+                continue;
+              }
+            }
+          }
+          chainUris.push(itemUri);
+        }
+        focusChain = chainUris;
+      } else {
+        focusChain = [uri];
+      }
+    } else {
+      focusChain = [uri];
+    }
+  } else {
+    // Atom or unknown: single focus
+    focusChain = [uri];
+  }
+
+  const focusResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[0]})});
+  focusData = await focusResp.json();
   renderFocus();
   renderAnnotations();
   renderFragments();
-  renderNodeList(allNodes); // update active state
+  renderNodeList(allNodes);
 }
 
 async function expandLeft(encodedUri) {

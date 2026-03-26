@@ -125,6 +125,13 @@ app.get('/api/resolve', (req, res) => {
   const resolved = pgslResolve(pgsl, uri);
   res.json({ uri, resolved, node });
 });
+app.post('/api/resolve', (req, res) => {
+  const uri = req.body.uri as IRI;
+  const node = pgsl.nodes.get(uri);
+  if (!node) { res.status(404).json({ error: 'Not found' }); return; }
+  const resolved = pgslResolve(pgsl, uri);
+  res.json({ uri, resolved, node });
+});
 
 // Get neighbors (what appears to the left/right of a node)
 app.get('/api/neighbors', (req, res) => {
