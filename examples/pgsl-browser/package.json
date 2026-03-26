@@ -1,0 +1,16 @@
+{
+  "name": "@foxxi/pgsl-browser",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx server.ts"
+  },
+  "dependencies": {
+    "@foxxi/context-graphs": "file:../../",
+    "express": "^4.21.0",
+    "tsx": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0"
+  }
+}

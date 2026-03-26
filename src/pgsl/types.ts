@@ -134,6 +134,50 @@ export interface Fragment {
 /** A Node is either an Atom or a Fragment. */
 export type Node = Atom | Fragment;
 
+// ── Containment Annotation (contextual properties on edges) ─
+
+/**
+ * Contextual metadata for a containment relationship.
+ *
+ * Properties belong to the EDGE (parent contains child at position),
+ * not to the node itself. Same node can have different annotations
+ * in different containing fragments — this IS the Peircean interpretant.
+ *
+ * Serialized as RDF 1.2 triple annotations:
+ *   <parent> cg:hasItem <child> {| cg:position 1 ; cg:contextualDepth 2 |} .
+ */
+export interface ContainmentAnnotation {
+  /** The containing fragment URI */
+  readonly parentUri: IRI;
+  /** The contained node URI */
+  readonly childUri: IRI;
+  /** Position of child in parent's items array (0-indexed) */
+  readonly position: number;
+  /** Distance from the bottom of the containing structure (0 = leaf) */
+  readonly depthFromBottom: number;
+  /** Distance from the top of the containing structure (0 = top) */
+  readonly depthFromTop: number;
+  /** Total depth of the containing structure */
+  readonly totalDepth: number;
+  /** What percentage of the parent this child represents */
+  readonly span: number;
+  /** Structural role based on position */
+  readonly role: ContainmentRole;
+}
+
+/**
+ * The structural role of a node within its containing fragment.
+ * Determined by position and context.
+ */
+export type ContainmentRole =
+  | 'head'       // first item (position 0)
+  | 'tail'       // last item
+  | 'medial'     // middle item(s)
+  | 'sole'       // only item (level 1 wrapper)
+  | 'left'       // left constituent of pullback pair
+  | 'right'      // right constituent of pullback pair
+  | 'overlap';   // shared region in pullback
+
 // ── Registry Types ──────────────────────────────────────────
 
 /**

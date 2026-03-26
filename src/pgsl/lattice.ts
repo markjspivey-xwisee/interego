@@ -26,6 +26,8 @@ import type {
   NodeProvenance,
   PGSLInstance,
   Direction,
+  ContainmentAnnotation,
+  ContainmentRole,
 } from './types.js';
 
 // ── URI Generation (Content-Addressing) ─────────────────────
@@ -452,4 +454,85 @@ export function computeLatticeCids(
   }
 
   return cids;
+}
+
+// ── Containment Annotations (contextual properties on edges) ─
+
+/**
+ * Compute all containment annotations for a given node.
+ * Returns one annotation per containing fragment — same node,
+ * different contextual properties in each container.
+ *
+ * This IS the Peircean interpretant: the meaning of a sign
+ * (the node) depends on its context (the containing fragment).
+ */
+export function computeContainmentAnnotations(
+  pgsl: PGSLInstance,
+  childUri: IRI,
+): ContainmentAnnotation[] {
+  const annotations: ContainmentAnnotation[] = [];
+  const childNode = pgsl.nodes.get(childUri);
+  if (!childNode) return annotations;
+
+  for (const [fragUri, fragNode] of pgsl.nodes) {
+    if (fragNode.kind !== 'Fragment' || !fragNode.items) continue;
+
+    const idx = fragNode.items.indexOf(childUri);
+    if (idx < 0) continue;
+
+    const totalItems = fragNode.items.length;
+    const parentLevel = fragNode.level;
+    const childLevel = childNode.level;
+
+    // Determine role
+    let role: ContainmentRole;
+    if (totalItems === 1) {
+      role = 'sole';
+    } else if (fragNode.left === childUri) {
+      role = 'left';
+    } else if (fragNode.right === childUri) {
+      role = 'right';
+    } else if (idx === 0) {
+      role = 'head';
+    } else if (idx === totalItems - 1) {
+      role = 'tail';
+    } else {
+      role = 'medial';
+    }
+
+    annotations.push({
+      parentUri: fragUri as IRI,
+      childUri,
+      position: idx,
+      depthFromBottom: childLevel,
+      depthFromTop: parentLevel - childLevel,
+      totalDepth: parentLevel,
+      span: 1 / totalItems,
+      role,
+    });
+  }
+
+  // Sort by total depth descending (deepest containers first)
+  annotations.sort((a, b) => b.totalDepth - a.totalDepth);
+
+  return annotations;
+}
+
+/**
+ * Get all containment annotations in the entire lattice.
+ * Returns a map from child URI to its annotations.
+ */
+export function allContainmentAnnotations(
+  pgsl: PGSLInstance,
+): Map<IRI, ContainmentAnnotation[]> {
+  const result = new Map<IRI, ContainmentAnnotation[]>();
+
+  for (const [uri] of pgsl.nodes) {
+    const annotations = computeContainmentAnnotations(pgsl, uri as IRI);
+    if (annotations.length > 0) {
+      result.set(uri as IRI, annotations);
+    }
+  }
+
+  return result;
 }

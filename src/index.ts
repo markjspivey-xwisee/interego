@@ -314,6 +314,8 @@ export {
   verifyProvenanceNaturality,
   structuralRetrieve,
   atomRetrieve,
+  computeContainmentAnnotations,
+  allContainmentAnnotations,
 } from './pgsl/index.js';
 
 export type {
@@ -328,6 +330,9 @@ export type {
   Direction,
   ConstituentMorphism,
   PullbackSquare,
+  ContainmentAnnotation,
+  ContainmentRole,
+  TokenGranularity,
   RetrievalResult,
   RetrievalOptions,
 } from './pgsl/index.js';

@@ -7,6 +7,8 @@ export {
   queryNeighbors,
   latticeStats,
   computeLatticeCids,
+  computeContainmentAnnotations,
+  allContainmentAnnotations,
 } from './lattice.js';
 export {
   fiber,
@@ -137,4 +139,4 @@ export type {
   TemporalQuestionParsed,
   AdvancedTemporalResult,
 } from './advanced-temporal.js';
-export type { TokenGranularity } from './types.js';
+export type { TokenGranularity, ContainmentAnnotation, ContainmentRole } from './types.js';
