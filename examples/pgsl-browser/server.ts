@@ -158,27 +158,45 @@ app.get('/api/atoms', (_req, res) => {
   res.json(atoms);
 });
 
-// Get focus chain — given a focus atom, find what's to its left and right across all fragments
+// Get focus chain — given a focus node, find what's to its left and right across all fragments
 app.get('/api/focus/:uri', (req, res) => {
   const focusUri = decodeURIComponent(req.params.uri) as IRI;
   const focusNode = pgsl.nodes.get(focusUri);
   if (!focusNode) { res.status(404).json({ error: 'Not found' }); return; }
 
   const resolved = pgslResolve(pgsl, focusUri);
+  const focusContent = resolved;
 
-  // Find all fragments containing this node
+  // Build a set of ALL URIs that "contain" or "are" this focus node
+  // An atom is contained in its L1 wrapper, which is in L2 pairs, etc.
+  const focusUris = new Set<string>([focusUri]);
+  // Find L1 wrapper of this atom (if atom)
+  if (focusNode.kind === 'Atom') {
+    for (const [fUri, fNode] of pgsl.nodes) {
+      if (fNode.kind === 'Fragment' && fNode.level === 1 && fNode.items.length === 1 && fNode.items[0] === focusUri) {
+        focusUris.add(fUri);
+      }
+    }
+  }
+
+  // Find all fragments containing ANY of the focus URIs
   const containingFragments: Array<{
     uri: string;
     resolved: string;
     level: number;
-    position: number; // index of focus in items
+    position: number;
     items: string[];
     itemsResolved: string[];
   }> = [];
 
   for (const [fragUri, fragNode] of pgsl.nodes) {
     if (fragNode.kind !== 'Fragment' || !fragNode.items) continue;
-    const idx = fragNode.items.indexOf(focusUri);
+    // Check if any focus URI is in this fragment's items
+    let idx = -1;
+    for (const fUri of focusUris) {
+      const i = fragNode.items.indexOf(fUri as IRI);
+      if (i >= 0) { idx = i; break; }
+    }
     if (idx >= 0) {
       containingFragments.push({
         uri: fragUri,
@@ -191,24 +209,33 @@ app.get('/api/focus/:uri', (req, res) => {
     }
   }
 
-  // Find left neighbors (what appears immediately before focus in any fragment)
-  const leftNeighbors = new Map<string, { uri: string; resolved: string; count: number }>();
-  const rightNeighbors = new Map<string, { uri: string; resolved: string; count: number }>();
+  // Find left/right neighbors — resolve to ATOM level for display
+  const leftNeighbors = new Map<string, { uri: string; resolved: string; count: number; level: number }>();
+  const rightNeighbors = new Map<string, { uri: string; resolved: string; count: number; level: number }>();
 
   for (const frag of containingFragments) {
     if (frag.position > 0) {
       const leftUri = frag.items[frag.position - 1]!;
       const leftResolved = frag.itemsResolved[frag.position - 1]!;
-      const existing = leftNeighbors.get(leftUri);
+      // Use the resolved content as key to deduplicate across levels
+      const key = leftResolved;
+      const existing = leftNeighbors.get(key);
       if (existing) { existing.count++; }
-      else { leftNeighbors.set(leftUri, { uri: leftUri, resolved: leftResolved, count: 1 }); }
+      else {
+        const leftNode = pgsl.nodes.get(leftUri as IRI);
+        leftNeighbors.set(key, { uri: leftUri, resolved: leftResolved, count: 1, level: leftNode?.level ?? 0 });
+      }
     }
     if (frag.position < frag.items.length - 1) {
       const rightUri = frag.items[frag.position + 1]!;
       const rightResolved = frag.itemsResolved[frag.position + 1]!;
-      const existing = rightNeighbors.get(rightUri);
+      const key = rightResolved;
+      const existing = rightNeighbors.get(key);
       if (existing) { existing.count++; }
-      else { rightNeighbors.set(rightUri, { uri: rightUri, resolved: rightResolved, count: 1 }); }
+      else {
+        const rightNode = pgsl.nodes.get(rightUri as IRI);
+        rightNeighbors.set(key, { uri: rightUri, resolved: rightResolved, count: 1, level: rightNode?.level ?? 0 });
+      }
     }
   }
 
