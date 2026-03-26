@@ -114,8 +114,8 @@ app.get('/api/stats', (_req, res) => {
 });
 
 // Resolve a URI
-app.get('/api/resolve/:uri', (req, res) => {
-  const uri = decodeURIComponent(req.params.uri) as IRI;
+app.get('/api/resolve', (req, res) => {
+  const uri = (req.query.uri as string) as IRI;
   const node = pgsl.nodes.get(uri);
   if (!node) { res.status(404).json({ error: 'Not found' }); return; }
   const resolved = pgslResolve(pgsl, uri);
@@ -123,9 +123,9 @@ app.get('/api/resolve/:uri', (req, res) => {
 });
 
 // Get neighbors (what appears to the left/right of a node)
-app.get('/api/neighbors/:uri/:direction', (req, res) => {
-  const uri = decodeURIComponent(req.params.uri) as IRI;
-  const direction = req.params.direction as 'left' | 'right';
+app.get('/api/neighbors', (req, res) => {
+  const uri = (req.query.uri as string) as IRI;
+  const direction = (req.query.direction as string) as 'left' | 'right';
   const neighbors = queryNeighbors(pgsl, uri, direction);
   const results = [...neighbors].map(n => ({
     uri: n,
@@ -159,8 +159,8 @@ app.get('/api/atoms', (_req, res) => {
 });
 
 // Get focus chain — given a focus node, find what's to its left and right across all fragments
-app.get('/api/focus/:uri', (req, res) => {
-  const focusUri = decodeURIComponent(req.params.uri) as IRI;
+app.post('/api/focus', (req, res) => {
+  const focusUri = req.body.uri as IRI;
   const focusNode = pgsl.nodes.get(focusUri);
   if (!focusNode) { res.status(404).json({ error: 'Not found' }); return; }
 

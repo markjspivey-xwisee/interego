@@ -202,7 +202,7 @@ function renderNodeList(nodes) {
 async function setFocus(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   focusChain = [uri];
-  const resp = await fetch('/api/focus/' + encodeURIComponent(uri));
+  const resp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri})});
   focusData = await resp.json();
   renderFocus();
   renderAnnotations();
@@ -214,7 +214,7 @@ async function expandLeft(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   focusChain.unshift(uri);
   // Re-fetch focus for the NEW leftmost to get its left neighbors
-  const resp = await fetch('/api/focus/' + encodeURIComponent(uri));
+  const resp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri})});
   const newFocus = await resp.json();
   focusData._leftExpansion = newFocus;
   renderFocus();
@@ -224,7 +224,7 @@ async function expandLeft(encodedUri) {
 async function expandRight(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   focusChain.push(uri);
-  const resp = await fetch('/api/focus/' + encodeURIComponent(uri));
+  const resp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri})});
   const newFocus = await resp.json();
   focusData._rightExpansion = newFocus;
   renderFocus();
@@ -255,11 +255,11 @@ async function renderFocus() {
   }
 
   // Get left neighbors for leftmost node in chain
-  const leftResp = await fetch('/api/focus/' + encodeURIComponent(focusChain[0]));
+  const leftResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[0]})});
   const leftData = await leftResp.json();
 
   // Get right neighbors for rightmost node in chain
-  const rightResp = await fetch('/api/focus/' + encodeURIComponent(focusChain[focusChain.length - 1]));
+  const rightResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[focusChain.length - 1]})});
   const rightData = await rightResp.json();
 
   // Filter out nodes already in the chain from neighbor options
