@@ -46,8 +46,14 @@
   .chain-node.right { background: #2a1a2a; color: #ee7eee; border: 1px solid #5a3a5a; }
   .chain-node:hover { transform: scale(1.05); filter: brightness(1.2); }
   .chain-node.multi { border-style: dashed; }
+  .chain-node.chain-item { background: #1a2a3e; color: #aac; border: 1px solid #2a3a5e; }
 
   .chain-arrow { font-size: 18px; color: #333; padding: 0 6px; }
+
+  .collapse-btn { padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 16px; border: 1px solid #333; background: #1a1a1a; color: #888; transition: all 0.15s; }
+  .collapse-btn:hover { background: #2a2a2a; color: #fff; border-color: #555; }
+  .collapse-btn.left { border-color: #3a5a3a; color: #7eee7e; }
+  .collapse-btn.right { border-color: #5a3a5a; color: #ee7eee; }
 
   /* Options (left/right neighbors) */
   .options-panel { display: flex; gap: 2px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
@@ -244,45 +250,51 @@ function collapseRight() {
 async function renderFocus() {
   const area = document.getElementById('focusArea');
   if (!focusData || focusChain.length === 0) {
-    area.innerHTML = '<div class="empty-state">Click a node to browse</div>';
+    area.innerHTML = '<div class="empty-state">Click a node to browse the lattice</div>';
     return;
   }
 
-  // Get left neighbors for leftmost node
+  // Get left neighbors for leftmost node in chain
   const leftResp = await fetch('/api/focus/' + encodeURIComponent(focusChain[0]));
   const leftData = await leftResp.json();
 
-  // Get right neighbors for rightmost node
+  // Get right neighbors for rightmost node in chain
   const rightResp = await fetch('/api/focus/' + encodeURIComponent(focusChain[focusChain.length - 1]));
   const rightData = await rightResp.json();
 
-  let html = '<div class="focus-label">Focus Chain</div><div class="chain">';
+  // Filter out nodes already in the chain from neighbor options
+  const chainSet = new Set(focusChain.map(u => {
+    const n = allNodes.find(x => x.uri === u);
+    return n ? n.resolved : '';
+  }));
+  const leftOptions = leftData.left.filter(n => !chainSet.has(n.resolved));
+  const rightOptions = rightData.right.filter(n => !chainSet.has(n.resolved));
 
-  // Left options
-  if (leftData.left.length > 0) {
+  let html = '<div class="focus-label">Focus Chain (' + focusChain.length + ' nodes)</div>';
+  html += '<div class="chain">';
+
+  // LEFT: collapse button + source options
+  if (focusChain.length > 1) {
+    html += `<button class="collapse-btn left" onclick="collapseLeft()" title="Remove leftmost from chain">&times;</button>`;
+  }
+  if (leftOptions.length > 0) {
     html += '<div class="chain-segment">';
-    html += `<div class="chain-node left multi" onclick="collapseLeft()" title="Collapse left">[`;
-    html += leftData.left.map(n => `<span>${n.resolved}</span>`).join(', ');
-    html += `]</div>`;
     html += '<div class="options-panel">';
-    html += leftData.left.map(n =>
-      `<span class="option-chip left" onclick="expandLeft('${encodeURIComponent(n.uri)}')">${n.resolved} (${n.count})</span>`
+    html += leftOptions.map(n =>
+      `<span class="option-chip left" onclick="expandLeft('${encodeURIComponent(n.uri)}')" title="Add to left of chain">${n.resolved} <small>(${n.count})</small></span>`
     ).join('');
     html += '</div></div>';
     html += '<span class="chain-arrow">&larr;</span>';
   }
 
-  // Chain nodes
+  // CHAIN NODES — each clickable to refocus
   for (let i = 0; i < focusChain.length; i++) {
     const uri = focusChain[i];
     const node = allNodes.find(n => n.uri === uri);
     const resolved = node ? node.resolved : '?';
-    const isFirst = i === 0 && focusChain.length > 1;
-    const isLast = i === focusChain.length - 1 && focusChain.length > 1;
-    const isFocus = focusChain.length === 1 || (i > 0 && i < focusChain.length - 1);
 
     html += '<div class="chain-segment">';
-    html += `<div class="chain-node ${isFocus ? 'focus' : isFirst ? 'left' : 'right'}" onclick="setFocus('${encodeURIComponent(uri)}')" title="${uri}">${resolved}</div>`;
+    html += `<div class="chain-node chain-item" onclick="setFocus('${encodeURIComponent(uri)}')" title="Click to refocus on '${resolved}'">${resolved}</div>`;
     html += '</div>';
 
     if (i < focusChain.length - 1) {
@@ -290,27 +302,28 @@ async function renderFocus() {
     }
   }
 
-  // Right options
-  if (rightData.right.length > 0) {
+  // RIGHT: target options + collapse button
+  if (rightOptions.length > 0) {
     html += '<span class="chain-arrow">&rarr;</span>';
     html += '<div class="chain-segment">';
-    html += `<div class="chain-node right multi" onclick="collapseRight()" title="Collapse right">[`;
-    html += rightData.right.map(n => `<span>${n.resolved}</span>`).join(', ');
-    html += `]</div>`;
     html += '<div class="options-panel">';
-    html += rightData.right.map(n =>
-      `<span class="option-chip right" onclick="expandRight('${encodeURIComponent(n.uri)}')">${n.resolved} (${n.count})</span>`
+    html += rightOptions.map(n =>
+      `<span class="option-chip right" onclick="expandRight('${encodeURIComponent(n.uri)}')" title="Add to right of chain">${n.resolved} <small>(${n.count})</small></span>`
     ).join('');
     html += '</div></div>';
+  }
+  if (focusChain.length > 1) {
+    html += `<button class="collapse-btn right" onclick="collapseRight()" title="Remove rightmost from chain">&times;</button>`;
   }
 
   html += '</div>';
 
-  // Level info
-  const focusNode = allNodes.find(n => n.uri === focusChain[0]);
-  if (focusNode) {
-    html += `<div style="margin-top:16px;font-size:11px;color:#555">Level ${focusNode.level} | ${focusNode.kind}</div>`;
-  }
+  // Chain info
+  const chainResolved = focusChain.map(u => {
+    const n = allNodes.find(x => x.uri === u);
+    return n ? n.resolved : '?';
+  }).join(' ');
+  html += `<div style="margin-top:12px;font-size:12px;color:#666">"${chainResolved}"</div>`;
 
   area.innerHTML = html;
 }
