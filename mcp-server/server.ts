@@ -79,6 +79,16 @@ import {
   latticeMeet,
   isSubFragment,
   pullbackSquare,
+  // Extraction + Computation + Affordance
+  extractEntities,
+  extractRelations,
+  classifyQuestion,
+  expandEntitiesWithOntology,
+  computeCognitiveStrategy,
+  parseDate,
+  daysBetween,
+  countUnique,
+  shouldAbstain,
 } from '@foxxi/context-graphs';
 
 import type {
@@ -129,7 +139,7 @@ const IS_CLOUD = !IS_LOCAL;
 
 // Progressive tool tiers
 const TOOL_TIER = process.env['CG_TOOL_TIER'] ?? 'all';
-const CORE_TOOLS = new Set(['publish_context', 'discover_context', 'get_descriptor', 'get_pod_status', 'subscribe_to_pod']);
+const CORE_TOOLS = new Set(['publish_context', 'discover_context', 'get_descriptor', 'get_pod_status', 'subscribe_to_pod', 'analyze_question']);
 const FEDERATION_TOOLS = new Set(['register_agent', 'revoke_agent', 'verify_agent', 'discover_all', 'subscribe_all', 'list_known_pods', 'add_pod', 'remove_pod', 'discover_directory', 'publish_directory', 'resolve_webfinger']);
 const CRYPTO_TOOLS = new Set(['setup_identity', 'link_wallet', 'check_balance']);
 const PGSL_TOOLS = new Set(['pgsl_ingest', 'pgsl_resolve', 'pgsl_lattice_status', 'pgsl_meet', 'pgsl_to_turtle']);
@@ -1183,6 +1193,75 @@ async function toolCheckBalance(args: { address?: string }): Promise<string> {
   return lines.join('\n');
 }
 
+// ── Comprehension Tool Implementations ──────────────────────
+
+async function toolAnalyzeQuestion(args: {
+  question: string;
+  session_content?: string;
+}): Promise<string> {
+  const strategy = computeCognitiveStrategy(args.question);
+
+  // If session content provided, also check for abstention
+  let sessionEntities: Set<string> | undefined;
+  if (args.session_content) {
+    const sessionExtr = extractEntities(args.session_content);
+    sessionEntities = new Set(sessionExtr.allEntities.map(e => e.toLowerCase()));
+    const abstain = shouldAbstain(
+      [...strategy.entities.contentWords],
+      sessionEntities,
+    );
+    if (abstain.abstain) {
+      return [
+        `Question Analysis:`,
+        `  Type: ${strategy.questionType}`,
+        `  Strategy: ABSTAIN — question entities not found in session content`,
+        `  Missing entities: ${abstain.missingEntities.join(', ')}`,
+        `  Match ratio: ${(abstain.matchRatio * 100).toFixed(0)}%`,
+      ].join('\n');
+    }
+  }
+
+  const lines = [
+    `Question Analysis:`,
+    `  Type: ${strategy.questionType}`,
+    `  Strategy: ${strategy.strategy}`,
+    `  Requires computation: ${strategy.requiresComputation}`,
+    strategy.computationType ? `  Computation type: ${strategy.computationType}` : '',
+    `  Key entities: ${strategy.entities.contentWords.join(', ')}`,
+    strategy.entities.nounPhrases.length > 0
+      ? `  Noun phrases: ${strategy.entities.nounPhrases.join(', ')}`
+      : '',
+    `  Confidence: ${(strategy.confidence * 100).toFixed(0)}%`,
+    ``,
+    `Recommended approach:`,
+  ];
+
+  switch (strategy.strategy) {
+    case 'temporal-twopass':
+      lines.push(`  1. Extract all dates/temporal markers from sessions`);
+      lines.push(`  2. Use structural date arithmetic to compute answer`);
+      lines.push(`  3. Verify with session context`);
+      break;
+    case 'multi-session-aggregate':
+      lines.push(`  1. Extract relevant items from EACH session separately`);
+      lines.push(`  2. Deduplicate and count structurally`);
+      lines.push(`  3. Aggregate (sum/count/average) in code, not LLM`);
+      break;
+    case 'preference-meta':
+      lines.push(`  1. Identify user's stated preferences, interests, expertise`);
+      lines.push(`  2. Generate meta-description: "The user would prefer..."`);
+      break;
+    case 'abstain':
+      lines.push(`  The question references entities not found in available context.`);
+      lines.push(`  The system should respond: "This information was not mentioned."`);
+      break;
+    default:
+      lines.push(`  Direct comprehension from session content`);
+  }
+
+  return lines.filter(Boolean).join('\n');
+}
+
 // ── PGSL Tool Implementations ───────────────────────────────
 
 async function toolPgslIngest(args: {
@@ -1524,6 +1603,19 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
     },
+    // ── Comprehension tools ──
+    {
+      name: 'analyze_question',
+      description: 'Analyze a question using the affordance engine to determine the optimal cognitive strategy. Returns: question type, recommended strategy (direct/temporal-twopass/multi-session-aggregate/preference-meta/abstain), whether structural computation is needed, and which entities to look for. Use this BEFORE answering a question to select the right approach.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          question: { type: 'string', description: 'The question to analyze' },
+          session_content: { type: 'string', description: 'Optional session content to check for abstention (are the question entities present?)' },
+        },
+        required: ['question'],
+      },
+    },
     // ── PGSL tools ──
     {
       name: 'pgsl_ingest',
@@ -1640,6 +1732,10 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'check_balance':
         result = await toolCheckBalance(args as { address?: string });
+        break;
+      // Comprehension
+      case 'analyze_question':
+        result = await toolAnalyzeQuestion(args as Parameters<typeof toolAnalyzeQuestion>[0]);
         break;
       // PGSL
       case 'pgsl_ingest':
