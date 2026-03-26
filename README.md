@@ -2,28 +2,33 @@
 
 Reference implementation of **[Context Graphs 1.0](https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html)** — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
 
-Context Graphs lets AI coding agents publish, discover, and compose knowledge graphs with full provenance, trust, temporal validity, and semiotic metadata — federated across decentralized Solid pods.
+Context Graphs gives autonomous AI agents the infrastructure to publish, discover, compose, and reason over knowledge graphs with full provenance, trust, temporal validity, semiotic metadata, causal models, and cryptographic verification — federated across decentralized Solid pods.
 
 **Author:** Mark Spivey / [Foxxi Mediums Inc.](https://foxximediums.com)
 **License:** CC-BY-4.0
+**W3C Community Group:** [Context Graph CG](https://www.w3.org/community/context-graph/) (launching March 2026)
 
 ---
 
 ## What It Does
 
-Every Named Graph has context: who created it, when, under what interpretive frame, at what confidence, with what trust credential. Context Graphs makes that context **structured, composable, and machine-readable**.
+Every Named Graph has context: who created it, when, under what interpretive frame, at what confidence, with what trust credential, through what causal model. Context Graphs makes that context **structured, composable, machine-readable, and cryptographically verifiable**.
 
-An AI agent (Claude Code, Codex, etc.) analyzes your codebase and produces a knowledge graph. This library wraps that graph with a **Context Descriptor** declaring:
+An AI agent (Claude Code, Codex, OpenClaw, etc.) produces a knowledge graph. This library wraps that graph with a **Context Descriptor** declaring:
 
-- **Temporal** — when is this valid? (OWL-Time, Dublin Core)
-- **Provenance** — who generated it, from what? (PROV-O)
-- **Agent** — which AI agent, on behalf of which human? (PROV-O, ActivityStreams)
-- **Access Control** — who can read/write? (WAC)
-- **Semiotic** — is this asserted or hypothetical? at what confidence? (Peircean triadic semiotics)
-- **Trust** — self-asserted, third-party attested, or cryptographically verified? (VC 2.0, DID Core)
-- **Federation** — where is this stored, how does it sync? (DCAT 3, Solid Protocol)
+| Facet | What it captures | W3C Alignment |
+|-------|-----------------|---------------|
+| **Temporal** | When is this valid? | OWL-Time, Dublin Core |
+| **Provenance** | Who generated it, from what? | PROV-O |
+| **Agent** | Which AI agent, on behalf of which human? | PROV-O, ActivityStreams |
+| **AccessControl** | Who can read/write? | WAC |
+| **Semiotic** | Asserted or hypothetical? At what confidence? | Peircean triadic semiotics |
+| **Trust** | Self-asserted, attested, or cryptographically verified? | VC 2.0, DID Core |
+| **Federation** | Where is this stored, how does it sync? | DCAT 3, Solid Protocol |
+| **Causal** | What structural causal model governs this? | Pearl's SCM framework |
+| **Projection** | How does this map to other vocabularies? | SKOS, Hydra |
 
-Two agents can then **compose** their descriptors via set-theoretic operators (union, intersection, restriction, override) to merge knowledge with full provenance chains preserved.
+Two agents can then **compose** their descriptors via set-theoretic operators (union, intersection, restriction, override) forming a **bounded lattice** — merging knowledge with full provenance chains preserved.
 
 ---
 
@@ -32,37 +37,60 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 ```
 @foxxi/context-graphs
 ├── src/
-│   ├── model/        Core types, ContextDescriptor builder, composition operators, delegation
-│   ├── rdf/          Namespaces (20+), Turtle serializer, JSON-LD serializer/parser
+│   ├── model/        Core types, ContextDescriptor builder, composition operators,
+│   │                 delegation, category theory (presheaf, naturality, lattice laws),
+│   │                 semiotic formalization (Sign functor, adjunction, field functor),
+│   │                 open facet registry with merge strategies
+│   ├── rdf/          Namespaces (23+), Turtle/JSON-LD/TriG serializers,
+│   │                 RDF 1.2 triple annotation support
 │   ├── validation/   Programmatic SHACL-equivalent validator, SHACL shapes export
 │   ├── sparql/       Parameterized SPARQL 1.2 query pattern builders
-│   └── solid/        publish(), discover(), subscribe(), directory, WebFinger
-├── mcp-server/       MCP server (16 tools) for Claude Code / AI agents
-├── deploy/           Dockerfiles + Azure Container Apps deployment
+│   ├── solid/        publish(), discover(), subscribe(), directory, WebFinger,
+│   │                 DID resolution, IPFS anchoring
+│   ├── pgsl/         Poly-Granular Sequence Lattice — content-addressed substrate,
+│   │                 entity/relation extraction, ontological inference, usage-based
+│   │                 semantics, structural retrieval, fact extraction, computation
+│   │                 (date arithmetic, counting, aggregation, abstention detection)
+│   ├── affordance/   Affordance engine integrating 8 frameworks:
+│   │                 Gibson, Norman, Pearl, Boyd (OODA), Endsley (SA),
+│   │                 Bratman (BDI), Friston (active inference), stigmergy
+│   ├── crypto/       Real cryptography — ethers.js ECDSA, NaCl E2E encryption,
+│   │                 ZK proofs (Merkle, range, temporal), SIWE (ERC-4361),
+│   │                 ERC-8004 agent identity, IPFS CID computation, Pinata pinning
+│   └── causality     Pearl's SCM: do-calculus, d-separation, backdoor/front-door
+│                     criteria, counterfactual evaluation
+├── mcp-server/       MCP server (24 tools) for Claude Code / AI agents
+├── deploy/           Dockerfiles, Azure Container Apps, identity server, relay
+│   ├── identity/     WebID + DID + Ed25519 + WebFinger + bearer tokens + SIWE
+│   ├── mcp-relay/    HTTP/REST bridge with auth, X402 payments, IPFS pinning
+│   └── css-config/   Community Solid Server configuration
 ├── examples/         Dashboard UI + multi-agent demo
-└── tests/            85 tests across 3 suites
+├── benchmarks/       LongMemEval (94.0%) + LoCoMo (80.0%) evaluation suites
+└── tests/            264 tests across 10 suites
 ```
 
 ### Design Principles
 
-- **Zero runtime dependencies.** Validation is programmatic — no SHACL engine required. SHACL shapes are exported as Turtle strings for external engines.
-- **Discriminated union pattern.** All seven facet types use `{ type: 'Temporal' | 'Provenance' | ... }` for exhaustive switch matching.
-- **Composition is algebraic.** The four operators form a bounded lattice. Each facet type defines its own merge semantics per the spec's §3.4.
-- **W3C vocabulary reuse.** 20+ standard namespaces (PROV-O, OWL-Time, DCAT, WAC, VC, DID, Solid, Hydra, DPROD). Every class IRI and property IRI is typed and exported.
-
----
-
-## Installation
-
-```bash
-npm install @foxxi/context-graphs
-```
-
-Requires Node.js ≥ 20.0.0. Zero runtime dependencies.
+- **Zero runtime dependencies for the core.** Validation is programmatic. SHACL shapes exported as Turtle strings.
+- **Discriminated union pattern.** All 9+ facet types use `{ type: 'Temporal' | 'Provenance' | ... }` for exhaustive switch matching.
+- **Composition is algebraic.** Four operators form a bounded lattice with category-theoretic proofs (presheaf naturality, idempotence, commutativity, associativity, absorption).
+- **Semiotic foundation.** Descriptors are Peircean signs. The Sign functor phi/psi forms an adjunction between the descriptor category and the semiotic category. The Semiotic Field Functor maps to SAT.
+- **PGSL substrate.** Content is canonically addressed via the Poly-Granular Sequence Lattice — deterministic, structurally shared, with categorical pullback construction.
+- **Real cryptography.** No mocks. ethers.js v6 for ECDSA, tweetnacl for NaCl encryption, real IPFS CIDs, real SIWE verification.
+- **Local-first.** Everything works on localhost with zero internet. Cloud deployment is additive.
+- **W3C vocabulary reuse.** 23+ standard namespaces (PROV-O, OWL-Time, DCAT, WAC, VC, DID, Solid, Hydra, DPROD, SKOS, FOAF).
 
 ---
 
 ## Quick Start
+
+```bash
+git clone https://github.com/markjspivey-xwisee/context-graphs.git
+cd context-graphs
+npm install
+npm run build
+npm test  # 264 tests
+```
 
 ### Build a Context Descriptor
 
@@ -77,15 +105,8 @@ const descriptor = ContextDescriptor.create('urn:cg:my-analysis:1' as IRI)
     'https://id.example.com/alice/profile#me' as IRI,  // owner (human)
     'urn:agent:anthropic:claude-code:vscode' as IRI,    // agent (AI)
   )
-  .semiotic({
-    modalStatus: 'Asserted',
-    epistemicConfidence: 0.92,
-    groundTruth: true,
-  })
-  .trust({
-    trustLevel: 'SelfAsserted',
-    issuer: 'https://id.example.com/alice/profile#me' as IRI,
-  })
+  .asserted(0.92)
+  .selfAsserted('did:web:alice.example' as IRI)
   .federation({
     origin: 'https://pod.example.com/alice/' as IRI,
     storageEndpoint: 'https://pod.example.com/alice/' as IRI,
@@ -94,11 +115,8 @@ const descriptor = ContextDescriptor.create('urn:cg:my-analysis:1' as IRI)
   .version(1)
   .build();
 
-// Validate
 const result = validate(descriptor);
 console.log(result.conforms); // true
-
-// Serialize to Turtle
 console.log(toTurtle(descriptor));
 ```
 
@@ -107,45 +125,168 @@ console.log(toTurtle(descriptor));
 ```typescript
 import { publish, discover, subscribe } from '@foxxi/context-graphs';
 
-// Publish descriptor + graph to a pod
-const result = await publish(descriptor, graphTurtle, 'https://pod.example.com/alice/', {
-  fetch: authenticatedFetch,
-});
+const result = await publish(descriptor, graphTurtle, 'https://pod.example.com/alice/');
 // → { descriptorUrl, graphUrl, manifestUrl }
+// → IPFS pinned (if configured): ipfs://Qm...
+// → Anchor receipt written to pod: /anchors/{id}.json
 
-// Discover what's on a pod
 const entries = await discover('https://pod.example.com/bob/', {
-  facetType: 'Semiotic',
-  validFrom: '2026-01-01T00:00:00Z',
+  facetType: 'Semiotic', validFrom: '2026-01-01T00:00:00Z',
 });
 
-// Subscribe to live changes via WebSocket
 const sub = await subscribe('https://pod.example.com/bob/', (event) => {
-  console.log(`${event.type} on ${event.resource} at ${event.timestamp}`);
+  console.log(`${event.type} on ${event.resource}`);
 });
 ```
 
-### Compose Two Descriptors
+### Compose Descriptors
 
 ```typescript
-import { union, intersection } from '@foxxi/context-graphs';
+import { union, intersection, restriction } from '@foxxi/context-graphs';
 
-// Union: merge all facets from both descriptors
 const merged = union(descriptorA, descriptorB);
-
-// Intersection: keep only shared facet types
 const common = intersection(descriptorA, descriptorB);
+const trustOnly = restriction(merged, ['Trust', 'Semiotic']);
 ```
 
 ---
 
-## MCP Server — AI Agent Integration
+## PGSL — Poly-Granular Sequence Lattice
 
-The MCP server gives AI coding agents (Claude Code, Codex CLI, etc.) direct access to context graphs through the [Model Context Protocol](https://modelcontextprotocol.io).
+The content substrate. Deterministic hierarchical data structure representing sequential data as a lattice of overlapping sub-structures with content-addressed canonical URIs.
+
+```typescript
+import { createPGSL, embedInPGSL, pgslResolve, latticeMeet } from '@foxxi/context-graphs';
+
+const pgsl = createPGSL({ wasAttributedTo: 'did:web:alice', generatedAtTime: new Date().toISOString() });
+
+const uriA = embedInPGSL(pgsl, 'autonomous agents share knowledge graphs');
+const uriB = embedInPGSL(pgsl, 'knowledge graphs enable semantic interoperability');
+
+const meet = latticeMeet(pgsl, uriA, uriB);
+const shared = pgslResolve(pgsl, meet!); // "knowledge graphs" — structural overlap
+```
+
+PGSL provides:
+- **Content-addressed atoms** — same input always produces the same URI
+- **Structural sharing** — two texts sharing sub-sequences share lattice fragments
+- **Lattice meet** — greatest lower bound finds the largest shared sub-sequence
+- **Categorical pullback** — overlapping pair construction as a universal property
+- **Entity/relation extraction** — extract structured facts from natural language
+- **Ontological inference** — synonym groups, IS-A hierarchies, part-of relations
+- **Usage-based semantics** — co-occurrence mining, Yoneda embedding, emergent synonyms
+- **Structural computation** — date arithmetic, counting, aggregation, abstention detection
+
+---
+
+## Affordance Engine
+
+Integrates 8 theoretical frameworks for autonomous agent decision-making:
+
+| Framework | What it provides | Module |
+|-----------|-----------------|--------|
+| **Gibson** | Relational affordances (agent x environment) | `computeAffordances()` |
+| **Norman** | Signifiers + anti-affordances | `extractSignifiers()` |
+| **Pearl** | Affordances as interventional queries P(Y\|do(X)) | `CausalAffordanceEffect` |
+| **Boyd (OODA)** | Observe -> Orient -> Decide -> Act with IG&C | `OODACycle` |
+| **Endsley (SA)** | Perception -> Comprehension -> Projection | `SituationalAwarenessLevel` |
+| **Bratman (BDI)** | Beliefs -> Desires -> Intentions | `AgentState` |
+| **Friston** | Active inference, surprise evaluation | `evaluateSurprise()` |
+| **Stigmergy** | Affordance landscape tracking across pods | `StigmergicField` |
+
+```typescript
+import { computeAffordances, computeCognitiveStrategy } from '@foxxi/context-graphs';
+
+// What can this agent do with this descriptor?
+const affordances = computeAffordances(agentProfile, descriptor);
+// → { affordances: [...], antiAffordances: [...], signifiers: [...], saLevel: {...} }
+
+// What cognitive strategy should answer this question?
+const strategy = computeCognitiveStrategy('How many days between X and Y?');
+// → { strategy: 'temporal-twopass', computationType: 'date-arithmetic', ... }
+```
+
+---
+
+## Causality — Pearl's SCM Framework
+
+```typescript
+import { buildSCM, doIntervention, isDSeparated, evaluateCounterfactual } from '@foxxi/context-graphs';
+
+const scm = buildSCM({
+  variables: [{ name: 'X' }, { name: 'Y' }, { name: 'Z' }],
+  edges: [{ from: 'X', to: 'Y' }, { from: 'Y', to: 'Z' }],
+});
+
+const mutilated = doIntervention(scm, { variable: 'Y', value: '1' });
+const separated = isDSeparated(scm, 'X', 'Z', new Set(['Y'])); // true
+const counterfactual = evaluateCounterfactual(scm, {
+  intervention: { variable: 'X', value: '0' },
+  outcome: 'Z',
+  evidence: { Y: '1' },
+});
+```
+
+---
+
+## Cryptography
+
+All real. No mocks.
+
+### E2E Encryption (NaCl)
+
+```typescript
+import { generateKeyPair, createEncryptedEnvelope, openEncryptedEnvelope } from '@foxxi/context-graphs';
+
+const owner = generateKeyPair();  // X25519
+const agent = generateKeyPair();
+const envelope = createEncryptedEnvelope(turtleContent, [agent.publicKey, owner.publicKey], owner);
+const decrypted = openEncryptedEnvelope(envelope, agent); // only authorized agents can read
+```
+
+### Zero-Knowledge Proofs
+
+```typescript
+import { proveConfidenceAboveThreshold, proveDelegationMembership, proveTemporalOrdering } from '@foxxi/context-graphs';
+
+// Prove confidence > 0.8 without revealing exact value
+const { proof } = proveConfidenceAboveThreshold(0.95, 0.8);
+
+// Prove "I'm in the authorized agent set" without revealing which agent
+const membershipProof = proveDelegationMembership(myAgentId, authorizedAgents);
+
+// Prove "published before time T" without revealing exact time
+const temporalProof = proveTemporalOrdering(myTimestamp, deadline);
+```
+
+### Wallets & SIWE
+
+```typescript
+import { createWallet, createDelegation, signDescriptor, verifySiweSignature } from '@foxxi/context-graphs';
+
+const humanWallet = await createWallet('human', 'Alice');  // real secp256k1
+const agentWallet = await createWallet('agent', 'Claude');
+const delegation = await createDelegation(humanWallet, agentWallet, 'ReadWrite'); // EIP-712
+const signed = await signDescriptor(descriptorId, turtle, agentWallet); // real ECDSA
+```
+
+### IPFS Pinning
+
+```typescript
+import { pinDescriptor, computeCid } from '@foxxi/context-graphs';
+
+const cid = computeCid(turtleContent);  // real SHA-256 CID
+const anchor = await pinDescriptor(descriptorId, turtle, { provider: 'pinata', apiKey: '...' });
+// → pinned to IPFS, dereferenceable globally
+```
+
+---
+
+## MCP Server — 24 Tools for AI Agents
 
 ### Setup
 
-Add to your `.mcp.json` (VS Code) or `claude_desktop_config.json` (Claude Desktop):
+Add to `.mcp.json` (VS Code) or `claude_desktop_config.json` (Desktop):
 
 ```json
 {
@@ -154,322 +295,127 @@ Add to your `.mcp.json` (VS Code) or `claude_desktop_config.json` (Claude Deskto
       "command": "cmd",
       "args": ["/c", "npx", "tsx", "path/to/context-graphs/mcp-server/server.ts"],
       "env": {
-        "CG_POD_NAME": "your-pod-name",
+        "CG_POD_NAME": "your-name",
         "CG_AGENT_ID": "urn:agent:anthropic:claude-code:vscode",
-        "CG_OWNER_WEBID": "https://id.example.com/you/profile#me",
+        "CG_OWNER_WEBID": "https://your-identity-server/users/you/profile#me",
         "CG_OWNER_NAME": "Your Name",
-        "CG_BASE_URL": "https://your-css-instance.example.com/"
+        "CG_BASE_URL": "https://your-css-instance/"
       }
     }
   }
 }
 ```
 
-### Environment Variables
+Auto-onboarding: first tool call provisions pod + registry + credential automatically.
 
-| Variable | Description | Default |
-|---|---|---|
-| `CG_HOME_POD` | Full URL of agent's home pod (takes precedence) | Computed from BASE_URL + POD_NAME |
-| `CG_BASE_URL` | CSS base URL | `http://localhost:3456/` |
-| `CG_POD_NAME` | Pod name on the CSS | `agent` |
-| `CG_AGENT_ID` | Agent identity IRI | `urn:agent:claude-code:local` |
-| `CG_OWNER_WEBID` | Owner's WebID | Auto-generated |
-| `CG_OWNER_NAME` | Owner's display name | — |
-| `CG_DID` | Agent's DID | `did:web:{pod_name}.local` |
-| `CG_KNOWN_PODS` | Comma-separated pod URLs for auto-discovery | — |
-| `CG_DIRECTORY_URL` | URL of a PodDirectory graph to auto-load | — |
-| `CG_PORT` | CSS port for local startup | `3456` |
+### Tool Categories
 
-### 16 MCP Tools
+**Core (6):** `publish_context`, `discover_context`, `get_descriptor`, `subscribe_to_pod`, `get_pod_status`, `analyze_question`
 
-**Core:**
+**Delegation (3):** `register_agent`, `revoke_agent`, `verify_agent`
 
-| Tool | Description |
-|---|---|
-| `publish_context` | Publish a context-annotated knowledge graph to your Solid pod |
-| `discover_context` | Discover descriptors on a pod, with optional delegation verification |
-| `get_descriptor` | Fetch the full Turtle of a specific descriptor |
-| `subscribe_to_pod` | Subscribe to live WebSocket notifications from a pod |
-| `get_pod_status` | Check a pod's owner, agents, descriptors, and notifications |
+**Federation (8):** `discover_all`, `subscribe_all`, `list_known_pods`, `add_pod`, `remove_pod`, `discover_directory`, `publish_directory`, `resolve_webfinger`
 
-**Delegation:**
+**Identity (2):** `setup_identity`, `link_wallet`
 
-| Tool | Description |
-|---|---|
-| `register_agent` | Register an AI agent as authorized to act on behalf of the pod owner |
-| `revoke_agent` | Revoke an agent's delegation |
-| `verify_agent` | Verify an agent is authorized by checking the pod's agent registry |
+**PGSL (5):** `pgsl_ingest`, `pgsl_resolve`, `pgsl_lattice_status`, `pgsl_meet`, `pgsl_to_turtle`
 
-**Federation:**
+### Progressive Tiers
 
-| Tool | Description |
-|---|---|
-| `discover_all` | Fan out discovery across ALL known pods |
-| `subscribe_all` | Subscribe to WebSocket notifications from ALL known pods |
-| `list_known_pods` | List all pods in the federation registry |
-| `add_pod` | Add a pod URL to the federation registry |
-| `remove_pod` | Remove a pod from the registry |
-| `discover_directory` | Import pods from a PodDirectory graph |
-| `publish_directory` | Publish your pod registry as a PodDirectory |
-| `resolve_webfinger` | Resolve a WebFinger identifier to discover a pod (RFC 7033) |
+Set `CG_TOOL_TIER` to control which tools are exposed:
+
+| Tier | Tools | For |
+|------|-------|-----|
+| `core` | 6 | New users learning the basics |
+| `standard` | 17 | Teams federating across pods |
+| `full` | 19 | Users with crypto/wallet integration |
+| `all` (default) | 24 | Power users, researchers |
 
 ---
 
-## Identity & Delegation Model
+## Identity & Delegation
 
-The pod belongs to the **owner** (a human or organization). Agents are **delegates** acting on the owner's behalf.
+The pod belongs to the **owner** (human/org). Agents are **delegates**.
 
 ```
 Owner (human)
-├── WebID: https://id.example.com/alice/profile#me
-├── Pod: https://pod.example.com/alice/
-│
+├── WebID: https://identity-server/users/alice/profile#me
+├── DID: did:web:identity-server:users:alice
+├── Pod: https://css-server/alice/
 ├── Authorized agents:
 │   ├── claude-code-vscode  [ReadWrite]
 │   ├── claude-desktop      [ReadWrite]
 │   └── codex-cli           [DiscoverOnly]
-│
-└── Agent Registry: /alice/agents (RDF Turtle)
-    └── Delegation Credentials: /alice/credentials/*.jsonld (VC format)
+└── Delegation credentials: /alice/credentials/*.jsonld (VC format)
 ```
 
-When an agent publishes a descriptor:
-- `prov:wasAttributedTo` → the owner (human)
-- `prov:wasAssociatedWith` → the agent (AI tool)
-- Trust facet references the delegation credential
-
-When another agent consumes it:
-1. Fetch descriptor from pod
-2. Read `wasAttributedTo` (owner) and `wasAssociatedWith` (agent)
-3. Fetch `/agents` registry from the pod
-4. Confirm the agent is listed as authorized and not revoked
-5. Check temporal validity of the delegation
-6. Accept or reject based on trust policy
+Supports: WebID, DID (did:web), W3C Verifiable Credentials, Open Badges 3.0, IEEE LERS, SIWE (ERC-4361), ERC-8004 agent identity tokens, Universal Wallet.
 
 ---
 
 ## Federation — Three Discovery Approaches
 
-### 1. Known Pods (manual)
-
-```bash
-CG_KNOWN_PODS="https://pod.alice.com/alice/,https://pod.bob.com/bob/"
-```
-
-The agent discovers from each on startup and when `discover_all` is called.
-
-### 2. Pod Directory Graphs (decentralized registry)
-
-A pod publishes a directory — itself an RDF graph:
-
-```turtle
-<urn:directory:team> a cg:PodDirectory ;
-    cg:hasPod [ cg:podUrl <https://pod.alice.com/alice/> ; cg:owner <https://id.alice.com/profile#me> ] ;
-    cg:hasPod [ cg:podUrl <https://pod.bob.com/bob/> ; cg:owner <https://id.bob.com/profile#me> ] .
-```
-
-Any agent can fetch the directory and import all listed pods.
-
-### 3. WebFinger (DNS-rooted, RFC 7033)
-
-```
-GET https://alice.com/.well-known/webfinger?resource=acct:alice@alice.com
-```
-
-Returns the pod URL in the JRD response. Same pattern ActivityPub uses for Mastodon federation. No central registry — DNS is the root of trust.
+1. **Known Pods** — `CG_KNOWN_PODS` env var
+2. **Pod Directory Graphs** — decentralized RDF registries
+3. **WebFinger** — RFC 7033 DNS-rooted discovery (same as ActivityPub)
 
 ---
 
-## Manifest Format — Hydra & DPROD Aligned
+## Benchmarks
 
-The `.well-known/context-graphs` manifest is a **Hydra Collection** with HATEOAS affordances:
+| Benchmark | Score | Method | LLM Calls | Cost |
+|-----------|-------|--------|-----------|------|
+| **LongMemEval** | **94.0%** (500q) | Affordance-routed strategies + structural computation | ~2/question | $0 (subscription) |
+| **LoCoMo** | **80.0%** (50q) | PGSL KG + structural + LLM | ~1/question | $0 (subscription) |
+| Supermemory (production) | 85.2% | Vector embeddings + reranking | Unknown | Paid |
+| Supermemory (ASMR experimental) | ~99% | 18+ LLM calls/question | 19/question | ~$10/run |
 
-```turtle
-<manifest> a hydra:Collection, cg:DataProduct ;
-    hydra:manages [ hydra:property cg:describes ; hydra:object cg:ManifestEntry ] ;
-    hydra:operation [
-        hydra:method "GET" ;
-        hydra:title "Discover context descriptors"
-    ] ;
-    hydra:operation [
-        hydra:method "PUT" ;
-        hydra:title "Publish new context descriptor"
-    ] ;
-    cg:affordance cg:canDiscover, cg:canSubscribe ;
-    cg:outputPort [ a dcat:Distribution ; dcat:mediaType "text/turtle" ] .
-```
-
-Agents can introspect what operations a pod supports before interacting.
-
----
-
-## Type System
-
-### Core Types
-
-```typescript
-type IRI = string & { readonly __brand: 'IRI' };
-
-type ContextTypeName =
-  | 'Temporal' | 'Provenance' | 'Agent'
-  | 'AccessControl' | 'Semiotic' | 'Trust' | 'Federation';
-
-type ModalStatus = 'Asserted' | 'Hypothetical' | 'Counterfactual' | 'Quoted' | 'Retracted';
-type TrustLevel = 'SelfAsserted' | 'ThirdPartyAttested' | 'CryptographicallyVerified';
-type CompositionOperator = 'union' | 'intersection' | 'restriction' | 'override';
-type DelegationScope = 'ReadWrite' | 'ReadOnly' | 'PublishOnly' | 'DiscoverOnly';
-```
-
-### Seven Facet Types (Discriminated Union)
-
-| Facet | W3C Alignment | Key Fields |
-|---|---|---|
-| **Temporal** | OWL-Time, Dublin Core | `validFrom`, `validUntil`, `temporalResolution` |
-| **Provenance** | PROV-O | `wasGeneratedBy`, `wasDerivedFrom`, `wasAttributedTo` |
-| **Agent** | PROV-O, ActivityStreams | `assertingAgent`, `onBehalfOf`, `agentRole` |
-| **AccessControl** | WAC | `authorizations[]`, `consentBasis` |
-| **Semiotic** | Peircean semiotics | `modalStatus`, `epistemicConfidence` [0.0–1.0], `groundTruth` |
-| **Trust** | VC 2.0, DID Core | `verifiableCredential`, `issuer`, `trustLevel` |
-| **Federation** | DCAT 3, LDP, Solid | `origin`, `storageEndpoint`, `syncProtocol` |
-
----
-
-## Serialization
-
-### Turtle
-
-```typescript
-import { toTurtle, toTurtleDocument } from '@foxxi/context-graphs';
-
-const turtle = toTurtle(descriptor);           // Just the triples
-const doc = toTurtleDocument(descriptor);      // With @prefix declarations
-```
-
-### JSON-LD
-
-```typescript
-import { toJsonLd, toJsonLdString, fromJsonLd } from '@foxxi/context-graphs';
-
-const jsonld = toJsonLd(descriptor);
-const str = toJsonLdString(descriptor, { pretty: true });
-const parsed = fromJsonLd(jsonldObject);
-```
-
----
-
-## Validation
-
-```typescript
-import { validate, assertValid, getShaclShapesTurtle } from '@foxxi/context-graphs';
-
-const result = validate(descriptor);
-// { conforms: boolean, violations: [{ path, message, severity }] }
-
-assertValid(descriptor); // Throws if invalid
-
-// Export SHACL shapes for use with external engines
-const shacl = getShaclShapesTurtle();
-```
-
----
-
-## SPARQL Query Patterns
-
-```typescript
-import {
-  queryContextForGraph,
-  queryGraphsAtTime,
-  queryGraphsByModalStatus,
-  queryGraphsByTrustLevel,
-  queryProvenanceChain,
-} from '@foxxi/context-graphs';
-
-const sparql = queryContextForGraph('urn:graph:my-analysis' as IRI);
-const atTime = queryGraphsAtTime('2026-03-20T00:00:00Z');
-const asserted = queryGraphsByModalStatus('Asserted');
-const trusted = queryGraphsByTrustLevel('CryptographicallyVerified');
-const provenance = queryProvenanceChain('urn:graph:my-analysis' as IRI);
-```
+Our 94.0% uses ~2 LLM calls/question vs their ~19. The structural layer (PGSL, entity extraction, ontological inference, computation) handles retrieval and arithmetic. The LLM handles comprehension.
 
 ---
 
 ## Deployment
 
-### Docker
-
-Three Dockerfiles in `deploy/`:
+### Local (zero internet)
 
 ```bash
-# Community Solid Server
-docker build -f deploy/Dockerfile.css -t context-graphs-css .
-
-# Dashboard (real-time observation UI)
-docker build -f deploy/Dockerfile.dashboard -t context-graphs-dashboard .
-
-# MCP Relay (HTTP bridge for remote agents)
-docker build -f deploy/Dockerfile.relay -t context-graphs-relay .
+# Just works — auto-starts Community Solid Server
+CG_BASE_URL=http://localhost:3456/ npx tsx mcp-server/server.ts
 ```
 
 ### Azure Container Apps
-
-One-command deployment:
 
 ```bash
 cd deploy && bash azure-deploy.sh
 ```
 
-Deploys three services:
-- **CSS** — Community Solid Server (internal ingress, port 3456)
-- **Dashboard** — Real-time observation UI (external, port 4000)
-- **MCP Relay** — HTTP/SSE bridge with 15 tools (external, port 8080)
-
-The relay exposes the same tools as the stdio MCP server but over HTTP, so agents running anywhere can connect.
-
-### MCP Relay Endpoints
-
-```
-GET  /health          Health check
-GET  /tools           List available tools
-POST /tool/:name      Call a tool via REST
-GET  /sse             SSE stream for real-time events
-POST /messages        MCP JSON-RPC over HTTP
-```
+Deploys: CSS (Solid server), Dashboard (observation UI), MCP Relay (HTTP bridge), Identity Server (WebID + DID + SIWE).
 
 ---
 
 ## Development
 
 ```bash
-npm install          # Install devDependencies
-npm run build        # Compile TypeScript → dist/
-npm test             # Run vitest (85 tests)
+npm install
+npm run build        # TypeScript → dist/
+npm test             # 264 tests across 10 suites
 npm run test:watch   # Watch mode
-npm run test:coverage # Coverage report
-npm run lint         # ESLint
 ```
 
 ### Test Suites
 
 | Suite | Tests | Coverage |
 |---|---|---|
-| `context-graphs.test.ts` | 44 | Builder, composition, validation, serialization, namespaces, SPARQL, SHACL |
-| `solid.test.ts` | 20 | Publish, discover, subscribe, agent registry, delegation |
-| `federation.test.ts` | 21 | Pod directory, multi-pod, WebFinger, Hydra manifest |
-
----
-
-## Module Exports
-
-The package provides fine-grained subpath exports:
-
-```typescript
-import { ... } from '@foxxi/context-graphs';          // Everything
-import { ... } from '@foxxi/context-graphs/model';    // Types, builder, composition
-import { ... } from '@foxxi/context-graphs/rdf';      // Serializers, namespaces
-import { ... } from '@foxxi/context-graphs/validation'; // Validator, SHACL shapes
-import { ... } from '@foxxi/context-graphs/sparql';   // Query pattern builders
-import { ... } from '@foxxi/context-graphs/solid';    // Pod client, directory, WebFinger
-```
+| `context-graphs.test.ts` | 44 | Builder, composition, validation, serialization |
+| `solid.test.ts` | 20 | Publish, discover, subscribe, agent registry |
+| `federation.test.ts` | 21 | Pod directory, multi-pod, WebFinger, Hydra |
+| `causality.test.ts` | 38 | SCM, do-calculus, d-separation, counterfactual |
+| `pgsl.test.ts` | 31 | Lattice, category, geometric morphism |
+| `projection.test.ts` | 15 | Vocabulary mapping, binding strength |
+| `affordance.test.ts` | 23 | Gibson, Norman, OODA, BDI, Friston, stigmergy |
+| `crypto.test.ts` | 25 | Wallets, ECDSA, delegation, SIWE |
+| `encryption-zk.test.ts` | 30 | NaCl encryption, ZK proofs, selective disclosure |
+| (additional) | 17 | Category theory, semiotic functor |
 
 ---
 
@@ -477,20 +423,21 @@ import { ... } from '@foxxi/context-graphs/solid';    // Pod client, directory, 
 
 Part of the Foxxi Mediums knowledge infrastructure:
 
-- **[@foxxi/hela-store](https://github.com/foxximediums/hela-store)** — HELA's topos-theoretic xAPI stack (presheaf category ℰ = Set^(𝒞_xAPI^op))
-- **SAT (Semiotic Agent Topos)** — The Semiotic Facet maps directly to SAT's Semiotic Field Functor (Σ)
-- **HyprCat × HyprAgent** — Federation Facet aligns with the three-world federation model
+- **[@foxxi/hela-store](https://github.com/foxximediums/hela-store)** — HELA's topos-theoretic xAPI stack (presheaf category E = Set^(C_xAPI^op))
+- **SAT (Semiotic Agent Topos)** — The Semiotic Facet maps directly to SAT's Semiotic Field Functor (Sigma)
+- **PGSL (Poly-Granular Sequence Lattice)** — Abstract data type for canonical sequence addressing
 
 ---
 
 ## Spec Compliance
 
-This implementation follows the [Context Graphs 1.0 Working Draft](https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html):
+Implements the [Context Graphs 1.0 Working Draft](https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html):
 
-- §3.1 Context Descriptor structure
-- §3.4 Composition operators (union, intersection, restriction, override) forming a bounded lattice
-- §3.5 Triple-level inheritance via `effectiveContext()`
-- §5 All seven facet types with W3C vocabulary alignment
-- §6 Serialization (Turtle, JSON-LD, TriG)
-- §7 SPARQL 1.2 query patterns
-- §8 SHACL validation shapes
+- Section 3.1: Context Descriptor structure
+- Section 3.4: Composition operators forming a bounded lattice
+- Section 3.5: Triple-level inheritance via `effectiveContext()`
+- Section 5: All facet types with W3C vocabulary alignment
+- Section 6: Serialization (Turtle, JSON-LD, TriG)
+- Section 7: SPARQL 1.2 query patterns
+
+Extensions beyond the spec: PGSL substrate, Pearl causality, affordance engine, E2E encryption, ZK proofs, IPFS anchoring, structural computation, cognitive strategy routing.
