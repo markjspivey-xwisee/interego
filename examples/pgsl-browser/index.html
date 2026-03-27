@@ -493,8 +493,23 @@ async function renderFocus() {
       }
     }
   }
-  const leftOptions = leftData.left.filter(n => !chainContentWords.has(n.resolved));
-  const rightOptions = rightData.right.filter(n => !chainContentWords.has(n.resolved));
+  // Filter: exclude neighbors whose content overlaps with any chain item
+  function overlapsChain(resolved) {
+    // Exact match
+    if (chainContentWords.has(resolved)) return true;
+    // Neighbor contains a chain word
+    const words = resolved.split(/\s+/);
+    for (const w of words) {
+      if (w.length > 0 && chainContentWords.has(w)) return true;
+    }
+    // Chain word contains this neighbor (fragment containing chain atoms)
+    for (const cw of chainContentWords) {
+      if (cw.length > resolved.length && cw.includes(resolved)) return true;
+    }
+    return false;
+  }
+  const leftOptions = leftData.left.filter(n => !overlapsChain(n.resolved));
+  const rightOptions = rightData.right.filter(n => !overlapsChain(n.resolved));
 
   let html = '<div class="focus-label">Focus Chain (' + focusChain.length + ' nodes)</div>';
   html += '<div class="chain">';
