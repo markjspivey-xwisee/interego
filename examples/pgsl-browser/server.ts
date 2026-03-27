@@ -433,8 +433,9 @@ app.get('/api/all', (_req, res) => {
   res.json({ nodes, stats: latticeStats(pgsl) });
 });
 
-// Load live data then start server
-loadFromPod().then(() => {
+// Start server — skip pod loading if CLEAN=1 env var
+const skipPod = process.env['CLEAN'] === '1';
+(skipPod ? Promise.resolve() : loadFromPod()).then(() => {
   app.listen(PORT, () => {
     console.log(`PGSL Browser running at http://localhost:${PORT}/`);
     console.log(`Connected to pod: ${POD_URL}`);

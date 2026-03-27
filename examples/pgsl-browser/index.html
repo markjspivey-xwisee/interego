@@ -264,7 +264,7 @@ async function setFocus(encodedUri) {
 async function expandLeft(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   focusChain.unshift(uri);
-  await ingestCurrentChain();
+  // READ-ONLY: navigate, don't create
   await renderFocus();
   renderNodeList(allNodes);
 }
@@ -272,7 +272,7 @@ async function expandLeft(encodedUri) {
 async function expandRight(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   focusChain.push(uri);
-  await ingestCurrentChain();
+  // READ-ONLY: navigate, don't create
   await renderFocus();
   renderNodeList(allNodes);
 }
@@ -323,8 +323,7 @@ async function addExistingToChain(side, encodedUri) {
   } else {
     focusChain.push(uri);
   }
-  // INGEST the full chain into PGSL so the structure is real
-  await ingestCurrentChain();
+  // READ-ONLY: navigate existing structure, don't create new fragments
   await renderFocus();
   renderNodeList(allNodes);
 }
@@ -347,24 +346,9 @@ async function addNewToChain(side, value) {
       focusChain.push(atomNode.uri);
     }
   }
-  // INGEST the full chain into PGSL so the structure is real
-  await ingestCurrentChain();
+  // READ-ONLY: navigate existing structure, don't create new fragments
   await renderFocus();
   renderNodeList(allNodes);
-}
-
-// Ingest the current chain as actual PGSL structure using URIs directly
-// This ensures the chain is a REAL fragment in the lattice, preserving structural identity
-async function ingestCurrentChain() {
-  if (focusChain.length < 2) return;
-
-  // Pass the actual URIs to the server — no content reconstruction, no lossy roundtrip
-  await fetch('/api/ingest-uris', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ uris: focusChain }),
-  });
-  await refreshAll();
 }
 
 function onAddKeydown(side, event) {
