@@ -175,29 +175,40 @@ app.post('/api/focus', (req, res) => {
   const resolved = pgslResolve(pgsl, focusUri);
 
   // Build set of fragment URIs to EXCLUDE from neighbor search
-  // These are sub-fragments of nested chain elements
+  // These are chain elements AND their sub-fragments
   const excludedFragments = new Set<string>();
   for (const chainUri of chainContext) {
+    excludedFragments.add(chainUri); // exclude the chain element itself
     const chainNode = pgsl.nodes.get(chainUri as IRI);
     if (chainNode && chainNode.kind === 'Fragment' && chainNode.level > 0) {
       // This is a nested fragment in the chain — exclude all its sub-fragments
+      // AND any fragment that contains ONLY atoms from inside this nested element
+      const nestedAtoms = new Set<string>();
       const addSubFragments = (uri: IRI) => {
         const node = pgsl.nodes.get(uri);
-        if (!node || node.kind !== 'Fragment') return;
+        if (!node) return;
+        if (node.kind === 'Atom') { nestedAtoms.add(uri); return; }
+        if (node.kind !== 'Fragment') return;
         excludedFragments.add(uri);
         if (node.items) {
           for (const item of node.items) {
-            // Add the item itself and recurse
-            const itemNode = pgsl.nodes.get(item);
-            if (itemNode && itemNode.kind === 'Fragment') {
-              addSubFragments(item);
-            }
+            addSubFragments(item);
           }
         }
         if (node.left) addSubFragments(node.left);
         if (node.right) addSubFragments(node.right);
       };
       addSubFragments(chainUri as IRI);
+
+      // Exclude ANY fragment that contains atoms from inside the nested element
+      // (except the focus atom itself, which legitimately appears at both levels)
+      const focusAtomUri = focusUri;
+      for (const [fUri, fNode] of pgsl.nodes) {
+        if (fNode.kind !== 'Fragment' || !fNode.items) continue;
+        // If ANY item (other than the focus) is a nested atom, exclude this fragment
+        const hasNestedAtom = fNode.items.some(item => item !== focusAtomUri && nestedAtoms.has(item));
+        if (hasNestedAtom) excludedFragments.add(fUri);
+      }
     }
   }
 
