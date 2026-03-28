@@ -170,7 +170,11 @@ app.post('/api/focus', (req, res) => {
   const focusUri = req.body.uri as IRI;
   const chainContext: string[] = req.body.chainContext ?? [];
   const focusNode = pgsl.nodes.get(focusUri);
-  if (!focusNode) { res.status(404).json({ error: 'Not found' }); return; }
+  if (!focusNode) {
+    // Return empty result instead of 404 — the chain may reference URIs not yet in the lattice
+    res.json({ focus: { uri: focusUri, resolved: '?', level: 0 }, left: [], right: [], containingFragments: [], annotations: [] });
+    return;
+  }
 
   const resolved = pgslResolve(pgsl, focusUri);
 
