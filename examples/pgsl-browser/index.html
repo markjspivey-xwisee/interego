@@ -296,69 +296,58 @@ async function renderChain() {
 
   let html = '';
 
-  // Outer left +
-  html += '<span class="plus" onclick="showAddPopup(\'left\', event)" title="Add to left of chain">+</span>';
+  // Outer left + (chain-level: adds beside the whole group)
+  html += '<span class="plus" onclick="showAddPopup(\'outer-left\', event)" title="Add new element before chain">+</span>';
   html += '<span class="sep">,</span>';
 
-  // Each chain item gets its own (+ , item , +) wrapper
+  // One group: (+ , items... , +)
+  html += '<span class="paren">(</span>';
+
+  // Inner left + (sequence-level: extends the sequence)
+  html += '<span class="plus" onclick="showAddPopup(\'left\', event)" title="Add to start of sequence">+</span>';
+  if (leftOptions.length > 0) {
+    html += '<span class="sep">,</span>';
+    html += leftOptions.map(l => '<span class="plus" style="font-size:10px;color:#4a8a4a" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + l.resolved + '</span>').join('<span class="sep">,</span>');
+  }
+
+  // Chain items
   for (let i = 0; i < focusChain.length; i++) {
     const uri = focusChain[i];
     const node = allNodes.find(n => n.uri === uri);
     const resolved = node ? node.resolved : '?';
     const isNested = node && node.level > 0;
 
-    if (i > 0) html += '<span class="sep">,</span>';
+    html += '<span class="sep">,</span>';
 
-    html += '<span class="paren">(</span>';
-
-    // Left + for this item
-    if (i === 0 && leftOptions.length > 0) {
-      html += leftOptions.map(l => '<span class="plus" style="font-size:10px;color:#4a8a4a" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + l.resolved + '</span>').join('<span class="sep">,</span>');
-      html += '<span class="sep">,</span>';
-    } else if (i > 0) {
-      html += '<span class="plus" style="font-size:10px" onclick="collapseLeftTo(' + i + ')" title="Collapse left to here">+</span>';
-      html += '<span class="sep">,</span>';
-    } else {
-      html += '<span class="plus" style="font-size:10px" onclick="showAddPopup(\'left\', event)" title="Add source">+</span>';
-      html += '<span class="sep">,</span>';
-    }
-
-    // The item itself
     if (isNested) {
       html += '<span class="item nested-item" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="Click to expand: ' + resolved + '">(' + resolved + ')</span>';
     } else {
-      html += '<span class="item atom" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="' + resolved + '">' + resolved + '</span>';
+      html += '<span class="item atom" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="Click to refocus: ' + resolved + '">' + resolved + '</span>';
     }
-
-    // Right + for this item
-    if (i === focusChain.length - 1 && rightOptions.length > 0) {
-      html += '<span class="sep">,</span>';
-      html += rightOptions.map(r => '<span class="plus" style="font-size:10px;color:#8a4a8a" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + r.resolved + '</span>').join('<span class="sep">,</span>');
-    } else if (i < focusChain.length - 1) {
-      html += '<span class="sep">,</span>';
-      html += '<span class="plus" style="font-size:10px" onclick="collapseRightTo(' + i + ')" title="Collapse right to here">+</span>';
-    } else {
-      html += '<span class="sep">,</span>';
-      html += '<span class="plus" style="font-size:10px" onclick="showAddPopup(\'right\', event)" title="Add target">+</span>';
-    }
-
-    html += '<span class="paren">)</span>';
   }
 
+  // Inner right + (sequence-level: extends the sequence)
+  if (rightOptions.length > 0) {
+    html += '<span class="sep">,</span>';
+    html += rightOptions.map(r => '<span class="plus" style="font-size:10px;color:#8a4a8a" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + r.resolved + '</span>').join('<span class="sep">,</span>');
+  }
   html += '<span class="sep">,</span>';
-  // Outer right +
-  html += '<span class="plus" onclick="showAddPopup(\'right\', event)" title="Add to right of chain">+</span>';
+  html += '<span class="plus" onclick="showAddPopup(\'right\', event)" title="Add to end of sequence">+</span>';
+
+  html += '<span class="paren">)</span>';
+
+  html += '<span class="sep">,</span>';
+  // Outer right + (chain-level)
+  html += '<span class="plus" onclick="showAddPopup(\'outer-right\', event)" title="Add new element after chain">+</span>';
 
   display.innerHTML = html;
 
-  // Wrap button (when chain has 2+ items)
+  // Controls (when chain has 2+ items)
   if (focusChain.length >= 2) {
     html += '<br><span style="display:inline-block;margin-top:6px">';
-    html += '<button style="background:#4a4a8a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px" onclick="wrapChain()">Wrap as (...)</button>';
-    if (focusChain.length > 1) {
-      html += '<button style="background:#8a4a4a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px" onclick="collapseLeft()">Collapse left</button>';
-      html += '<button style="background:#8a4a4a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer" onclick="collapseRight()">Collapse right</button>';
-    }
+    html += '<button style="background:#8a4a4a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px" onclick="collapseLeft()">- left</button>';
+    html += '<button style="background:#4a4a8a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px" onclick="wrapChain()">Wrap (...)</button>';
+    html += '<button style="background:#8a4a4a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer" onclick="collapseRight()">- right</button>';
     html += '</span>';
   }
 
@@ -476,8 +465,21 @@ function showAddPopup(side, event) {
 
 async function addToChain(side, encodedUri) {
   const uri = decodeURIComponent(encodedUri);
-  if (side === 'left') focusChain.unshift(uri);
-  else focusChain.push(uri);
+  const isOuter = side.startsWith('outer-');
+  const actualSide = isOuter ? side.replace('outer-', '') : side;
+
+  if (isOuter && focusChain.length >= 2) {
+    // Outer add: wrap current chain first, then add new element beside it
+    const wrapResp = await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
+    const wrapData = await wrapResp.json();
+    await refreshAll();
+    if (wrapData.uri) {
+      focusChain = actualSide === 'left' ? [uri, wrapData.uri] : [wrapData.uri, uri];
+    }
+  } else {
+    if (actualSide === 'left') focusChain.unshift(uri);
+    else focusChain.push(uri);
+  }
 
   // Ingest using URIs to create real structure
   if (focusChain.length >= 2) {
@@ -493,12 +495,8 @@ async function createAndAdd(side, value) {
   await refreshAll();
   const atom = allNodes.find(n => n.resolved === value && n.level === 0);
   if (atom) {
-    if (side === 'left') focusChain.unshift(atom.uri);
-    else focusChain.push(atom.uri);
-    if (focusChain.length >= 2) {
-      await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
-      await refreshAll();
-    }
+    await addToChain(side, encodeURIComponent(atom.uri));
+    return;
   }
   await renderChain();
   document.querySelectorAll('.add-popup').forEach(p => p.remove());
