@@ -333,6 +333,7 @@ app.post('/api/focus', (req, res) => {
     // Find fragments containing the chain as a sub-sequence in items
     // Report what's BEFORE and AFTER the sub-sequence (item-level, not constituent-level)
     {
+      let chainFoundInItems = false;
       for (const [fragUri, fragNode] of pgsl.nodes) {
         if (fragNode.kind !== 'Fragment' || !fragNode.items || excludedFragments.has(fragUri)) continue;
         if (fragNode.items.length < chainItemUris.length) continue;
@@ -371,12 +372,13 @@ app.post('/api/focus', (req, res) => {
               rightNeighbors.set(rightUri, { uri: rightUri, resolved: rightResolved, count: 1, level: rn?.level ?? 0 });
             }
           }
+          chainFoundInItems = true;
           break;
         }
       }
 
-      // Fallback: if nothing found via items, try constituent relationships
-      if (leftNeighbors.size === 0 && rightNeighbors.size === 0 && chainFragUri) {
+      // Fallback: ONLY if chain was NOT found in any fragment's items
+      if (!chainFoundInItems && chainFragUri) {
         for (const [fragUri, fragNode] of pgsl.nodes) {
           if (fragNode.kind !== 'Fragment' || excludedFragments.has(fragUri)) continue;
           if (fragNode.left === chainFragUri && fragNode.right) {
@@ -392,8 +394,8 @@ app.post('/api/focus', (req, res) => {
         }
       }
 
-      // If STILL nothing, fall back to single-node
-      if (leftNeighbors.size === 0 && rightNeighbors.size === 0) {
+      // If STILL nothing and chain wasn't found in items, fall back to single-node
+      if (!chainFoundInItems && leftNeighbors.size === 0 && rightNeighbors.size === 0) {
         for (const frag of containingFragments) {
           if (frag.position > 0) {
             const leftUri = frag.items[frag.position - 1]!;
