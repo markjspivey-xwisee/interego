@@ -6,102 +6,67 @@
 <title>PGSL Browser — Poly-Granular Sequence Lattice</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0a0a0f; color: #e0e0e0; }
+  body { font-family: 'SF Mono', 'Fira Code', monospace; background: #f5f5f0; color: #333; overflow: hidden; }
 
-  .header { padding: 16px 24px; background: #111118; border-bottom: 1px solid #222; display: flex; align-items: center; gap: 16px; }
-  .header h1 { font-size: 16px; color: #7ecfff; font-weight: 600; }
-  .header .stats { font-size: 12px; color: #666; }
+  .header { padding: 8px 16px; background: #fff; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 12px; z-index: 10; position: relative; }
+  .header h1 { font-size: 14px; color: #333; font-weight: 600; }
+  .header .stats { font-size: 11px; color: #888; }
 
-  .layout { display: grid; grid-template-columns: 300px 1fr; height: calc(100vh - 52px); }
+  .layout { display: flex; height: calc(100vh - 40px); }
 
-  /* Sidebar */
-  .sidebar { background: #0d0d14; border-right: 1px solid #1a1a2e; overflow-y: auto; padding: 12px; }
-  .sidebar h2 { font-size: 13px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  /* Controls panel */
+  .controls { width: 240px; background: #fff; border-right: 1px solid #ddd; padding: 12px; overflow-y: auto; flex-shrink: 0; }
+  .controls h2 { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .controls textarea { width: 100%; height: 50px; border: 1px solid #ccc; padding: 6px; font-family: inherit; font-size: 11px; border-radius: 3px; resize: vertical; }
+  .controls select { border: 1px solid #ccc; padding: 2px 6px; font-size: 10px; border-radius: 3px; }
+  .controls button { background: #4a8a4a; color: #fff; border: none; padding: 3px 10px; font-size: 10px; border-radius: 3px; cursor: pointer; }
+  .controls button:hover { background: #5a9a5a; }
+  .ctrl-row { display: flex; gap: 4px; margin-top: 4px; margin-bottom: 12px; }
 
-  .ingest-form { margin-bottom: 16px; }
-  .ingest-form textarea { width: 100%; height: 60px; background: #111; border: 1px solid #333; color: #e0e0e0; padding: 8px; font-family: inherit; font-size: 12px; border-radius: 4px; resize: vertical; }
-  .ingest-form select { background: #111; border: 1px solid #333; color: #e0e0e0; padding: 4px 8px; font-size: 11px; border-radius: 4px; margin-right: 4px; }
-  .ingest-form button { background: #2a5; color: #fff; border: none; padding: 4px 12px; font-size: 11px; border-radius: 4px; cursor: pointer; }
-  .ingest-form button:hover { background: #3b6; }
-  .ingest-row { display: flex; gap: 4px; margin-top: 6px; }
+  .node-list { list-style: none; margin-top: 8px; }
+  .node-list li { padding: 3px 6px; font-size: 10px; cursor: pointer; border-radius: 2px; margin-bottom: 1px; display: flex; justify-content: space-between; align-items: center; }
+  .node-list li:hover { background: #e8e8ff; }
+  .node-list li.active { background: #d0d0ff; }
+  .node-list .lbl { font-size: 9px; color: #999; padding: 1px 4px; background: #f0f0f0; border-radius: 8px; }
 
-  .atom-list { list-style: none; }
-  .atom-list li { padding: 4px 8px; font-size: 12px; cursor: pointer; border-radius: 3px; margin-bottom: 2px; display: flex; justify-content: space-between; }
-  .atom-list li:hover { background: #1a1a2e; }
-  .atom-list li.active { background: #1a2a4e; color: #7ecfff; }
-  .atom-list .level-badge { font-size: 10px; color: #555; }
+  /* Graph canvas */
+  .graph-area { flex: 1; position: relative; overflow: auto; }
+  .graph-container { position: relative; min-width: 100%; min-height: 100%; }
 
-  /* Main area */
-  .main { display: flex; flex-direction: column; overflow: hidden; }
+  /* Graph nodes */
+  .gnode { position: absolute; padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; white-space: nowrap; border: 2px solid transparent; transition: all 0.15s; z-index: 2; }
+  .gnode:hover { transform: scale(1.1); z-index: 5; }
+  .gnode.atom { background: #ffe0e0; border-color: #e88; }
+  .gnode.l1 { background: #fff0d0; border-color: #da5; }
+  .gnode.fragment { background: #e0e8ff; border-color: #88e; }
+  .gnode.nested { background: #333; color: #fff; border-color: #666; }
+  .gnode.focused { border-color: #f00; border-width: 3px; box-shadow: 0 0 8px rgba(255,0,0,0.3); }
 
-  /* Focus chain */
-  .focus-area { padding: 24px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  .focus-label { font-size: 11px; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; }
+  /* Edges (SVG overlay) */
+  .edges-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+  .edge { stroke: #ccc; stroke-width: 1; fill: none; }
+  .edge.left-const { stroke: #aaf; stroke-width: 1.5; }
+  .edge.right-const { stroke: #faa; stroke-width: 1.5; }
 
-  .chain { display: flex; align-items: center; gap: 0; flex-wrap: wrap; justify-content: center; }
-  .chain-segment { display: flex; flex-direction: column; align-items: center; }
-  .chain-node { padding: 10px 18px; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.15s; position: relative; }
-  .chain-node.focus { background: #1a3a6e; color: #7ecfff; border: 2px solid #4a8aee; }
-  .chain-node.left { background: #1a2a1a; color: #7eee7e; border: 1px solid #3a5a3a; }
-  .chain-node.right { background: #2a1a2a; color: #ee7eee; border: 1px solid #5a3a5a; }
-  .chain-node:hover { transform: scale(1.05); filter: brightness(1.2); }
-  .chain-node.multi { border-style: dashed; }
-  .chain-node.chain-item { background: #1a2a3e; color: #aac; border: 1px solid #2a3a5e; }
-  .chain-node.nested { background: #2a2a1a; color: #eedd88; border: 2px solid #5a5a2a; font-style: italic; }
+  /* Chain view */
+  .chain-panel { position: fixed; bottom: 0; left: 240px; right: 0; background: #fff; border-top: 2px solid #ddd; padding: 12px 20px; z-index: 10; }
+  .chain-display { display: flex; align-items: center; gap: 0; flex-wrap: wrap; justify-content: center; font-size: 14px; }
+  .chain-display .plus { color: #999; padding: 0 4px; cursor: pointer; font-weight: bold; }
+  .chain-display .plus:hover { color: #4a8a4a; }
+  .chain-display .item { padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+  .chain-display .item.atom { background: #ffe0e0; border: 1px solid #e88; }
+  .chain-display .item.frag { background: #e0e8ff; border: 1px solid #88e; }
+  .chain-display .item.nested-item { background: #333; color: #fff; border: 1px solid #666; }
+  .chain-display .sep { color: #ccc; padding: 0 2px; }
+  .chain-display .paren { color: #888; font-size: 16px; font-weight: bold; }
+  .chain-info { text-align: center; margin-top: 6px; font-size: 10px; color: #888; }
 
-  .chain-arrow { font-size: 18px; color: #333; padding: 0 6px; }
-
-  .collapse-btn { padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 16px; border: 1px solid #333; background: #1a1a1a; color: #888; transition: all 0.15s; }
-  .collapse-btn:hover { background: #2a2a2a; color: #fff; border-color: #555; }
-  .collapse-btn.left { border-color: #3a5a3a; color: #7eee7e; }
-  .collapse-btn.right { border-color: #5a3a5a; color: #ee7eee; }
-
-  .add-input-wrap { position: relative; display: inline-block; }
-  .add-input { width: 100px; padding: 5px 8px; font-size: 12px; font-family: inherit; background: #111; border: 1px solid #333; color: #e0e0e0; border-radius: 4px; outline: none; }
-  .add-input:focus { border-color: #4a8aee; }
-  .add-input.left { border-color: #3a5a3a; }
-  .add-input.left:focus { border-color: #7eee7e; }
-  .add-input.right { border-color: #5a3a5a; }
-  .add-input.right:focus { border-color: #ee7eee; }
-  .add-dropdown { position: absolute; top: 100%; left: 0; right: 0; background: #1a1a22; border: 1px solid #333; border-top: none; border-radius: 0 0 4px 4px; max-height: 150px; overflow-y: auto; z-index: 100; }
-  .add-dropdown-item { padding: 4px 8px; font-size: 11px; cursor: pointer; color: #aaa; }
-  .add-dropdown-item:hover { background: #2a2a4e; color: #fff; }
-  .add-dropdown-item .level-hint { color: #555; font-size: 9px; }
-
-  /* Options (left/right neighbors) */
-  .options-panel { display: flex; gap: 2px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
-  .option-chip { font-size: 10px; padding: 2px 6px; border-radius: 10px; cursor: pointer; background: #1a1a2e; color: #888; border: 1px solid #2a2a4e; }
-  .option-chip:hover { background: #2a2a4e; color: #bbb; }
-  .option-chip.left { border-color: #2a4a2a; }
-  .option-chip.right { border-color: #4a2a4a; }
-
-  /* Containing fragments */
-  .fragments-area { padding: 12px 24px; border-top: 1px solid #1a1a2e; max-height: 200px; overflow-y: auto; }
-  .fragments-area h3 { font-size: 11px; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-  .fragment-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 11px; cursor: pointer; }
-  .fragment-row:hover { color: #7ecfff; }
-  .fragment-row .flevel { color: #555; min-width: 24px; }
-  .fragment-row .ftext { color: #aaa; }
-  .fragment-row .ftext .fhighlight { color: #7ecfff; font-weight: 600; }
-
-  .annotations-area { padding: 12px 24px; border-top: 1px solid #1a1a2e; max-height: 180px; overflow-y: auto; }
-  .annotations-area h3 { font-size: 11px; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
-  .annotation-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 11px; }
-  .annotation-row .arole { padding: 1px 6px; border-radius: 8px; font-size: 9px; font-weight: 600; }
-  .annotation-row .arole.head { background: #1a3a1a; color: #7eee7e; }
-  .annotation-row .arole.tail { background: #3a1a3a; color: #ee7eee; }
-  .annotation-row .arole.medial { background: #1a1a3a; color: #7e7eee; }
-  .annotation-row .arole.sole { background: #3a3a1a; color: #eeee7e; }
-  .annotation-row .arole.left { background: #1a3a2a; color: #7eeeaa; }
-  .annotation-row .arole.right { background: #3a1a2a; color: #ee7eaa; }
-  .annotation-row .adepth { color: #555; min-width: 60px; }
-  .annotation-row .aparent { color: #888; }
-
-  /* Level distribution bar */
-  .level-bar { display: flex; height: 4px; margin: 8px 0; border-radius: 2px; overflow: hidden; }
-  .level-bar .seg { height: 100%; }
-
-  .empty-state { color: #444; font-size: 13px; text-align: center; padding: 40px; }
+  /* Add input */
+  .add-popup { position: fixed; background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 20; }
+  .add-popup input { border: 1px solid #ccc; padding: 4px 8px; font-size: 12px; font-family: inherit; width: 120px; outline: none; }
+  .add-popup .dropdown { max-height: 120px; overflow-y: auto; }
+  .add-popup .dropdown-item { padding: 3px 8px; font-size: 11px; cursor: pointer; }
+  .add-popup .dropdown-item:hover { background: #e8e8ff; }
 </style>
 </head>
 <body>
@@ -112,136 +77,186 @@
 </div>
 
 <div class="layout">
-  <div class="sidebar">
-    <div class="ingest-form">
-      <h2>Ingest</h2>
-      <textarea id="ingestInput" placeholder="Type content to ingest...&#10;e.g. &quot;mark is human&quot;&#10;or &quot;((0,0),(0,0))&quot;"></textarea>
-      <div class="ingest-row">
-        <select id="granularity">
-          <option value="word">word</option>
-          <option value="character">char</option>
-          <option value="sentence">sentence</option>
-          <option value="structured">structured</option>
-        </select>
-        <button onclick="doIngest()">Ingest</button>
-      </div>
+  <div class="controls">
+    <h2>Ingest</h2>
+    <textarea id="ingestInput" placeholder="mark is human"></textarea>
+    <div class="ctrl-row">
+      <select id="granularity">
+        <option value="word">word</option>
+        <option value="character">char</option>
+        <option value="sentence">sent</option>
+        <option value="structured">struct</option>
+      </select>
+      <button onclick="doIngest()">Ingest</button>
     </div>
 
-    <h2>Atoms & Fragments</h2>
-    <div class="level-bar" id="levelBar"></div>
-    <ul class="atom-list" id="nodeList"></ul>
+    <h2>Nodes</h2>
+    <ul class="node-list" id="nodeList"></ul>
   </div>
 
-  <div class="main">
-    <div class="focus-area" id="focusArea">
-      <div class="empty-state">Ingest some content, then click a node to browse the lattice</div>
-    </div>
-    <div class="annotations-area" id="annotationsArea" style="display:none">
-      <h3>Contextual Roles (Peircean Interpretants)</h3>
-      <div id="annotationsList"></div>
-    </div>
-    <div class="fragments-area" id="fragmentsArea" style="display:none">
-      <h3>Containing Fragments</h3>
-      <div id="fragmentsList"></div>
-    </div>
+  <div class="graph-area" id="graphArea">
+    <svg class="edges-svg" id="edgesSvg"></svg>
+    <div class="graph-container" id="graphContainer"></div>
   </div>
+</div>
+
+<div class="chain-panel" id="chainPanel">
+  <div class="chain-display" id="chainDisplay">
+    <span style="color:#999">Click a node in the graph to focus</span>
+  </div>
+  <div class="chain-info" id="chainInfo"></div>
 </div>
 
 <script>
 let allNodes = [];
-let focusChain = []; // array of URIs in the current chain
+let focusChain = [];
 let focusData = null;
+let nodePositions = {}; // uri -> {x, y}
 
 async function doIngest() {
   const content = document.getElementById('ingestInput').value.trim();
   if (!content) return;
   const granularity = document.getElementById('granularity').value;
-  const resp = await fetch('/api/ingest', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  await fetch('/api/ingest', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ content, granularity }),
   });
-  const data = await resp.json();
   document.getElementById('ingestInput').value = '';
   await refreshAll();
-  // Auto-focus the top fragment
-  if (data.uri) setFocus(data.uri);
 }
 
 async function refreshAll() {
   const resp = await fetch('/api/all');
   const data = await resp.json();
   allNodes = data.nodes;
-  renderStats(data.stats);
-  renderNodeList(data.nodes);
-  renderLevelBar(data.stats);
-}
-
-function renderStats(stats) {
   document.getElementById('stats').textContent =
-    `${stats.totalNodes} nodes | ${stats.atoms} atoms | ${stats.fragments} fragments | L0-L${stats.maxLevel}`;
+    data.stats.totalNodes + ' nodes | ' + data.stats.atoms + ' atoms | ' + data.stats.fragments + ' frags | L0-L' + data.stats.maxLevel;
+  renderNodeList();
+  renderGraph();
 }
 
-function renderLevelBar(stats) {
-  const bar = document.getElementById('levelBar');
-  bar.innerHTML = '';
-  const total = stats.totalNodes || 1;
-  const colors = ['#4a8aee', '#3a7ade', '#2a6ace', '#1a5abe', '#0a4aae', '#003a9e',
-                  '#002a8e', '#001a7e', '#000a6e', '#00005e', '#000050', '#000040'];
-  for (const [level, count] of Object.entries(stats.levels)) {
-    const seg = document.createElement('div');
-    seg.className = 'seg';
-    seg.style.width = (count / total * 100) + '%';
-    seg.style.background = colors[Math.min(parseInt(level), colors.length - 1)];
-    seg.title = `L${level}: ${count}`;
-    bar.appendChild(seg);
-  }
-}
-
-function renderNodeList(nodes) {
+function renderNodeList() {
   const list = document.getElementById('nodeList');
-  // Sort: atoms first, then by level
-  nodes.sort((a, b) => a.level - b.level || a.resolved.localeCompare(b.resolved));
-  list.innerHTML = nodes.map(n => {
+  const sorted = [...allNodes].sort((a, b) => a.level - b.level || a.resolved.localeCompare(b.resolved));
+  list.innerHTML = sorted.map(n => {
     const active = focusChain.includes(n.uri) ? ' active' : '';
-    const display = n.resolved.length > 30 ? n.resolved.slice(0, 28) + '...' : n.resolved;
-    return `<li class="${active}" onclick="setFocus('${encodeURIComponent(n.uri)}')" title="${n.resolved}">
-      <span>"${display}"</span>
-      <span class="level-badge">L${n.level}</span>
-    </li>`;
+    const display = n.resolved.length > 20 ? n.resolved.slice(0, 18) + '..' : n.resolved;
+    return '<li class="' + active + '" onclick="clickNode(\'' + encodeURIComponent(n.uri) + '\')">' +
+      '<span>' + display + '</span><span class="lbl">L' + n.level + '</span></li>';
   }).join('');
 }
 
-async function setFocus(encodedUri) {
+function renderGraph() {
+  const container = document.getElementById('graphContainer');
+  const svg = document.getElementById('edgesSvg');
+  container.innerHTML = '';
+  svg.innerHTML = '';
+  nodePositions = {};
+
+  if (allNodes.length === 0) return;
+
+  // Group by level
+  const levels = {};
+  let maxLevel = 0;
+  for (const n of allNodes) {
+    if (!levels[n.level]) levels[n.level] = [];
+    levels[n.level].push(n);
+    if (n.level > maxLevel) maxLevel = n.level;
+  }
+
+  // Position nodes: level = y (bottom to top), index = x
+  const nodeW = 60, nodeH = 30, gapX = 20, gapY = 50;
+  const graphH = (maxLevel + 1) * (nodeH + gapY) + 80;
+  container.style.minHeight = graphH + 'px';
+
+  const levelColors = ['#ffe0e0', '#fff0d0', '#e0f0e0', '#e0e8ff', '#e8e0ff', '#f0e0ff', '#ffe0f0', '#e0ffff'];
+
+  for (let level = 0; level <= maxLevel; level++) {
+    const nodes = levels[level] || [];
+    const y = graphH - (level + 1) * (nodeH + gapY);
+    const totalW = nodes.length * (nodeW + gapX);
+    const startX = Math.max(20, 20 + level * 30); // stagger levels
+
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      const x = startX + i * (nodeW + gapX + Math.min(n.resolved.length * 3, 60));
+
+      nodePositions[n.uri] = { x: x + nodeW/2, y: y + nodeH/2 };
+
+      const div = document.createElement('div');
+      div.className = 'gnode ' + (n.level === 0 ? 'atom' : n.level === 1 ? 'l1' : 'fragment');
+      if (focusChain.includes(n.uri)) div.className += ' focused';
+      div.style.left = x + 'px';
+      div.style.top = y + 'px';
+      div.style.background = levelColors[Math.min(n.level, levelColors.length - 1)];
+
+      const display = n.resolved.length > 15 ? n.resolved.slice(0, 13) + '..' : n.resolved;
+      div.textContent = display;
+      div.title = 'L' + n.level + ': ' + n.resolved + '\n' + n.uri;
+      div.onclick = () => clickNode(encodeURIComponent(n.uri));
+      container.appendChild(div);
+    }
+  }
+
+  // Draw edges from fragments to their items
+  for (const n of allNodes) {
+    if (n.kind !== 'Fragment') continue;
+    const parentPos = nodePositions[n.uri];
+    if (!parentPos) continue;
+
+    // Get node details for edges
+    fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: n.uri}) })
+      .then(r => r.json())
+      .then(data => {
+        if (!data.node || !data.node.items) return;
+        for (const itemUri of data.node.items) {
+          const childPos = nodePositions[itemUri];
+          if (childPos) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', parentPos.x);
+            line.setAttribute('y1', parentPos.y);
+            line.setAttribute('x2', childPos.x);
+            line.setAttribute('y2', childPos.y);
+            line.setAttribute('class', 'edge');
+            svg.appendChild(line);
+          }
+        }
+        // Left/right constituent edges (colored)
+        if (data.node.left) {
+          const lPos = nodePositions[data.node.left];
+          if (lPos) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', parentPos.x); line.setAttribute('y1', parentPos.y);
+            line.setAttribute('x2', lPos.x); line.setAttribute('y2', lPos.y);
+            line.setAttribute('class', 'edge left-const');
+            svg.appendChild(line);
+          }
+        }
+        if (data.node.right) {
+          const rPos = nodePositions[data.node.right];
+          if (rPos) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', parentPos.x); line.setAttribute('y1', parentPos.y);
+            line.setAttribute('x2', rPos.x); line.setAttribute('y2', rPos.y);
+            line.setAttribute('class', 'edge right-const');
+            svg.appendChild(line);
+          }
+        }
+      });
+  }
+}
+
+async function clickNode(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   const node = allNodes.find(n => n.uri === uri);
 
   if (node && node.level > 0 && node.kind === 'Fragment') {
-    // Fragment: decompose into leaf atoms for the chain
+    // Decompose fragment into chain items
     const resp = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) });
     if (resp.ok) {
       const data = await resp.json();
       if (data.node && data.node.items && data.node.items.length > 1) {
-        // Resolve each item to get its leaf atoms
-        const items = data.node.items;
-        // For L1 wrappers, unwrap to the atom
-        const chainUris = [];
-        for (const itemUri of items) {
-          const itemNode = allNodes.find(n => n.uri === itemUri);
-          if (itemNode && itemNode.kind === 'Fragment' && itemNode.level === 1) {
-            // L1 wrapper — find the atom inside
-            const atomResp = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: itemUri}) });
-            if (atomResp.ok) {
-              const atomData = await atomResp.json();
-              if (atomData.node && atomData.node.items && atomData.node.items.length === 1) {
-                chainUris.push(atomData.node.items[0]);
-                continue;
-              }
-            }
-          }
-          chainUris.push(itemUri);
-        }
-        focusChain = chainUris;
+        focusChain = [...data.node.items];
       } else {
         focusChain = [uri];
       }
@@ -249,330 +264,185 @@ async function setFocus(encodedUri) {
       focusChain = [uri];
     }
   } else {
-    // Atom or unknown: single focus
     focusChain = [uri];
   }
 
   const focusResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[0], chainContext: focusChain})});
   focusData = await focusResp.json();
-  renderFocus();
-  renderAnnotations();
-  renderFragments();
-  renderNodeList(allNodes);
+  renderChain();
+  renderNodeList();
+  renderGraph(); // re-render to highlight focused nodes
+}
+
+async function renderChain() {
+  const display = document.getElementById('chainDisplay');
+  const info = document.getElementById('chainInfo');
+
+  if (focusChain.length === 0) {
+    display.innerHTML = '<span style="color:#999">Click a node in the graph to focus</span>';
+    info.textContent = '';
+    return;
+  }
+
+  // Get left/right neighbors
+  const leftResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[0], chainContext: focusChain})});
+  const leftData = await leftResp.json();
+  const rightResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[focusChain.length - 1], chainContext: focusChain})});
+  const rightData = await rightResp.json();
+
+  const chainUriSet = new Set(focusChain);
+  const leftOptions = (leftData.left || []).filter(n => !chainUriSet.has(n.uri));
+  const rightOptions = (rightData.right || []).filter(n => !chainUriSet.has(n.uri));
+
+  let html = '';
+
+  // Left expansion point with options
+  html += '<span class="plus" title="' + (leftOptions.length ? leftOptions.map(l => l.resolved).join(', ') : 'no sources') + '" onclick="showAddPopup(\'left\', event)">+</span>';
+
+  // Left options as small labels
+  if (leftOptions.length > 0) {
+    html += '<span class="sep">,</span>';
+    html += leftOptions.map(l => '<span class="item atom" style="font-size:10px;padding:2px 5px;opacity:0.6" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="Click to add">' + l.resolved + '</span>').join('');
+    html += '<span class="sep">,</span>';
+  }
+
+  // Chain items with nesting notation
+  for (let i = 0; i < focusChain.length; i++) {
+    const uri = focusChain[i];
+    const node = allNodes.find(n => n.uri === uri);
+    const resolved = node ? node.resolved : '?';
+    const isNested = node && node.level > 0;
+
+    if (i > 0) html += '<span class="sep">,</span>';
+
+    if (isNested) {
+      html += '<span class="paren">(</span>';
+      // Show inner items
+      html += '<span class="item nested-item" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="Click to expand: ' + resolved + '">' + resolved + '</span>';
+      html += '<span class="paren">)</span>';
+    } else {
+      html += '<span class="item atom" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="' + resolved + '">' + resolved + '</span>';
+    }
+  }
+
+  // Right options
+  if (rightOptions.length > 0) {
+    html += '<span class="sep">,</span>';
+    html += rightOptions.map(r => '<span class="item atom" style="font-size:10px;padding:2px 5px;opacity:0.6" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="Click to add">' + r.resolved + '</span>').join('');
+    html += '<span class="sep">,</span>';
+  }
+
+  // Right expansion point
+  html += '<span class="plus" title="' + (rightOptions.length ? rightOptions.map(r => r.resolved).join(', ') : 'no targets') + '" onclick="showAddPopup(\'right\', event)">+</span>';
+
+  display.innerHTML = html;
+
+  // Chain info
+  const chainStr = focusChain.map(u => {
+    const n = allNodes.find(x => x.uri === u);
+    if (!n) return '?';
+    return n.level > 0 ? '(' + n.resolved + ')' : n.resolved;
+  }).join(',');
+  info.textContent = '+,' + chainStr + ',+';
 }
 
 async function expandLeft(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   focusChain.unshift(uri);
-  // These are existing structural connections — no need to ingest
-  await renderFocus();
-  renderNodeList(allNodes);
+  await renderChain();
+  renderNodeList();
+  renderGraph();
 }
 
 async function expandRight(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   focusChain.push(uri);
-  // These are existing structural connections — no need to ingest
-  await renderFocus();
-  renderNodeList(allNodes);
+  await renderChain();
+  renderNodeList();
+  renderGraph();
 }
 
-// Add to chain: type to search/create atoms, add to either end
-function showAddInput(side) {
-  const id = 'addInput' + side;
-  const existing = document.getElementById(id);
-  if (existing) { existing.focus(); return; }
-  // Input is rendered in renderFocus — just focus it
-  const input = document.querySelector('.add-input.' + side);
-  if (input) input.focus();
-}
+function showAddPopup(side, event) {
+  // Remove existing popup
+  document.querySelectorAll('.add-popup').forEach(p => p.remove());
 
-function onAddInputChange(side, value) {
-  const dropdownId = 'addDropdown' + side;
-  const dropdown = document.getElementById(dropdownId);
-  if (!dropdown) return;
+  const popup = document.createElement('div');
+  popup.className = 'add-popup';
+  popup.style.left = event.clientX + 'px';
+  popup.style.top = (event.clientY - 40) + 'px';
 
-  if (!value || value.length === 0) {
-    dropdown.innerHTML = '';
-    dropdown.style.display = 'none';
-    return;
-  }
+  const input = document.createElement('input');
+  input.placeholder = side === 'left' ? '+ source' : '+ target';
+  input.autofocus = true;
 
-  const query = value.toLowerCase();
-  const matches = allNodes.filter(n => {
-    const r = n.resolved.toLowerCase();
-    return r.includes(query); // all nodes, not just atoms
-  }).slice(0, 8);
+  const dropdown = document.createElement('div');
+  dropdown.className = 'dropdown';
 
-  if (matches.length === 0 && value.trim().length > 0) {
-    // Offer to create new atom
-    dropdown.innerHTML = `<div class="add-dropdown-item" onclick="addNewToChain('${side}', '${value.trim().replace(/'/g, "\\'")}')">Create "${value.trim()}" <span class="level-hint">(new atom)</span></div>`;
-    dropdown.style.display = '';
-  } else {
+  input.oninput = () => {
+    const q = input.value.toLowerCase();
+    if (!q) { dropdown.innerHTML = ''; return; }
+    const matches = allNodes.filter(n => n.resolved.toLowerCase().includes(q)).slice(0, 6);
     dropdown.innerHTML = matches.map(n =>
-      `<div class="add-dropdown-item" onclick="addExistingToChain('${side}', '${encodeURIComponent(n.uri)}')">${n.resolved} <span class="level-hint">L${n.level}</span></div>`
+      '<div class="dropdown-item" onclick="addToChain(\'' + side + '\',\'' + encodeURIComponent(n.uri) + '\')">' + n.resolved + ' <small style="color:#999">L' + n.level + '</small></div>'
     ).join('');
-    dropdown.style.display = matches.length > 0 ? '' : 'none';
-  }
+    if (matches.length === 0 && q.trim()) {
+      dropdown.innerHTML = '<div class="dropdown-item" onclick="createAndAdd(\'' + side + '\',\'' + q.trim() + '\')">Create "' + q.trim() + '"</div>';
+    }
+  };
+
+  input.onkeydown = (e) => {
+    if (e.key === 'Escape') popup.remove();
+    if (e.key === 'Enter') {
+      const v = input.value.trim();
+      if (!v) return;
+      const match = allNodes.find(n => n.resolved.toLowerCase() === v.toLowerCase());
+      if (match) addToChain(side, encodeURIComponent(match.uri));
+      else createAndAdd(side, v);
+      popup.remove();
+    }
+  };
+
+  popup.appendChild(input);
+  popup.appendChild(dropdown);
+  document.body.appendChild(popup);
+  setTimeout(() => input.focus(), 50);
+
+  // Close on outside click
+  setTimeout(() => {
+    document.addEventListener('click', function handler(e) {
+      if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', handler); }
+    });
+  }, 100);
 }
 
-async function addExistingToChain(side, encodedUri) {
+async function addToChain(side, encodedUri) {
   const uri = decodeURIComponent(encodedUri);
-  const newResolved = allNodes.find(n => n.uri === uri)?.resolved ?? '';
-
   if (side === 'left') focusChain.unshift(uri);
   else focusChain.push(uri);
 
-  // Ingest using actual URIs — preserves structural identity
+  // Ingest using URIs to create real structure
   if (focusChain.length >= 2) {
     await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
   }
-
   await refreshAll();
-  await renderFocus();
-  renderNodeList(allNodes);
+  await renderChain();
+  document.querySelectorAll('.add-popup').forEach(p => p.remove());
 }
 
-async function addNewToChain(side, value) {
-  // Create atom via ingest
-  const resp = await fetch('/api/ingest', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: value }),
-  });
-  await resp.json();
+async function createAndAdd(side, value) {
+  await fetch('/api/ingest', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({content: value}) });
   await refreshAll();
-
-  const atomNode = allNodes.find(n => n.resolved === value && n.level === 0);
-  if (atomNode && focusChain.length > 0) {
-    // Capture the adjacent item BEFORE modifying the chain
-    const adjacentUri = side === 'left' ? focusChain[0] : focusChain[focusChain.length - 1];
-    const adjacentResolved = allNodes.find(n => n.uri === adjacentUri)?.resolved ?? '';
-
-    // Add to chain
-    if (side === 'left') {
-      focusChain.unshift(atomNode.uri);
-    } else {
-      focusChain.push(atomNode.uri);
-    }
-
-    // Ingest using actual URIs — nested fragments stay as single items, no flattening
+  const atom = allNodes.find(n => n.resolved === value && n.level === 0);
+  if (atom) {
+    if (side === 'left') focusChain.unshift(atom.uri);
+    else focusChain.push(atom.uri);
     if (focusChain.length >= 2) {
       await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
-    }
-  } else if (atomNode) {
-    if (side === 'left') focusChain.unshift(atomNode.uri);
-    else focusChain.push(atomNode.uri);
-  }
-  await refreshAll();
-  await renderFocus();
-  renderNodeList(allNodes);
-}
-
-function onAddKeydown(side, event) {
-  if (event.key === 'Enter') {
-    const value = event.target.value.trim();
-    if (value) {
-      // Check if there's an exact atom match
-      const match = allNodes.find(n => n.resolved.toLowerCase() === value.toLowerCase() && n.level === 0);
-      if (match) {
-        addExistingToChain(side, encodeURIComponent(match.uri));
-      } else {
-        addNewToChain(side, value);
-      }
-      event.target.value = '';
-    }
-  } else if (event.key === 'Escape') {
-    event.target.value = '';
-    const dropdown = document.getElementById('addDropdown' + side);
-    if (dropdown) dropdown.style.display = 'none';
-  }
-}
-
-// Wrap/nest the entire current chain as a single element
-async function wrapChain() {
-  if (focusChain.length < 2) return; // nothing to wrap
-
-  // Resolve each chain element to its content
-  const contents = [];
-  for (const uri of focusChain) {
-    const node = allNodes.find(n => n.uri === uri);
-    contents.push(node ? node.resolved : '?');
-  }
-  const chainContent = contents.join(' ');
-
-  // Ingest the chain content as a fragment (word mode)
-  const resp = await fetch('/api/ingest', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: chainContent }),
-  });
-  const data = await resp.json();
-  await refreshAll();
-
-  // The top fragment URI represents the entire chain as one element
-  if (data.uri) {
-    focusChain = [data.uri];
-    const focusResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: data.uri})});
-    focusData = await focusResp.json();
-    renderFocus();
-    renderAnnotations();
-    renderFragments();
-    renderNodeList(allNodes);
-  }
-}
-
-function collapseLeft() {
-  if (focusChain.length > 1) {
-    focusChain.shift();
-    renderFocus();
-    renderNodeList(allNodes);
-  }
-}
-
-function collapseRight() {
-  if (focusChain.length > 1) {
-    focusChain.pop();
-    renderFocus();
-    renderNodeList(allNodes);
-  }
-}
-
-async function renderFocus() {
-  const area = document.getElementById('focusArea');
-  if (!focusData || focusChain.length === 0) {
-    area.innerHTML = '<div class="empty-state">Click a node to browse the lattice</div>';
-    return;
-  }
-
-  // Get left neighbors for leftmost node in chain
-  const leftResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[0], chainContext: focusChain})});
-  const leftData = await leftResp.json();
-
-  // Get right neighbors for rightmost node in chain
-  const rightResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[focusChain.length - 1], chainContext: focusChain})});
-  const rightData = await rightResp.json();
-
-  // Filter: exclude neighbors whose URI is already in the chain
-  // or is structurally contained within a chain element (sub-fragment/descendant)
-  const chainUriSet = new Set(focusChain);
-  const leftOptions = leftData.left.filter(n => !chainUriSet.has(n.uri));
-  const rightOptions = rightData.right.filter(n => !chainUriSet.has(n.uri));
-
-  let html = '<div class="focus-label">Focus Chain (' + focusChain.length + ' nodes)</div>';
-  html += '<div class="chain">';
-
-  // LEFT: add input + collapse button + source options
-  html += `<div class="add-input-wrap">
-    <input class="add-input left" placeholder="+ source" oninput="onAddInputChange('left', this.value)" onkeydown="onAddKeydown('left', event)" />
-    <div class="add-dropdown" id="addDropdownleft" style="display:none"></div>
-  </div>`;
-  if (focusChain.length > 1) {
-    html += `<button class="collapse-btn left" onclick="collapseLeft()" title="Remove leftmost from chain">&times;</button>`;
-  }
-  if (leftOptions.length > 0) {
-    html += '<div class="chain-segment">';
-    html += '<div class="options-panel">';
-    html += leftOptions.map(n =>
-      `<span class="option-chip left" onclick="expandLeft('${encodeURIComponent(n.uri)}')" title="Add to left of chain">${n.resolved} <small>(${n.count})</small></span>`
-    ).join('');
-    html += '</div></div>';
-    html += '<span class="chain-arrow">&larr;</span>';
-  }
-
-  // CHAIN NODES — each clickable to refocus
-  for (let i = 0; i < focusChain.length; i++) {
-    const uri = focusChain[i];
-    const node = allNodes.find(n => n.uri === uri);
-    const resolved = node ? node.resolved : '?';
-
-    const isNested = node && node.level > 0;
-    const nodeClass = isNested ? 'chain-node nested' : 'chain-node chain-item';
-    const display = isNested ? '(' + resolved + ')' : resolved;
-
-    html += '<div class="chain-segment">';
-    html += `<div class="${nodeClass}" onclick="setFocus('${encodeURIComponent(uri)}')" title="${isNested ? 'Nested L'+node.level+' — click to expand' : 'Click to refocus'}: ${resolved}">${display}</div>`;
-    html += '</div>';
-
-    if (i < focusChain.length - 1) {
-      html += '<span class="chain-arrow">&mdash;</span>';
+      await refreshAll();
     }
   }
-
-  // RIGHT: target options + collapse button
-  if (rightOptions.length > 0) {
-    html += '<span class="chain-arrow">&rarr;</span>';
-    html += '<div class="chain-segment">';
-    html += '<div class="options-panel">';
-    html += rightOptions.map(n =>
-      `<span class="option-chip right" onclick="expandRight('${encodeURIComponent(n.uri)}')" title="Add to right of chain">${n.resolved} <small>(${n.count})</small></span>`
-    ).join('');
-    html += '</div></div>';
-  }
-  if (focusChain.length > 1) {
-    html += `<button class="collapse-btn right" onclick="collapseRight()" title="Remove rightmost from chain">&times;</button>`;
-  }
-  // RIGHT: add input
-  html += `<div class="add-input-wrap">
-    <input class="add-input right" placeholder="+ target" oninput="onAddInputChange('right', this.value)" onkeydown="onAddKeydown('right', event)" />
-    <div class="add-dropdown" id="addDropdownright" style="display:none"></div>
-  </div>`;
-
-  html += '</div>';
-
-  // Wrap button — nest the current chain as one element
-  if (focusChain.length >= 2) {
-    html += `<div style="margin-top:12px"><button class="collapse-btn" onclick="wrapChain()" title="Wrap entire chain as a single nested element" style="border-color:#4a8aee;color:#7ecfff;font-size:11px;padding:4px 12px">&#x2937; Wrap chain as one element</button></div>`;
-  }
-
-  // Chain info — show parens for nested fragments
-  const chainResolved = focusChain.map(u => {
-    const n = allNodes.find(x => x.uri === u);
-    if (!n) return '?';
-    return n.level > 0 ? '(' + n.resolved + ')' : n.resolved;
-  }).join(' ');
-  html += `<div style="margin-top:12px;font-size:12px;color:#666">"${chainResolved}"</div>`;
-
-  area.innerHTML = html;
-}
-
-function renderAnnotations() {
-  const area = document.getElementById('annotationsArea');
-  if (!focusData || !focusData.annotations || !focusData.annotations.length) {
-    area.style.display = 'none';
-    return;
-  }
-  area.style.display = '';
-  const list = document.getElementById('annotationsList');
-  list.innerHTML = focusData.annotations.map(a => {
-    const depthLabel = `${a.depthFromTop} from top, ${a.depthFromBottom} from bottom`;
-    const spanPct = (a.span * 100).toFixed(0) + '%';
-    return `<div class="annotation-row" onclick="setFocus('${encodeURIComponent(a.parentUri)}')">
-      <span class="arole ${a.role}">${a.role}</span>
-      <span class="adepth">pos ${a.position} | ${depthLabel}</span>
-      <span class="aparent">"${a.parentResolved.length > 40 ? a.parentResolved.slice(0,38) + '...' : a.parentResolved}" (L${a.totalDepth}, ${spanPct})</span>
-    </div>`;
-  }).join('');
-}
-
-function renderFragments() {
-  const area = document.getElementById('fragmentsArea');
-  if (!focusData || !focusData.containingFragments.length) {
-    area.style.display = 'none';
-    return;
-  }
-  area.style.display = '';
-  const list = document.getElementById('fragmentsList');
-  list.innerHTML = focusData.containingFragments.map(f => {
-    const parts = f.itemsResolved.map((r, i) => {
-      const isMatch = f.items[i] === focusChain[0];
-      return isMatch ? `<span class="fhighlight">${r}</span>` : r;
-    });
-    return `<div class="fragment-row" onclick="setFocus('${encodeURIComponent(f.uri)}')">
-      <span class="flevel">L${f.level}</span>
-      <span class="ftext">${parts.join(' ')}</span>
-    </div>`;
-  }).join('');
+  await renderChain();
+  document.querySelectorAll('.add-popup').forEach(p => p.remove());
 }
 
 // Initial load
