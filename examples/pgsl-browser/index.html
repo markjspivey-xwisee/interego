@@ -311,7 +311,7 @@ async function renderChain() {
 
     html += '<span class="paren">(</span>';
 
-    // Left + for this item (collapse left if not first, or show source options)
+    // Left + for this item
     if (i === 0 && leftOptions.length > 0) {
       html += leftOptions.map(l => '<span class="plus" style="font-size:10px;color:#4a8a4a" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + l.resolved + '</span>').join('<span class="sep">,</span>');
       html += '<span class="sep">,</span>';
@@ -319,7 +319,7 @@ async function renderChain() {
       html += '<span class="plus" style="font-size:10px" onclick="collapseLeftTo(' + i + ')" title="Collapse left to here">+</span>';
       html += '<span class="sep">,</span>';
     } else {
-      html += '<span class="plus" style="font-size:10px;color:#ccc">+</span>';
+      html += '<span class="plus" style="font-size:10px" onclick="showAddPopup(\'left\', event)" title="Add source">+</span>';
       html += '<span class="sep">,</span>';
     }
 
@@ -339,7 +339,7 @@ async function renderChain() {
       html += '<span class="plus" style="font-size:10px" onclick="collapseRightTo(' + i + ')" title="Collapse right to here">+</span>';
     } else {
       html += '<span class="sep">,</span>';
-      html += '<span class="plus" style="font-size:10px;color:#ccc">+</span>';
+      html += '<span class="plus" style="font-size:10px" onclick="showAddPopup(\'right\', event)" title="Add target">+</span>';
     }
 
     html += '<span class="paren">)</span>';
