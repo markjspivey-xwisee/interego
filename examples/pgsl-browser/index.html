@@ -284,11 +284,17 @@ async function renderChain() {
     return;
   }
 
-  // Get left/right neighbors
-  const leftResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[0], chainContext: focusChain})});
-  const leftData = await leftResp.json();
-  const rightResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[focusChain.length - 1], chainContext: focusChain})});
-  const rightData = await rightResp.json();
+  // Get left/right neighbors (with error handling)
+  let leftData = { left: [], right: [] };
+  let rightData = { left: [], right: [] };
+  try {
+    const leftResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[0], chainContext: focusChain})});
+    if (leftResp.ok) leftData = await leftResp.json();
+  } catch {}
+  try {
+    const rightResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[focusChain.length - 1], chainContext: focusChain})});
+    if (rightResp.ok) rightData = await rightResp.json();
+  } catch {}
 
   const chainUriSet = new Set(focusChain);
   const leftOptions = (leftData.left || []).filter(n => !chainUriSet.has(n.uri));
@@ -339,8 +345,6 @@ async function renderChain() {
   html += '<span class="sep">,</span>';
   // Outer right + (chain-level)
   html += '<span class="plus" onclick="showAddPopup(\'outer-right\', event)" title="Add new element after chain">+</span>';
-
-  display.innerHTML = html;
 
   // Controls (when chain has 2+ items)
   if (focusChain.length >= 2) {
