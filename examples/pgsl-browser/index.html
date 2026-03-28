@@ -323,10 +323,9 @@ async function addExistingToChain(side, encodedUri) {
   if (side === 'left') focusChain.unshift(uri);
   else focusChain.push(uri);
 
-  // Ingest the FULL chain so overlapping pair construction builds all levels
-  const chainResolved = focusChain.map(u => allNodes.find(n => n.uri === u)?.resolved ?? '').join(' ').trim();
-  if (chainResolved && focusChain.length >= 2) {
-    await fetch('/api/ingest', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({content: chainResolved}) });
+  // Ingest using actual URIs — preserves structural identity
+  if (focusChain.length >= 2) {
+    await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
   }
 
   await refreshAll();
@@ -357,10 +356,9 @@ async function addNewToChain(side, value) {
       focusChain.push(atomNode.uri);
     }
 
-    // Ingest the FULL chain as a sequence so overlapping pair construction builds all levels
-    const chainResolved = focusChain.map(u => allNodes.find(n => n.uri === u)?.resolved ?? '').join(' ').trim();
-    if (chainResolved) {
-      await fetch('/api/ingest', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({content: chainResolved}) });
+    // Ingest using actual URIs — nested fragments stay as single items, no flattening
+    if (focusChain.length >= 2) {
+      await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
     }
   } else if (atomNode) {
     if (side === 'left') focusChain.unshift(atomNode.uri);
