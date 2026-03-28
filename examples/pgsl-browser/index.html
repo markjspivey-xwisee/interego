@@ -296,17 +296,11 @@ async function renderChain() {
 
   let html = '';
 
-  // Left expansion point with options
-  html += '<span class="plus" title="' + (leftOptions.length ? leftOptions.map(l => l.resolved).join(', ') : 'no sources') + '" onclick="showAddPopup(\'left\', event)">+</span>';
+  // Outer left +
+  html += '<span class="plus" onclick="showAddPopup(\'left\', event)" title="Add to left of chain">+</span>';
+  html += '<span class="sep">,</span>';
 
-  // Left options as small labels
-  if (leftOptions.length > 0) {
-    html += '<span class="sep">,</span>';
-    html += leftOptions.map(l => '<span class="item atom" style="font-size:10px;padding:2px 5px;opacity:0.6" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="Click to add">' + l.resolved + '</span>').join('');
-    html += '<span class="sep">,</span>';
-  }
-
-  // Chain items with nesting notation
+  // Each chain item gets its own (+ , item , +) wrapper
   for (let i = 0; i < focusChain.length; i++) {
     const uri = focusChain[i];
     const node = allNodes.find(n => n.uri === uri);
@@ -315,25 +309,45 @@ async function renderChain() {
 
     if (i > 0) html += '<span class="sep">,</span>';
 
+    html += '<span class="paren">(</span>';
+
+    // Left + for this item (collapse left if not first, or show source options)
+    if (i === 0 && leftOptions.length > 0) {
+      html += leftOptions.map(l => '<span class="plus" style="font-size:10px;color:#4a8a4a" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + l.resolved + '</span>').join('<span class="sep">,</span>');
+      html += '<span class="sep">,</span>';
+    } else if (i > 0) {
+      html += '<span class="plus" style="font-size:10px" onclick="collapseLeftTo(' + i + ')" title="Collapse left to here">+</span>';
+      html += '<span class="sep">,</span>';
+    } else {
+      html += '<span class="plus" style="font-size:10px;color:#ccc">+</span>';
+      html += '<span class="sep">,</span>';
+    }
+
+    // The item itself
     if (isNested) {
-      html += '<span class="paren">(</span>';
-      // Show inner items
-      html += '<span class="item nested-item" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="Click to expand: ' + resolved + '">' + resolved + '</span>';
-      html += '<span class="paren">)</span>';
+      html += '<span class="item nested-item" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="Click to expand: ' + resolved + '">(' + resolved + ')</span>';
     } else {
       html += '<span class="item atom" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="' + resolved + '">' + resolved + '</span>';
     }
+
+    // Right + for this item
+    if (i === focusChain.length - 1 && rightOptions.length > 0) {
+      html += '<span class="sep">,</span>';
+      html += rightOptions.map(r => '<span class="plus" style="font-size:10px;color:#8a4a8a" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + r.resolved + '</span>').join('<span class="sep">,</span>');
+    } else if (i < focusChain.length - 1) {
+      html += '<span class="sep">,</span>';
+      html += '<span class="plus" style="font-size:10px" onclick="collapseRightTo(' + i + ')" title="Collapse right to here">+</span>';
+    } else {
+      html += '<span class="sep">,</span>';
+      html += '<span class="plus" style="font-size:10px;color:#ccc">+</span>';
+    }
+
+    html += '<span class="paren">)</span>';
   }
 
-  // Right options
-  if (rightOptions.length > 0) {
-    html += '<span class="sep">,</span>';
-    html += rightOptions.map(r => '<span class="item atom" style="font-size:10px;padding:2px 5px;opacity:0.6" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="Click to add">' + r.resolved + '</span>').join('');
-    html += '<span class="sep">,</span>';
-  }
-
-  // Right expansion point
-  html += '<span class="plus" title="' + (rightOptions.length ? rightOptions.map(r => r.resolved).join(', ') : 'no targets') + '" onclick="showAddPopup(\'right\', event)">+</span>';
+  html += '<span class="sep">,</span>';
+  // Outer right +
+  html += '<span class="plus" onclick="showAddPopup(\'right\', event)" title="Add to right of chain">+</span>';
 
   display.innerHTML = html;
 
@@ -361,24 +375,13 @@ async function renderChain() {
 
 async function wrapChain() {
   if (focusChain.length < 2) return;
-  // Ingest the chain as a fragment, then replace chain with the fragment URI
-  await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
+  // Ingest the chain URIs as a fragment
+  const resp = await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
+  const data = await resp.json();
   await refreshAll();
-  // Find the fragment whose items match the chain
-  const chainUris = focusChain;
-  const fragNode = allNodes.find(n => {
-    if (n.kind !== 'Fragment' || n.level < 2) return false;
-    // Need to check items — fetch resolve
-    return false; // will use API
-  });
-  // Use API to find the fragment
-  const resp = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: 'lookup'}) });
-  // Simpler: the fragment URI for these items should exist after ingestion
-  // Search allNodes for a fragment that resolves to the chain content
-  const chainContent = focusChain.map(u => allNodes.find(n => n.uri === u)?.resolved ?? '').join(' ');
-  const frag = allNodes.find(n => n.resolved === chainContent && n.level >= 2);
-  if (frag) {
-    focusChain = [frag.uri];
+  // The response has the top fragment URI
+  if (data.uri) {
+    focusChain = [data.uri];
   }
   await renderChain();
   renderNodeList();
@@ -386,21 +389,20 @@ async function wrapChain() {
 }
 
 function collapseLeft() {
-  if (focusChain.length > 1) {
-    focusChain.shift();
-    renderChain();
-    renderNodeList();
-    renderGraph();
-  }
+  if (focusChain.length > 1) { focusChain.shift(); renderChain(); renderNodeList(); renderGraph(); }
 }
-
 function collapseRight() {
-  if (focusChain.length > 1) {
-    focusChain.pop();
-    renderChain();
-    renderNodeList();
-    renderGraph();
-  }
+  if (focusChain.length > 1) { focusChain.pop(); renderChain(); renderNodeList(); renderGraph(); }
+}
+function collapseLeftTo(idx) {
+  // Keep only items from idx onwards
+  focusChain = focusChain.slice(idx);
+  renderChain(); renderNodeList(); renderGraph();
+}
+function collapseRightTo(idx) {
+  // Keep only items up to and including idx
+  focusChain = focusChain.slice(0, idx + 1);
+  renderChain(); renderNodeList(); renderGraph();
 }
 
 async function expandLeft(encodedUri) {
