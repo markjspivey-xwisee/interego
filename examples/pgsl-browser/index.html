@@ -472,22 +472,32 @@ async function addToChain(side, encodedUri) {
   const isOuter = side.startsWith('outer-');
   const actualSide = isOuter ? side.replace('outer-', '') : side;
 
-  if (isOuter && focusChain.length >= 2) {
+  if (isOuter && focusChain.length >= 1) {
     // Outer add: wrap current chain first, then add new element beside it
-    const wrapResp = await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
-    const wrapData = await wrapResp.json();
+    let wrappedUri;
+    if (focusChain.length >= 2) {
+      const wrapResp = await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
+      const wrapData = await wrapResp.json();
+      wrappedUri = wrapData.uri;
+    } else {
+      wrappedUri = focusChain[0];
+    }
     await refreshAll();
-    if (wrapData.uri) {
-      focusChain = actualSide === 'left' ? [uri, wrapData.uri] : [wrapData.uri, uri];
+    if (wrappedUri) {
+      focusChain = actualSide === 'left' ? [uri, wrappedUri] : [wrappedUri, uri];
     }
   } else {
+    // Inner add: extend the sequence, using URI-based ingestion
     if (actualSide === 'left') focusChain.unshift(uri);
     else focusChain.push(uri);
   }
 
-  // Ingest using URIs to create real structure
+  // Ingest only the NEW PAIR to avoid flat boundary-crossing artifacts
   if (focusChain.length >= 2) {
-    await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
+    const pairUris = actualSide === 'left'
+      ? [focusChain[0], focusChain[1]]
+      : [focusChain[focusChain.length - 2], focusChain[focusChain.length - 1]];
+    await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: pairUris}) });
   }
   await refreshAll();
   await renderChain();
