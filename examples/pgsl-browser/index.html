@@ -357,13 +357,13 @@ async function renderChain() {
 
   display.innerHTML = html;
 
-  // Chain info with + notation
-  const chainStr = focusChain.map(u => {
+  // Chain info with + notation — nested items get parens
+  const chainItems = focusChain.map(u => {
     const n = allNodes.find(x => x.uri === u);
     if (!n) return '?';
-    return n.level > 0 ? '(+,' + n.resolved + ',+)' : n.resolved;
-  }).join(',');
-  info.textContent = '+,' + chainStr + ',+';
+    return n.level > 0 ? '(' + n.resolved + ')' : n.resolved;
+  });
+  info.textContent = '+,(+,' + chainItems.join(' ') + ',+),+';
 }
 
 async function wrapChain() {
