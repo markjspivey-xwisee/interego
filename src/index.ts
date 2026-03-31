@@ -316,6 +316,19 @@ export {
   atomRetrieve,
   computeContainmentAnnotations,
   allContainmentAnnotations,
+  // Computation (structural date math, counting, aggregation)
+  parseDate,
+  daysBetween,
+  dateDifference,
+  orderChronologically,
+  countUnique,
+  sumValues,
+  averageValues,
+  extractNumbers,
+  getLatestFact,
+  findFirstAfter,
+  whichCameFirst,
+  shouldAbstain,
 } from './pgsl/index.js';
 
 export type {
