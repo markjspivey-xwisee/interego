@@ -532,11 +532,36 @@ export function computeCognitiveStrategy(
     ? shouldAbstain([...entities.contentWords], sessionEntities)
     : { abstain: false, matchRatio: 1, matchedEntities: [] as string[], missingEntities: [] as string[] };
 
-  // Detect if computation is needed
-  const needsDateArithmetic = /how many days|how long|when did|which.*first|order.*earliest|how old/i.test(qLower);
-  const needsCounting = /how many|total number|count|how much.*total/i.test(qLower);
-  const needsAggregation = /total|combined|altogether|sum|average|gpa/i.test(qLower);
-  const needsComparison = /more than|less than|higher|lower|which.*first|same as|prefer/i.test(qLower);
+  // Detect computation type needed.
+  // Order matters: temporal indicators override counting because
+  // "how many days ago" is temporal, not counting.
+  //
+  // Temporal signals: time units (days/weeks/months/years) + temporal
+  // prepositions (ago/between/before/after/since/until/when/first/last)
+  const temporalUnits = /days?|weeks?|months?|years?|hours?|minutes?/i;
+  const temporalPrepositions = /\b(ago|between|before|after|since|until|passed|took|spend|spent|long|old|recently|first|last|earlier|later|order)\b/i;
+  const hasTemporalUnit = temporalUnits.test(qLower);
+  const hasTemporalPreposition = temporalPrepositions.test(qLower);
+
+  // Date arithmetic: question involves time units WITH temporal prepositions
+  // e.g. "how many days ago", "how long did", "which came first", "how old was I"
+  const needsDateArithmetic = (hasTemporalUnit && hasTemporalPreposition)
+    || /when did|which.*first|order.*earliest|how old|how long/i.test(qLower);
+
+  // Counting: "how many X" where X is NOT a time unit
+  // e.g. "how many books" YES, "how many days ago" NO
+  const howManyMatch = qLower.match(/how many (\w+)/i);
+  const howManyNonTemporal = howManyMatch
+    ? !temporalUnits.test(howManyMatch[1]!)
+    : false;
+  const needsCounting = howManyNonTemporal
+    || /total number|count\b|how much.*total/i.test(qLower);
+
+  // Aggregation: explicit sum/total/average language
+  const needsAggregation = /\btotal\b|combined|altogether|\bsum\b|average|gpa/i.test(qLower);
+
+  // Comparison: relative judgments
+  const needsComparison = /more than|less than|higher|lower|same as|prefer/i.test(qLower);
   const needsOrdering = /order|sequence|first.*last|earliest.*latest|chronological/i.test(qLower);
 
   const requiresComputation = needsDateArithmetic || needsCounting || needsAggregation || needsComparison || needsOrdering;
