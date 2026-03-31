@@ -55,15 +55,12 @@ function llm(prompt: string): string {
   try {
     const tmpFile = join(tmpdir(), `cg-prompt-${Date.now()}.txt`);
     writeFileSync(tmpFile, prompt, 'utf-8');
-    const result = spawnSync('claude', ['--print', '--model', MODEL], {
-      input: prompt,
-      maxBuffer: 2 * 1024 * 1024,
-      timeout: 120000,
-      env: { ...process.env, CLAUDECODE: '' },
-      encoding: 'utf-8',
-    });
+    const result = execSync(
+      `cat "${tmpFile.replace(/\\/g, '/')}" | claude --print --model ${MODEL}`,
+      { maxBuffer: 2 * 1024 * 1024, timeout: 120000, env: { ...process.env, CLAUDECODE: '' }, encoding: 'utf-8' }
+    );
     try { unlinkSync(tmpFile); } catch {}
-    return (result.stdout ?? '').trim();
+    return (result ?? '').trim();
   } catch {
     return '';
   }
