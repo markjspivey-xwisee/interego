@@ -316,6 +316,11 @@ export {
   atomRetrieve,
   computeContainmentAnnotations,
   allContainmentAnnotations,
+  // Entity/relation extraction
+  extractEntities,
+  extractRelations,
+  classifyQuestion,
+  expandEntitiesWithOntology,
   // Computation (structural date math, counting, aggregation)
   parseDate,
   daysBetween,

@@ -17,7 +17,10 @@
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
+import { writeFileSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 // System imports
 import {
@@ -50,12 +53,17 @@ const data = JSON.parse(readFileSync(DATA_FILE, 'utf-8'));
 
 function llm(prompt: string): string {
   try {
-    const escaped = prompt.replace(/'/g, "'\\''");
-    const result = execSync(
-      `echo '${escaped}' | claude --print --model ${MODEL}`,
-      { maxBuffer: 1024 * 1024, timeout: 120000, env: { ...process.env, CLAUDECODE: '' } }
-    );
-    return result.toString().trim();
+    const tmpFile = join(tmpdir(), `cg-prompt-${Date.now()}.txt`);
+    writeFileSync(tmpFile, prompt, 'utf-8');
+    const result = spawnSync('claude', ['--print', '--model', MODEL], {
+      input: prompt,
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: 120000,
+      env: { ...process.env, CLAUDECODE: '' },
+      encoding: 'utf-8',
+    });
+    try { unlinkSync(tmpFile); } catch {}
+    return (result.stdout ?? '').trim();
   } catch {
     return '';
   }
