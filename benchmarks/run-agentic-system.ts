@@ -179,13 +179,59 @@ function runAgent(question: string, sessions: string[], questionDate?: string): 
     }
   }
 
-  // 3. LLM comprehension for what structure can't handle
+  // 3. Build structural scaffolding from PGSL + affordance analysis
+  const scaffolding: string[] = [];
+
+  // Question analysis from the affordance engine
+  scaffolding.push(`STRUCTURAL ANALYSIS (from system):`);
+  scaffolding.push(`  Question type: ${strategy.questionType}`);
+  scaffolding.push(`  Strategy: ${strategy.strategy}`);
+  if (strategy.requiresComputation) scaffolding.push(`  Computation needed: ${strategy.computationType}`);
+  scaffolding.push(`  Key entities: ${qEntities.contentWords.join(', ')}`);
+  if (qEntities.nounPhrases.length > 0) scaffolding.push(`  Noun phrases: ${qEntities.nounPhrases.join(', ')}`);
+
+  // PGSL structural overlap — find which sessions share entities with the question
+  const sessionRelevance: string[] = [];
+  for (let i = 0; i < sessions.length; i++) {
+    const sessionWords = new Set(sessions[i]!.toLowerCase().split(/\s+/));
+    const overlap = qEntities.contentWords.filter(w => sessionWords.has(w.toLowerCase()));
+    if (overlap.length > 0) {
+      sessionRelevance.push(`  Session ${i + 1}: matches [${overlap.join(', ')}]`);
+    }
+  }
+  if (sessionRelevance.length > 0) {
+    scaffolding.push(`  Session relevance:`);
+    scaffolding.push(...sessionRelevance);
+  }
+
+  // Abstention signal
+  if (abstainCheck.matchRatio < 0.3) {
+    scaffolding.push(`  WARNING: Low entity match (${(abstainCheck.matchRatio * 100).toFixed(0)}%). Some question entities not found in sessions: [${abstainCheck.missingEntities.join(', ')}]`);
+    scaffolding.push(`  If the information truly isn't in the sessions, say "The information provided is not enough."`);
+  }
+
+  // Structural computation hint
+  if (structuralAnswer) {
+    scaffolding.push(`  Structural computation result: ${structuralAnswer}`);
+    scaffolding.push(`  (Verify this against the sessions — structural computation may have errors)`);
+  }
+
+  // Strategy-specific guidance
+  if (strategy.strategy === 'temporal-twopass') {
+    scaffolding.push(`  TEMPORAL: Find specific dates/times for each event, then compare.`);
+  } else if (strategy.strategy === 'multi-session-aggregate') {
+    scaffolding.push(`  MULTI-SESSION: Check EVERY session for relevant items. Count carefully.`);
+  }
+
+  const scaffoldBlock = scaffolding.join('\n');
+
+  // 4. LLM comprehension WITH structural scaffolding
   const fullText = sessions.map((s, i) => {
-    const date = data[START]?.haystack_dates?.[i] ?? '';
-    return `=== Session ${i + 1} (${date}) ===\n${s}`;
+    const date = questionDate ? '' : ''; // dates come from session content
+    return `=== Session ${i + 1} ===\n${s}`;
   }).join('\n\n');
 
-  const prompt = `Read ALL sessions carefully. ${questionDate ? `The current date is ${questionDate}.` : ''} Answer the question. Be SPECIFIC and CONCISE. Give ONLY the answer.\n\n${fullText}\n\nQuestion: ${question}\n\nAnswer:`;
+  const prompt = `${scaffoldBlock}\n\nRead ALL sessions carefully. ${questionDate ? `The current date is ${questionDate}.` : ''} Use the structural analysis above to guide your reading. Answer the question. Be SPECIFIC and CONCISE. Give ONLY the answer.\n\n${fullText}\n\nQuestion: ${question}\n\nAnswer:`;
   const llmAnswer = llm(prompt);
 
   // ── ACT: compose results ──
