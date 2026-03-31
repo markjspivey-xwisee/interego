@@ -17,6 +17,13 @@
  *   - Manifest metadata (facet types, temporal range, graph IRI) stays plaintext
  *   - Graph content + full descriptor Turtle are encrypted
  *   - Agents can discover WHAT exists but not read WHAT it says without delegation
+ *
+ * Structural-level encryption (PGSL foundation):
+ *   - Encrypt at any level of the PGSL lattice
+ *   - Inner (0,0) can be encrypted while outer structure is visible
+ *   - Wrap creates an encryption boundary — wrapping then encrypting
+ *     hides the inner structure while the outer placement is visible
+ *   - Each structural level can have different encryption keys/recipients
  */
 
 import nacl from 'tweetnacl';
@@ -288,4 +295,99 @@ export function envelopeToJson(envelope: EncryptedEnvelope): string {
  */
 export function envelopeFromJson(json: string): EncryptedEnvelope {
   return JSON.parse(json) as EncryptedEnvelope;
+}
+
+// ═════════════════════════════════════════════════════════════
+//  Structural-Level Encryption (PGSL foundation)
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * A structurally-encrypted PGSL node.
+ *
+ * In PGSL terms: wrapping creates an encryption boundary.
+ * The outer structure (placement in the lattice) is visible.
+ * The inner structure (what's inside the wrap) is encrypted.
+ *
+ * Example: ((encrypted_inner), is, fact)
+ *   - The outer structure [?, is, fact] is visible
+ *   - The inner (encrypted_inner) requires the key to read
+ *   - Agents can see the structural position without reading the content
+ */
+export interface StructuralEncryption {
+  /** The PGSL URI of the node being encrypted */
+  readonly nodeUri: string;
+  /** The structural level (0 = atom, 1 = L1, etc.) */
+  readonly level: number;
+  /** The encrypted content of this node */
+  readonly encrypted: EncryptedContent;
+  /** The encrypted key, wrapped for authorized recipients */
+  readonly wrappedKeys: readonly WrappedKey[];
+  /** What's visible WITHOUT decryption (structural metadata) */
+  readonly visibleMetadata: {
+    readonly level: number;
+    readonly itemCount?: number;    // how many items (without revealing what they are)
+    readonly facetTypes?: string[]; // which facet types (without revealing values)
+  };
+}
+
+/**
+ * Encrypt a PGSL node at a specific structural level.
+ *
+ * The node's content is encrypted, but its structural position
+ * (URI, level, item count) remains visible. This allows agents
+ * to see WHERE in the lattice something exists without reading
+ * WHAT it is.
+ *
+ * @param content - The resolved content of the PGSL node
+ * @param nodeUri - The canonical URI of the node
+ * @param level - The structural level (0 = atom, etc.)
+ * @param recipientPublicKeys - Who can decrypt
+ * @param senderKeyPair - The encryptor's key pair
+ * @param itemCount - Optional: number of items (visible in metadata)
+ * @param facetTypes - Optional: facet types (visible in metadata)
+ */
+export function encryptAtStructuralLevel(
+  content: string,
+  nodeUri: string,
+  level: number,
+  recipientPublicKeys: readonly string[],
+  senderKeyPair: EncryptionKeyPair,
+  itemCount?: number,
+  facetTypes?: string[],
+): StructuralEncryption {
+  const contentKey = generateContentKey();
+  const encrypted = encryptContent(content, contentKey);
+  const wrappedKeys = recipientPublicKeys.map(pubKey =>
+    wrapKeyForRecipient(contentKey, pubKey, senderKeyPair)
+  );
+
+  return {
+    nodeUri,
+    level,
+    encrypted,
+    wrappedKeys,
+    visibleMetadata: {
+      level,
+      itemCount,
+      facetTypes,
+    },
+  };
+}
+
+/**
+ * Decrypt a structurally-encrypted PGSL node.
+ */
+export function decryptStructuralNode(
+  structuralEnc: StructuralEncryption,
+  recipientKeyPair: EncryptionKeyPair,
+): string | null {
+  const myWrappedKey = structuralEnc.wrappedKeys.find(
+    wk => wk.recipientPublicKey === recipientKeyPair.publicKey
+  );
+  if (!myWrappedKey) return null;
+
+  const contentKey = unwrapKey(myWrappedKey, recipientKeyPair.secretKey);
+  if (!contentKey) return null;
+
+  return decryptContent(structuralEnc.encrypted, contentKey);
 }

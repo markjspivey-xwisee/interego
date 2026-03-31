@@ -26,6 +26,9 @@ export type AffordanceAction =
   | 'read'        // perceive the content
   | 'apply'       // use this context directly in decision-making
   | 'compose'     // merge with local context via union/intersection
+  | 'extend'      // grow the pyramid (inner +) — add to existing structure
+  | 'beside'      // place beside (outer +) — independent element
+  | 'wrap'        // create boundary — turn structure into single element
   | 'cite'        // reference with attribution
   | 'forward'     // share to other agents
   | 'challenge'   // publish a counter-descriptor
