@@ -367,24 +367,37 @@ async function renderChain() {
   const outerRight = chainData?._links?.outerRight || [];
   const chainFrag = chainData?.chainFragment;
 
+  // Only show outer level when chain is 2+ items AND the chain exists as a fragment
+  const hasOuterLevel = focusChain.length >= 2 && chainFrag;
+
+  // Deduplicate: remove outer neighbors that also appear as inner neighbors
+  const innerLeftUris = new Set(innerLeft.map(n => n.uri));
+  const innerRightUris = new Set(innerRight.map(n => n.uri));
+  const filteredOuterLeft = outerLeft.filter(n => !innerLeftUris.has(n.uri));
+  const filteredOuterRight = outerRight.filter(n => !innerRightUris.has(n.uri));
+
   let html = '';
 
-  // ── OUTER LEFT: neighbors of the chain-as-unit ──
-  if (outerLeft.length > 0) {
-    html += '<span class="options-stack">' + outerLeft.map(l => '<span class="option-item source" onclick="clickNode(\'' + encodeURIComponent(l.uri) + '\')" title="outer: ' + l.resolved + '">' + l.resolved + '</span>').join('') + '</span>';
+  // ── OUTER LEFT: neighbors of the chain-as-unit (only for multi-item chains that exist as fragments) ──
+  if (hasOuterLevel) {
+    if (filteredOuterLeft.length > 0) {
+      html += '<span class="options-stack">' + filteredOuterLeft.map(l => '<span class="option-item source" onclick="clickNode(\'' + encodeURIComponent(l.uri) + '\')" title="outer: ' + l.resolved + '">' + l.resolved + '</span>').join('') + '</span>';
+      html += '<span class="sep">,</span>';
+    }
+    html += '<span class="plus" onclick="showAddPopup(\'outer-left\', event)" title="Add before group">+</span>';
     html += '<span class="sep">,</span>';
   }
-  html += '<span class="plus" onclick="showAddPopup(\'outer-left\', event)" title="Add before chain">+</span>';
-  html += '<span class="sep">,</span>';
 
-  // ── OPEN PAREN: the chain group ──
-  html += '<span class="paren">' + (chainFrag ? '<a href="/node/' + encodeURIComponent(chainFrag.uri) + '" onclick="event.preventDefault(); clickNode(\'' + encodeURIComponent(chainFrag.uri) + '\')" title="' + chainFrag.resolved + '" style="color:#888;text-decoration:none">(</a>' : '(') + '</span>';
+  // ── OPEN PAREN ──
+  if (hasOuterLevel) {
+    html += '<span class="paren"><a href="/node/' + encodeURIComponent(chainFrag.uri) + '" onclick="event.preventDefault(); clickNode(\'' + encodeURIComponent(chainFrag.uri) + '\')" title="' + chainFrag.resolved + '" style="color:#888;text-decoration:none">(</a></span>';
+  }
 
   // ── INNER LEFT: sequence extensions ──
   html += '<span class="plus" onclick="showAddPopup(\'left\', event)" title="Extend sequence left">+</span>';
   if (innerLeft.length > 0) {
     html += '<span class="sep">,</span>';
-    html += '<span class="options-stack">' + innerLeft.map(l => '<span class="option-item source" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="inner: ' + l.resolved + '">' + l.resolved + '</span>').join('') + '</span>';
+    html += '<span class="options-stack">' + innerLeft.map(l => '<span class="option-item source" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + l.resolved + '</span>').join('') + '</span>';
   }
 
   // ── CHAIN ITEMS ──
@@ -406,20 +419,24 @@ async function renderChain() {
   // ── INNER RIGHT: sequence extensions ──
   if (innerRight.length > 0) {
     html += '<span class="sep">,</span>';
-    html += '<span class="options-stack">' + innerRight.map(r => '<span class="option-item target" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="inner: ' + r.resolved + '">' + r.resolved + '</span>').join('') + '</span>';
+    html += '<span class="options-stack">' + innerRight.map(r => '<span class="option-item target" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + r.resolved + '</span>').join('') + '</span>';
   }
   html += '<span class="sep">,</span>';
   html += '<span class="plus" onclick="showAddPopup(\'right\', event)" title="Extend sequence right">+</span>';
 
   // ── CLOSE PAREN ──
-  html += '<span class="paren">)</span>';
+  if (hasOuterLevel) {
+    html += '<span class="paren">)</span>';
+  }
 
   // ── OUTER RIGHT: neighbors of the chain-as-unit ──
-  html += '<span class="sep">,</span>';
-  html += '<span class="plus" onclick="showAddPopup(\'outer-right\', event)" title="Add after chain">+</span>';
-  if (outerRight.length > 0) {
+  if (hasOuterLevel) {
     html += '<span class="sep">,</span>';
-    html += '<span class="options-stack">' + outerRight.map(r => '<span class="option-item target" onclick="clickNode(\'' + encodeURIComponent(r.uri) + '\')" title="outer: ' + r.resolved + '">' + r.resolved + '</span>').join('') + '</span>';
+    html += '<span class="plus" onclick="showAddPopup(\'outer-right\', event)" title="Add after group">+</span>';
+    if (filteredOuterRight.length > 0) {
+      html += '<span class="sep">,</span>';
+      html += '<span class="options-stack">' + filteredOuterRight.map(r => '<span class="option-item target" onclick="clickNode(\'' + encodeURIComponent(r.uri) + '\')" title="outer: ' + r.resolved + '">' + r.resolved + '</span>').join('') + '</span>';
+    }
   }
 
   // Controls (collapse only — no wrap button, wrap already exists in lattice)
