@@ -56,7 +56,9 @@
   .chain-display .item { padding: 4px 10px; border-radius: 4px; cursor: pointer; }
   .chain-display .item.atom { background: #ffe0e0; border: 1px solid #e88; }
   .chain-display .item.frag { background: #e0e8ff; border: 1px solid #88e; }
-  .chain-display .item.nested-item { background: #333; color: #fff; border: 1px solid #666; }
+  .chain-display .item.nested-item { background: #f0f0f5; border: 2px solid #666; display: inline-flex; gap: 2px; padding: 2px 4px; align-items: center; }
+  .chain-display .item.nested-item .nested-atom { background: #ffe0e0; border: 1px solid #e88; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+  .chain-display .item.nested-item .nested-frag { background: #e0e8ff; border: 1px solid #88e; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
   .chain-display .sep { color: #ccc; padding: 0 2px; }
   .chain-display .paren { color: #888; font-size: 16px; font-weight: bold; }
   .chain-info { text-align: center; margin-top: 6px; font-size: 10px; color: #888; }
@@ -435,16 +437,38 @@ async function renderChain() {
   }
 
   // ── CHAIN ITEMS ──
+  // Pre-fetch nested fragment items for visual nesting
+  const nestedItems = {};
+  for (const uri of focusChain) {
+    const node = allNodes.find(n => n.uri === uri);
+    if (node && node.level > 0 && node.kind === 'Fragment') {
+      try {
+        const r = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) });
+        if (r.ok) { const d = await r.json(); if (d.node?.items) nestedItems[uri] = d.node.items; }
+      } catch {}
+    }
+  }
+
   for (let i = 0; i < focusChain.length; i++) {
     const uri = focusChain[i];
     const node = allNodes.find(n => n.uri === uri);
     const resolved = node ? node.resolved : '?';
-    const isNested = node && node.level > 0;
+    const isNested = node && node.level > 0 && node.kind === 'Fragment';
 
     html += '<span class="sep">,</span>';
 
-    if (isNested) {
-      html += '<span class="item nested-item" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="' + resolved + '">(' + resolved + ')</span>';
+    if (isNested && nestedItems[uri]) {
+      // Render as nested boxes — each item inside the fragment shown as a sub-box
+      const items = nestedItems[uri];
+      let innerHtml = '';
+      for (const itemUri of items) {
+        const itemNode = allNodes.find(n => n.uri === itemUri);
+        const itemResolved = itemNode ? itemNode.resolved : '?';
+        const isSubNested = itemNode && itemNode.level > 0;
+        const cls = isSubNested ? 'nested-frag' : 'nested-atom';
+        innerHtml += '<span class="' + cls + '">' + itemResolved + '</span>';
+      }
+      html += '<span class="item nested-item" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="Click to expand: ' + resolved + '">' + innerHtml + '</span>';
     } else {
       html += '<span class="item atom" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="' + resolved + '">' + resolved + '</span>';
     }
