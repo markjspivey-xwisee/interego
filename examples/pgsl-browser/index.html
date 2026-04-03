@@ -639,14 +639,17 @@ async function addToChain(side, encodedUri) {
     else focusChain.push(uri);
   }
 
-  // Ingest only the NEW PAIR to avoid flat boundary-crossing artifacts
+  // Ingest the full chain as a structure — this creates the complete fragment
   if (focusChain.length >= 2) {
-    const pairUris = actualSide === 'left'
-      ? [focusChain[0], focusChain[1]]
-      : [focusChain[focusChain.length - 2], focusChain[focusChain.length - 1]];
-    await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: pairUris}) });
+    await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
   }
   await refreshAll();
+  // Refetch chain data for the new chain
+  try {
+    const chainResp = await fetch('/api/chain', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
+    if (chainResp.ok) chainData = await chainResp.json();
+  } catch {}
+  updateUrl();
   await renderChain();
   document.querySelectorAll('.add-popup').forEach(p => p.remove());
 }
