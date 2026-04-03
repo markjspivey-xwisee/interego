@@ -75,7 +75,7 @@
   /* Add input */
   .add-popup { position: fixed; background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 20; }
   .add-popup input { border: 1px solid #ccc; padding: 4px 8px; font-size: 12px; font-family: inherit; width: 120px; outline: none; }
-  .add-popup .dropdown { max-height: 120px; overflow-y: auto; }
+  .add-popup .dropdown { max-height: 200px; overflow-y: auto; }
   .add-popup .dropdown-item { padding: 3px 8px; font-size: 11px; cursor: pointer; }
   .add-popup .dropdown-item:hover { background: #e8e8ff; }
 </style>
@@ -642,7 +642,10 @@ function showAddPopup(side, event) {
   const popup = document.createElement('div');
   popup.className = 'add-popup';
   popup.style.left = event.clientX + 'px';
-  popup.style.top = (event.clientY - 40) + 'px';
+  // Position above the chain panel
+  const chainPanel = document.getElementById('chainPanel');
+  const panelTop = chainPanel ? chainPanel.getBoundingClientRect().top : event.clientY;
+  popup.style.bottom = (window.innerHeight - panelTop + 10) + 'px';
 
   const input = document.createElement('input');
   input.placeholder = side === 'left' ? '+ source' : '+ target';
@@ -655,7 +658,7 @@ function showAddPopup(side, event) {
     const q = input.value.toLowerCase();
     if (!q) {
       // Show all atoms and non-L1 fragments when empty
-      const all = allNodes.filter(n => n.level !== 1 && !focusChain.includes(n.uri)).slice(0, 10);
+      const all = allNodes.filter(n => n.level !== 1).slice(0, 10);
       dropdown.innerHTML = all.map(n => {
         const isF = n.level > 0;
         const label = isF ? '<span style="background:#e0e8ff;border:1px solid #88e;padding:1px 4px;border-radius:2px;font-size:9px">(' + n.resolved + ')</span>' : n.resolved;
@@ -663,7 +666,7 @@ function showAddPopup(side, event) {
       }).join('');
       return;
     }
-    const matches = allNodes.filter(n => n.level !== 1 && n.resolved.toLowerCase().includes(q) && !focusChain.includes(n.uri)).slice(0, 8);
+    const matches = allNodes.filter(n => n.level !== 1 && n.resolved.toLowerCase().includes(q)).slice(0, 8);
     let html = matches.map(n => {
       const isF = n.level > 0;
       const label = isF ? '<span style="background:#e0e8ff;border:1px solid #88e;padding:1px 4px;border-radius:2px;font-size:9px">(' + n.resolved + ')</span>' : n.resolved;
