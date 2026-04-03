@@ -68,9 +68,9 @@
   .option-item.source:hover { background: #d0e8d0; }
   .option-item.target { color: #8a4a8a; background: #f8f0f8; border: 1px solid #e0cde0; }
   .option-item.target:hover { background: #e8d0e8; }
-  /* Nested rendering inside options */
-  .option-item .nested-atom { background: #ffe0e0; border: 1px solid #e88; padding: 1px 4px; border-radius: 2px; font-size: 9px; display: inline-block; }
-  .option-item .nested-frag { background: #e0e8ff; border: 1px solid #88e; padding: 1px 4px; border-radius: 2px; font-size: 9px; display: inline-block; }
+  /* Nested rendering inside options — pointer-events none so outer option handles click */
+  .option-item .nested-atom, .option-item .item { background: #ffe0e0; border: 1px solid #e88; padding: 1px 4px; border-radius: 2px; font-size: 9px; display: inline-block; pointer-events: none; }
+  .option-item .nested-frag, .option-item .nested-item { background: #e0e8ff; border: 1px solid #88e; padding: 1px 4px; border-radius: 2px; font-size: 9px; display: inline-block; pointer-events: none; }
 
   /* Add input */
   .add-popup { position: fixed; background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 20; }
@@ -441,7 +441,7 @@ async function renderChain() {
     if (filteredOuterLeft.length > 0) {
       let olHtml = '';
       for (const l of filteredOuterLeft) {
-        const innerRender = await renderNodeHtml(l.uri, 'onclick="clickNode(\'' + encodeURIComponent(l.uri) + '\')"');
+        const innerRender = await renderNodeHtml(l.uri);
         olHtml += '<span class="option-item source" onclick="clickNode(\'' + encodeURIComponent(l.uri) + '\')" title="outer: ' + l.resolved + '">' + innerRender + '</span>';
       }
       html += '<span class="options-stack">' + olHtml + '</span>';
@@ -470,7 +470,7 @@ async function renderChain() {
     html += '<span class="sep">,</span>';
     let leftHtml = '';
     for (const l of innerLeft) {
-      const innerRender = await renderNodeHtml(l.uri, 'onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')"');
+      const innerRender = await renderNodeHtml(l.uri);
       leftHtml += '<span class="option-item source" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + innerRender + '</span>';
     }
     html += '<span class="options-stack">' + leftHtml + '</span>';
@@ -519,7 +519,7 @@ async function renderChain() {
     html += '<span class="sep">,</span>';
     let rightHtml = '';
     for (const r of innerRight) {
-      const innerRender = await renderNodeHtml(r.uri, 'onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')"');
+      const innerRender = await renderNodeHtml(r.uri);
       rightHtml += '<span class="option-item target" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + innerRender + '</span>';
     }
     html += '<span class="options-stack">' + rightHtml + '</span>';
@@ -546,7 +546,7 @@ async function renderChain() {
       html += '<span class="sep">,</span>';
       let orHtml = '';
       for (const r of filteredOuterRight) {
-        const innerRender = await renderNodeHtml(r.uri, 'onclick="clickNode(\'' + encodeURIComponent(r.uri) + '\')"');
+        const innerRender = await renderNodeHtml(r.uri);
         orHtml += '<span class="option-item target" onclick="clickNode(\'' + encodeURIComponent(r.uri) + '\')" title="outer: ' + r.resolved + '">' + innerRender + '</span>';
       }
       html += '<span class="options-stack">' + orHtml + '</span>';
