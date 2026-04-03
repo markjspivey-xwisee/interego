@@ -415,6 +415,12 @@ async function renderChain() {
     html += '<span class="paren">(</span>';
   }
 
+  // ── COLLAPSE LEFT (shrink from left → ) ──
+  if (focusChain.length >= 2) {
+    html += '<span class="plus" onclick="collapseLeft()" title="Collapse from left" style="color:#8a4a4a;cursor:pointer;font-weight:bold">&gt;</span>';
+    html += '<span class="sep">,</span>';
+  }
+
   // ── INNER LEFT: sequence extensions ──
   html += '<span class="plus" onclick="showAddPopup(\'left\', event)" title="Extend sequence left">+</span>';
   if (innerLeft.length > 0) {
@@ -446,6 +452,12 @@ async function renderChain() {
   html += '<span class="sep">,</span>';
   html += '<span class="plus" onclick="showAddPopup(\'right\', event)" title="Extend sequence right">+</span>';
 
+  // ── COLLAPSE RIGHT (shrink from right ← ) ──
+  if (focusChain.length >= 2) {
+    html += '<span class="sep">,</span>';
+    html += '<span class="plus" onclick="collapseRight()" title="Collapse from right" style="color:#8a4a4a;cursor:pointer;font-weight:bold">&lt;</span>';
+  }
+
   // ── CLOSE PAREN ──
   if (hasOuterLevel) {
     html += '<span class="paren">)</span>';
@@ -461,13 +473,7 @@ async function renderChain() {
     }
   }
 
-  // Controls (collapse only — no wrap button, wrap already exists in lattice)
-  if (focusChain.length >= 2) {
-    html += '<br><span style="display:inline-block;margin-top:6px">';
-    html += '<button style="background:#8a4a4a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px" onclick="collapseLeft()">- left</button>';
-    html += '<button style="background:#8a4a4a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer" onclick="collapseRight()">- right</button>';
-    html += '</span>';
-  }
+  // No separate controls row — collapse buttons are inline (see below)
 
   display.innerHTML = html;
 
