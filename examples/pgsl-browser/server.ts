@@ -160,9 +160,212 @@ async function rebuildFromPod() {
 const app = express();
 app.use(express.json());
 
-// Serve the HTML
+// Serve the HTML — root and node-specific URLs
 app.get('/', (_req, res) => {
   res.sendFile(resolve(__dirname, 'index.html'));
+});
+
+// Hypermedia: dereferenceable node URLs
+// /node/{encoded-uri} serves the same browser but with the URI in the URL
+app.get('/node/*', (_req, res) => {
+  res.sendFile(resolve(__dirname, 'index.html'));
+});
+
+// Hypermedia API: full self-descriptive resource for a node
+// Returns the node data + links (neighbors, containers, constituents) + controls (affordances)
+app.get('/api/node/*', (req, res) => {
+  const nodeUri = decodeURIComponent(req.params[0]!) as IRI;
+  const node = pgsl.nodes.get(nodeUri);
+  if (!node) { res.status(404).json({ error: 'Node not found', uri: nodeUri }); return; }
+
+  const resolved = pgslResolve(pgsl, nodeUri);
+  const annotations = computeContainmentAnnotations(pgsl, nodeUri);
+
+  // Build links (HATEOAS)
+  const links: Record<string, any> = {
+    self: { href: `/node/${encodeURIComponent(nodeUri)}`, rel: 'self' },
+  };
+
+  // Items (for fragments)
+  if (node.kind === 'Fragment' && node.items) {
+    links.items = node.items.map((itemUri, i) => ({
+      href: `/node/${encodeURIComponent(itemUri)}`,
+      rel: 'item',
+      position: i,
+      resolved: pgslResolve(pgsl, itemUri),
+      level: pgsl.nodes.get(itemUri)?.level ?? 0,
+    }));
+  }
+
+  // Constituents (for level >= 2)
+  if (node.kind === 'Fragment' && node.left) {
+    links.leftConstituent = { href: `/node/${encodeURIComponent(node.left)}`, rel: 'left-constituent', resolved: pgslResolve(pgsl, node.left) };
+  }
+  if (node.kind === 'Fragment' && node.right) {
+    links.rightConstituent = { href: `/node/${encodeURIComponent(node.right)}`, rel: 'right-constituent', resolved: pgslResolve(pgsl, node.right) };
+  }
+
+  // Containing fragments (what contains this node)
+  const containers: any[] = [];
+  for (const [fUri, fNode] of pgsl.nodes) {
+    if (fNode.kind === 'Fragment' && fNode.items.includes(nodeUri)) {
+      const pos = fNode.items.indexOf(nodeUri);
+      containers.push({
+        href: `/node/${encodeURIComponent(fUri)}`,
+        rel: 'container',
+        resolved: pgslResolve(pgsl, fUri as IRI),
+        level: fNode.level,
+        position: pos,
+      });
+    }
+  }
+  if (containers.length > 0) links.containers = containers;
+
+  // Neighbors (left/right in containing fragments)
+  const leftN: any[] = [];
+  const rightN: any[] = [];
+  for (const c of containers) {
+    const cNode = pgsl.nodes.get(decodeURIComponent(c.href.replace('/node/', '')) as IRI);
+    if (!cNode || cNode.kind !== 'Fragment') continue;
+    const pos = cNode.items.indexOf(nodeUri);
+    if (pos > 0) {
+      const lu = cNode.items[pos - 1]!;
+      if (!leftN.some(n => n.uri === lu)) leftN.push({ href: `/node/${encodeURIComponent(lu)}`, rel: 'left-neighbor', uri: lu, resolved: pgslResolve(pgsl, lu) });
+    }
+    if (pos < cNode.items.length - 1) {
+      const ru = cNode.items[pos + 1]!;
+      if (!rightN.some(n => n.uri === ru)) rightN.push({ href: `/node/${encodeURIComponent(ru)}`, rel: 'right-neighbor', uri: ru, resolved: pgslResolve(pgsl, ru) });
+    }
+  }
+  if (leftN.length > 0) links.leftNeighbors = leftN;
+  if (rightN.length > 0) links.rightNeighbors = rightN;
+
+  // Controls (available operations)
+  const controls: any[] = [
+    { rel: 'ingest', method: 'POST', href: '/api/ingest', description: 'Ingest new content' },
+  ];
+  if (node.kind === 'Atom') {
+    controls.push({ rel: 'find-containing', method: 'GET', href: `/api/node/${encodeURIComponent(nodeUri)}`, description: 'Find all fragments containing this atom' });
+  }
+
+  res.json({
+    uri: nodeUri,
+    resolved,
+    kind: node.kind,
+    level: node.level,
+    _links: links,
+    _controls: controls,
+    annotations: annotations.map(a => ({ ...a, parentResolved: pgslResolve(pgsl, a.parentUri) })),
+  });
+});
+
+// Hypermedia API: chain-level resource
+// Given a chain of URIs, returns inner neighbors (sequence extensions)
+// and outer neighbors (what contains the whole chain as a unit)
+app.post('/api/chain', (req, res) => {
+  const { uris } = req.body as { uris: string[] };
+  if (!uris || uris.length === 0) { res.status(400).json({ error: 'Need at least 1 URI' }); return; }
+
+  const chainUris = uris as IRI[];
+
+  // Resolve chain items
+  const items = chainUris.map(u => ({
+    uri: u,
+    resolved: pgsl.nodes.has(u) ? pgslResolve(pgsl, u) : '?',
+    level: pgsl.nodes.get(u)?.level ?? 0,
+    kind: pgsl.nodes.get(u)?.kind ?? 'unknown',
+    href: `/node/${encodeURIComponent(u)}`,
+  }));
+
+  // Find the chain as a fragment (exact match)
+  let chainFragUri: IRI | null = null;
+  for (const [fUri, fNode] of pgsl.nodes) {
+    if (fNode.kind !== 'Fragment' || fNode.items.length !== chainUris.length) continue;
+    if (chainUris.every((u, i) => fNode.items[i] === u)) { chainFragUri = fUri as IRI; break; }
+  }
+
+  // INNER neighbors: what extends the sequence left/right
+  const innerLeft: any[] = [];
+  const innerRight: any[] = [];
+
+  // Search for chain as sub-sequence in larger fragments
+  for (const [fragUri, fragNode] of pgsl.nodes) {
+    if (fragNode.kind !== 'Fragment' || fragNode.items.length < chainUris.length) continue;
+    for (let sp = 0; sp <= fragNode.items.length - chainUris.length; sp++) {
+      let match = true;
+      for (let ci = 0; ci < chainUris.length; ci++) {
+        if (fragNode.items[sp + ci] !== chainUris[ci]) { match = false; break; }
+      }
+      if (!match) continue;
+
+      if (sp > 0) {
+        const lu = fragNode.items[sp - 1]!;
+        if (!innerLeft.some(n => n.uri === lu)) {
+          innerLeft.push({ uri: lu, href: `/node/${encodeURIComponent(lu)}`, rel: 'inner-left', resolved: pgslResolve(pgsl, lu), level: pgsl.nodes.get(lu)?.level ?? 0 });
+        }
+      }
+      const ep = sp + chainUris.length;
+      if (ep < fragNode.items.length) {
+        const ru = fragNode.items[ep]!;
+        if (!innerRight.some(n => n.uri === ru)) {
+          innerRight.push({ uri: ru, href: `/node/${encodeURIComponent(ru)}`, rel: 'inner-right', resolved: pgslResolve(pgsl, ru), level: pgsl.nodes.get(ru)?.level ?? 0 });
+        }
+      }
+      break;
+    }
+  }
+
+  // OUTER neighbors: what contains the chain-as-unit in higher-level fragments
+  const outerLeft: any[] = [];
+  const outerRight: any[] = [];
+
+  if (chainFragUri) {
+    // Look for fragments that contain chainFragUri as an item
+    for (const [fUri, fNode] of pgsl.nodes) {
+      if (fNode.kind !== 'Fragment') continue;
+      const pos = fNode.items.indexOf(chainFragUri);
+      if (pos < 0) continue;
+      if (pos > 0) {
+        const lu = fNode.items[pos - 1]!;
+        if (!outerLeft.some(n => n.uri === lu)) {
+          outerLeft.push({ uri: lu, href: `/node/${encodeURIComponent(lu)}`, rel: 'outer-left', resolved: pgslResolve(pgsl, lu), level: pgsl.nodes.get(lu)?.level ?? 0 });
+        }
+      }
+      if (pos < fNode.items.length - 1) {
+        const ru = fNode.items[pos + 1]!;
+        if (!outerRight.some(n => n.uri === ru)) {
+          outerRight.push({ uri: ru, href: `/node/${encodeURIComponent(ru)}`, rel: 'outer-right', resolved: pgslResolve(pgsl, ru), level: pgsl.nodes.get(ru)?.level ?? 0 });
+        }
+      }
+    }
+
+    // Also check constituent relationships
+    for (const [fUri, fNode] of pgsl.nodes) {
+      if (fNode.kind !== 'Fragment') continue;
+      if (fNode.left === chainFragUri && fNode.right) {
+        const ru = fNode.right;
+        if (!outerRight.some(n => n.uri === ru)) {
+          outerRight.push({ uri: ru, href: `/node/${encodeURIComponent(ru)}`, rel: 'outer-right', resolved: pgslResolve(pgsl, ru), level: pgsl.nodes.get(ru)?.level ?? 0 });
+        }
+      }
+      if (fNode.right === chainFragUri && fNode.left) {
+        const lu = fNode.left;
+        if (!outerLeft.some(n => n.uri === lu)) {
+          outerLeft.push({ uri: lu, href: `/node/${encodeURIComponent(lu)}`, rel: 'outer-left', resolved: pgslResolve(pgsl, lu), level: pgsl.nodes.get(lu)?.level ?? 0 });
+        }
+      }
+    }
+  }
+
+  res.json({
+    chain: items,
+    chainFragment: chainFragUri ? { uri: chainFragUri, href: `/node/${encodeURIComponent(chainFragUri)}`, resolved: pgslResolve(pgsl, chainFragUri) } : null,
+    _links: {
+      self: { href: '/api/chain', method: 'POST' },
+      innerLeft, innerRight,
+      outerLeft, outerRight,
+    },
+  });
 });
 
 // Ingest content into the lattice (and optionally to pod)

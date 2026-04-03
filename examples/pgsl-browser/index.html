@@ -119,7 +119,35 @@
 let allNodes = [];
 let focusChain = [];
 let focusData = null;
+let chainData = null; // from /api/chain — inner/outer neighbors
 let nodePositions = {}; // uri -> {x, y}
+
+// ── URL-based navigation ──
+function updateUrl() {
+  if (focusChain.length === 1) {
+    history.pushState(null, '', '/node/' + encodeURIComponent(focusChain[0]));
+  } else if (focusChain.length > 1) {
+    history.pushState(null, '', '/node/' + encodeURIComponent(focusChain[0]) + '?chain=' + focusChain.map(encodeURIComponent).join(','));
+  }
+}
+
+function loadFromUrl() {
+  const path = window.location.pathname;
+  if (path.startsWith('/node/')) {
+    const uri = decodeURIComponent(path.slice(6));
+    const params = new URLSearchParams(window.location.search);
+    const chain = params.get('chain');
+    if (chain) {
+      focusChain = chain.split(',').map(decodeURIComponent);
+    } else {
+      focusChain = [uri];
+    }
+    // Defer click until allNodes is loaded
+    setTimeout(() => { if (focusChain.length > 0) clickNode(encodeURIComponent(focusChain[0])); }, 500);
+  }
+}
+
+window.addEventListener('popstate', loadFromUrl);
 
 async function doIngest() {
   const content = document.getElementById('ingestInput').value.trim();
@@ -298,6 +326,17 @@ async function clickNode(encodedUri) {
     } else {
       focusData = { focus: { uri: focusChain[0], resolved: '?', level: 0 }, left: [], right: [], containingFragments: [], annotations: [] };
     }
+
+    // Fetch chain-level hypermedia (inner/outer neighbors)
+    chainData = null;
+    if (focusChain.length >= 1) {
+      try {
+        const chainResp = await fetch('/api/chain', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
+        if (chainResp.ok) chainData = await chainResp.json();
+      } catch {}
+    }
+
+    updateUrl();
     renderChain();
     renderNodeList();
     renderGraph();
@@ -321,43 +360,34 @@ async function renderChain() {
     return;
   }
 
-  // Get left/right neighbors (with error handling)
-  let leftData = { left: [], right: [] };
-  let rightData = { left: [], right: [] };
-  try {
-    const validFirst = focusChain[0] && allNodes.some(n => n.uri === focusChain[0]);
-    const validLast = focusChain[focusChain.length - 1] && allNodes.some(n => n.uri === focusChain[focusChain.length - 1]);
-    if (validFirst) {
-      const leftResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[0], chainContext: focusChain})});
-      if (leftResp.ok) leftData = await leftResp.json();
-    }
-    if (validLast) {
-      const rightResp = await fetch('/api/focus', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: focusChain[focusChain.length - 1], chainContext: focusChain})});
-      if (rightResp.ok) rightData = await rightResp.json();
-    }
-  } catch {}
-
-  const chainUriSet = new Set(focusChain);
-  const leftOptions = (leftData.left || []).filter(n => !chainUriSet.has(n.uri));
-  const rightOptions = (rightData.right || []).filter(n => !chainUriSet.has(n.uri));
+  // Use /api/chain data for inner/outer neighbors
+  const innerLeft = chainData?._links?.innerLeft || [];
+  const innerRight = chainData?._links?.innerRight || [];
+  const outerLeft = chainData?._links?.outerLeft || [];
+  const outerRight = chainData?._links?.outerRight || [];
+  const chainFrag = chainData?.chainFragment;
 
   let html = '';
 
-  // Outer left + (chain-level: adds beside the whole group)
-  html += '<span class="plus" onclick="showAddPopup(\'outer-left\', event)" title="Add new element before chain">+</span>';
+  // ── OUTER LEFT: neighbors of the chain-as-unit ──
+  if (outerLeft.length > 0) {
+    html += '<span class="options-stack">' + outerLeft.map(l => '<span class="option-item source" onclick="clickNode(\'' + encodeURIComponent(l.uri) + '\')" title="outer: ' + l.resolved + '">' + l.resolved + '</span>').join('') + '</span>';
+    html += '<span class="sep">,</span>';
+  }
+  html += '<span class="plus" onclick="showAddPopup(\'outer-left\', event)" title="Add before chain">+</span>';
   html += '<span class="sep">,</span>';
 
-  // One group: (+ , items... , +)
-  html += '<span class="paren">(</span>';
+  // ── OPEN PAREN: the chain group ──
+  html += '<span class="paren">' + (chainFrag ? '<a href="/node/' + encodeURIComponent(chainFrag.uri) + '" onclick="event.preventDefault(); clickNode(\'' + encodeURIComponent(chainFrag.uri) + '\')" title="' + chainFrag.resolved + '" style="color:#888;text-decoration:none">(</a>' : '(') + '</span>';
 
-  // Inner left + (sequence-level: extends the sequence)
-  html += '<span class="plus" onclick="showAddPopup(\'left\', event)" title="Add to start of sequence">+</span>';
-  if (leftOptions.length > 0) {
+  // ── INNER LEFT: sequence extensions ──
+  html += '<span class="plus" onclick="showAddPopup(\'left\', event)" title="Extend sequence left">+</span>';
+  if (innerLeft.length > 0) {
     html += '<span class="sep">,</span>';
-    html += '<span class="options-stack">' + leftOptions.map(l => '<span class="option-item source" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + l.resolved + '</span>').join('') + '</span>';
+    html += '<span class="options-stack">' + innerLeft.map(l => '<span class="option-item source" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="inner: ' + l.resolved + '">' + l.resolved + '</span>').join('') + '</span>';
   }
 
-  // Chain items
+  // ── CHAIN ITEMS ──
   for (let i = 0; i < focusChain.length; i++) {
     const uri = focusChain[i];
     const node = allNodes.find(n => n.uri === uri);
@@ -367,31 +397,35 @@ async function renderChain() {
     html += '<span class="sep">,</span>';
 
     if (isNested) {
-      html += '<span class="item nested-item" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="Click to expand: ' + resolved + '">(' + resolved + ')</span>';
+      html += '<span class="item nested-item" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="' + resolved + '">(' + resolved + ')</span>';
     } else {
-      html += '<span class="item atom" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="Click to refocus: ' + resolved + '">' + resolved + '</span>';
+      html += '<span class="item atom" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="' + resolved + '">' + resolved + '</span>';
     }
   }
 
-  // Inner right + (sequence-level: extends the sequence)
-  if (rightOptions.length > 0) {
+  // ── INNER RIGHT: sequence extensions ──
+  if (innerRight.length > 0) {
     html += '<span class="sep">,</span>';
-    html += '<span class="options-stack">' + rightOptions.map(r => '<span class="option-item target" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + r.resolved + '</span>').join('') + '</span>';
+    html += '<span class="options-stack">' + innerRight.map(r => '<span class="option-item target" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="inner: ' + r.resolved + '">' + r.resolved + '</span>').join('') + '</span>';
   }
   html += '<span class="sep">,</span>';
-  html += '<span class="plus" onclick="showAddPopup(\'right\', event)" title="Add to end of sequence">+</span>';
+  html += '<span class="plus" onclick="showAddPopup(\'right\', event)" title="Extend sequence right">+</span>';
 
+  // ── CLOSE PAREN ──
   html += '<span class="paren">)</span>';
 
+  // ── OUTER RIGHT: neighbors of the chain-as-unit ──
   html += '<span class="sep">,</span>';
-  // Outer right + (chain-level)
-  html += '<span class="plus" onclick="showAddPopup(\'outer-right\', event)" title="Add new element after chain">+</span>';
+  html += '<span class="plus" onclick="showAddPopup(\'outer-right\', event)" title="Add after chain">+</span>';
+  if (outerRight.length > 0) {
+    html += '<span class="sep">,</span>';
+    html += '<span class="options-stack">' + outerRight.map(r => '<span class="option-item target" onclick="clickNode(\'' + encodeURIComponent(r.uri) + '\')" title="outer: ' + r.resolved + '">' + r.resolved + '</span>').join('') + '</span>';
+  }
 
-  // Controls (when chain has 2+ items)
+  // Controls (collapse only — no wrap button, wrap already exists in lattice)
   if (focusChain.length >= 2) {
     html += '<br><span style="display:inline-block;margin-top:6px">';
     html += '<button style="background:#8a4a4a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px" onclick="collapseLeft()">- left</button>';
-    html += '<button style="background:#4a4a8a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px" onclick="wrapChain()">Wrap (...)</button>';
     html += '<button style="background:#8a4a4a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer" onclick="collapseRight()">- right</button>';
     html += '</span>';
   }
@@ -443,6 +477,12 @@ async function expandLeft(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   if (!allNodes.some(n => n.uri === uri)) { await refreshAll(); return; }
   focusChain.unshift(uri);
+  // Refetch chain data for new chain
+  try {
+    const chainResp = await fetch('/api/chain', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
+    if (chainResp.ok) chainData = await chainResp.json();
+  } catch {}
+  updateUrl();
   await renderChain();
   renderNodeList();
   renderGraph();
@@ -452,6 +492,11 @@ async function expandRight(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   if (!allNodes.some(n => n.uri === uri)) { await refreshAll(); return; }
   focusChain.push(uri);
+  try {
+    const chainResp = await fetch('/api/chain', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
+    if (chainResp.ok) chainData = await chainResp.json();
+  } catch {}
+  updateUrl();
   await renderChain();
   renderNodeList();
   renderGraph();
@@ -560,7 +605,7 @@ async function createAndAdd(side, value) {
 }
 
 // Initial load
-refreshAll();
+refreshAll().then(() => loadFromUrl());
 </script>
 </body>
 </html>
