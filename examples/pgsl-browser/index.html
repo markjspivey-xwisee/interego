@@ -501,21 +501,29 @@ async function wrapChain() {
   renderGraph();
 }
 
-function collapseLeft() {
-  if (focusChain.length > 1) { focusChain.shift(); renderChain(); renderNodeList(); renderGraph(); }
+async function collapseLeft() {
+  if (focusChain.length > 1) {
+    focusChain.shift();
+    try { const r = await fetch('/api/chain', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) }); if (r.ok) chainData = await r.json(); } catch {}
+    updateUrl(); renderChain(); renderNodeList(); renderGraph();
+  }
 }
-function collapseRight() {
-  if (focusChain.length > 1) { focusChain.pop(); renderChain(); renderNodeList(); renderGraph(); }
+async function collapseRight() {
+  if (focusChain.length > 1) {
+    focusChain.pop();
+    try { const r = await fetch('/api/chain', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) }); if (r.ok) chainData = await r.json(); } catch {}
+    updateUrl(); renderChain(); renderNodeList(); renderGraph();
+  }
 }
-function collapseLeftTo(idx) {
-  // Keep only items from idx onwards
+async function collapseLeftTo(idx) {
   focusChain = focusChain.slice(idx);
-  renderChain(); renderNodeList(); renderGraph();
+  try { const r = await fetch('/api/chain', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) }); if (r.ok) chainData = await r.json(); } catch {}
+  updateUrl(); renderChain(); renderNodeList(); renderGraph();
 }
-function collapseRightTo(idx) {
-  // Keep only items up to and including idx
+async function collapseRightTo(idx) {
   focusChain = focusChain.slice(0, idx + 1);
-  renderChain(); renderNodeList(); renderGraph();
+  try { const r = await fetch('/api/chain', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) }); if (r.ok) chainData = await r.json(); } catch {}
+  updateUrl(); renderChain(); renderNodeList(); renderGraph();
 }
 
 async function expandLeft(encodedUri) {
