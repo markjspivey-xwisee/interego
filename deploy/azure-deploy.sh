@@ -141,6 +141,38 @@ az containerapp create \
 RELAY_FQDN=$(az containerapp show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
 echo "    MCP Relay: https://$RELAY_FQDN"
 
+# ── 8. Deploy PGSL Browser + Observatory ──────────────────────
+BROWSER_APP="context-graphs-browser"
+echo ">>> Building PGSL Browser image..."
+az acr build \
+  --registry "$ACR_NAME" \
+  --image context-graphs-browser:latest \
+  --file deploy/Dockerfile.pgsl-browser \
+  . \
+  --no-logs
+
+echo ">>> Deploying PGSL Browser + Observatory..."
+az containerapp create \
+  --name "$BROWSER_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/context-graphs-browser:latest" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USERNAME" \
+  --registry-password "$ACR_PASSWORD" \
+  --target-port 5000 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 2 \
+  --cpu 0.25 \
+  --memory 0.5Gi \
+  --env-vars "CSS_URL=$CSS_INTERNAL_URL" "PORT=5000" "POD_NAME=markj" "CLEAN=1" \
+  --output none
+
+BROWSER_FQDN=$(az containerapp show --name "$BROWSER_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
+echo "    Browser:       https://$BROWSER_FQDN"
+echo "    Observatory:   https://$BROWSER_FQDN/observatory"
+
 # ── Done ──────────────────────────────────────────────────────
 echo ""
 echo "=== Deployment Complete ==="
@@ -149,6 +181,8 @@ echo "Services:"
 echo "  CSS (internal):  $CSS_INTERNAL_URL"
 echo "  Dashboard:       https://$DASHBOARD_FQDN"
 echo "  MCP Relay:       https://$RELAY_FQDN"
+echo "  PGSL Browser:    https://$BROWSER_FQDN"
+echo "  Observatory:     https://$BROWSER_FQDN/observatory"
 echo ""
 echo "To connect a remote agent, set:"
 echo "  CG_BASE_URL=https://$RELAY_FQDN"

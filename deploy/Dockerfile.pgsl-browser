@@ -16,6 +16,7 @@ RUN npm install
 
 COPY examples/pgsl-browser/server.ts ./
 COPY examples/pgsl-browser/index.html ./
+COPY examples/pgsl-browser/observatory.html ./
 
 EXPOSE 5000
 
