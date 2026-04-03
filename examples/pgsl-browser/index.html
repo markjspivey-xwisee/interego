@@ -34,12 +34,10 @@
   .graph-container { position: relative; min-width: 100%; min-height: 100%; }
 
   /* Graph nodes */
-  .gnode { position: absolute; padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; white-space: nowrap; border: 2px solid transparent; transition: all 0.15s; z-index: 2; }
-  .gnode:hover { transform: scale(1.1); z-index: 5; }
-  .gnode.atom { background: #ffe0e0; border-color: #e88; }
-  .gnode.l1 { background: #fff0d0; border-color: #da5; }
-  .gnode.fragment { background: #e0e8ff; border-color: #88e; }
-  .gnode.nested { background: #333; color: #fff; border-color: #666; }
+  .gnode { position: absolute; padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; white-space: nowrap; border: 2px solid transparent; transition: all 0.15s; z-index: 2; min-width: 30px; text-align: center; }
+  .gnode:hover { transform: scale(1.05); z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+  .gnode.atom { background: #ffe0e0; border-color: #e88; font-weight: 600; }
+  .gnode.fragment { background: #e0e8ff; border-color: #88e; min-width: 50px; }
   .gnode.focused { border-color: #f00; border-width: 3px; box-shadow: 0 0 8px rgba(255,0,0,0.3); }
 
   /* Edges (SVG overlay) */
@@ -245,7 +243,8 @@ function renderGraph() {
 
     for (let i = 0; i < nodes.length; i++) {
       const n = nodes[i];
-      const x = startX + i * (nodeW + gapX + Math.min(n.resolved.length * 3, 60));
+      const labelLen = n.level === 0 ? n.resolved.length : n.resolved.length + 2; // +2 for parens
+      const x = startX + i * (nodeW + gapX + Math.min(labelLen * 5, 120));
 
       nodePositions[n.uri] = { x: x + nodeW/2, y: y + nodeH/2 };
 
@@ -256,11 +255,17 @@ function renderGraph() {
       div.style.top = y + 'px';
       div.style.background = levelColors[Math.min(n.level, levelColors.length - 1)];
 
-      // Atoms get text labels, fragments are unlabeled boxes
+      // All nodes get labels — atoms show their value, fragments show chain notation
       if (n.level === 0) {
         div.textContent = n.resolved;
+      } else {
+        // Short label for fragments: truncate resolved text
+        const display = n.resolved.length > 18 ? n.resolved.slice(0, 16) + '..' : n.resolved;
+        div.textContent = '(' + display + ')';
+        div.style.fontSize = '10px';
+        div.style.color = '#555';
       }
-      div.title = 'L' + n.level + ': ' + n.resolved + '\n' + n.uri;
+      div.title = 'L' + n.level + ': (' + n.resolved + ')\n' + n.uri;
       div.onclick = () => clickNode(encodeURIComponent(n.uri));
       container.appendChild(div);
     }
