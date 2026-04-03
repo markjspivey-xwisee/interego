@@ -97,6 +97,14 @@ CSS_FQDN=$(az containerapp show --name "$CSS_APP" --resource-group "$RESOURCE_GR
 CSS_INTERNAL_URL="https://$CSS_FQDN/"
 echo "    CSS internal: $CSS_INTERNAL_URL"
 
+# Set CSS_BASE_URL so CSS recognizes requests at its internal FQDN
+echo ">>> Setting CSS_BASE_URL..."
+az containerapp update \
+  --name "$CSS_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --set-env-vars "CSS_BASE_URL=$CSS_INTERNAL_URL" \
+  --output none
+
 # ── 6. Deploy Dashboard ──────────────────────────────────────
 echo ">>> Deploying Dashboard..."
 az containerapp create \
