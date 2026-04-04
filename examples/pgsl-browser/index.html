@@ -203,7 +203,7 @@ function renderNodeList() {
   }).join('');
 }
 
-function renderGraph() {
+async function renderGraph() {
   const container = document.getElementById('graphContainer');
   const svg = document.getElementById('edgesSvg');
   container.innerHTML = '';
@@ -223,6 +223,26 @@ function renderGraph() {
     levels[n.level].push(n);
     if (n.level > maxLevel) maxLevel = n.level;
   }
+
+  // Build set of all transitive constituents of the focused chain fragment
+  const constituentUris = new Set();
+  async function collectConstituents(uri) {
+    if (constituentUris.has(uri)) return;
+    constituentUris.add(uri);
+    try {
+      const r = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) });
+      if (r.ok) {
+        const d = await r.json();
+        if (d.node?.left) await collectConstituents(d.node.left);
+        if (d.node?.right) await collectConstituents(d.node.right);
+        if (d.node?.items) for (const item of d.node.items) constituentUris.add(item);
+      }
+    } catch {}
+  }
+  const chainFragUri0 = chainData?.chainFragment?.uri;
+  if (chainFragUri0) await collectConstituents(chainFragUri0);
+  // Also add focusChain items
+  for (const u of focusChain) constituentUris.add(u);
 
   // Position nodes: level = y (bottom to top), index = x
   const nodeW = 60, nodeH = 30, gapX = 20, gapY = 50;
@@ -249,7 +269,7 @@ function renderGraph() {
       // Highlight: focus = strong, constituents = normal, everything else = dimmed
       const chainFragUri = chainData?.chainFragment?.uri;
       const isFocus = (chainFragUri && n.uri === chainFragUri) || (!chainFragUri && focusChain.length === 1 && n.uri === focusChain[0]);
-      const isConstituent = focusChain.includes(n.uri);
+      const isConstituent = focusChain.includes(n.uri) || constituentUris.has(n.uri);
       if (isFocus) {
         div.className += ' focused';
       } else if (isConstituent) {
