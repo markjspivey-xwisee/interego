@@ -322,6 +322,8 @@ async function renderGraph() {
           return Promise.resolve(uri);
         };
 
+        const isDimmed = focusChain.length > 0 && !constituentUris.has(n.uri);
+
         Promise.all([resolveThrough(data.node.left), resolveThrough(data.node.right)]).then(([leftTarget, rightTarget]) => {
           const lPos = nodePositions[leftTarget];
           if (lPos) {
@@ -329,6 +331,7 @@ async function renderGraph() {
             line.setAttribute('x1', parentPos.x); line.setAttribute('y1', parentPos.y);
             line.setAttribute('x2', lPos.x); line.setAttribute('y2', lPos.y);
             line.setAttribute('class', 'edge left-const');
+            if (isDimmed) line.style.opacity = '0.15';
             svg.appendChild(line);
           }
           const rPos = nodePositions[rightTarget];
@@ -337,6 +340,7 @@ async function renderGraph() {
             line.setAttribute('x1', parentPos.x); line.setAttribute('y1', parentPos.y);
             line.setAttribute('x2', rPos.x); line.setAttribute('y2', rPos.y);
             line.setAttribute('class', 'edge right-const');
+            if (isDimmed) line.style.opacity = '0.15';
             svg.appendChild(line);
           }
         });
