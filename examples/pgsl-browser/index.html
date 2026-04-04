@@ -97,6 +97,15 @@
       <button onclick="doIngest()">Ingest</button>
     </div>
 
+    <h2>Shapes</h2>
+    <div id="shapeList" style="font-size:10px;margin-bottom:8px"></div>
+    <div style="margin-bottom:12px">
+      <input id="shapeName" placeholder="name" style="width:100%;border:1px solid #ccc;padding:3px 6px;font-size:10px;border-radius:3px;margin-bottom:2px;font-family:inherit">
+      <input id="shapeWhen" placeholder="WHEN: ?x, is, employee" style="width:100%;border:1px solid #ccc;padding:3px 6px;font-size:10px;border-radius:3px;margin-bottom:2px;font-family:inherit">
+      <input id="shapeRequire" placeholder="REQUIRE: ?x, is, human" style="width:100%;border:1px solid #ccc;padding:3px 6px;font-size:10px;border-radius:3px;margin-bottom:2px;font-family:inherit">
+      <button onclick="addShape()" style="background:#4a4a8a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer">Add Shape</button>
+    </div>
+
     <h2>Nodes</h2>
     <ul class="node-list" id="nodeList"></ul>
   </div>
@@ -694,30 +703,74 @@ function showAddPopup(side, event) {
   const dropdown = document.createElement('div');
   dropdown.className = 'dropdown';
 
-  input.oninput = () => {
-    const q = input.value.toLowerCase();
-    if (!q) {
-      // Show all atoms and non-L1 fragments when empty
-      const all = allNodes.filter(n => n.level !== 1).slice(0, 10);
-      dropdown.innerHTML = all.map(n => {
+  // Check if shapes constrain this position
+  let shapeConstrained = false;
+  let shapeCandidateUris = null; // null = no constraint, Set = only these allowed
+  let shapeInfo = '';
+
+  (async () => {
+    try {
+      const actualSide = side.replace('outer-', '');
+      const resp = await fetch('/api/shapes/candidates', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ currentChain: focusChain, side: actualSide }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.constrained && data.candidates) {
+          shapeConstrained = true;
+          shapeCandidateUris = new Set(data.candidates.map(c => c.uri));
+          shapeInfo = data.constraints.map(c => c.shape + ': REQUIRE (' + c.require + ')').join('; ');
+        }
+      }
+    } catch {}
+  })();
+
+  const renderDropdown = (q) => {
+    let nodes = allNodes.filter(n => n.level !== 1);
+    if (q) nodes = nodes.filter(n => n.resolved.toLowerCase().includes(q.toLowerCase()));
+
+    // If shape-constrained, filter to only valid candidates and show constraint info
+    if (shapeConstrained && shapeCandidateUris) {
+      const constrained = nodes.filter(n => shapeCandidateUris.has(n.uri));
+      const unconstrained = nodes.filter(n => !shapeCandidateUris.has(n.uri));
+
+      let html = '';
+      if (shapeInfo) {
+        html += '<div style="padding:3px 8px;font-size:9px;color:#8a4a4a;background:#fff0f0;border-bottom:1px solid #eee">\u26a0 ' + shapeInfo + '</div>';
+      }
+      html += constrained.slice(0, 8).map(n => {
+        const isF = n.level > 0;
+        const label = isF ? '<span style="background:#e0e8ff;border:1px solid #88e;padding:1px 4px;border-radius:2px;font-size:9px">(' + n.resolved + ')</span>' : n.resolved;
+        return '<div class="dropdown-item" style="background:#f0fff0" onclick="addToChain(\'' + side + '\',\'' + encodeURIComponent(n.uri) + '\')">\u2705 ' + label + '</div>';
+      }).join('');
+      if (unconstrained.length > 0) {
+        html += '<div style="padding:3px 8px;font-size:9px;color:#999;border-top:1px solid #eee">Constraint not met:</div>';
+        html += unconstrained.slice(0, 4).map(n => {
+          return '<div class="dropdown-item" style="opacity:0.4;text-decoration:line-through">' + n.resolved + '</div>';
+        }).join('');
+      }
+      if (q && q.trim()) {
+        html += '<div class="dropdown-item" style="border-top:1px solid #eee;color:#888" onclick="createAndAdd(\'' + side + '\',\'' + q.trim() + '\')">+ Create "' + q.trim() + '"</div>';
+      }
+      dropdown.innerHTML = html;
+    } else {
+      // No constraints — show all
+      let html = nodes.slice(0, 10).map(n => {
         const isF = n.level > 0;
         const label = isF ? '<span style="background:#e0e8ff;border:1px solid #88e;padding:1px 4px;border-radius:2px;font-size:9px">(' + n.resolved + ')</span>' : n.resolved;
         return '<div class="dropdown-item" onclick="addToChain(\'' + side + '\',\'' + encodeURIComponent(n.uri) + '\')">' + label + '</div>';
       }).join('');
-      return;
+      if (q && q.trim()) {
+        html += '<div class="dropdown-item" style="border-top:1px solid #eee;color:#888" onclick="createAndAdd(\'' + side + '\',\'' + q.trim() + '\')">+ Create "' + q.trim() + '"</div>';
+      }
+      dropdown.innerHTML = html;
     }
-    const matches = allNodes.filter(n => n.level !== 1 && n.resolved.toLowerCase().includes(q)).slice(0, 8);
-    let html = matches.map(n => {
-      const isF = n.level > 0;
-      const label = isF ? '<span style="background:#e0e8ff;border:1px solid #88e;padding:1px 4px;border-radius:2px;font-size:9px">(' + n.resolved + ')</span>' : n.resolved;
-      return '<div class="dropdown-item" onclick="addToChain(\'' + side + '\',\'' + encodeURIComponent(n.uri) + '\')">' + label + '</div>';
-    }).join('');
-    // Always show create option at the bottom
-    if (q.trim()) {
-      html += '<div class="dropdown-item" style="border-top:1px solid #eee;color:#888" onclick="createAndAdd(\'' + side + '\',\'' + q.trim() + '\')">+ Create "' + q.trim() + '"</div>';
-    }
-    dropdown.innerHTML = html;
   };
+
+  input.oninput = () => renderDropdown(input.value);
+  // Initial render (empty query)
+  setTimeout(() => renderDropdown(''), 100);
 
   input.onkeydown = (e) => {
     if (e.key === 'Escape') popup.remove();
@@ -796,7 +849,54 @@ async function createAndAdd(side, value) {
   document.querySelectorAll('.add-popup').forEach(p => p.remove());
 }
 
+// ── Shapes ──
+
+async function addShape() {
+  const name = document.getElementById('shapeName').value.trim();
+  const when = document.getElementById('shapeWhen').value.trim();
+  const require = document.getElementById('shapeRequire').value.trim();
+  if (!name || !when || !require) return;
+
+  const whenPattern = when.split(',').map(s => s.trim());
+  const requirePattern = require.split(',').map(s => s.trim());
+
+  await fetch('/api/shapes', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ name, whenPattern, requirePattern }),
+  });
+
+  document.getElementById('shapeName').value = '';
+  document.getElementById('shapeWhen').value = '';
+  document.getElementById('shapeRequire').value = '';
+  await refreshShapes();
+}
+
+async function deleteShape(id) {
+  await fetch('/api/shapes/' + id, { method: 'DELETE' });
+  await refreshShapes();
+}
+
+async function refreshShapes() {
+  const resp = await fetch('/api/shapes');
+  const data = await resp.json();
+  const list = document.getElementById('shapeList');
+  if (data.shapes.length === 0) {
+    list.innerHTML = '<span style="color:#999">No shapes defined</span>';
+    return;
+  }
+  list.innerHTML = data.shapes.map(s =>
+    '<div style="padding:2px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">' +
+      '<div><strong>' + s.name + '</strong><br>' +
+        '<span style="color:#4a8a4a">WHEN</span> (' + s.whenPattern.join(', ') + ')<br>' +
+        '<span style="color:#8a4a4a">REQUIRE</span> (' + s.requirePattern.join(', ') + ')' +
+      '</div>' +
+      '<span onclick="deleteShape(\'' + s.id + '\')" style="cursor:pointer;color:#c00;font-size:14px" title="Delete">\u00d7</span>' +
+    '</div>'
+  ).join('');
+}
+
 // Initial load
+refreshShapes();
 refreshAll().then(() => loadFromUrl());
 </script>
 </body>

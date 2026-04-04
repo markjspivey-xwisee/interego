@@ -160,6 +160,210 @@ async function rebuildFromPod() {
 const app = express();
 app.use(express.json());
 
+// ── Shape Registry (dogfooded — shapes are PGSL content) ──
+
+interface ShapeConstraint {
+  id: string;
+  name: string;
+  /** Pattern that triggers this constraint: array of atom values, ?x = variable */
+  whenPattern: string[];
+  /** Pattern that must exist for the constraint to be satisfied */
+  requirePattern: string[];
+  /** The PGSL URI of this shape (it's content in the lattice) */
+  pgslUri?: string;
+  /** Who defined this shape */
+  definedBy: string;
+  /** When */
+  definedAt: string;
+}
+
+const shapeRegistry: ShapeConstraint[] = [];
+
+// Create a shape and ingest it into PGSL
+app.post('/api/shapes', (req, res) => {
+  const { name, whenPattern, requirePattern, definedBy } = req.body as {
+    name: string; whenPattern: string[]; requirePattern: string[]; definedBy?: string;
+  };
+  if (!name || !whenPattern || !requirePattern) {
+    res.status(400).json({ error: 'Need name, whenPattern, requirePattern' });
+    return;
+  }
+
+  const shape: ShapeConstraint = {
+    id: `shape:${Date.now()}`,
+    name,
+    whenPattern,
+    requirePattern,
+    definedBy: definedBy ?? 'user',
+    definedAt: new Date().toISOString(),
+  };
+
+  // Ingest the shape itself into PGSL — it's content in the lattice
+  const shapeText = `WHEN (${whenPattern.join(', ')}) REQUIRE (${requirePattern.join(', ')})`;
+  try {
+    const uri = embedInPGSL(pgsl, shapeText);
+    shape.pgslUri = uri;
+  } catch {}
+
+  shapeRegistry.push(shape);
+  res.json({ shape, totalShapes: shapeRegistry.length });
+});
+
+// List all shapes
+app.get('/api/shapes', (_req, res) => {
+  res.json({ shapes: shapeRegistry });
+});
+
+// Delete a shape
+app.delete('/api/shapes/:id', (req, res) => {
+  const idx = shapeRegistry.findIndex(s => s.id === req.params['id']);
+  if (idx < 0) { res.status(404).json({ error: 'Shape not found' }); return; }
+  shapeRegistry.splice(idx, 1);
+  res.json({ deleted: true, totalShapes: shapeRegistry.length });
+});
+
+// Query: given a partial chain being built, what candidates satisfy all active shapes?
+// This is the core of SHACL-driven autocomplete.
+app.post('/api/shapes/candidates', (req, res) => {
+  const { currentChain, side } = req.body as { currentChain: string[]; side: 'left' | 'right' };
+  if (!currentChain) { res.status(400).json({ error: 'Need currentChain' }); return; }
+
+  // Resolve chain items to their text values
+  const chainValues = currentChain.map(uri => {
+    const node = pgsl.nodes.get(uri as IRI);
+    if (!node) return '?';
+    return node.kind === 'Atom' ? String((node as any).value) : pgslResolve(pgsl, uri as IRI);
+  });
+
+  // For each shape, check if the current chain + a candidate would trigger a constraint
+  const constraints: Array<{ shape: ShapeConstraint; requiredPattern: string[]; variableBindings: Record<string, string> }> = [];
+
+  for (const shape of shapeRegistry) {
+    // Try to match whenPattern against currentChain + new item
+    // Variables in whenPattern (starting with ?) get bound to chain values
+    const wp = shape.whenPattern;
+
+    // Check if the chain is building toward this pattern
+    // e.g., chain is [mark, is] and whenPattern is [?x, is, employee]
+    // The new item (side=right) would be at position chainValues.length
+    if (side === 'right' && chainValues.length < wp.length) {
+      // Check if existing chain matches the prefix of whenPattern
+      let match = true;
+      const bindings: Record<string, string> = {};
+      for (let i = 0; i < chainValues.length; i++) {
+        if (wp[i]!.startsWith('?')) {
+          bindings[wp[i]!] = chainValues[i]!;
+        } else if (wp[i] !== chainValues[i]) {
+          match = false; break;
+        }
+      }
+
+      if (match && chainValues.length === wp.length - 1) {
+        // The next item would complete the whenPattern
+        const nextSlot = wp[chainValues.length]!;
+        if (!nextSlot.startsWith('?')) {
+          // The slot is a fixed value — this shape constrains what can go here
+          constraints.push({ shape, requiredPattern: shape.requirePattern, variableBindings: bindings });
+        }
+      }
+    }
+
+    if (side === 'left' && chainValues.length < wp.length) {
+      let match = true;
+      const bindings: Record<string, string> = {};
+      for (let i = 0; i < chainValues.length; i++) {
+        const wpIdx = wp.length - chainValues.length + i;
+        if (wp[wpIdx]!.startsWith('?')) {
+          bindings[wp[wpIdx]!] = chainValues[i]!;
+        } else if (wp[wpIdx] !== chainValues[i]) {
+          match = false; break;
+        }
+      }
+
+      if (match && chainValues.length === wp.length - 1) {
+        constraints.push({ shape, requiredPattern: shape.requirePattern, variableBindings: bindings });
+      }
+    }
+  }
+
+  if (constraints.length === 0) {
+    // No constraints apply — all nodes are valid candidates
+    res.json({ constrained: false, constraints: [], candidates: null });
+    return;
+  }
+
+  // For each constraint, find which values satisfy the requirePattern
+  const validCandidates = new Set<string>();
+
+  for (const c of constraints) {
+    // Find all atoms/fragments that, when bound to the variable, satisfy requirePattern
+    // e.g., requirePattern is [?x, is, human], bindings has ?x bound
+    // Check if (binding[?x], is, human) exists as a chain in the lattice
+
+    for (const [uri, node] of pgsl.nodes) {
+      if (node.kind !== 'Atom') continue;
+      const candidateValue = String((node as any).value);
+
+      // Try binding this candidate to the unbound variable in requirePattern
+      const rp = c.requiredPattern;
+      const bindings = { ...c.variableBindings };
+
+      // Find unbound variables in requirePattern
+      for (const slot of rp) {
+        if (slot.startsWith('?') && !bindings[slot]) {
+          bindings[slot] = candidateValue;
+        }
+      }
+
+      // Resolve requirePattern with bindings
+      const resolvedRequire = rp.map(slot => slot.startsWith('?') ? (bindings[slot] ?? slot) : slot);
+
+      // Check if this resolved pattern exists in the lattice
+      // Search for the sequence as atoms
+      const atomUris = resolvedRequire.map(val => {
+        for (const [aKey, aUri] of pgsl.atoms) {
+          if (aKey === val) return aUri;
+        }
+        return null;
+      });
+
+      if (atomUris.every(u => u !== null)) {
+        // Check if this sequence exists as a fragment
+        for (const [fUri, fNode] of pgsl.nodes) {
+          if (fNode.kind !== 'Fragment') continue;
+          if (fNode.items.length !== atomUris.length) continue;
+          let seqMatch = true;
+          for (let i = 0; i < atomUris.length; i++) {
+            if (fNode.items[i] !== atomUris[i]) { seqMatch = false; break; }
+          }
+          if (seqMatch) {
+            // The require pattern is satisfied for the variable binding
+            // The candidate is the value bound to the variable in the WHEN pattern
+            const whenVar = c.shape.whenPattern.find(s => s.startsWith('?'));
+            if (whenVar && bindings[whenVar]) {
+              // Find the atom URI for this value
+              for (const [aKey, aUri] of pgsl.atoms) {
+                if (aKey === bindings[whenVar]) validCandidates.add(aUri);
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  res.json({
+    constrained: true,
+    constraints: constraints.map(c => ({ shape: c.shape.name, require: c.requiredPattern.join(', ') })),
+    candidates: [...validCandidates].map(uri => ({
+      uri,
+      resolved: pgslResolve(pgsl, uri as IRI),
+      level: pgsl.nodes.get(uri as IRI)?.level ?? 0,
+    })),
+  });
+});
+
 // Serve the HTML — root and node-specific URLs
 app.get('/', (_req, res) => {
   res.sendFile(resolve(__dirname, 'index.html'));
