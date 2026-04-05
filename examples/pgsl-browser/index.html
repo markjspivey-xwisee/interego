@@ -120,11 +120,16 @@
     <span style="color:#999">Click a node in the graph to focus</span>
   </div>
   <div class="chain-info" id="chainInfo"></div>
-  <div id="shapeArea" style="display:none;border-top:1px dashed #ccc;margin-top:6px;padding-top:6px">
-    <div id="shapeBuilder"></div>
+  <div id="constrainArea" style="display:none;border-top:1px dashed #ccc;margin-top:6px;padding-top:6px">
+    <div style="font-size:9px;color:#888;text-align:center;margin-bottom:4px">requires</div>
+    <div class="chain-display" id="requireChainDisplay"></div>
+    <div style="text-align:center;margin-top:4px">
+      <button onclick="saveConstraint()" style="background:#238636;color:#fff;border:none;padding:2px 10px;font-size:9px;border-radius:3px;cursor:pointer">save</button>
+      <button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer;margin-left:4px">cancel</button>
+    </div>
   </div>
   <div id="constrainBtn" style="text-align:center;margin-top:4px">
-    <button onclick="startShapeMode()" style="background:none;border:1px solid #ccc;padding:2px 10px;font-size:9px;border-radius:3px;cursor:pointer;color:#888">+ constrain</button>
+    <button onclick="startConstraint()" style="background:none;border:1px solid #ccc;padding:2px 10px;font-size:9px;border-radius:3px;cursor:pointer;color:#888">+ constrain</button>
   </div>
 </div>
 
@@ -367,8 +372,8 @@ async function clickNode(encodedUri) {
     const uri = decodeURIComponent(encodedUri);
     const node = allNodes.find(n => n.uri === uri);
 
-    // If in shape mode, don't navigate — stay on current chain
-    if (shapeMode) return;
+    // If in constraint mode, don't navigate — stay on current chain
+    if (constraintMode) return;
 
     if (node && node.level > 0 && node.kind === 'Fragment') {
       // Decompose fragment into chain items
@@ -807,6 +812,15 @@ function showAddPopup(side, event) {
 
 async function addToChain(side, encodedUri) {
   const uri = decodeURIComponent(encodedUri);
+
+  // If adding to the require chain (constraint mode)
+  if (side === 'require-right' || side === 'require-left') {
+    requireChain.push(uri);
+    document.querySelectorAll('.add-popup').forEach(p => p.remove());
+    renderRequireChain();
+    return;
+  }
+
   const isOuter = side.startsWith('outer-');
   const actualSide = isOuter ? side.replace('outer-', '') : side;
 
@@ -869,217 +883,75 @@ function toggleGraph() {
   }
 }
 
-// ── Constraints (shapes created by relating two chains) ──
+// ── Constraints ──
+// ? is just an atom. Build chains with ? in them.
+// A constraint links two chains that share ? at the same position.
 
-let shapeMode = false;
-let shapeStep = 0; // 0=not active, 1=selecting variable positions, 2=waiting for second chain
-let shapeWhenChain = null;
-let shapeWhenValues = null;
-let shapeVariablePositions = new Set(); // which positions in the chain are variables
+let constraintMode = false;
+let constraintWhenChain = null; // the "when" chain URIs
+let requireChain = []; // the "require" chain being built
 
-function startShapeMode() {
+function startConstraint() {
   if (focusChain.length === 0) return;
-  shapeMode = true;
-  shapeStep = 1;
-  shapeWhenChain = [...focusChain];
-  shapeWhenValues = focusChain.map(u => {
+  // The current chain must contain the ? atom
+  const hasQ = focusChain.some(u => {
     const n = allNodes.find(x => x.uri === u);
-    return n ? n.resolved : '?';
+    return n && n.resolved === '?';
   });
-  shapeVariablePositions = new Set();
-  renderShapeBuilder();
-}
-
-function toggleShapePosition(idx) {
-  if (shapeVariablePositions.has(idx)) shapeVariablePositions.delete(idx);
-  else shapeVariablePositions.add(idx);
-  renderShapeBuilder();
-}
-
-function confirmShapePositions() {
-  if (shapeVariablePositions.size === 0) return; // need at least one variable
-  shapeStep = 2;
-  renderShapeBuilder();
-}
-
-let shapeRequireChain = []; // the second chain being built
-
-function renderShapeBuilder() {
-  const builder = document.getElementById('shapeBuilder');
-  const area = document.getElementById('shapeArea');
-  const constrainBtn = document.getElementById('constrainBtn');
-  area.style.display = 'block';
-  constrainBtn.style.display = 'none';
-
-  if (shapeStep === 1) {
-    // Step 1: select which positions are variables
-    let html = '<div style="font-size:9px;color:#888;margin-bottom:4px">Click positions to mark as <strong style="color:#228">variable</strong>:</div>';
-    html += '<div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px">';
-    for (let i = 0; i < shapeWhenValues.length; i++) {
-      const isVar = shapeVariablePositions.has(i);
-      const style = isVar
-        ? 'background:#d0e0ff;border:2px solid #58f;color:#228;font-weight:bold'
-        : 'background:#f5f5f5;border:1px solid #ccc;color:#666';
-      html += '<span onclick="toggleShapePosition(' + i + ')" style="padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;' + style + '">' +
-        (isVar ? '?' : '') + shapeWhenValues[i] + '</span>';
-    }
-    html += '</div>';
-    html += '<button onclick="confirmShapePositions()" style="background:#4a4a8a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px"' +
-      (shapeVariablePositions.size === 0 ? ' disabled title="Select at least one variable"' : '') +
-      '>Next</button>';
-    html += '<button onclick="cancelShape()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">Cancel</button>';
-    builder.innerHTML = html;
-  } else if (shapeStep === 2) {
-    // Step 2: build the required chain using + autocomplete (same interface)
-    // Show the when pattern with variables
-    let whenHtml = '';
-    for (let i = 0; i < shapeWhenValues.length; i++) {
-      const isVar = shapeVariablePositions.has(i);
-      if (i > 0) whenHtml += '<span style="color:#ccc">, </span>';
-      whenHtml += isVar
-        ? '<span style="color:#228;font-weight:bold">?</span>'
-        : '<span style="background:#f5f5f5;border:1px solid #ccc;padding:1px 4px;border-radius:2px;font-size:10px">' + shapeWhenValues[i] + '</span>';
-    }
-
-    // Show the require chain being built
-    let reqHtml = '';
-    if (shapeRequireChain.length === 0) {
-      reqHtml = '<span style="color:#999;font-size:10px">empty — use + to build</span>';
-    } else {
-      for (let i = 0; i < shapeRequireChain.length; i++) {
-        const n = allNodes.find(x => x.uri === shapeRequireChain[i]);
-        const val = n ? n.resolved : '?';
-        if (i > 0) reqHtml += '<span style="color:#ccc">, </span>';
-        reqHtml += '<span style="background:#f0fff0;border:1px solid #8c8;padding:1px 4px;border-radius:2px;font-size:10px">' + val + '</span>';
-      }
-    }
-
-    let html = '<div style="margin-bottom:4px">(' + whenHtml + ')</div>';
-    html += '<div style="font-size:9px;color:#888">requires</div>';
-    html += '<div style="display:flex;align-items:center;gap:4px;margin:4px 0">';
-    html += '<span style="color:#4a8a4a;cursor:pointer;font-weight:bold" onclick="shapeAddRequireItem(event)">+</span>';
-    html += '<span>(' + reqHtml + ')</span>';
-    html += '</div>';
-
-    if (shapeRequireChain.length > 0) {
-      html += '<button onclick="finishShape()" style="background:#238636;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px">Create constraint</button>';
-    }
-    html += '<button onclick="cancelShape()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">Cancel</button>';
-    builder.innerHTML = html;
+  if (!hasQ) {
+    alert('Add ? to the chain first (use + and type ?)');
+    return;
   }
+  constraintMode = true;
+  constraintWhenChain = [...focusChain];
+  requireChain = [];
+  document.getElementById('constrainArea').style.display = 'block';
+  document.getElementById('constrainBtn').style.display = 'none';
+  renderRequireChain();
 }
 
-function shapeAddRequireItem(event) {
-  // Show the same + autocomplete popup for building the require chain
-  document.querySelectorAll('.add-popup').forEach(p => p.remove());
-
-  const popup = document.createElement('div');
-  popup.className = 'add-popup';
-  popup.style.left = event.clientX + 'px';
-  const chainPanel = document.getElementById('chainPanel');
-  popup.style.bottom = (window.innerHeight - chainPanel.getBoundingClientRect().top + 10) + 'px';
-
-  const input = document.createElement('input');
-  input.placeholder = '+ add item';
-  input.autofocus = true;
-
-  const dropdown = document.createElement('div');
-  dropdown.className = 'dropdown';
-
-  const renderDD = (q) => {
-    let nodes = allNodes.filter(n => n.level !== 1);
-    if (q) nodes = nodes.filter(n => n.resolved.toLowerCase().includes(q.toLowerCase()));
-    let html = nodes.slice(0, 10).map(n => {
-      const isF = n.level > 0;
-      const label = isF ? '<span style="background:#e0e8ff;border:1px solid #88e;padding:1px 4px;border-radius:2px;font-size:9px">(' + n.resolved + ')</span>' : n.resolved;
-      return '<div class="dropdown-item" onclick="shapeSelectRequireItem(\'' + encodeURIComponent(n.uri) + '\')">' + label + '</div>';
-    }).join('');
-    if (q && q.trim()) {
-      html += '<div class="dropdown-item" style="border-top:1px solid #eee;color:#888" onclick="shapeCreateAndAdd(\'' + q.trim() + '\')">+ Create "' + q.trim() + '"</div>';
-    }
-    dropdown.innerHTML = html;
-  };
-
-  input.oninput = () => renderDD(input.value);
-  input.onkeydown = (e) => {
-    if (e.key === 'Escape') popup.remove();
-    if (e.key === 'Enter') {
-      const v = input.value.trim();
-      if (!v) return;
-      const match = allNodes.find(n => n.resolved.toLowerCase() === v.toLowerCase());
-      if (match) shapeSelectRequireItem(encodeURIComponent(match.uri));
-      else shapeCreateAndAdd(v);
-      popup.remove();
-    }
-  };
-
-  setTimeout(() => renderDD(''), 50);
-  popup.appendChild(input);
-  popup.appendChild(dropdown);
-  document.body.appendChild(popup);
-  setTimeout(() => input.focus(), 50);
-  setTimeout(() => {
-    document.addEventListener('click', function handler(e) {
-      if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', handler); }
-    });
-  }, 100);
-}
-
-function shapeSelectRequireItem(encodedUri) {
-  const uri = decodeURIComponent(encodedUri);
-  shapeRequireChain.push(uri);
-  document.querySelectorAll('.add-popup').forEach(p => p.remove());
-  renderShapeBuilder();
-}
-
-async function shapeCreateAndAdd(value) {
-  await fetch('/api/ingest', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({content: value, granularity: 'word'}) });
-  await refreshAll();
-  const atom = allNodes.find(n => n.resolved === value && n.level === 0);
-  if (atom) shapeRequireChain.push(atom.uri);
-  document.querySelectorAll('.add-popup').forEach(p => p.remove());
-  renderShapeBuilder();
-}
-
-async function finishShape() {
-  await completeShape(shapeRequireChain);
-  shapeRequireChain = [];
-}
-
-function cancelShape() {
-  shapeMode = false;
-  shapeStep = 0;
-  shapeWhenChain = null;
-  shapeWhenValues = null;
-  shapeVariablePositions = new Set();
-  document.getElementById('shapeArea').style.display = 'none';
-  document.getElementById('shapeBuilder').innerHTML = '';
+function cancelConstraint() {
+  constraintMode = false;
+  constraintWhenChain = null;
+  requireChain = [];
+  document.getElementById('constrainArea').style.display = 'none';
   document.getElementById('constrainBtn').style.display = 'block';
 }
 
-async function completeShape(requireChain) {
+function renderRequireChain() {
+  const display = document.getElementById('requireChainDisplay');
+  let html = '<span class="plus" onclick="addToRequireChain(event)">+</span>';
+  for (const uri of requireChain) {
+    const n = allNodes.find(x => x.uri === uri);
+    const val = n ? n.resolved : '?';
+    html += '<span class="sep">,</span>';
+    html += '<span class="item ' + (val === '?' ? 'atom' : 'atom') + '" style="' + (val === '?' ? 'background:#d0e0ff;border-color:#58f;font-weight:bold' : '') + '">' + val + '</span>';
+  }
+  html += '<span class="sep">,</span>';
+  html += '<span class="plus" onclick="addToRequireChain(event)">+</span>';
+  display.innerHTML = html;
+}
+
+function addToRequireChain(event) {
+  showAddPopup('require-right', event);
+}
+
+async function saveConstraint() {
+  if (requireChain.length === 0 || !constraintWhenChain) return;
+
+  // Resolve both chains to values
+  const whenValues = constraintWhenChain.map(u => {
+    const n = allNodes.find(x => x.uri === u);
+    return n ? n.resolved : '?';
+  });
   const requireValues = requireChain.map(u => {
     const n = allNodes.find(x => x.uri === u);
     return n ? n.resolved : '?';
   });
 
-  // Build patterns: variable positions get ?x, ?x1, etc.
-  const whenPattern = [...shapeWhenValues];
-  const requirePattern = [...requireValues];
-
-  let varIdx = 0;
-  for (const pos of shapeVariablePositions) {
-    const varName = '?x' + (varIdx > 0 ? varIdx : '');
-    const originalValue = whenPattern[pos];
-    whenPattern[pos] = varName;
-
-    // Find the same value in requirePattern and bind it
-    const reqPos = requirePattern.indexOf(originalValue);
-    if (reqPos >= 0) {
-      requirePattern[reqPos] = varName;
-    }
-    varIdx++;
-  }
+  // ? atoms become ?x variables in the pattern
+  const whenPattern = whenValues.map(v => v === '?' ? '?x' : v);
+  const requirePattern = requireValues.map(v => v === '?' ? '?x' : v);
 
   const name = '(' + whenPattern.join(', ') + ') requires (' + requirePattern.join(', ') + ')';
 
@@ -1088,7 +960,14 @@ async function completeShape(requireChain) {
     body: JSON.stringify({ name, whenPattern, requirePattern }),
   });
 
-  cancelShape();
+  cancelConstraint();
+
+  // Ingest the require chain into the lattice too
+  if (requireChain.length >= 2) {
+    await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: requireChain}) });
+    await refreshAll();
+  }
+
   await refreshShapes();
 }
 
