@@ -113,8 +113,13 @@
   </div>
 
   <div class="graph-area" id="graphArea">
-    <svg class="edges-svg" id="edgesSvg"></svg>
-    <div class="graph-container" id="graphContainer"></div>
+    <div style="padding:4px 12px;background:#f0f0ea;border-bottom:1px solid #ddd;font-size:10px;cursor:pointer;color:#888" onclick="toggleGraph()">
+      <span id="graphToggle">\u25BC</span> Graph View
+    </div>
+    <div id="graphContent" style="position:relative;overflow:auto;height:calc(100% - 25px)">
+      <svg class="edges-svg" id="edgesSvg"></svg>
+      <div class="graph-container" id="graphContainer"></div>
+    </div>
   </div>
 </div>
 
@@ -364,23 +369,8 @@ async function clickNode(encodedUri) {
     const uri = decodeURIComponent(encodedUri);
     const node = allNodes.find(n => n.uri === uri);
 
-    // If in shape mode step 2, clicking a node completes the constraint
-    if (shapeMode && shapeStep === 2 && node) {
-      let requireChain;
-      if (node.level > 0 && node.kind === 'Fragment') {
-        const resp = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) });
-        if (resp.ok) {
-          const data = await resp.json();
-          requireChain = data.node?.items?.length > 1 ? [...data.node.items] : [uri];
-        } else {
-          requireChain = [uri];
-        }
-      } else {
-        requireChain = [uri];
-      }
-      await completeShape(requireChain);
-      return;
-    }
+    // If in shape mode, don't navigate — stay on current chain
+    if (shapeMode) return;
 
     if (node && node.level > 0 && node.kind === 'Fragment') {
       // Decompose fragment into chain items
@@ -869,6 +859,18 @@ async function createAndAdd(side, value) {
   document.querySelectorAll('.add-popup').forEach(p => p.remove());
 }
 
+function toggleGraph() {
+  const content = document.getElementById('graphContent');
+  const toggle = document.getElementById('graphToggle');
+  if (content.style.display === 'none') {
+    content.style.display = 'block';
+    toggle.textContent = '\u25BC';
+  } else {
+    content.style.display = 'none';
+    toggle.textContent = '\u25B6';
+  }
+}
+
 // ── Constraints (shapes created by relating two chains) ──
 
 let shapeMode = false;
@@ -902,6 +904,8 @@ function confirmShapePositions() {
   renderShapeBuilder();
 }
 
+let shapeRequireChain = []; // the second chain being built
+
 function renderShapeBuilder() {
   const builder = document.getElementById('shapeBuilder');
   const btn = document.getElementById('startShapeBtn');
@@ -910,7 +914,7 @@ function renderShapeBuilder() {
 
   if (shapeStep === 1) {
     // Step 1: select which positions are variables
-    let html = '<div style="font-size:9px;color:#888;margin-bottom:4px">Click positions to mark as <strong>variable</strong> (what can substitute):</div>';
+    let html = '<div style="font-size:9px;color:#888;margin-bottom:4px">Click positions to mark as <strong style="color:#228">variable</strong>:</div>';
     html += '<div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px">';
     for (let i = 0; i < shapeWhenValues.length; i++) {
       const isVar = shapeVariablePositions.has(i);
@@ -923,23 +927,124 @@ function renderShapeBuilder() {
     html += '</div>';
     html += '<button onclick="confirmShapePositions()" style="background:#4a4a8a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px"' +
       (shapeVariablePositions.size === 0 ? ' disabled title="Select at least one variable"' : '') +
-      '>Next: select required chain</button>';
-    html += '<button onclick="cancelShape()" style="background:#8a4a4a;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer">Cancel</button>';
+      '>Next</button>';
+    html += '<button onclick="cancelShape()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">Cancel</button>';
     builder.innerHTML = html;
   } else if (shapeStep === 2) {
-    // Step 2: waiting for second chain click
-    let patternHtml = '';
+    // Step 2: build the required chain using + autocomplete (same interface)
+    // Show the when pattern with variables
+    let whenHtml = '';
     for (let i = 0; i < shapeWhenValues.length; i++) {
       const isVar = shapeVariablePositions.has(i);
-      patternHtml += isVar ? '<strong style="color:#228">?</strong>' : shapeWhenValues[i];
-      if (i < shapeWhenValues.length - 1) patternHtml += ', ';
+      if (i > 0) whenHtml += '<span style="color:#ccc">, </span>';
+      whenHtml += isVar
+        ? '<span style="color:#228;font-weight:bold">?</span>'
+        : '<span style="background:#f5f5f5;border:1px solid #ccc;padding:1px 4px;border-radius:2px;font-size:10px">' + shapeWhenValues[i] + '</span>';
     }
-    let html = '<div style="font-size:10px;margin-bottom:4px">(' + patternHtml + ')</div>';
-    html += '<div style="font-size:9px;color:#888;margin-bottom:4px">requires \u2193</div>';
-    html += '<div style="font-size:10px;color:#888">click a chain in the graph...</div>';
-    html += '<button onclick="cancelShape()" style="background:#8a4a4a;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer;margin-top:4px">Cancel</button>';
+
+    // Show the require chain being built
+    let reqHtml = '';
+    if (shapeRequireChain.length === 0) {
+      reqHtml = '<span style="color:#999;font-size:10px">empty — use + to build</span>';
+    } else {
+      for (let i = 0; i < shapeRequireChain.length; i++) {
+        const n = allNodes.find(x => x.uri === shapeRequireChain[i]);
+        const val = n ? n.resolved : '?';
+        if (i > 0) reqHtml += '<span style="color:#ccc">, </span>';
+        reqHtml += '<span style="background:#f0fff0;border:1px solid #8c8;padding:1px 4px;border-radius:2px;font-size:10px">' + val + '</span>';
+      }
+    }
+
+    let html = '<div style="margin-bottom:4px">(' + whenHtml + ')</div>';
+    html += '<div style="font-size:9px;color:#888">requires</div>';
+    html += '<div style="display:flex;align-items:center;gap:4px;margin:4px 0">';
+    html += '<span style="color:#4a8a4a;cursor:pointer;font-weight:bold" onclick="shapeAddRequireItem(event)">+</span>';
+    html += '<span>(' + reqHtml + ')</span>';
+    html += '</div>';
+
+    if (shapeRequireChain.length > 0) {
+      html += '<button onclick="finishShape()" style="background:#238636;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px">Create constraint</button>';
+    }
+    html += '<button onclick="cancelShape()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">Cancel</button>';
     builder.innerHTML = html;
   }
+}
+
+function shapeAddRequireItem(event) {
+  // Show the same + autocomplete popup for building the require chain
+  document.querySelectorAll('.add-popup').forEach(p => p.remove());
+
+  const popup = document.createElement('div');
+  popup.className = 'add-popup';
+  popup.style.left = event.clientX + 'px';
+  const chainPanel = document.getElementById('shapeBuilder');
+  popup.style.bottom = (window.innerHeight - chainPanel.getBoundingClientRect().top + 10) + 'px';
+
+  const input = document.createElement('input');
+  input.placeholder = '+ add item';
+  input.autofocus = true;
+
+  const dropdown = document.createElement('div');
+  dropdown.className = 'dropdown';
+
+  const renderDD = (q) => {
+    let nodes = allNodes.filter(n => n.level !== 1);
+    if (q) nodes = nodes.filter(n => n.resolved.toLowerCase().includes(q.toLowerCase()));
+    let html = nodes.slice(0, 10).map(n => {
+      const isF = n.level > 0;
+      const label = isF ? '<span style="background:#e0e8ff;border:1px solid #88e;padding:1px 4px;border-radius:2px;font-size:9px">(' + n.resolved + ')</span>' : n.resolved;
+      return '<div class="dropdown-item" onclick="shapeSelectRequireItem(\'' + encodeURIComponent(n.uri) + '\')">' + label + '</div>';
+    }).join('');
+    if (q && q.trim()) {
+      html += '<div class="dropdown-item" style="border-top:1px solid #eee;color:#888" onclick="shapeCreateAndAdd(\'' + q.trim() + '\')">+ Create "' + q.trim() + '"</div>';
+    }
+    dropdown.innerHTML = html;
+  };
+
+  input.oninput = () => renderDD(input.value);
+  input.onkeydown = (e) => {
+    if (e.key === 'Escape') popup.remove();
+    if (e.key === 'Enter') {
+      const v = input.value.trim();
+      if (!v) return;
+      const match = allNodes.find(n => n.resolved.toLowerCase() === v.toLowerCase());
+      if (match) shapeSelectRequireItem(encodeURIComponent(match.uri));
+      else shapeCreateAndAdd(v);
+      popup.remove();
+    }
+  };
+
+  setTimeout(() => renderDD(''), 50);
+  popup.appendChild(input);
+  popup.appendChild(dropdown);
+  document.body.appendChild(popup);
+  setTimeout(() => input.focus(), 50);
+  setTimeout(() => {
+    document.addEventListener('click', function handler(e) {
+      if (!popup.contains(e.target)) { popup.remove(); document.removeEventListener('click', handler); }
+    });
+  }, 100);
+}
+
+function shapeSelectRequireItem(encodedUri) {
+  const uri = decodeURIComponent(encodedUri);
+  shapeRequireChain.push(uri);
+  document.querySelectorAll('.add-popup').forEach(p => p.remove());
+  renderShapeBuilder();
+}
+
+async function shapeCreateAndAdd(value) {
+  await fetch('/api/ingest', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({content: value, granularity: 'word'}) });
+  await refreshAll();
+  const atom = allNodes.find(n => n.resolved === value && n.level === 0);
+  if (atom) shapeRequireChain.push(atom.uri);
+  document.querySelectorAll('.add-popup').forEach(p => p.remove());
+  renderShapeBuilder();
+}
+
+async function finishShape() {
+  await completeShape(shapeRequireChain);
+  shapeRequireChain = [];
 }
 
 function cancelShape() {
