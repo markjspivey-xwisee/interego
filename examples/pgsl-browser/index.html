@@ -929,12 +929,16 @@ function cancelConstraint() {
 
 function renderRequireChain() {
   const display = document.getElementById('requireChainDisplay');
+  if (requireChain.length === 0) {
+    display.innerHTML = '<span class="plus" onclick="addToRequireChain(event)">+</span>';
+    return;
+  }
   let html = '<span class="plus" onclick="addToRequireChain(event)">+</span>';
   for (const uri of requireChain) {
     const n = allNodes.find(x => x.uri === uri);
     const val = n ? n.resolved : '?';
     html += '<span class="sep">,</span>';
-    html += '<span class="item ' + (val === '?' ? 'atom' : 'atom') + '" style="' + (val === '?' ? 'background:#d0e0ff;border-color:#58f;font-weight:bold' : '') + '">' + val + '</span>';
+    html += '<span class="item atom" style="' + (val === '?' ? 'background:#d0e0ff;border-color:#58f;font-weight:bold' : '') + '">' + val + '</span>';
   }
   html += '<span class="sep">,</span>';
   html += '<span class="plus" onclick="addToRequireChain(event)">+</span>';
