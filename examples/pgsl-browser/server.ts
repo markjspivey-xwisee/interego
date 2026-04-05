@@ -360,6 +360,182 @@ app.post('/api/constraints/candidates', (req, res) => {
   });
 });
 
+// ── Paradigm Causal Model ──
+// Derive a structural causal model from paradigm constraints.
+// Each paradigm P(pattern, position) is a variable.
+// Each constraint is a causal edge between paradigms.
+// Enables: doIntervention, isDSeparated, counterfactual queries
+// on the paradigm graph itself.
+
+app.get('/api/paradigm-scm', (_req, res) => {
+  if (constraintRegistry.length === 0) {
+    res.json({ variables: [], edges: [], constraints: 0 });
+    return;
+  }
+
+  // Each unique paradigm (pattern + position) is a variable
+  const varMap = new Map<string, { name: string; pattern: string[]; position: number; members: string[] }>();
+
+  function paradigmKey(pattern: string[], position: number): string {
+    return `P(${pattern.map((v, i) => i === position ? '?' : v).join(',')})`;
+  }
+
+  for (const c of constraintRegistry) {
+    const keyA = paradigmKey(c.patternA, c.positionA);
+    const keyB = paradigmKey(c.patternB, c.positionB);
+
+    if (!varMap.has(keyA)) {
+      const members = [...computeParadigm(c.patternA, c.positionA)].map(u => pgslResolve(pgsl, u as IRI));
+      varMap.set(keyA, { name: keyA, pattern: c.patternA, position: c.positionA, members });
+    }
+    if (!varMap.has(keyB)) {
+      const members = [...computeParadigm(c.patternB, c.positionB)].map(u => pgslResolve(pgsl, u as IRI));
+      varMap.set(keyB, { name: keyB, pattern: c.patternB, position: c.positionB, members });
+    }
+  }
+
+  // Build SCM
+  const variables = [...varMap.values()].map(v => ({
+    name: v.name,
+    observed: true,
+    mechanism: `paradigm at position ${v.position}`,
+    members: v.members,
+  }));
+
+  const edges = constraintRegistry.map(c => ({
+    from: paradigmKey(c.patternA, c.positionA),
+    to: paradigmKey(c.patternB, c.positionB),
+    mechanism: c.op,
+    op: c.op,
+  }));
+
+  // Build the actual SCM for causal queries
+  try {
+    const scm = buildSCM(
+      'urn:scm:paradigm-constraints' as IRI,
+      variables.map(v => ({ name: v.name, observed: v.observed, mechanism: v.mechanism })),
+      edges.map(e => ({ from: e.from, to: e.to, mechanism: e.mechanism })),
+      'Paradigm Constraint Causal Model',
+    );
+
+    // Compute causal properties
+    const causalInfo: any = {
+      variables: variables.map(v => ({ name: v.name, members: v.members })),
+      edges: edges.map(e => ({ from: e.from, to: e.to, op: e.op })),
+      constraints: constraintRegistry.length,
+    };
+
+    // For each pair of paradigms, check d-separation
+    if (variables.length >= 2) {
+      causalInfo.dSeparation = [];
+      for (let i = 0; i < variables.length; i++) {
+        for (let j = i + 1; j < variables.length; j++) {
+          const sep = isDSeparated(scm, variables[i]!.name, variables[j]!.name, new Set());
+          causalInfo.dSeparation.push({
+            x: variables[i]!.name,
+            y: variables[j]!.name,
+            independent: sep,
+          });
+        }
+      }
+    }
+
+    // Counterfactual: for each edge, what if we intervened on the source?
+    causalInfo.counterfactuals = edges.map(e => {
+      const cf = evaluateCounterfactual(scm, {
+        intervention: { variable: e.from, value: 'modified' },
+        target: e.to,
+      });
+      return {
+        intervention: `do(${e.from} = modified)`,
+        target: e.to,
+        affected: cf.targetAffected,
+        affectedVariables: cf.affectedVariables,
+      };
+    });
+
+    res.json(causalInfo);
+  } catch (err) {
+    // SCM might fail if constraints form cycles — that's informative too
+    res.json({
+      variables: variables.map(v => ({ name: v.name, members: v.members })),
+      edges: edges.map(e => ({ from: e.from, to: e.to, op: e.op })),
+      constraints: constraintRegistry.length,
+      error: (err as Error).message,
+    });
+  }
+});
+
+// Paradigm intervention: what happens if we add an atom to a paradigm?
+app.post('/api/paradigm-intervene', (req, res) => {
+  const { pattern, position, newAtom } = req.body as { pattern: string[]; position: number; newAtom: string };
+  if (!pattern || position === undefined || !newAtom) {
+    res.status(400).json({ error: 'Need pattern, position, newAtom' });
+    return;
+  }
+
+  const paradigmName = `P(${pattern.map((v, i) => i === position ? '?' : v).join(',')})`;
+
+  // Check which constraints would fire
+  const effects: Array<{
+    constraint: string;
+    op: string;
+    targetParadigm: string;
+    satisfied: boolean;
+    reason: string;
+  }> = [];
+
+  for (const c of constraintRegistry) {
+    // Does this constraint's pattern A match the intervention?
+    const pa = c.patternA;
+    if (pa.length !== pattern.length) continue;
+
+    let match = true;
+    for (let i = 0; i < pa.length; i++) {
+      if (i === c.positionA) continue;
+      if (pa[i] === '?') continue;
+      if (pa[i] !== pattern[i]) { match = false; break; }
+    }
+    if (!match || c.positionA !== position) continue;
+
+    // This constraint fires — check if newAtom satisfies it
+    const targetParadigm = computeParadigm(c.patternB, c.positionB);
+    const targetMembers = [...targetParadigm].map(u => pgslResolve(pgsl, u as IRI));
+
+    // Find the atom URI for newAtom
+    const newAtomUri = pgsl.atoms.get(newAtom);
+    const inTarget = newAtomUri ? targetParadigm.has(newAtomUri) : false;
+
+    let satisfied = false;
+    let reason = '';
+    switch (c.op) {
+      case '⊆': satisfied = inTarget; reason = inTarget ? `${newAtom} exists in target` : `${newAtom} NOT in target paradigm (${targetMembers.join(', ')})`; break;
+      case '∩': satisfied = inTarget; reason = inTarget ? `${newAtom} in both` : `${newAtom} not in target`; break;
+      case '∪': satisfied = true; reason = 'union always satisfied'; break;
+      case '∖': satisfied = !inTarget; reason = !inTarget ? `${newAtom} excluded from target (good)` : `${newAtom} found in excluded set`; break;
+      case '=': satisfied = inTarget; reason = inTarget ? `${newAtom} in both (equal)` : `${newAtom} missing from target`; break;
+    }
+
+    const targetName = `P(${c.patternB.map((v, i) => i === c.positionB ? '?' : v).join(',')})`;
+    effects.push({
+      constraint: `${paradigmName} ${c.op} ${targetName}`,
+      op: c.op,
+      targetParadigm: targetName,
+      satisfied,
+      reason,
+    });
+  }
+
+  const allSatisfied = effects.length === 0 || effects.every(e => e.satisfied);
+
+  res.json({
+    intervention: `do(add ${newAtom} to ${paradigmName})`,
+    effects,
+    permitted: allSatisfied,
+    blockedBy: effects.filter(e => !e.satisfied).map(e => e.constraint),
+  });
+});
+
 // Serve the HTML — root and node-specific URLs
 app.get('/', (_req, res) => {
   res.sendFile(resolve(__dirname, 'index.html'));
