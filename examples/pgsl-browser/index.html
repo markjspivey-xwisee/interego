@@ -364,8 +364,8 @@ async function clickNode(encodedUri) {
     const uri = decodeURIComponent(encodedUri);
     const node = allNodes.find(n => n.uri === uri);
 
-    // If in shape mode, clicking a node completes the constraint
-    if (shapeMode && node) {
+    // If in shape mode step 2, clicking a node completes the constraint
+    if (shapeMode && shapeStep === 2 && node) {
       let requireChain;
       if (node.level > 0 && node.kind === 'Fragment') {
         const resp = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) });
@@ -872,79 +872,109 @@ async function createAndAdd(side, value) {
 // ── Constraints (shapes created by relating two chains) ──
 
 let shapeMode = false;
-let shapeWhenChain = null; // the "when" chain (current focus when shape mode started)
+let shapeStep = 0; // 0=not active, 1=selecting variable positions, 2=waiting for second chain
+let shapeWhenChain = null;
 let shapeWhenValues = null;
+let shapeVariablePositions = new Set(); // which positions in the chain are variables
 
 function startShapeMode() {
   if (focusChain.length === 0) return;
   shapeMode = true;
+  shapeStep = 1;
   shapeWhenChain = [...focusChain];
-  // Resolve chain to values
   shapeWhenValues = focusChain.map(u => {
     const n = allNodes.find(x => x.uri === u);
     return n ? n.resolved : '?';
   });
-  document.getElementById('shapeBuilder').style.display = 'block';
-  document.getElementById('startShapeBtn').style.display = 'none';
-  document.getElementById('shapeWhenLabel').textContent = '(' + shapeWhenValues.join(', ') + ')';
-  document.getElementById('shapeRequireLabel').textContent = 'click another chain in the graph...';
+  shapeVariablePositions = new Set();
+  renderShapeBuilder();
+}
+
+function toggleShapePosition(idx) {
+  if (shapeVariablePositions.has(idx)) shapeVariablePositions.delete(idx);
+  else shapeVariablePositions.add(idx);
+  renderShapeBuilder();
+}
+
+function confirmShapePositions() {
+  if (shapeVariablePositions.size === 0) return; // need at least one variable
+  shapeStep = 2;
+  renderShapeBuilder();
+}
+
+function renderShapeBuilder() {
+  const builder = document.getElementById('shapeBuilder');
+  const btn = document.getElementById('startShapeBtn');
+  builder.style.display = 'block';
+  btn.style.display = 'none';
+
+  if (shapeStep === 1) {
+    // Step 1: select which positions are variables
+    let html = '<div style="font-size:9px;color:#888;margin-bottom:4px">Click positions to mark as <strong>variable</strong> (what can substitute):</div>';
+    html += '<div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px">';
+    for (let i = 0; i < shapeWhenValues.length; i++) {
+      const isVar = shapeVariablePositions.has(i);
+      const style = isVar
+        ? 'background:#d0e0ff;border:2px solid #58f;color:#228;font-weight:bold'
+        : 'background:#f5f5f5;border:1px solid #ccc;color:#666';
+      html += '<span onclick="toggleShapePosition(' + i + ')" style="padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;' + style + '">' +
+        (isVar ? '?' : '') + shapeWhenValues[i] + '</span>';
+    }
+    html += '</div>';
+    html += '<button onclick="confirmShapePositions()" style="background:#4a4a8a;color:#fff;border:none;padding:3px 10px;font-size:10px;border-radius:3px;cursor:pointer;margin-right:4px"' +
+      (shapeVariablePositions.size === 0 ? ' disabled title="Select at least one variable"' : '') +
+      '>Next: select required chain</button>';
+    html += '<button onclick="cancelShape()" style="background:#8a4a4a;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer">Cancel</button>';
+    builder.innerHTML = html;
+  } else if (shapeStep === 2) {
+    // Step 2: waiting for second chain click
+    let patternHtml = '';
+    for (let i = 0; i < shapeWhenValues.length; i++) {
+      const isVar = shapeVariablePositions.has(i);
+      patternHtml += isVar ? '<strong style="color:#228">?</strong>' : shapeWhenValues[i];
+      if (i < shapeWhenValues.length - 1) patternHtml += ', ';
+    }
+    let html = '<div style="font-size:10px;margin-bottom:4px">(' + patternHtml + ')</div>';
+    html += '<div style="font-size:9px;color:#888;margin-bottom:4px">requires \u2193</div>';
+    html += '<div style="font-size:10px;color:#888">click a chain in the graph...</div>';
+    html += '<button onclick="cancelShape()" style="background:#8a4a4a;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer;margin-top:4px">Cancel</button>';
+    builder.innerHTML = html;
+  }
 }
 
 function cancelShape() {
   shapeMode = false;
+  shapeStep = 0;
   shapeWhenChain = null;
   shapeWhenValues = null;
+  shapeVariablePositions = new Set();
   document.getElementById('shapeBuilder').style.display = 'none';
+  document.getElementById('shapeBuilder').innerHTML = '';
   document.getElementById('startShapeBtn').style.display = 'block';
 }
 
 async function completeShape(requireChain) {
-  // Build patterns with variable binding — find shared values and replace with ?x
-  const whenValues = shapeWhenValues;
   const requireValues = requireChain.map(u => {
     const n = allNodes.find(x => x.uri === u);
     return n ? n.resolved : '?';
   });
 
-  // Create variables: find positions where both chains have the same value
-  // and the chains differ elsewhere. Only variabilize the positions that
-  // represent entities (what varies), not structural connectives.
-  //
-  // Heuristic: among same-value positions, variabilize those whose value
-  // does NOT also appear at a different position in the same chain.
-  // "mark" appears only at position 0 → entity → variable
-  // "is" appears only at position 1, but it's a connective (same in both) →
-  // if ALL same-positions would become variables, keep only the first one
-  // to avoid over-binding.
-  const whenPattern = [...whenValues];
+  // Build patterns: variable positions get ?x, ?x1, etc.
+  const whenPattern = [...shapeWhenValues];
   const requirePattern = [...requireValues];
-  const minLen = Math.min(whenPattern.length, requirePattern.length);
 
-  const samePositions = [];
-  let hasDifference = false;
-  for (let i = 0; i < minLen; i++) {
-    if (whenPattern[i] === requirePattern[i]) samePositions.push(i);
-    else hasDifference = true;
-  }
+  let varIdx = 0;
+  for (const pos of shapeVariablePositions) {
+    const varName = '?x' + (varIdx > 0 ? varIdx : '');
+    const originalValue = whenPattern[pos];
+    whenPattern[pos] = varName;
 
-  // Variabilize: only positions where the value differs from ALL values
-  // at the differing positions (i.e., it's not the pattern-defining part)
-  let varCount = 0;
-  if (hasDifference && samePositions.length > 0 && samePositions.length < minLen) {
-    // Get the values at differing positions to understand the pattern
-    // Simple approach: variabilize same-value positions that are NOT
-    // adjacent to (immediately before) a differing position
-    // For (mark, is, employee) vs (mark, is, human): position 2 differs
-    // Position 0 (mark) is not adjacent-before position 2 → variable? No that's wrong too.
-    //
-    // Simplest correct approach: just variabilize the FIRST same-value position.
-    // For subject-predicate-object patterns, the subject (position 0) is almost always
-    // the entity that varies.
-    const firstSame = samePositions[0];
-    const varName = '?x';
-    whenPattern[firstSame] = varName;
-    requirePattern[firstSame] = varName;
-    varCount = 1;
+    // Find the same value in requirePattern and bind it
+    const reqPos = requirePattern.indexOf(originalValue);
+    if (reqPos >= 0) {
+      requirePattern[reqPos] = varName;
+    }
+    varIdx++;
   }
 
   const name = '(' + whenPattern.join(', ') + ') requires (' + requirePattern.join(', ') + ')';
