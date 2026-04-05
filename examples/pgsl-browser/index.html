@@ -64,7 +64,8 @@
   .chain-info { text-align: center; margin-top: 6px; font-size: 10px; color: #888; }
 
   /* Source/target option stacks */
-  .options-stack { display: inline-flex; flex-direction: column; gap: 2px; vertical-align: middle; max-height: 100px; overflow-y: auto; border: 2px dashed #ccc; border-radius: 4px; padding: 3px; }
+  .options-stack { display: inline-flex; flex-direction: column; gap: 2px; vertical-align: middle; max-height: 100px; overflow-y: auto; border: 2px dashed #ccc; border-radius: 4px; padding: 3px; cursor: pointer; }
+  .options-stack:hover { border-color: #4a4a8a; background: #fafaff; }
   .option-item { display: block; padding: 2px 8px; font-size: 10px; cursor: pointer; border-radius: 3px; white-space: nowrap; }
   .option-item.source { color: #4a8a4a; background: #f0f8f0; border: 1px solid #cde0cd; }
   .option-item.source:hover { background: #d0e8d0; }
@@ -479,6 +480,12 @@ async function renderChain() {
     return;
   }
 
+  // Resolve chain values for paradigm pattern construction
+  const chainValues = focusChain.map(u => {
+    const n = allNodes.find(x => x.uri === u);
+    return n ? n.resolved : '?';
+  });
+
   // Use /api/chain data for inner/outer neighbors
   const innerLeft = chainData?._links?.innerLeft || [];
   const innerRight = chainData?._links?.innerRight || [];
@@ -527,15 +534,18 @@ async function renderChain() {
   }
 
   // ── INNER LEFT: sequence extensions ──
+  // Paradigm: P(?, chainValues...) at position 0
   html += '<span class="plus" onclick="showAddPopup(\'left\', event)" title="Extend sequence left">+</span>';
   if (innerLeft.length > 0) {
     html += '<span class="sep">,</span>';
+    const leftPattern = ['?', ...chainValues];
+    const leftPatternJson = JSON.stringify(leftPattern).replace(/'/g, "\\'");
     let leftHtml = '';
     for (const l of innerLeft) {
       const innerRender = await renderNodeHtml(l.uri, null, true);
-      leftHtml += '<span class="option-item source" onclick="expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + innerRender + '</span>';
+      leftHtml += '<span class="option-item source" onclick="event.stopPropagation(); expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + innerRender + '</span>';
     }
-    html += '<span class="options-stack">' + leftHtml + '</span>';
+    html += '<span class="options-stack" onclick="constrainParadigm(' + leftPatternJson + ', 0)" title="Click to constrain this paradigm">' + leftHtml + '</span>';
   }
 
   // ── CHAIN ITEMS ──
@@ -577,14 +587,18 @@ async function renderChain() {
   }
 
   // ── INNER RIGHT: sequence extensions ──
+  // Paradigm: P(chainValues..., ?) at position chainValues.length
   if (innerRight.length > 0) {
     html += '<span class="sep">,</span>';
+    const rightPattern = [...chainValues, '?'];
+    const rightPatternJson = JSON.stringify(rightPattern).replace(/'/g, "\\'");
+    const rightPos = chainValues.length;
     let rightHtml = '';
     for (const r of innerRight) {
       const innerRender = await renderNodeHtml(r.uri, null, true);
-      rightHtml += '<span class="option-item target" onclick="expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + innerRender + '</span>';
+      rightHtml += '<span class="option-item target" onclick="event.stopPropagation(); expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + innerRender + '</span>';
     }
-    html += '<span class="options-stack">' + rightHtml + '</span>';
+    html += '<span class="options-stack" onclick="constrainParadigm(' + rightPatternJson + ', ' + rightPos + ')" title="Click to constrain this paradigm">' + rightHtml + '</span>';
   }
   html += '<span class="sep">,</span>';
   html += '<span class="plus" onclick="showAddPopup(\'right\', event)" title="Extend sequence right">+</span>';
@@ -902,6 +916,17 @@ let constraintPatternA = [];
 let constraintPosA = -1;
 let constraintOp = null;
 let requireChain = [];
+
+// Start constraint directly from a paradigm box click
+function constrainParadigm(pattern, position) {
+  constraintMode = true;
+  constraintStep = 2; // skip step 1 (position already selected)
+  constraintPatternA = pattern;
+  constraintPosA = position;
+  constraintOp = null;
+  requireChain = [];
+  renderConstraintArea();
+}
 
 function startConstraint() {
   if (focusChain.length === 0) return;
