@@ -50,6 +50,31 @@ export interface CoherenceCertificate {
   readonly signature?: string;
   /** Hash of the verification computation (replayable) */
   readonly computationHash: string;
+  /** Semantic overlap: 0-1 continuous measure of shared usage */
+  readonly semanticOverlap: number;
+  /** Shared syntagmatic patterns (structural agreement) */
+  readonly sharedPatterns: readonly string[];
+  /** Emergent semantic profile: per-atom usage overlap */
+  readonly semanticProfile: readonly AtomCoherence[];
+}
+
+export interface AtomCoherence {
+  /** The shared atom value */
+  readonly atom: string;
+  /** How many usage contexts agent A has for this atom */
+  readonly usagesA: number;
+  /** How many usage contexts agent B has */
+  readonly usagesB: number;
+  /** How many usage contexts are shared */
+  readonly sharedUsages: number;
+  /** Overlap ratio: shared / max(A, B) */
+  readonly overlap: number;
+  /** Shared syntagmatic patterns for this atom */
+  readonly sharedContexts: readonly string[];
+  /** Usage contexts unique to A */
+  readonly uniqueToA: readonly string[];
+  /** Usage contexts unique to B */
+  readonly uniqueToB: readonly string[];
 }
 
 export interface CoherenceObstruction {
@@ -141,75 +166,106 @@ export function verifyCoherence(
     return contexts;
   }
 
-  // Step 3: Compare usage signatures
-  const sharedUsage: string[] = []; // atoms used the same way
-  const divergentUsage: string[] = []; // atoms used differently
+  // Step 3: Build semantic profile — per-atom usage comparison
+  // This captures emergent semantics: meaning = totality of usage contexts
+  const semanticProfile: AtomCoherence[] = [];
+  const sharedPatterns: string[] = [];
+  let totalOverlap = 0;
+  let atomsCompared = 0;
 
   for (const atomValue of sharedAtoms) {
     const usageA = getUsageContexts(pgslA, atomValue);
     const usageB = getUsageContexts(pgslB, atomValue);
 
-    // Convert to comparable strings
+    if (usageA.length === 0 && usageB.length === 0) continue;
+
+    // Convert to comparable strings (usage signatures)
     const sigA = new Set(usageA.map(u => `pos${u.position}:[${u.coItems.join(',')}]`));
     const sigB = new Set(usageB.map(u => `pos${u.position}:[${u.coItems.join(',')}]`));
 
-    // Find overlap in usage
-    let hasSharedUsage = false;
-    for (const s of sigA) {
-      if (sigB.has(s)) { hasSharedUsage = true; break; }
+    // Compute overlap
+    const shared: string[] = [];
+    for (const s of sigA) if (sigB.has(s)) shared.push(s);
+    const uniqueA = [...sigA].filter(s => !sigB.has(s));
+    const uniqueB = [...sigB].filter(s => !sigA.has(s));
+
+    const maxUsages = Math.max(sigA.size, sigB.size);
+    const overlap = maxUsages > 0 ? shared.length / maxUsages : 0;
+
+    semanticProfile.push({
+      atom: atomValue,
+      usagesA: sigA.size,
+      usagesB: sigB.size,
+      sharedUsages: shared.length,
+      overlap,
+      sharedContexts: shared,
+      uniqueToA: uniqueA,
+      uniqueToB: uniqueB,
+    });
+
+    if (shared.length > 0) {
+      sharedPatterns.push(`${atomValue}: ${shared.join(', ')}`);
     }
 
-    if (hasSharedUsage) {
-      sharedUsage.push(atomValue);
-    } else if (sigA.size > 0 && sigB.size > 0) {
-      // Both agents use this atom but in entirely different contexts
-      const exampleA = [...sigA][0] ?? '?';
-      const exampleB = [...sigB][0] ?? '?';
-      divergentUsage.push(`"${atomValue}": A uses as ${exampleA}, B uses as ${exampleB}`);
-    }
+    totalOverlap += overlap;
+    atomsCompared++;
   }
 
-  // Step 4: Also check shared fragments (shared syntagmatic structures)
-  const sharedFragments: string[] = [];
+  // Step 4: Shared syntagmatic structures (exact fragment matches)
+  // These represent complete shared usage patterns — strongest form of coherence
   for (const [keyA, uriA] of pgslA.fragments) {
     if (pgslB.fragments.has(keyA)) {
-      sharedFragments.push(resolve(pgslA, uriA));
+      sharedPatterns.push(`syntagm: ${resolve(pgslA, uriA)}`);
     }
   }
 
+  // Step 5: Compute overall semantic overlap (continuous 0-1)
+  const semanticOverlap = atomsCompared > 0 ? totalOverlap / atomsCompared : 0;
+
   const now = new Date().toISOString();
-  const computationData = `${agentA}|${agentB}|${topic}|usage:${sharedUsage.join(',')}|div:${divergentUsage.join(',')}|frag:${sharedFragments.join(',')}|${now}`;
+  const computationData = `${agentA}|${agentB}|${topic}|overlap:${semanticOverlap.toFixed(4)}|patterns:${sharedPatterns.length}|${now}`;
   const computationHash = createHash('sha256').update(computationData).digest('hex').slice(0, 40);
 
+  // Step 6: Determine status from semantic overlap
+  // Not binary — uses overlap threshold
+  // >0.7 = verified (strong shared semantics)
+  // >0.3 = divergent with partial overlap (emerging alignment)
+  // >0 = divergent (minimal shared usage)
+  // 0 = frame incompatible or unexamined
   let status: CoherenceStatus;
   let obstruction: CoherenceObstruction | undefined;
   let sharedStructure: string | undefined;
 
   if (sharedAtoms.length === 0) {
-    // No shared signs at all
     status = 'unexamined';
-  } else if (divergentUsage.length > 0 && sharedUsage.length === 0) {
-    // Shared signs but ALL used differently — frame incompatible
+  } else if (semanticOverlap >= 0.7) {
+    status = 'verified';
+    sharedStructure = `${semanticOverlap.toFixed(0)}% semantic overlap across ${atomsCompared} shared signs`;
+  } else if (semanticOverlap > 0) {
+    // Partial overlap — signs are shared but used differently in some contexts
+    // This is the interesting emergent state: meaning is partially shared
+    const divergentAtoms = semanticProfile
+      .filter(p => p.overlap < 0.5 && p.uniqueToA.length > 0 && p.uniqueToB.length > 0)
+      .map(p => `"${p.atom}": A=${p.uniqueToA[0]}, B=${p.uniqueToB[0]}`);
+
+    status = 'divergent';
+    obstruction = {
+      type: divergentAtoms.length > 0 ? 'term-mismatch' : 'structure-mismatch',
+      description: `${(semanticOverlap * 100).toFixed(0)}% semantic overlap — partial alignment, ${divergentAtoms.length} term(s) used differently`,
+      divergentItems: divergentAtoms,
+    };
+    sharedStructure = `${sharedPatterns.length} shared patterns emerging`;
+  } else {
+    // Zero overlap in usage even though atoms are shared
+    const examples = semanticProfile.slice(0, 3).map(p =>
+      `"${p.atom}": A=${p.uniqueToA[0] ?? 'unused'}, B=${p.uniqueToB[0] ?? 'unused'}`
+    );
     status = 'divergent';
     obstruction = {
       type: 'frame-incompatible',
-      description: `Shared signs used in incompatible contexts: ${divergentUsage.length} divergence(s)`,
-      divergentItems: divergentUsage,
+      description: `Shared signs but zero usage overlap — incompatible frames`,
+      divergentItems: examples,
     };
-  } else if (divergentUsage.length > 0) {
-    // Some shared usage, some divergent — partial alignment
-    status = 'divergent';
-    obstruction = {
-      type: 'term-mismatch',
-      description: `${sharedUsage.length} sign(s) used coherently, ${divergentUsage.length} used differently`,
-      divergentItems: divergentUsage,
-    };
-  } else if (sharedUsage.length > 0 || sharedFragments.length > 0) {
-    // Shared signs used in the same contexts — coherent
-    status = 'verified';
-    sharedStructure = `${sharedUsage.length} signs with shared usage, ${sharedFragments.length} shared structures`;
-  } else {
-    status = 'unexamined';
   }
 
   const cert: CoherenceCertificate = {
@@ -222,6 +278,9 @@ export function verifyCoherence(
     obstruction,
     verifiedAt: now,
     computationHash,
+    semanticOverlap,
+    sharedPatterns,
+    semanticProfile,
   };
 
   // Store the certificate

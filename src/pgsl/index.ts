@@ -153,6 +153,7 @@ export type {
   CoherenceCertificate,
   CoherenceObstruction,
   CoherenceCoverage,
+  AtomCoherence,
 } from './coherence.js';
 export type { TokenGranularity, ContainmentAnnotation, ContainmentRole } from './types.js';
 // Ingestion profiles

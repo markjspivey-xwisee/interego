@@ -410,6 +410,7 @@ export type {
   CoherenceCertificate,
   CoherenceObstruction,
   CoherenceCoverage,
+  AtomCoherence,
   // Ingestion profile types
   IngestionProfile,
   XapiStatement,
