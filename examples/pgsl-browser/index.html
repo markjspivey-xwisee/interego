@@ -921,18 +921,75 @@ let constraintPosA = -1;
 let constraintOp = null;
 let requireChain = [];
 
-// Start constraint directly from a paradigm box click
+// Two-click constraint: click paradigm A → click paradigm B → pick op → done
+let pendingParadigmA = null; // { pattern, position }
+
 function constrainParadigm(pattern, position) {
-  constraintMode = true;
-  constraintStep = 2; // skip step 1 (position already selected)
-  constraintPatternA = pattern;
-  constraintPosA = position;
-  constraintOp = null;
-  requireChain = [];
-  renderConstraintArea();
+  if (!pendingParadigmA) {
+    // First click: store paradigm A, show instruction
+    pendingParadigmA = { pattern, position };
+    document.getElementById('constrainArea').style.display = 'block';
+    document.getElementById('constrainBtn').style.display = 'none';
+
+    let patternHtml = pattern.map((v, i) => i === position
+      ? '<span style="color:#228;font-weight:bold">?</span>'
+      : '<span style="background:#f5f5f5;border:1px solid #ccc;padding:1px 4px;border-radius:2px;font-size:10px">' + v + '</span>'
+    ).join(' ');
+    document.getElementById('constrainArea').innerHTML =
+      '<div style="text-align:center;font-size:10px;margin-bottom:4px">P(' + patternHtml + ')</div>' +
+      '<div style="text-align:center;font-size:9px;color:#888">now click another paradigm box to relate</div>' +
+      '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
+  } else {
+    // Second click: show operation picker between A and B
+    const pA = pendingParadigmA;
+    const pB = { pattern, position };
+
+    let htmlA = pA.pattern.map((v, i) => i === pA.position ? '<strong style="color:#228">?</strong>' : v).join(', ');
+    let htmlB = pB.pattern.map((v, i) => i === pB.position ? '<strong style="color:#228">?</strong>' : v).join(', ');
+
+    const ops = [
+      { op: '⊆', title: 'Subset — A must be in B\ne.g., employees ⊆ humans' },
+      { op: '∩', title: 'Intersect — must be in both A and B' },
+      { op: '∪', title: 'Union — can be in A or B' },
+      { op: '∖', title: 'Exclude — in A but not B' },
+      { op: '=', title: 'Equal — A and B must be same set' },
+    ];
+
+    document.getElementById('constrainArea').innerHTML =
+      '<div style="text-align:center;font-size:10px;margin-bottom:2px">P(' + htmlA + ')</div>' +
+      '<div style="display:flex;gap:4px;justify-content:center;margin:4px 0">' +
+        ops.map(o => '<button onclick="finishConstraintTwoClick(\'' + o.op + '\')" style="background:#4a4a8a;color:#fff;border:none;padding:4px 10px;font-size:12px;border-radius:3px;cursor:pointer" title="' + o.title + '">' + o.op + '</button>').join('') +
+      '</div>' +
+      '<div style="text-align:center;font-size:10px;margin-top:2px">P(' + htmlB + ')</div>' +
+      '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
+
+    // Store B for when op is picked
+    window._pendingParadigmB = pB;
+  }
+}
+
+async function finishConstraintTwoClick(op) {
+  const pA = pendingParadigmA;
+  const pB = window._pendingParadigmB;
+  if (!pA || !pB) return;
+
+  await fetch('/api/constraints', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      patternA: pA.pattern,
+      positionA: pA.position,
+      patternB: pB.pattern,
+      positionB: pB.position,
+      op: op,
+    }),
+  });
+
+  cancelConstraint();
+  await refreshConstraints();
 }
 
 function startConstraint() {
+  // Legacy: from the "+ constrain" button — start by selecting a position
   if (focusChain.length === 0) return;
   constraintMode = true;
   constraintStep = 1;
@@ -953,6 +1010,8 @@ function cancelConstraint() {
   constraintPosA = -1;
   constraintOp = null;
   requireChain = [];
+  pendingParadigmA = null;
+  window._pendingParadigmB = null;
   document.getElementById('constrainArea').style.display = 'none';
   document.getElementById('constrainBtn').style.display = 'block';
 }
