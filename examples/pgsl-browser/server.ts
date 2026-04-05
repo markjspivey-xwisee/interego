@@ -164,12 +164,13 @@ app.use(express.json());
 // Operations on paradigm sets at syntagmatic positions.
 // A paradigm P(S,i) = { atoms that appear at position i in chains matching pattern S }
 
-type ParadigmOp = '⊆' | '∩' | '∪' | '∖' | '=';
-// ⊆ restrict: P(A,i) must be subset of P(B,j) — "employee restricts to human"
-// ∩ intersect: must be in both P(A,i) AND P(B,j)
-// ∪ union: can be in either P(A,i) OR P(B,j)
-// ∖ exclude: must be in P(A,i) but NOT in P(B,j)
-// = equal: P(A,i) must equal P(B,j)
+type ParadigmOp = 'subset' | 'intersect' | 'union' | 'exclude' | 'equal';
+// subset: P(A,i) must be subset of P(B,j) — "employee restricts to human"
+// intersect: must be in both P(A,i) AND P(B,j)
+// union: can be in either P(A,i) OR P(B,j)
+// exclude: must be in P(A,i) but NOT in P(B,j)
+// equal: P(A,i) must equal P(B,j)
+const OP_SYMBOLS: Record<ParadigmOp, string> = { subset: '⊆', intersect: '∩', union: '∪', exclude: '∖', equal: '=' };
 
 interface ParadigmConstraint {
   id: string;
@@ -221,11 +222,11 @@ function computeParadigm(pattern: string[], position: number): Set<string> {
 // Apply a paradigm operation
 function applyParadigmOp(op: ParadigmOp, setA: Set<string>, setB: Set<string>): Set<string> {
   switch (op) {
-    case '⊆': return setB; // restrict A to B — valid candidates are those in B
-    case '∩': { const result = new Set<string>(); for (const x of setA) if (setB.has(x)) result.add(x); return result; }
-    case '∪': { const result = new Set(setA); for (const x of setB) result.add(x); return result; }
-    case '∖': { const result = new Set<string>(); for (const x of setA) if (!setB.has(x)) result.add(x); return result; }
-    case '=': return setB; // equal — valid candidates are those in B
+    case 'subset': return setB;
+    case 'intersect': { const result = new Set<string>(); for (const x of setA) if (setB.has(x)) result.add(x); return result; }
+    case 'union': { const result = new Set(setA); for (const x of setB) result.add(x); return result; }
+    case 'exclude': { const result = new Set<string>(); for (const x of setA) if (!setB.has(x)) result.add(x); return result; }
+    case 'equal': return setB;
   }
 }
 
@@ -509,11 +510,11 @@ app.post('/api/paradigm-intervene', (req, res) => {
     let satisfied = false;
     let reason = '';
     switch (c.op) {
-      case '⊆': satisfied = inTarget; reason = inTarget ? `${newAtom} exists in target` : `${newAtom} NOT in target paradigm (${targetMembers.join(', ')})`; break;
-      case '∩': satisfied = inTarget; reason = inTarget ? `${newAtom} in both` : `${newAtom} not in target`; break;
-      case '∪': satisfied = true; reason = 'union always satisfied'; break;
-      case '∖': satisfied = !inTarget; reason = !inTarget ? `${newAtom} excluded from target (good)` : `${newAtom} found in excluded set`; break;
-      case '=': satisfied = inTarget; reason = inTarget ? `${newAtom} in both (equal)` : `${newAtom} missing from target`; break;
+      case 'subset': satisfied = inTarget; reason = inTarget ? `${newAtom} exists in target` : `${newAtom} NOT in target paradigm (${targetMembers.join(', ')})`; break;
+      case 'intersect': satisfied = inTarget; reason = inTarget ? `${newAtom} in both` : `${newAtom} not in target`; break;
+      case 'union': satisfied = true; reason = 'union always satisfied'; break;
+      case 'exclude': satisfied = !inTarget; reason = !inTarget ? `${newAtom} excluded from target (good)` : `${newAtom} found in excluded set`; break;
+      case 'equal': satisfied = inTarget; reason = inTarget ? `${newAtom} in both (equal)` : `${newAtom} missing from target`; break;
     }
 
     const targetName = `P(${c.patternB.map((v, i) => i === c.positionB ? '?' : v).join(',')})`;

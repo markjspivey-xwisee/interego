@@ -944,17 +944,17 @@ function constrainParadigm(pattern, position) {
     let htmlB = pB.pattern.map((v, i) => i === pB.position ? '<strong style="color:#228">?</strong>' : v).join(', ');
 
     const ops = [
-      { op: '⊆', title: 'Subset — A must be in B\ne.g., employees ⊆ humans' },
-      { op: '∩', title: 'Intersect — must be in both A and B' },
-      { op: '∪', title: 'Union — can be in A or B' },
-      { op: '∖', title: 'Exclude — in A but not B' },
-      { op: '=', title: 'Equal — A and B must be same set' },
+      { op: 'subset', symbol: '⊆', title: 'Subset — A must be in B\ne.g., employees ⊆ humans' },
+      { op: 'intersect', symbol: '∩', title: 'Intersect — must be in both A and B' },
+      { op: 'union', symbol: '∪', title: 'Union — can be in A or B' },
+      { op: 'exclude', symbol: '∖', title: 'Exclude — in A but not B' },
+      { op: 'equal', symbol: '=', title: 'Equal — A and B must be same set' },
     ];
 
     document.getElementById('constrainArea').innerHTML =
       '<div style="text-align:center;font-size:10px;margin-bottom:2px">P(' + htmlA + ')</div>' +
       '<div style="display:flex;gap:4px;justify-content:center;margin:4px 0">' +
-        ops.map(o => '<button onclick="finishConstraintTwoClick(\'' + o.op + '\')" style="background:#4a4a8a;color:#fff;border:none;padding:4px 10px;font-size:12px;border-radius:3px;cursor:pointer" title="' + o.title + '">' + o.op + '</button>').join('') +
+        ops.map(o => '<button onclick="finishConstraintTwoClick(\'' + o.op + '\')" style="background:#4a4a8a;color:#fff;border:none;padding:4px 10px;font-size:12px;border-radius:3px;cursor:pointer" title="' + o.title + '">' + o.symbol + '</button>').join('') +
       '</div>' +
       '<div style="text-align:center;font-size:10px;margin-top:2px">P(' + htmlB + ')</div>' +
       '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
@@ -1055,14 +1055,14 @@ function renderConstraintArea() {
     html += '<div style="font-size:9px;color:#888;text-align:center;margin-bottom:4px">paradigm operation:</div>';
     html += '<div style="display:flex;gap:4px;justify-content:center">';
     const ops = [
-      { op: '⊆', label: '⊆ Subset (restricts to)', example: 'e.g., employees ⊆ humans — can only be employee if also human' },
-      { op: '∩', label: '∩ Intersection (must be in both)', example: 'e.g., managers ∩ engineers — must be both a manager and an engineer' },
-      { op: '∪', label: '∪ Union (can be in either)', example: 'e.g., staff = doctors ∪ nurses — can be either a doctor or a nurse' },
-      { op: '∖', label: '∖ Exclusion (must not be in)', example: 'e.g., volunteers ∖ employees — volunteers cannot also be employees' },
-      { op: '=', label: '= Equality (must be same set)', example: 'e.g., citizens = voters — exact same set of people' },
+      { op: 'subset', symbol: '⊆', label: '⊆ Subset (restricts to)', example: 'e.g., employees ⊆ humans — can only be employee if also human' },
+      { op: 'intersect', symbol: '∩', label: '∩ Intersection (must be in both)', example: 'e.g., managers ∩ engineers — must be both a manager and an engineer' },
+      { op: 'union', symbol: '∪', label: '∪ Union (can be in either)', example: 'e.g., staff = doctors ∪ nurses — can be either a doctor or a nurse' },
+      { op: 'exclude', symbol: '∖', label: '∖ Exclusion (must not be in)', example: 'e.g., volunteers ∖ employees — volunteers cannot also be employees' },
+      { op: 'equal', symbol: '=', label: '= Equality (must be same set)', example: 'e.g., citizens = voters — exact same set of people' },
     ];
     for (const o of ops) {
-      html += '<button onclick="selectConstraintOp(\'' + o.op + '\')" style="background:#4a4a8a;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer" title="' + o.label + '\n' + o.example + '">' + o.op + '</button>';
+      html += '<button onclick="selectConstraintOp(\'' + o.op + '\')" style="background:#4a4a8a;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer" title="' + o.label + '\n' + o.example + '">' + o.symbol + '</button>';
     }
     html += '</div>';
     html += '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
@@ -1159,7 +1159,7 @@ async function refreshConstraints() {
     list.innerHTML = '<span style="color:#999">None</span>';
     return;
   }
-  const opNames = { '⊆': 'restricts to', '∩': 'intersects', '∪': 'unions', '∖': 'excludes', '=': 'equals' };
+  const opNames = { 'subset': '⊆ restricts to', 'intersect': '∩ intersects', 'union': '∪ unions', 'exclude': '∖ excludes', 'equal': '= equals' };
   list.innerHTML = data.constraints.map(c =>
     '<div style="padding:3px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">' +
       '<div style="font-size:9px">' +
