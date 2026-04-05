@@ -533,15 +533,12 @@ async function renderChain() {
     html += '<span class="sep">,</span>';
   }
 
-  // ── INNER LEFT: sequence extensions ──
-  // Paradigm: P(?, chainValues...) at position 0
-  html += '<span class="plus" onclick="showAddPopup(\'left\', event)" title="Extend sequence left">+</span>';
-  if (innerLeft.length > 0) {
-    html += '<span class="sep">,</span>';
+  // ── INNER LEFT: paradigm box (options + add) ──
+  {
     const leftPattern = ['?', ...chainValues];
     const leftPatternId = 'lp_' + Date.now();
     window[leftPatternId] = leftPattern;
-    let leftHtml = '';
+    let leftHtml = '<span class="plus" onclick="event.stopPropagation(); showAddPopup(\'left\', event)" title="Add to this paradigm">+</span>';
     for (const l of innerLeft) {
       const innerRender = await renderNodeHtml(l.uri, null, true);
       leftHtml += '<span class="option-item source" onclick="event.stopPropagation(); expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + innerRender + '</span>';
@@ -588,15 +585,14 @@ async function renderChain() {
     }
   }
 
-  // ── INNER RIGHT: sequence extensions ──
-  // Paradigm: P(chainValues..., ?) at position chainValues.length
-  if (innerRight.length > 0) {
+  // ── INNER RIGHT: paradigm box (options + add) ──
+  {
     html += '<span class="sep">,</span>';
     const rightPattern = [...chainValues, '?'];
     const rightPatternId = 'rp_' + Date.now();
     window[rightPatternId] = rightPattern;
     const rightPos = chainValues.length;
-    let rightHtml = '';
+    let rightHtml = '<span class="plus" onclick="event.stopPropagation(); showAddPopup(\'right\', event)" title="Add to this paradigm">+</span>';
     for (const r of innerRight) {
       const innerRender = await renderNodeHtml(r.uri, null, true);
       rightHtml += '<span class="option-item target" onclick="event.stopPropagation(); expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + innerRender + '</span>';
@@ -604,8 +600,6 @@ async function renderChain() {
     rightHtml += '<span onclick="event.stopPropagation(); constrainParadigm(window[\'' + rightPatternId + '\'], ' + rightPos + ')" style="font-size:8px;color:#4a4a8a;cursor:pointer;text-align:center;padding:1px 4px;border-top:1px dashed #ccc;margin-top:1px" title="Constrain this paradigm">constrain</span>';
     html += '<span class="options-stack">' + rightHtml + '</span>';
   }
-  html += '<span class="sep">,</span>';
-  html += '<span class="plus" onclick="showAddPopup(\'right\', event)" title="Extend sequence right">+</span>';
 
   // ── COLLAPSE RIGHT (shrink from right ← ) ──
   if (focusChain.length >= 2) {
