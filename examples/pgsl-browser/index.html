@@ -940,7 +940,7 @@ async function completeShape(requireChain) {
     // Simplest correct approach: just variabilize the FIRST same-value position.
     // For subject-predicate-object patterns, the subject (position 0) is almost always
     // the entity that varies.
-    const firstSame = samePositions[0]!;
+    const firstSame = samePositions[0];
     const varName = '?x';
     whenPattern[firstSame] = varName;
     requirePattern[firstSame] = varName;
