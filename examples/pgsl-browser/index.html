@@ -724,7 +724,7 @@ function showAddPopup(side, event) {
   (async () => {
     try {
       const actualSide = side.replace('outer-', '');
-      const resp = await fetch('/api/shapes/candidates', {
+      const resp = await fetch('/api/constraints/candidates', {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ currentChain: focusChain, side: actualSide }),
       });
@@ -897,52 +897,128 @@ function toggleGraph() {
 // A constraint links two chains that share ? at the same position.
 
 let constraintMode = false;
-let constraintWhenChain = null; // the "when" chain URIs
-let requireChain = []; // the "require" chain being built
+let constraintStep = 0; // 0=inactive, 1=select position in A, 2=select op, 3=build B
+let constraintPatternA = [];
+let constraintPosA = -1;
+let constraintOp = null;
+let requireChain = [];
 
 function startConstraint() {
   if (focusChain.length === 0) return;
-  // The current chain must contain the ? atom
-  const hasQ = focusChain.some(u => {
-    const n = allNodes.find(x => x.uri === u);
-    return n && n.resolved === '?';
-  });
-  if (!hasQ) {
-    alert('Add ? to the chain first (use + and type ?)');
-    return;
-  }
   constraintMode = true;
-  constraintWhenChain = [...focusChain];
+  constraintStep = 1;
+  constraintPatternA = focusChain.map(u => {
+    const n = allNodes.find(x => x.uri === u);
+    return n ? n.resolved : '?';
+  });
+  constraintPosA = -1;
+  constraintOp = null;
   requireChain = [];
-  document.getElementById('constrainArea').style.display = 'block';
-  document.getElementById('constrainBtn').style.display = 'none';
-  renderRequireChain();
+  renderConstraintArea();
 }
 
 function cancelConstraint() {
   constraintMode = false;
-  constraintWhenChain = null;
+  constraintStep = 0;
+  constraintPatternA = [];
+  constraintPosA = -1;
+  constraintOp = null;
   requireChain = [];
   document.getElementById('constrainArea').style.display = 'none';
   document.getElementById('constrainBtn').style.display = 'block';
 }
 
-function renderRequireChain() {
-  const display = document.getElementById('requireChainDisplay');
-  if (requireChain.length === 0) {
-    display.innerHTML = '<span class="plus" onclick="addToRequireChain(event)">+</span>';
-    return;
+function selectConstraintPos(idx) {
+  constraintPosA = idx;
+  constraintStep = 2;
+  renderConstraintArea();
+}
+
+function selectConstraintOp(op) {
+  constraintOp = op;
+  constraintStep = 3;
+  renderConstraintArea();
+}
+
+function renderConstraintArea() {
+  const area = document.getElementById('constrainArea');
+  const btn = document.getElementById('constrainBtn');
+  area.style.display = 'block';
+  btn.style.display = 'none';
+
+  let html = '';
+
+  if (constraintStep === 1) {
+    // Select which position's paradigm to constrain
+    html += '<div style="font-size:9px;color:#888;text-align:center;margin-bottom:4px">select the position to constrain:</div>';
+    html += '<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap">';
+    for (let i = 0; i < constraintPatternA.length; i++) {
+      html += '<span onclick="selectConstraintPos(' + i + ')" style="padding:3px 8px;border-radius:3px;cursor:pointer;font-size:11px;background:#f5f5f5;border:1px solid #ccc">' + constraintPatternA[i] + '</span>';
+    }
+    html += '</div>';
+    html += '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
+
+  } else if (constraintStep === 2) {
+    // Show pattern with selected position highlighted, pick operation
+    html += '<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin-bottom:6px">';
+    for (let i = 0; i < constraintPatternA.length; i++) {
+      const style = i === constraintPosA
+        ? 'background:#d0e0ff;border:2px solid #58f;font-weight:bold'
+        : 'background:#f5f5f5;border:1px solid #ccc;color:#888';
+      html += '<span style="padding:3px 8px;border-radius:3px;font-size:11px;' + style + '">' + (i === constraintPosA ? '?' : constraintPatternA[i]) + '</span>';
+    }
+    html += '</div>';
+    html += '<div style="font-size:9px;color:#888;text-align:center;margin-bottom:4px">paradigm operation:</div>';
+    html += '<div style="display:flex;gap:4px;justify-content:center">';
+    const ops = [
+      { op: '⊆', label: '⊆ restricts to' },
+      { op: '∩', label: '∩ intersect' },
+      { op: '∪', label: '∪ union' },
+      { op: '∖', label: '∖ exclude' },
+      { op: '=', label: '= equals' },
+    ];
+    for (const o of ops) {
+      html += '<button onclick="selectConstraintOp(\'' + o.op + '\')" style="background:#4a4a8a;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer" title="' + o.label + '">' + o.op + '</button>';
+    }
+    html += '</div>';
+    html += '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
+
+  } else if (constraintStep === 3) {
+    // Show A pattern + op, build B pattern below
+    html += '<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin-bottom:2px">';
+    for (let i = 0; i < constraintPatternA.length; i++) {
+      const style = i === constraintPosA ? 'background:#d0e0ff;border:1px solid #58f;font-weight:bold' : 'background:#f5f5f5;border:1px solid #ddd;color:#888';
+      html += '<span style="padding:2px 6px;border-radius:3px;font-size:10px;' + style + '">' + (i === constraintPosA ? '?' : constraintPatternA[i]) + '</span>';
+    }
+    html += '</div>';
+    html += '<div style="font-size:12px;text-align:center;color:#4a4a8a;font-weight:bold;margin:2px 0">' + constraintOp + '</div>';
+
+    // Require chain builder
+    const display = document.getElementById('requireChainDisplay');
+    if (requireChain.length === 0) {
+      html += '<div id="requireChainDisplay" class="chain-display" style="justify-content:center"><span class="plus" onclick="addToRequireChain(event)">+</span></div>';
+    } else {
+      let reqHtml = '<span class="plus" onclick="addToRequireChain(event)">+</span>';
+      for (const uri of requireChain) {
+        const n = allNodes.find(x => x.uri === uri);
+        const val = n ? n.resolved : '?';
+        reqHtml += '<span class="sep">,</span>';
+        reqHtml += '<span class="item atom" style="' + (val === '?' ? 'background:#d0e0ff;border-color:#58f;font-weight:bold' : '') + '">' + val + '</span>';
+      }
+      reqHtml += '<span class="sep">,</span>';
+      reqHtml += '<span class="plus" onclick="addToRequireChain(event)">+</span>';
+      html += '<div id="requireChainDisplay" class="chain-display" style="justify-content:center">' + reqHtml + '</div>';
+    }
+
+    html += '<div style="text-align:center;margin-top:4px">';
+    if (requireChain.length > 0) {
+      html += '<button onclick="saveConstraint()" style="background:#238636;color:#fff;border:none;padding:2px 10px;font-size:9px;border-radius:3px;cursor:pointer;margin-right:4px">save</button>';
+    }
+    html += '<button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button>';
+    html += '</div>';
   }
-  let html = '<span class="plus" onclick="addToRequireChain(event)">+</span>';
-  for (const uri of requireChain) {
-    const n = allNodes.find(x => x.uri === uri);
-    const val = n ? n.resolved : '?';
-    html += '<span class="sep">,</span>';
-    html += '<span class="item atom" style="' + (val === '?' ? 'background:#d0e0ff;border-color:#58f;font-weight:bold' : '') + '">' + val + '</span>';
-  }
-  html += '<span class="sep">,</span>';
-  html += '<span class="plus" onclick="addToRequireChain(event)">+</span>';
-  display.innerHTML = html;
+
+  area.innerHTML = html;
 }
 
 function addToRequireChain(event) {
@@ -950,67 +1026,71 @@ function addToRequireChain(event) {
 }
 
 async function saveConstraint() {
-  if (requireChain.length === 0 || !constraintWhenChain) return;
+  if (requireChain.length === 0 || constraintPosA < 0 || !constraintOp) return;
 
-  // Resolve both chains to values
-  const whenValues = constraintWhenChain.map(u => {
-    const n = allNodes.find(x => x.uri === u);
-    return n ? n.resolved : '?';
-  });
-  const requireValues = requireChain.map(u => {
+  // Build pattern B from require chain
+  const patternB = requireChain.map(u => {
     const n = allNodes.find(x => x.uri === u);
     return n ? n.resolved : '?';
   });
 
-  // ? atoms become ?x variables in the pattern
-  const whenPattern = whenValues.map(v => v === '?' ? '?x' : v);
-  const requirePattern = requireValues.map(v => v === '?' ? '?x' : v);
+  // Find position of ? in pattern B
+  const positionB = patternB.indexOf('?');
+  if (positionB < 0) {
+    alert('The second pattern must contain ? at the variable position');
+    return;
+  }
 
-  const name = '(' + whenPattern.join(', ') + ') requires (' + requirePattern.join(', ') + ')';
-
-  await fetch('/api/shapes', {
+  await fetch('/api/constraints', {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ name, whenPattern, requirePattern }),
+    body: JSON.stringify({
+      patternA: constraintPatternA,
+      positionA: constraintPosA,
+      patternB: patternB,
+      positionB: positionB,
+      op: constraintOp,
+    }),
   });
 
-  cancelConstraint();
-
-  // Ingest the require chain into the lattice too
+  // Ingest the require chain into the lattice
   if (requireChain.length >= 2) {
     await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: requireChain}) });
     await refreshAll();
   }
 
-  await refreshShapes();
+  cancelConstraint();
+  await refreshConstraints();
 }
 
-async function deleteShape(id) {
-  await fetch('/api/shapes/' + id, { method: 'DELETE' });
-  await refreshShapes();
+async function deleteConstraint(id) {
+  await fetch('/api/constraints/' + id, { method: 'DELETE' });
+  await refreshConstraints();
 }
 
-async function refreshShapes() {
-  const resp = await fetch('/api/shapes');
+async function refreshConstraints() {
+  const resp = await fetch('/api/constraints');
   const data = await resp.json();
   const list = document.getElementById('shapeList');
-  if (data.shapes.length === 0) {
-    list.innerHTML = '<span style="color:#999">None — focus a chain then click "Constrain"</span>';
+  if (data.constraints.length === 0) {
+    list.innerHTML = '<span style="color:#999">None</span>';
     return;
   }
-  list.innerHTML = data.shapes.map(s =>
+  const opNames = { '⊆': 'restricts to', '∩': 'intersects', '∪': 'unions', '∖': 'excludes', '=': 'equals' };
+  list.innerHTML = data.constraints.map(c =>
     '<div style="padding:3px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">' +
-      '<div style="font-size:10px">' +
-        '(' + s.whenPattern.join(', ') + ')<br>' +
-        '<span style="color:#888">requires</span><br>' +
-        '(' + s.requirePattern.join(', ') + ')' +
+      '<div style="font-size:9px">' +
+        'P(' + c.patternA.join(',') + ')[' + c.positionA + ']<br>' +
+        '<span style="color:#4a4a8a;font-weight:bold">' + c.op + '</span> ' +
+        '<span style="color:#888">' + (opNames[c.op] || c.op) + '</span><br>' +
+        'P(' + c.patternB.join(',') + ')[' + c.positionB + ']' +
       '</div>' +
-      '<span onclick="deleteShape(\'' + s.id + '\')" style="cursor:pointer;color:#c00;font-size:14px;padding-left:8px" title="Delete">\u00d7</span>' +
+      '<span onclick="deleteConstraint(\'' + c.id + '\')" style="cursor:pointer;color:#c00;font-size:14px;padding-left:8px" title="Delete">\u00d7</span>' +
     '</div>'
   ).join('');
 }
 
 // Initial load
-refreshShapes();
+refreshConstraints();
 refreshAll().then(() => loadFromUrl());
 </script>
 </body>

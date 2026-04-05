@@ -160,205 +160,203 @@ async function rebuildFromPod() {
 const app = express();
 app.use(express.json());
 
-// ── Shape Registry (dogfooded — shapes are PGSL content) ──
+// ── Paradigm Constraints ──
+// Operations on paradigm sets at syntagmatic positions.
+// A paradigm P(S,i) = { atoms that appear at position i in chains matching pattern S }
 
-interface ShapeConstraint {
+type ParadigmOp = '⊆' | '∩' | '∪' | '∖' | '=';
+// ⊆ restrict: P(A,i) must be subset of P(B,j) — "employee restricts to human"
+// ∩ intersect: must be in both P(A,i) AND P(B,j)
+// ∪ union: can be in either P(A,i) OR P(B,j)
+// ∖ exclude: must be in P(A,i) but NOT in P(B,j)
+// = equal: P(A,i) must equal P(B,j)
+
+interface ParadigmConstraint {
   id: string;
-  name: string;
-  /** Pattern that triggers this constraint: array of atom values, ?x = variable */
-  whenPattern: string[];
-  /** Pattern that must exist for the constraint to be satisfied */
-  requirePattern: string[];
-  /** The PGSL URI of this shape (it's content in the lattice) */
-  pgslUri?: string;
-  /** Who defined this shape */
-  definedBy: string;
-  /** When */
-  definedAt: string;
+  /** Pattern A: fixed values + one position marked with ? */
+  patternA: string[];
+  positionA: number;
+  /** Pattern B: fixed values + one position marked with ? */
+  patternB: string[];
+  positionB: number;
+  /** The operation relating paradigm A to paradigm B */
+  op: ParadigmOp;
+  createdAt: string;
 }
 
-const shapeRegistry: ShapeConstraint[] = [];
+const constraintRegistry: ParadigmConstraint[] = [];
 
-// Create a shape and ingest it into PGSL
-app.post('/api/shapes', (req, res) => {
-  const { name, whenPattern, requirePattern, definedBy } = req.body as {
-    name: string; whenPattern: string[]; requirePattern: string[]; definedBy?: string;
+// Compute a paradigm set: all atoms that appear at a given position
+// in chains matching a pattern (with ? at that position)
+function computeParadigm(pattern: string[], position: number): Set<string> {
+  const paradigm = new Set<string>();
+
+  // Search all fragments for chains matching the pattern
+  for (const [, node] of pgsl.nodes) {
+    if (node.kind !== 'Fragment') continue;
+    if (node.items.length !== pattern.length) continue;
+
+    let match = true;
+    for (let i = 0; i < pattern.length; i++) {
+      if (i === position) continue; // skip the variable position
+      if (pattern[i] === '?') continue; // skip other variable positions
+      // Check if atom at this position matches the pattern value
+      const itemNode = pgsl.nodes.get(node.items[i]!);
+      if (!itemNode || itemNode.kind !== 'Atom') { match = false; break; }
+      if (String((itemNode as any).value) !== pattern[i]) { match = false; break; }
+    }
+
+    if (match) {
+      // Add the atom at the variable position to the paradigm set
+      const itemNode = pgsl.nodes.get(node.items[position]!);
+      if (itemNode && itemNode.kind === 'Atom' && String((itemNode as any).value) !== '?') {
+        paradigm.add(node.items[position]!);
+      }
+    }
+  }
+
+  return paradigm;
+}
+
+// Apply a paradigm operation
+function applyParadigmOp(op: ParadigmOp, setA: Set<string>, setB: Set<string>): Set<string> {
+  switch (op) {
+    case '⊆': return setB; // restrict A to B — valid candidates are those in B
+    case '∩': { const result = new Set<string>(); for (const x of setA) if (setB.has(x)) result.add(x); return result; }
+    case '∪': { const result = new Set(setA); for (const x of setB) result.add(x); return result; }
+    case '∖': { const result = new Set<string>(); for (const x of setA) if (!setB.has(x)) result.add(x); return result; }
+    case '=': return setB; // equal — valid candidates are those in B
+  }
+}
+
+// CRUD for paradigm constraints
+app.post('/api/constraints', (req, res) => {
+  const { patternA, positionA, patternB, positionB, op } = req.body as {
+    patternA: string[]; positionA: number; patternB: string[]; positionB: number; op: ParadigmOp;
   };
-  if (!name || !whenPattern || !requirePattern) {
-    res.status(400).json({ error: 'Need name, whenPattern, requirePattern' });
+  if (!patternA || !patternB || positionA === undefined || positionB === undefined || !op) {
+    res.status(400).json({ error: 'Need patternA, positionA, patternB, positionB, op' });
     return;
   }
 
-  const shape: ShapeConstraint = {
-    id: `shape:${Date.now()}`,
-    name,
-    whenPattern,
-    requirePattern,
-    definedBy: definedBy ?? 'user',
-    definedAt: new Date().toISOString(),
+  const constraint: ParadigmConstraint = {
+    id: `c:${Date.now()}`,
+    patternA, positionA, patternB, positionB, op,
+    createdAt: new Date().toISOString(),
   };
+  constraintRegistry.push(constraint);
 
-  // Shape is NOT ingested as flat text — it's metadata about the lattice,
-  // referencing patterns that exist (or will exist) in the lattice.
-  // The patterns themselves (e.g., "?x is human") use atom values
-  // that are already content-addressed in the lattice.
+  // Compute the paradigm sets for display
+  const pA = computeParadigm(patternA, positionA);
+  const pB = computeParadigm(patternB, positionB);
+  const result = applyParadigmOp(op, pA, pB);
 
-  shapeRegistry.push(shape);
-  res.json({ shape, totalShapes: shapeRegistry.length });
+  res.json({
+    constraint,
+    paradigmA: [...pA].map(u => pgslResolve(pgsl, u as IRI)),
+    paradigmB: [...pB].map(u => pgslResolve(pgsl, u as IRI)),
+    result: [...result].map(u => pgslResolve(pgsl, u as IRI)),
+    total: constraintRegistry.length,
+  });
 });
 
-// List all shapes
-app.get('/api/shapes', (_req, res) => {
-  res.json({ shapes: shapeRegistry });
+app.get('/api/constraints', (_req, res) => {
+  res.json({ constraints: constraintRegistry });
 });
 
-// Delete a shape
-app.delete('/api/shapes/:id', (req, res) => {
-  const idx = shapeRegistry.findIndex(s => s.id === req.params['id']);
-  if (idx < 0) { res.status(404).json({ error: 'Shape not found' }); return; }
-  shapeRegistry.splice(idx, 1);
-  res.json({ deleted: true, totalShapes: shapeRegistry.length });
+app.delete('/api/constraints/:id', (req, res) => {
+  const idx = constraintRegistry.findIndex(c => c.id === req.params['id']);
+  if (idx < 0) { res.status(404).json({ error: 'Not found' }); return; }
+  constraintRegistry.splice(idx, 1);
+  res.json({ deleted: true, total: constraintRegistry.length });
 });
 
-// Query: given a partial chain being built, what candidates satisfy all active shapes?
-// This is the core of SHACL-driven autocomplete.
-app.post('/api/shapes/candidates', (req, res) => {
-  const { currentChain, side } = req.body as { currentChain: string[]; side: 'left' | 'right' };
+// Compute paradigm set for a given pattern + position
+app.post('/api/paradigm', (req, res) => {
+  const { pattern, position } = req.body as { pattern: string[]; position: number };
+  if (!pattern || position === undefined) {
+    res.status(400).json({ error: 'Need pattern and position' });
+    return;
+  }
+  const paradigm = computeParadigm(pattern, position);
+  res.json({
+    pattern, position,
+    members: [...paradigm].map(u => ({
+      uri: u,
+      resolved: pgslResolve(pgsl, u as IRI),
+    })),
+    size: paradigm.size,
+  });
+});
+
+// Query: given a chain being built, what candidates satisfy all active constraints?
+app.post('/api/constraints/candidates', (req, res) => {
+  const { currentChain, side } = req.body as { currentChain: string[]; side: string };
   if (!currentChain) { res.status(400).json({ error: 'Need currentChain' }); return; }
 
-  // Resolve chain items to their text values
   const chainValues = currentChain.map(uri => {
     const node = pgsl.nodes.get(uri as IRI);
     if (!node) return '?';
     return node.kind === 'Atom' ? String((node as any).value) : pgslResolve(pgsl, uri as IRI);
   });
 
-  // For each shape, check if the current chain + a candidate would trigger a constraint
-  const constraints: Array<{ shape: ShapeConstraint; requiredPattern: string[]; variableBindings: Record<string, string> }> = [];
+  // Check each constraint: does the current chain match patternA?
+  // If so, compute the constrained paradigm and filter candidates.
+  let constrained = false;
+  let validUris: Set<string> | null = null;
+  const activeConstraints: string[] = [];
 
-  for (const shape of shapeRegistry) {
-    // Try to match whenPattern against currentChain + new item
-    // Variables in whenPattern (starting with ?) get bound to chain values
-    const wp = shape.whenPattern;
+  for (const c of constraintRegistry) {
+    // Check if current chain + new item would match patternA
+    const pa = c.patternA;
+    if (chainValues.length + 1 !== pa.length) continue;
 
-    // Check if the chain is building toward this pattern
-    // e.g., chain is [mark, is] and whenPattern is [?x, is, employee]
-    // The new item (side=right) would be at position chainValues.length
-    if (side === 'right' && chainValues.length < wp.length) {
-      // Check if existing chain matches the prefix of whenPattern
-      let match = true;
-      const bindings: Record<string, string> = {};
-      for (let i = 0; i < chainValues.length; i++) {
-        if (wp[i]!.startsWith('?')) {
-          bindings[wp[i]!] = chainValues[i]!;
-        } else if (wp[i] !== chainValues[i]) {
-          match = false; break;
-        }
-      }
-
-      if (match && chainValues.length === wp.length - 1) {
-        // The next item would complete the whenPattern
-        const nextSlot = wp[chainValues.length]!;
-        if (!nextSlot.startsWith('?')) {
-          // The slot is a fixed value — this shape constrains what can go here
-          constraints.push({ shape, requiredPattern: shape.requirePattern, variableBindings: bindings });
-        }
-      }
+    // Check if chain matches the non-variable, non-position parts of patternA
+    let match = true;
+    for (let i = 0; i < chainValues.length; i++) {
+      const targetIdx = (side === 'left') ? i + 1 : i;
+      if (targetIdx === c.positionA) continue; // variable position
+      if (pa[targetIdx] === '?') continue;
+      if (pa[targetIdx] !== chainValues[i]) { match = false; break; }
     }
 
-    if (side === 'left' && chainValues.length < wp.length) {
-      let match = true;
-      const bindings: Record<string, string> = {};
-      for (let i = 0; i < chainValues.length; i++) {
-        const wpIdx = wp.length - chainValues.length + i;
-        if (wp[wpIdx]!.startsWith('?')) {
-          bindings[wp[wpIdx]!] = chainValues[i]!;
-        } else if (wp[wpIdx] !== chainValues[i]) {
-          match = false; break;
-        }
-      }
+    // Check that the new item position IS the variable position
+    const newItemIdx = (side === 'left') ? 0 : chainValues.length;
+    if (newItemIdx !== c.positionA) continue;
 
-      if (match && chainValues.length === wp.length - 1) {
-        constraints.push({ shape, requiredPattern: shape.requirePattern, variableBindings: bindings });
-      }
+    if (!match) continue;
+
+    // This constraint applies! Compute paradigm B and apply operation.
+    constrained = true;
+    const pB = computeParadigm(c.patternB, c.positionB);
+    const result = applyParadigmOp(c.op, new Set(), pB);
+
+    if (validUris === null) {
+      validUris = result;
+    } else {
+      // Intersect with previous constraints
+      const intersected = new Set<string>();
+      for (const u of validUris) if (result.has(u)) intersected.add(u);
+      validUris = intersected;
     }
+
+    const opSymbol = c.op;
+    activeConstraints.push(`P(${pa.join(',')},${c.positionA}) ${opSymbol} P(${c.patternB.join(',')},${c.positionB})`);
   }
 
-  if (constraints.length === 0) {
-    // No constraints apply — all nodes are valid candidates
+  if (!constrained) {
     res.json({ constrained: false, constraints: [], candidates: null });
     return;
   }
 
-  // For each constraint, find which values satisfy the requirePattern
-  const validCandidates = new Set<string>();
-
-  for (const c of constraints) {
-    // Find all atoms/fragments that, when bound to the variable, satisfy requirePattern
-    // e.g., requirePattern is [?x, is, human], bindings has ?x bound
-    // Check if (binding[?x], is, human) exists as a chain in the lattice
-
-    for (const [uri, node] of pgsl.nodes) {
-      if (node.kind !== 'Atom') continue;
-      const candidateValue = String((node as any).value);
-
-      // Try binding this candidate to the unbound variable in requirePattern
-      const rp = c.requiredPattern;
-      const bindings = { ...c.variableBindings };
-
-      // Find unbound variables in requirePattern
-      for (const slot of rp) {
-        if (slot.startsWith('?') && !bindings[slot]) {
-          bindings[slot] = candidateValue;
-        }
-      }
-
-      // Resolve requirePattern with bindings
-      const resolvedRequire = rp.map(slot => slot.startsWith('?') ? (bindings[slot] ?? slot) : slot);
-
-      // Check if this resolved pattern exists in the lattice
-      // Search for the sequence as atoms
-      const atomUris = resolvedRequire.map(val => {
-        for (const [aKey, aUri] of pgsl.atoms) {
-          if (aKey === val) return aUri;
-        }
-        return null;
-      });
-
-      if (atomUris.every(u => u !== null)) {
-        // Check if this sequence exists as a fragment
-        for (const [fUri, fNode] of pgsl.nodes) {
-          if (fNode.kind !== 'Fragment') continue;
-          if (fNode.items.length !== atomUris.length) continue;
-          let seqMatch = true;
-          for (let i = 0; i < atomUris.length; i++) {
-            if (fNode.items[i] !== atomUris[i]) { seqMatch = false; break; }
-          }
-          if (seqMatch) {
-            // The require pattern is satisfied for the variable binding
-            // The candidate is the value bound to the variable in the WHEN pattern
-            const whenVar = c.shape.whenPattern.find(s => s.startsWith('?'));
-            if (whenVar && bindings[whenVar]) {
-              // Find the atom URI for this value
-              for (const [aKey, aUri] of pgsl.atoms) {
-                if (aKey === bindings[whenVar]) validCandidates.add(aUri);
-              }
-            }
-            break;
-          }
-        }
-      }
-    }
-  }
-
   res.json({
     constrained: true,
-    constraints: constraints.map(c => ({ shape: c.shape.name, require: c.requiredPattern.join(', ') })),
-    candidates: [...validCandidates].map(uri => ({
+    constraints: activeConstraints,
+    candidates: validUris ? [...validUris].map(uri => ({
       uri,
       resolved: pgslResolve(pgsl, uri as IRI),
       level: pgsl.nodes.get(uri as IRI)?.level ?? 0,
-    })),
+    })) : null,
   });
 });
 
