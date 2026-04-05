@@ -1000,14 +1000,14 @@ function renderConstraintArea() {
     html += '<div style="font-size:9px;color:#888;text-align:center;margin-bottom:4px">paradigm operation:</div>';
     html += '<div style="display:flex;gap:4px;justify-content:center">';
     const ops = [
-      { op: '⊆', label: '⊆ restricts to' },
-      { op: '∩', label: '∩ intersect' },
-      { op: '∪', label: '∪ union' },
-      { op: '∖', label: '∖ exclude' },
-      { op: '=', label: '= equals' },
+      { op: '⊆', label: '⊆ Subset (restricts to)', example: 'e.g., employees ⊆ humans — can only be employee if also human' },
+      { op: '∩', label: '∩ Intersection (must be in both)', example: 'e.g., managers ∩ engineers — must be both a manager and an engineer' },
+      { op: '∪', label: '∪ Union (can be in either)', example: 'e.g., staff = doctors ∪ nurses — can be either a doctor or a nurse' },
+      { op: '∖', label: '∖ Exclusion (must not be in)', example: 'e.g., volunteers ∖ employees — volunteers cannot also be employees' },
+      { op: '=', label: '= Equality (must be same set)', example: 'e.g., citizens = voters — exact same set of people' },
     ];
     for (const o of ops) {
-      html += '<button onclick="selectConstraintOp(\'' + o.op + '\')" style="background:#4a4a8a;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer" title="' + o.label + '">' + o.op + '</button>';
+      html += '<button onclick="selectConstraintOp(\'' + o.op + '\')" style="background:#4a4a8a;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer" title="' + o.label + '\n' + o.example + '">' + o.op + '</button>';
     }
     html += '</div>';
     html += '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
