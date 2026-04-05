@@ -182,6 +182,13 @@ interface ParadigmConstraint {
   positionB: number;
   /** The operation relating paradigm A to paradigm B */
   op: ParadigmOp;
+  /** Optional SPARQL query for arbitrary constraints.
+   * Must SELECT ?candidate — returns URIs that satisfy the constraint.
+   * When present, overrides patternB-based paradigm computation. */
+  sparql?: string;
+  /** Cardinality: min/max count on paradigm set size */
+  minCount?: number;
+  maxCount?: number;
   createdAt: string;
 }
 
@@ -219,6 +226,21 @@ function computeParadigm(pattern: string[], position: number): Set<string> {
   return paradigm;
 }
 
+// Compute paradigm set from a SPARQL query.
+// The query must SELECT ?candidate — each result is a URI in the paradigm set.
+function computeParadigmFromSparql(query: string): Set<string> {
+  const paradigm = new Set<string>();
+  try {
+    const store = materializeTriples(pgsl);
+    const result = executeSparqlString(store, query);
+    for (const binding of result.bindings) {
+      const candidate = binding.get('?candidate');
+      if (candidate) paradigm.add(candidate);
+    }
+  } catch {}
+  return paradigm;
+}
+
 // Apply a paradigm operation
 function applyParadigmOp(op: ParadigmOp, setA: Set<string>, setB: Set<string>): Set<string> {
   switch (op) {
@@ -232,24 +254,36 @@ function applyParadigmOp(op: ParadigmOp, setA: Set<string>, setB: Set<string>): 
 
 // CRUD for paradigm constraints
 app.post('/api/constraints', (req, res) => {
-  const { patternA, positionA, patternB, positionB, op } = req.body as {
-    patternA: string[]; positionA: number; patternB: string[]; positionB: number; op: ParadigmOp;
+  const { patternA, positionA, patternB, positionB, op, sparql, minCount, maxCount } = req.body as {
+    patternA: string[]; positionA: number; patternB?: string[]; positionB?: number; op: ParadigmOp;
+    sparql?: string; minCount?: number; maxCount?: number;
   };
-  if (!patternA || !patternB || positionA === undefined || positionB === undefined || !op) {
-    res.status(400).json({ error: 'Need patternA, positionA, patternB, positionB, op' });
+  if (!patternA || positionA === undefined || !op) {
+    res.status(400).json({ error: 'Need patternA, positionA, op' });
+    return;
+  }
+  // Either patternB or sparql must be provided
+  if (!sparql && (!patternB || positionB === undefined)) {
+    res.status(400).json({ error: 'Need either patternB+positionB or sparql' });
     return;
   }
 
   const constraint: ParadigmConstraint = {
     id: `c:${Date.now()}`,
-    patternA, positionA, patternB, positionB, op,
+    patternA, positionA,
+    patternB: patternB ?? [],
+    positionB: positionB ?? 0,
+    op,
+    sparql,
+    minCount,
+    maxCount,
     createdAt: new Date().toISOString(),
   };
   constraintRegistry.push(constraint);
 
   // Compute the paradigm sets for display
   const pA = computeParadigm(patternA, positionA);
-  const pB = computeParadigm(patternB, positionB);
+  const pB = sparql ? computeParadigmFromSparql(sparql) : computeParadigm(patternB!, positionB!);
   const result = applyParadigmOp(op, pA, pB);
 
   res.json({
@@ -265,6 +299,30 @@ app.get('/api/constraints', (_req, res) => {
   res.json({ constraints: constraintRegistry });
 });
 
+// Compute paradigm set for a given pattern + position
+app.post('/api/paradigm', (req, res) => {
+  const { pattern, position, sparql } = req.body as { pattern?: string[]; position?: number; sparql?: string };
+  if (sparql) {
+    const paradigm = computeParadigmFromSparql(sparql);
+    res.json({
+      source: 'sparql', sparql,
+      members: [...paradigm].map(u => ({ uri: u, resolved: pgslResolve(pgsl, u as IRI) })),
+      size: paradigm.size,
+    });
+    return;
+  }
+  if (!pattern || position === undefined) {
+    res.status(400).json({ error: 'Need (pattern + position) or sparql' });
+    return;
+  }
+  const paradigm = computeParadigm(pattern, position);
+  res.json({
+    source: 'pattern', pattern, position,
+    members: [...paradigm].map(u => ({ uri: u, resolved: pgslResolve(pgsl, u as IRI) })),
+    size: paradigm.size,
+  });
+});
+
 app.delete('/api/constraints/:id', (req, res) => {
   const idx = constraintRegistry.findIndex(c => c.id === req.params['id']);
   if (idx < 0) { res.status(404).json({ error: 'Not found' }); return; }
@@ -273,23 +331,6 @@ app.delete('/api/constraints/:id', (req, res) => {
 });
 
 // Compute paradigm set for a given pattern + position
-app.post('/api/paradigm', (req, res) => {
-  const { pattern, position } = req.body as { pattern: string[]; position: number };
-  if (!pattern || position === undefined) {
-    res.status(400).json({ error: 'Need pattern and position' });
-    return;
-  }
-  const paradigm = computeParadigm(pattern, position);
-  res.json({
-    pattern, position,
-    members: [...paradigm].map(u => ({
-      uri: u,
-      resolved: pgslResolve(pgsl, u as IRI),
-    })),
-    size: paradigm.size,
-  });
-});
-
 // Query: given a chain being built, what candidates satisfy all active constraints?
 app.post('/api/constraints/candidates', (req, res) => {
   const { currentChain, side } = req.body as { currentChain: string[]; side: string };
@@ -327,9 +368,9 @@ app.post('/api/constraints/candidates', (req, res) => {
 
     if (!match) continue;
 
-    // This constraint applies! Compute paradigm B and apply operation.
+    // This constraint applies! Compute paradigm B (from pattern or SPARQL) and apply operation.
     constrained = true;
-    const pB = computeParadigm(c.patternB, c.positionB);
+    const pB = c.sparql ? computeParadigmFromSparql(c.sparql) : computeParadigm(c.patternB, c.positionB);
     const result = applyParadigmOp(c.op, new Set(), pB);
 
     if (validUris === null) {
@@ -500,7 +541,7 @@ app.post('/api/paradigm-intervene', (req, res) => {
     if (!match || c.positionA !== position) continue;
 
     // This constraint fires — check if newAtom satisfies it
-    const targetParadigm = computeParadigm(c.patternB, c.positionB);
+    const targetParadigm = c.sparql ? computeParadigmFromSparql(c.sparql) : computeParadigm(c.patternB, c.positionB);
     const targetMembers = [...targetParadigm].map(u => pgslResolve(pgsl, u as IRI));
 
     // Find the atom URI for newAtom
