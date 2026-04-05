@@ -545,7 +545,8 @@ async function renderChain() {
       const innerRender = await renderNodeHtml(l.uri, null, true);
       leftHtml += '<span class="option-item source" onclick="event.stopPropagation(); expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + innerRender + '</span>';
     }
-    html += '<span class="options-stack" onclick="constrainParadigm(' + leftPatternJson + ', 0)" title="Click to constrain this paradigm">' + leftHtml + '</span>';
+    leftHtml += '<span onclick="constrainParadigm(' + leftPatternJson + ', 0)" style="font-size:8px;color:#4a4a8a;cursor:pointer;text-align:center;padding:1px 4px;border-top:1px dashed #ccc;margin-top:1px" title="Constrain this paradigm">constrain</span>';
+    html += '<span class="options-stack">' + leftHtml + '</span>';
   }
 
   // ── CHAIN ITEMS ──
@@ -598,7 +599,8 @@ async function renderChain() {
       const innerRender = await renderNodeHtml(r.uri, null, true);
       rightHtml += '<span class="option-item target" onclick="event.stopPropagation(); expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + innerRender + '</span>';
     }
-    html += '<span class="options-stack" onclick="constrainParadigm(' + rightPatternJson + ', ' + rightPos + ')" title="Click to constrain this paradigm">' + rightHtml + '</span>';
+    rightHtml += '<span onclick="constrainParadigm(' + rightPatternJson + ', ' + rightPos + ')" style="font-size:8px;color:#4a4a8a;cursor:pointer;text-align:center;padding:1px 4px;border-top:1px dashed #ccc;margin-top:1px" title="Constrain this paradigm">constrain</span>';
+    html += '<span class="options-stack">' + rightHtml + '</span>';
   }
   html += '<span class="sep">,</span>';
   html += '<span class="plus" onclick="showAddPopup(\'right\', event)" title="Extend sequence right">+</span>';
