@@ -782,8 +782,9 @@ function showAddPopup(side, event) {
   };
 
   input.oninput = () => renderDropdown(input.value);
-  // Initial render (empty query)
-  setTimeout(() => renderDropdown(''), 100);
+  // Show all options immediately on open, and again after focus
+  renderDropdown('');
+  input.onfocus = () => renderDropdown(input.value);
 
   input.onkeydown = (e) => {
     if (e.key === 'Escape') popup.remove();
