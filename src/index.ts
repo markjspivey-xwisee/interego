@@ -370,6 +370,12 @@ export {
   formatToolPrompt,
   formatToolResult,
   runToolLoop,
+  // Decision functor
+  extractObservations,
+  computeAffordances as computeDecisionAffordances,
+  selectStrategy,
+  decide as decideFromObservations,
+  composeDecisions,
 } from './pgsl/index.js';
 
 export type {
@@ -416,6 +422,12 @@ export type {
   XapiStatement,
   LersCredential,
   RdfTriple,
+  // Decision functor types
+  Affordance as DecisionAffordance,
+  Decision,
+  ObservationSection,
+  DecisionStrategy,
+  DecisionResult,
 } from './pgsl/index.js';
 
 // ── Affordance Engine ────────────────────────────────────────

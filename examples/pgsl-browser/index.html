@@ -41,6 +41,7 @@
   .gnode.focused { border-color: #f00; border-width: 3px; box-shadow: 0 0 8px rgba(255,0,0,0.3); }
   .gnode.focused-constituent { border-color: #e88; border-width: 2px; }
   .gnode.dimmed { opacity: 0.4; }
+  .gnode.overflow-indicator { background: #f0f0f0; border-color: #bbb; font-style: italic; color: #888; cursor: default; }
 
   /* Edges (SVG overlay) */
   .edges-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
@@ -107,7 +108,7 @@
 
   <div class="graph-area" id="graphArea">
     <div style="padding:4px 12px;background:#f0f0ea;border-bottom:1px solid #ddd;font-size:10px;cursor:pointer;color:#888" onclick="toggleGraph()">
-      <span id="graphToggle">\u25BC</span> Graph View
+      <span id="graphToggle">&#x25BC;</span> Graph View
     </div>
     <div id="graphContent" style="position:relative;overflow:auto;height:calc(100% - 25px)">
       <svg class="edges-svg" id="edgesSvg"></svg>
@@ -121,17 +122,8 @@
     <span style="color:#999">Click a node in the graph to focus</span>
   </div>
   <div class="chain-info" id="chainInfo"></div>
-  <div id="constrainArea" style="display:none;border-top:1px dashed #ccc;margin-top:6px;padding-top:6px">
-    <div style="font-size:9px;color:#888;text-align:center;margin-bottom:4px">requires</div>
-    <div class="chain-display" id="requireChainDisplay"></div>
-    <div style="text-align:center;margin-top:4px">
-      <button onclick="saveConstraint()" style="background:#238636;color:#fff;border:none;padding:2px 10px;font-size:9px;border-radius:3px;cursor:pointer">save</button>
-      <button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer;margin-left:4px">cancel</button>
-    </div>
-  </div>
-  <div id="constrainBtn" style="text-align:center;margin-top:4px">
-    <button onclick="startConstraint()" style="background:none;border:1px solid #ccc;padding:2px 10px;font-size:9px;border-radius:3px;cursor:pointer;color:#888">+ constrain</button>
-  </div>
+  <div id="constrainArea" style="display:none;border-top:1px dashed #ccc;margin-top:6px;padding-top:6px"></div>
+  <div id="constrainBtn" style="display:none"></div>
 </div>
 
 <script>
@@ -141,15 +133,84 @@ let focusData = null;
 let chainData = null; // from /api/chain — inner/outer neighbors
 let nodePositions = {}; // uri -> {x, y}
 
+// ── Resolve cache: avoid redundant /api/resolve calls ──
+// Maps URI -> resolved data (node object with left, right, items, etc.)
+let resolveCache = {};
+
+// Batch-resolve URIs: first check allNodes + resolveCache, then fetch missing ones
+// Returns a map of uri -> resolved data
+async function batchResolve(uris) {
+  const result = {};
+  const missing = [];
+  for (const uri of uris) {
+    if (resolveCache[uri]) {
+      result[uri] = resolveCache[uri];
+    } else {
+      missing.push(uri);
+    }
+  }
+  if (missing.length === 0) return result;
+
+  // Try batch endpoint first, fall back to individual calls
+  try {
+    const resp = await fetch('/api/resolve', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ uris: missing }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      // Handle both batch response formats
+      if (data.results && typeof data.results === 'object') {
+        for (const uri of missing) {
+          if (data.results[uri]) {
+            resolveCache[uri] = data.results[uri];
+            result[uri] = data.results[uri];
+          }
+        }
+        return result;
+      } else if (data.node) {
+        // Single-URI response — server doesn't support batch
+        resolveCache[missing[0]] = data;
+        result[missing[0]] = data;
+        // Fetch remaining individually
+        for (let i = 1; i < missing.length; i++) {
+          try {
+            const r = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ uri: missing[i] }) });
+            if (r.ok) { const d = await r.json(); resolveCache[missing[i]] = d; result[missing[i]] = d; }
+          } catch {}
+        }
+        return result;
+      }
+    }
+  } catch {}
+
+  // Fallback: individual calls
+  await Promise.all(missing.map(async (uri) => {
+    try {
+      const r = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ uri }) });
+      if (r.ok) { const d = await r.json(); resolveCache[uri] = d; result[uri] = d; }
+    } catch {}
+  }));
+  return result;
+}
+
+// Resolve a single URI, using cache
+async function resolveUri(uri) {
+  if (resolveCache[uri]) return resolveCache[uri];
+  try {
+    const r = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ uri }) });
+    if (r.ok) { const d = await r.json(); resolveCache[uri] = d; return d; }
+  } catch {}
+  return null;
+}
+
 // ── URL-based navigation ──
-// Extract the hash portion of a PGSL URI for clean browser URLs
-// urn:pgsl:atom:53d880ec... → 53d880ec...
 function uriToHash(uri) {
   const parts = uri.split(':');
   return parts[parts.length - 1] || uri;
 }
 
-// Reconstruct full URI from hash by searching allNodes
 function hashToUri(hash) {
   const node = allNodes.find(n => n.uri.endsWith(':' + hash));
   return node ? node.uri : null;
@@ -170,7 +231,6 @@ function loadFromUrl() {
     const params = new URLSearchParams(window.location.search);
     const chainParam = params.get('chain');
 
-    // Defer until allNodes loaded
     setTimeout(() => {
       const uri = hashToUri(hash);
       if (!uri) return;
@@ -197,6 +257,7 @@ async function doIngest() {
     body: JSON.stringify({ content, granularity: 'word' }),
   });
   document.getElementById('ingestInput').value = '';
+  resolveCache = {};
   await refreshAll();
 }
 
@@ -212,16 +273,24 @@ async function refreshAll() {
 
 function renderNodeList() {
   const list = document.getElementById('nodeList');
-  // Hide L1 wrappers — they're internal to the pullback construction, not meaningful structure
   const sorted = [...allNodes].filter(n => n.level !== 1).sort((a, b) => a.level - b.level || a.resolved.localeCompare(b.resolved));
   list.innerHTML = sorted.map(n => {
     const chainFragUri = chainData?.chainFragment?.uri;
     const active = (chainFragUri && n.uri === chainFragUri) ? ' active' : focusChain.includes(n.uri) ? ' active' : '';
     const display = n.resolved.length > 20 ? n.resolved.slice(0, 18) + '..' : n.resolved;
-    return '<li class="' + active + '" onclick="clickNode(\'' + encodeURIComponent(n.uri) + '\')">' +
+    return '<li class="' + active + '" data-action="click-node" data-uri="' + encodeURIComponent(n.uri) + '">' +
       '<span>' + display + '</span><span class="lbl">L' + n.level + '</span></li>';
   }).join('');
 }
+
+// Delegated click handler for node list
+document.getElementById('nodeList').addEventListener('click', function(e) {
+  const li = e.target.closest('li[data-action="click-node"]');
+  if (li) {
+    e.stopPropagation();
+    clickNode(li.dataset.uri);
+  }
+});
 
 async function renderGraph() {
   const container = document.getElementById('graphContainer');
@@ -232,10 +301,9 @@ async function renderGraph() {
 
   if (allNodes.length === 0) return;
 
-  // Filter out L1 wrappers — internal to pullback construction
   const visibleNodes = allNodes.filter(n => n.level !== 1);
 
-  // Group by ACTUAL level — preserves correct vertical positioning
+  // Group by level
   const levels = {};
   let maxLevel = 0;
   for (const n of visibleNodes) {
@@ -244,155 +312,258 @@ async function renderGraph() {
     if (n.level > maxLevel) maxLevel = n.level;
   }
 
-  // Build set of all transitive constituents of the focused chain fragment
+  // Collect constituent URIs using cached resolve data
   const constituentUris = new Set();
   async function collectConstituents(uri) {
     if (constituentUris.has(uri)) return;
     constituentUris.add(uri);
-    try {
-      const r = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) });
-      if (r.ok) {
-        const d = await r.json();
-        if (d.node?.left) await collectConstituents(d.node.left);
-        if (d.node?.right) await collectConstituents(d.node.right);
-        if (d.node?.items) for (const item of d.node.items) constituentUris.add(item);
-      }
-    } catch {}
+    // Use allNodes data first, then cache
+    const node = allNodes.find(x => x.uri === uri);
+    if (node && node.level > 0) {
+      const data = await resolveUri(uri);
+      if (data?.node?.left) await collectConstituents(data.node.left);
+      if (data?.node?.right) await collectConstituents(data.node.right);
+      if (data?.node?.items) for (const item of data.node.items) constituentUris.add(item);
+    }
   }
   const chainFragUri0 = chainData?.chainFragment?.uri;
   if (chainFragUri0) await collectConstituents(chainFragUri0);
-  // Also add focusChain items
   for (const u of focusChain) constituentUris.add(u);
 
-  // Position nodes: level = y (bottom to top), index = x
-  const nodeW = 60, nodeH = 30, gapX = 20, gapY = 50;
-  const graphH = (maxLevel + 1) * (nodeH + gapY) + 80;
-  container.style.minHeight = graphH + 'px';
+  // Scale node sizes based on total count
+  const totalVisible = visibleNodes.length;
+  const scaleFactor = totalVisible > 50 ? 0.7 : totalVisible > 30 ? 0.85 : 1.0;
+  const nodeW = Math.round(60 * scaleFactor);
+  const nodeH = Math.round(30 * scaleFactor);
+  const gapX = Math.round(20 * scaleFactor);
+  const gapY = Math.round(50 * scaleFactor);
+  const fontSize = totalVisible > 50 ? '9px' : totalVisible > 30 ? '10px' : '11px';
+  const MAX_VISIBLE_PER_LEVEL = 30;
 
   const levelColors = ['#ffe0e0', '#fff0d0', '#e0f0e0', '#e0e8ff', '#e8e0ff', '#f0e0ff', '#ffe0f0', '#e0ffff'];
 
-  for (let level = 0; level <= maxLevel; level++) {
-    const nodes = levels[level] || [];
-    if (nodes.length === 0) continue; // skip empty levels (L1 filtered out)
-    const y = graphH - (level + 1) * (nodeH + gapY);
-    const startX = Math.max(20, 20 + level * 30);
+  // Pre-resolve all fragment nodes we need edges for
+  const fragmentUrisForEdges = visibleNodes.filter(n => n.kind === 'Fragment' && n.level >= 2).map(n => n.uri);
+  const edgeResolveData = await batchResolve(fragmentUrisForEdges);
 
-    for (let i = 0; i < nodes.length; i++) {
-      const n = nodes[i];
-      const labelLen = n.level === 0 ? n.resolved.length : n.resolved.length + 2; // +2 for parens
-      const x = startX + i * (nodeW + gapX + Math.min(labelLen * 5, 120));
+  // Calculate actual graph height considering row wrapping
+  let maxRowBottom = 0;
 
-      nodePositions[n.uri] = { x: x + nodeW/2, y: y + nodeH/2 };
+  requestAnimationFrame(() => {
+    const frag = document.createDocumentFragment();
 
-      const div = document.createElement('div');
-      div.className = 'gnode ' + (n.level === 0 ? 'atom' : 'fragment');
-      // Highlight: focus = strong, constituents = normal, everything else = dimmed
-      const chainFragUri = chainData?.chainFragment?.uri;
-      const isFocus = (chainFragUri && n.uri === chainFragUri) || (!chainFragUri && focusChain.length === 1 && n.uri === focusChain[0]);
-      const isConstituent = focusChain.includes(n.uri) || constituentUris.has(n.uri);
-      if (isFocus) {
-        div.className += ' focused';
-      } else if (isConstituent) {
-        div.className += ' focused-constituent';
-      } else if (focusChain.length > 0) {
-        div.className += ' dimmed';
+    for (let level = 0; level <= maxLevel; level++) {
+      const allNodesAtLevel = levels[level] || [];
+      if (allNodesAtLevel.length === 0) continue;
+
+      const capped = allNodesAtLevel.length > MAX_VISIBLE_PER_LEVEL;
+      const nodes = capped ? allNodesAtLevel.slice(0, MAX_VISIBLE_PER_LEVEL) : allNodesAtLevel;
+
+      // Row wrapping: use sqrt-based columns
+      const cols = Math.ceil(Math.sqrt(nodes.length));
+      const baseY = 40 + level * (nodeH + gapY) * 2;
+      const startX = Math.max(20, 20 + level * 20);
+
+      for (let i = 0; i < nodes.length; i++) {
+        const n = nodes[i];
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        const labelLen = n.level === 0 ? n.resolved.length : n.resolved.length + 2;
+        const colWidth = nodeW + gapX + Math.min(labelLen * 4 * scaleFactor, 100 * scaleFactor);
+        const x = startX + col * colWidth;
+        const y = baseY + row * (nodeH + gapY);
+
+        nodePositions[n.uri] = { x: x + nodeW / 2, y: y + nodeH / 2 };
+        if (y + nodeH > maxRowBottom) maxRowBottom = y + nodeH;
+
+        const div = document.createElement('div');
+        div.className = 'gnode ' + (n.level === 0 ? 'atom' : 'fragment');
+        const chainFragUri = chainData?.chainFragment?.uri;
+        const isFocus = (chainFragUri && n.uri === chainFragUri) || (!chainFragUri && focusChain.length === 1 && n.uri === focusChain[0]);
+        const isConstituent = focusChain.includes(n.uri) || constituentUris.has(n.uri);
+        if (isFocus) {
+          div.className += ' focused';
+        } else if (isConstituent) {
+          div.className += ' focused-constituent';
+        } else if (focusChain.length > 0) {
+          div.className += ' dimmed';
+        }
+        div.style.left = x + 'px';
+        div.style.top = y + 'px';
+        div.style.fontSize = fontSize;
+        div.style.background = levelColors[Math.min(n.level, levelColors.length - 1)];
+
+        if (n.level === 0) {
+          div.textContent = n.resolved;
+        } else {
+          const display = n.resolved.length > 18 ? n.resolved.slice(0, 16) + '..' : n.resolved;
+          div.textContent = '(' + display + ')';
+          div.style.color = '#555';
+        }
+        div.title = 'L' + n.level + ': (' + n.resolved + ')\n' + n.uri;
+        div.dataset.action = 'click-node';
+        div.dataset.uri = encodeURIComponent(n.uri);
+        frag.appendChild(div);
       }
-      div.style.left = x + 'px';
-      div.style.top = y + 'px';
-      div.style.background = levelColors[Math.min(n.level, levelColors.length - 1)];
 
-      // All nodes get labels — atoms show their value, fragments show chain notation
-      if (n.level === 0) {
-        div.textContent = n.resolved;
-      } else {
-        // Short label for fragments: truncate resolved text
-        const display = n.resolved.length > 18 ? n.resolved.slice(0, 16) + '..' : n.resolved;
-        div.textContent = '(' + display + ')';
-        div.style.fontSize = '10px';
-        div.style.color = '#555';
+      // Overflow indicator
+      if (capped) {
+        const remaining = allNodesAtLevel.length - MAX_VISIBLE_PER_LEVEL;
+        const lastCol = nodes.length % cols;
+        const lastRow = Math.floor(nodes.length / cols);
+        const x = startX + lastCol * (nodeW + gapX + 60 * scaleFactor);
+        const y = baseY + lastRow * (nodeH + gapY);
+        const indicator = document.createElement('div');
+        indicator.className = 'gnode overflow-indicator';
+        indicator.style.left = x + 'px';
+        indicator.style.top = y + 'px';
+        indicator.style.fontSize = fontSize;
+        indicator.textContent = '...and ' + remaining + ' more';
+        indicator.title = remaining + ' additional L' + level + ' nodes not shown';
+        frag.appendChild(indicator);
+        if (y + nodeH > maxRowBottom) maxRowBottom = y + nodeH;
       }
-      div.title = 'L' + n.level + ': (' + n.resolved + ')\n' + n.uri;
-      div.onclick = () => clickNode(encodeURIComponent(n.uri));
-      container.appendChild(div);
     }
-  }
 
-  // Draw edges: constituent structure only, skip L1 wrappers
-  // For L2: constituents are L1 wrappers — follow through to their atoms
-  // For L3+: constituents are L2+ — draw directly
-  for (const n of visibleNodes) {
-    if (n.kind !== 'Fragment' || n.level < 2) continue;
-    const parentPos = nodePositions[n.uri];
-    if (!parentPos) continue;
+    container.appendChild(frag);
+    // Auto-fit container height
+    container.style.minHeight = (maxRowBottom + 80) + 'px';
 
-    fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri: n.uri}) })
-      .then(r => r.json())
-      .then(data => {
-        if (!data.node || !data.node.left || !data.node.right) return;
+    // Draw edges using pre-resolved data
+    for (const n of visibleNodes) {
+      if (n.kind !== 'Fragment' || n.level < 2) continue;
+      const parentPos = nodePositions[n.uri];
+      if (!parentPos) continue;
 
-        // Resolve through L1 wrappers: if constituent is L1, use its single item (the atom) instead
-        const resolveThrough = (uri) => {
-          const node = allNodes.find(x => x.uri === uri);
-          if (node && node.level === 1) {
-            // L1 wrapper — return its atom (first item)
-            return fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) })
-              .then(r => r.json())
-              .then(d => d.node?.items?.[0] || uri);
-          }
-          return Promise.resolve(uri);
-        };
+      const data = edgeResolveData[n.uri];
+      if (!data?.node?.left || !data?.node?.right) continue;
 
-        const isDimmed = focusChain.length > 0 && !constituentUris.has(n.uri);
+      const isDimmed = focusChain.length > 0 && !constituentUris.has(n.uri);
 
-        Promise.all([resolveThrough(data.node.left), resolveThrough(data.node.right)]).then(([leftTarget, rightTarget]) => {
-          const lPos = nodePositions[leftTarget];
-          if (lPos) {
+      // Resolve through L1 wrappers using allNodes data
+      const resolveThrough = (uri) => {
+        const node = allNodes.find(x => x.uri === uri);
+        if (node && node.level === 1) {
+          const cached = resolveCache[uri];
+          if (cached?.node?.items?.[0]) return cached.node.items[0];
+          // If not cached, try to find the atom in allNodes that this L1 wraps
+          return uri;
+        }
+        return uri;
+      };
+
+      const leftTarget = resolveThrough(data.node.left);
+      const rightTarget = resolveThrough(data.node.right);
+
+      const lPos = nodePositions[leftTarget];
+      if (lPos) {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', parentPos.x); line.setAttribute('y1', parentPos.y);
+        line.setAttribute('x2', lPos.x); line.setAttribute('y2', lPos.y);
+        line.setAttribute('class', 'edge left-const');
+        if (isDimmed) line.style.opacity = '0.15';
+        svg.appendChild(line);
+      }
+      const rPos = nodePositions[rightTarget];
+      if (rPos) {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', parentPos.x); line.setAttribute('y1', parentPos.y);
+        line.setAttribute('x2', rPos.x); line.setAttribute('y2', rPos.y);
+        line.setAttribute('class', 'edge right-const');
+        if (isDimmed) line.style.opacity = '0.15';
+        svg.appendChild(line);
+      }
+    }
+
+    // Also pre-resolve L1 wrappers for edge drawing
+    // Collect L1 URIs referenced as left/right in edges
+    const l1Uris = [];
+    for (const n of visibleNodes) {
+      if (n.kind !== 'Fragment' || n.level < 2) continue;
+      const data = edgeResolveData[n.uri];
+      if (!data?.node) continue;
+      for (const childUri of [data.node.left, data.node.right].filter(Boolean)) {
+        const childNode = allNodes.find(x => x.uri === childUri);
+        if (childNode && childNode.level === 1 && !resolveCache[childUri]) {
+          l1Uris.push(childUri);
+        }
+      }
+    }
+    if (l1Uris.length > 0) {
+      batchResolve(l1Uris).then(() => {
+        // Re-draw edges that needed L1 resolution
+        // Clear and redraw SVG edges
+        svg.innerHTML = '';
+        for (const n of visibleNodes) {
+          if (n.kind !== 'Fragment' || n.level < 2) continue;
+          const parentPos = nodePositions[n.uri];
+          if (!parentPos) continue;
+          const data = edgeResolveData[n.uri];
+          if (!data?.node?.left || !data?.node?.right) continue;
+          const isDimmed = focusChain.length > 0 && !constituentUris.has(n.uri);
+
+          const resolveThrough2 = (uri) => {
+            const node = allNodes.find(x => x.uri === uri);
+            if (node && node.level === 1) {
+              const cached = resolveCache[uri];
+              if (cached?.node?.items?.[0]) return cached.node.items[0];
+              return uri;
+            }
+            return uri;
+          };
+
+          const lt = resolveThrough2(data.node.left);
+          const rt = resolveThrough2(data.node.right);
+
+          const lp = nodePositions[lt];
+          if (lp) {
             const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
             line.setAttribute('x1', parentPos.x); line.setAttribute('y1', parentPos.y);
-            line.setAttribute('x2', lPos.x); line.setAttribute('y2', lPos.y);
+            line.setAttribute('x2', lp.x); line.setAttribute('y2', lp.y);
             line.setAttribute('class', 'edge left-const');
             if (isDimmed) line.style.opacity = '0.15';
             svg.appendChild(line);
           }
-          const rPos = nodePositions[rightTarget];
-          if (rPos) {
+          const rp = nodePositions[rt];
+          if (rp) {
             const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
             line.setAttribute('x1', parentPos.x); line.setAttribute('y1', parentPos.y);
-            line.setAttribute('x2', rPos.x); line.setAttribute('y2', rPos.y);
+            line.setAttribute('x2', rp.x); line.setAttribute('y2', rp.y);
             line.setAttribute('class', 'edge right-const');
             if (isDimmed) line.style.opacity = '0.15';
             svg.appendChild(line);
           }
-        });
+        }
       });
-  }
+    }
+  });
 }
+
+// Delegated click handler for graph container
+document.getElementById('graphContainer').addEventListener('click', function(e) {
+  const gnode = e.target.closest('.gnode[data-action="click-node"]');
+  if (gnode) {
+    e.stopPropagation();
+    clickNode(gnode.dataset.uri);
+  }
+});
 
 async function clickNode(encodedUri) {
   try {
     const uri = decodeURIComponent(encodedUri);
     const node = allNodes.find(n => n.uri === uri);
 
-    // If in constraint mode, don't navigate — stay on current chain
     if (constraintMode) return;
 
     if (node && node.level > 0 && node.kind === 'Fragment') {
-      // Decompose fragment into chain items
-      const resp = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.node && data.node.items && data.node.items.length > 1) {
-          // Verify all items exist in allNodes before using them
-          const validItems = data.node.items.filter(u => allNodes.some(n => n.uri === u));
-          focusChain = validItems.length > 1 ? [...validItems] : [uri];
-        } else {
-          focusChain = [uri];
-        }
+      const data = await resolveUri(uri);
+      if (data?.node?.items && data.node.items.length > 1) {
+        const validItems = data.node.items.filter(u => allNodes.some(n => n.uri === u));
+        focusChain = validItems.length > 1 ? [...validItems] : [uri];
       } else {
         focusChain = [uri];
       }
     } else if (!node) {
-      // URI not found in allNodes — refresh and retry
       await refreshAll();
       focusChain = [];
       renderChain();
@@ -401,7 +572,6 @@ async function clickNode(encodedUri) {
       focusChain = [uri];
     }
 
-    // Filter chain to only valid URIs
     focusChain = focusChain.filter(u => allNodes.some(n => n.uri === u));
     if (focusChain.length === 0) {
       renderChain();
@@ -416,7 +586,6 @@ async function clickNode(encodedUri) {
       focusData = { focus: { uri: focusChain[0], resolved: '?', level: 0 }, left: [], right: [], containingFragments: [], annotations: [] };
     }
 
-    // Fetch chain-level hypermedia (inner/outer neighbors)
     chainData = null;
     if (focusChain.length >= 1) {
       try {
@@ -439,35 +608,30 @@ async function clickNode(encodedUri) {
   }
 }
 
-// Render a node as HTML — atoms as simple boxes, fragments as nested sub-boxes
+// Render a node as HTML using cached data
 // When `bare` is true, returns just the inner content (for use inside option-items)
-async function renderNodeHtml(uri, clickAction, bare) {
+function renderNodeHtml(uri, bare) {
   const node = allNodes.find(n => n.uri === uri);
   if (!node) return bare ? '?' : '<span class="item atom">?</span>';
   const resolved = node.resolved;
   const isFragment = node.level > 0 && node.kind === 'Fragment';
 
   if (isFragment) {
-    try {
-      const r = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) });
-      if (r.ok) {
-        const d = await r.json();
-        if (d.node?.items) {
-          let inner = '';
-          for (const itemUri of d.node.items) {
-            const itemNode = allNodes.find(n => n.uri === itemUri);
-            const itemResolved = itemNode ? itemNode.resolved : '?';
-            const isSubFrag = itemNode && itemNode.level > 0;
-            inner += '<span class="' + (isSubFrag ? 'nested-frag' : 'nested-atom') + '">' + itemResolved + '</span>';
-          }
-          if (bare) return inner;
-          return '<span class="item nested-item" ' + (clickAction || '') + ' title="' + resolved + '">' + inner + '</span>';
-        }
+    const cached = resolveCache[uri];
+    if (cached?.node?.items) {
+      let inner = '';
+      for (const itemUri of cached.node.items) {
+        const itemNode = allNodes.find(n => n.uri === itemUri);
+        const itemResolved = itemNode ? itemNode.resolved : '?';
+        const isSubFrag = itemNode && itemNode.level > 0;
+        inner += '<span class="' + (isSubFrag ? 'nested-frag' : 'nested-atom') + '">' + itemResolved + '</span>';
       }
-    } catch {}
+      if (bare) return inner;
+      return '<span class="item nested-item" title="' + resolved + '">' + inner + '</span>';
+    }
   }
   if (bare) return resolved;
-  return '<span class="item atom" ' + (clickAction || '') + ' title="' + resolved + '">' + resolved + '</span>';
+  return '<span class="item atom" title="' + resolved + '">' + resolved + '</span>';
 }
 
 async function renderChain() {
@@ -480,83 +644,95 @@ async function renderChain() {
     return;
   }
 
-  // Resolve chain values for paradigm pattern construction
   const chainValues = focusChain.map(u => {
     const n = allNodes.find(x => x.uri === u);
     return n ? n.resolved : '?';
   });
 
-  // Use /api/chain data for inner/outer neighbors
   const innerLeft = chainData?._links?.innerLeft || [];
   const innerRight = chainData?._links?.innerRight || [];
   const outerLeft = chainData?._links?.outerLeft || [];
   const outerRight = chainData?._links?.outerRight || [];
   const chainFrag = chainData?.chainFragment;
 
-  // Always show the outer level with parens — the notation is always +,(+,items,+),+
-  // Outer neighbors only populate when chainFrag exists as an item in a higher fragment
   const hasOuterLevel = true;
 
-  // Deduplicate: remove outer neighbors that also appear as inner neighbors
   const innerLeftUris = new Set(innerLeft.map(n => n.uri));
   const innerRightUris = new Set(innerRight.map(n => n.uri));
   const filteredOuterLeft = outerLeft.filter(n => !innerLeftUris.has(n.uri));
   const filteredOuterRight = outerRight.filter(n => !innerRightUris.has(n.uri));
 
+  // Pre-resolve all URIs we'll need for rendering
+  const urisToResolve = [];
+  for (const l of filteredOuterLeft) urisToResolve.push(l.uri);
+  for (const l of innerLeft) urisToResolve.push(l.uri);
+  for (const r of innerRight) urisToResolve.push(r.uri);
+  for (const r of filteredOuterRight) urisToResolve.push(r.uri);
+  for (const uri of focusChain) {
+    const node = allNodes.find(n => n.uri === uri);
+    if (node && node.level > 0 && node.kind === 'Fragment') urisToResolve.push(uri);
+  }
+  if (urisToResolve.length > 0) await batchResolve(urisToResolve);
+
   let html = '';
 
-  // ── OUTER LEFT: neighbors of the chain-as-unit (only for multi-item chains that exist as fragments) ──
+  // OUTER LEFT paradigm box — what can appear before the group
   if (hasOuterLevel) {
+    const outerParadigm = chainData?._outerParadigm;
+    let olHtml = '<span class="plus" data-action="show-add" data-side="outer-left" title="Add before group">+</span>';
     if (filteredOuterLeft.length > 0) {
-      let olHtml = '';
       for (const l of filteredOuterLeft) {
-        const innerRender = await renderNodeHtml(l.uri, null, true);
-        olHtml += '<span class="option-item source" onclick="clickNode(\'' + encodeURIComponent(l.uri) + '\')" title="outer: ' + l.resolved + '">' + innerRender + '</span>';
+        const innerRender = renderNodeHtml(l.uri, true);
+        olHtml += '<span class="option-item source" data-action="expand-left" data-uri="' + encodeURIComponent(l.uri) + '" title="outer: ' + l.resolved + '">' + innerRender + '</span>';
       }
-      html += '<span class="options-stack">' + olHtml + '</span>';
-      html += '<span class="sep">,</span>';
     }
-    html += '<span class="plus" onclick="showAddPopup(\'outer-left\', event)" title="Add before group">+</span>';
+    // Add constrain link for outer left paradigm — always available
+    // Use server-provided pattern if exists, otherwise build from chain values
+    {
+      const olPattern = outerParadigm?.leftPattern ?? ['?', ...chainValues];
+      const olPos = outerParadigm?.leftPosition ?? 0;
+      const olPatternId = '_olp_' + Date.now();
+      window[olPatternId] = olPattern;
+      olHtml += '<span data-action="constrain-paradigm" data-pattern-id="' + olPatternId + '" data-position="' + olPos + '" style="font-size:8px;color:#4a4a8a;cursor:pointer;text-align:center;padding:1px 4px;border-top:1px dashed #ccc;margin-top:1px" title="Constrain this outer paradigm">constrain</span>';
+    }
+    html += '<span class="options-stack">' + olHtml + '</span>';
     html += '<span class="sep">,</span>';
   }
 
-  // ── OPEN PAREN ──
+  // OPEN PAREN
   if (chainFrag) {
-    html += '<span class="paren"><a href="/node/' + encodeURIComponent(chainFrag.uri) + '" onclick="event.preventDefault(); clickNode(\'' + encodeURIComponent(chainFrag.uri) + '\')" title="' + chainFrag.resolved + '" style="color:#888;text-decoration:none">(</a></span>';
+    html += '<span class="paren"><a href="/node/' + encodeURIComponent(chainFrag.uri) + '" data-action="click-node" data-uri="' + encodeURIComponent(chainFrag.uri) + '" title="' + chainFrag.resolved + '" style="color:#888;text-decoration:none">(</a></span>';
   } else {
     html += '<span class="paren">(</span>';
   }
 
-  // ── COLLAPSE LEFT (shrink from left → ) ──
+  // COLLAPSE LEFT
   if (focusChain.length >= 2) {
-    html += '<span class="plus" onclick="collapseLeft()" title="Collapse from left" style="color:#8a4a4a;cursor:pointer;font-weight:bold">&gt;</span>';
+    html += '<span class="plus" data-action="collapse-left" title="Collapse from left" style="color:#8a4a4a;cursor:pointer;font-weight:bold">&gt;</span>';
     html += '<span class="sep">,</span>';
   }
 
-  // ── INNER LEFT: paradigm box (options + add) ──
+  // INNER LEFT paradigm box
   {
     const leftPattern = ['?', ...chainValues];
-    const leftPatternId = 'lp_' + Date.now();
+    const leftPatternId = '_lp_' + Date.now();
     window[leftPatternId] = leftPattern;
-    let leftHtml = '<span class="plus" onclick="event.stopPropagation(); showAddPopup(\'left\', event)" title="Add to this paradigm">+</span>';
+    let leftHtml = '<span class="plus" data-action="show-add" data-side="left" title="Add to this paradigm">+</span>';
     for (const l of innerLeft) {
-      const innerRender = await renderNodeHtml(l.uri, null, true);
-      leftHtml += '<span class="option-item source" onclick="event.stopPropagation(); expandLeft(\'' + encodeURIComponent(l.uri) + '\')" title="' + l.resolved + '">' + innerRender + '</span>';
+      const innerRender = renderNodeHtml(l.uri, true);
+      leftHtml += '<span class="option-item source" data-action="expand-left" data-uri="' + encodeURIComponent(l.uri) + '" title="' + l.resolved + '">' + innerRender + '</span>';
     }
-    leftHtml += '<span onclick="event.stopPropagation(); constrainParadigm(window[\'' + leftPatternId + '\'], 0)" style="font-size:8px;color:#4a4a8a;cursor:pointer;text-align:center;padding:1px 4px;border-top:1px dashed #ccc;margin-top:1px" title="Constrain this paradigm">constrain</span>';
+    leftHtml += '<span data-action="constrain-paradigm" data-pattern-id="' + leftPatternId + '" data-position="0" style="font-size:8px;color:#4a4a8a;cursor:pointer;text-align:center;padding:1px 4px;border-top:1px dashed #ccc;margin-top:1px" title="Constrain this paradigm">constrain</span>';
     html += '<span class="options-stack">' + leftHtml + '</span>';
   }
 
-  // ── CHAIN ITEMS ──
-  // Pre-fetch nested fragment items for visual nesting
+  // CHAIN ITEMS — use pre-resolved data
   const nestedItems = {};
   for (const uri of focusChain) {
     const node = allNodes.find(n => n.uri === uri);
     if (node && node.level > 0 && node.kind === 'Fragment') {
-      try {
-        const r = await fetch('/api/resolve', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uri}) });
-        if (r.ok) { const d = await r.json(); if (d.node?.items) nestedItems[uri] = d.node.items; }
-      } catch {}
+      const cached = resolveCache[uri];
+      if (cached?.node?.items) nestedItems[uri] = cached.node.items;
     }
   }
 
@@ -569,7 +745,6 @@ async function renderChain() {
     html += '<span class="sep">,</span>';
 
     if (isNested && nestedItems[uri]) {
-      // Render as nested boxes — each item inside the fragment shown as a sub-box
       const items = nestedItems[uri];
       let innerHtml = '';
       for (const itemUri of items) {
@@ -579,59 +754,64 @@ async function renderChain() {
         const cls = isSubNested ? 'nested-frag' : 'nested-atom';
         innerHtml += '<span class="' + cls + '">' + itemResolved + '</span>';
       }
-      html += '<span class="item nested-item" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="Click to expand: ' + resolved + '">' + innerHtml + '</span>';
+      html += '<span class="item nested-item" data-action="click-node" data-uri="' + encodeURIComponent(uri) + '" title="Click to expand: ' + resolved + '">' + innerHtml + '</span>';
     } else {
-      html += '<span class="item atom" onclick="clickNode(\'' + encodeURIComponent(uri) + '\')" title="' + resolved + '">' + resolved + '</span>';
+      html += '<span class="item atom" data-action="click-node" data-uri="' + encodeURIComponent(uri) + '" title="' + resolved + '">' + resolved + '</span>';
     }
   }
 
-  // ── INNER RIGHT: paradigm box (options + add) ──
+  // INNER RIGHT paradigm box
   {
     html += '<span class="sep">,</span>';
     const rightPattern = [...chainValues, '?'];
-    const rightPatternId = 'rp_' + Date.now();
+    const rightPatternId = '_rp_' + Date.now();
     window[rightPatternId] = rightPattern;
     const rightPos = chainValues.length;
-    let rightHtml = '<span class="plus" onclick="event.stopPropagation(); showAddPopup(\'right\', event)" title="Add to this paradigm">+</span>';
+    let rightHtml = '<span class="plus" data-action="show-add" data-side="right" title="Add to this paradigm">+</span>';
     for (const r of innerRight) {
-      const innerRender = await renderNodeHtml(r.uri, null, true);
-      rightHtml += '<span class="option-item target" onclick="event.stopPropagation(); expandRight(\'' + encodeURIComponent(r.uri) + '\')" title="' + r.resolved + '">' + innerRender + '</span>';
+      const innerRender = renderNodeHtml(r.uri, true);
+      rightHtml += '<span class="option-item target" data-action="expand-right" data-uri="' + encodeURIComponent(r.uri) + '" title="' + r.resolved + '">' + innerRender + '</span>';
     }
-    rightHtml += '<span onclick="event.stopPropagation(); constrainParadigm(window[\'' + rightPatternId + '\'], ' + rightPos + ')" style="font-size:8px;color:#4a4a8a;cursor:pointer;text-align:center;padding:1px 4px;border-top:1px dashed #ccc;margin-top:1px" title="Constrain this paradigm">constrain</span>';
+    rightHtml += '<span data-action="constrain-paradigm" data-pattern-id="' + rightPatternId + '" data-position="' + rightPos + '" style="font-size:8px;color:#4a4a8a;cursor:pointer;text-align:center;padding:1px 4px;border-top:1px dashed #ccc;margin-top:1px" title="Constrain this paradigm">constrain</span>';
     html += '<span class="options-stack">' + rightHtml + '</span>';
   }
 
-  // ── COLLAPSE RIGHT (shrink from right ← ) ──
+  // COLLAPSE RIGHT
   if (focusChain.length >= 2) {
     html += '<span class="sep">,</span>';
-    html += '<span class="plus" onclick="collapseRight()" title="Collapse from right" style="color:#8a4a4a;cursor:pointer;font-weight:bold">&lt;</span>';
+    html += '<span class="plus" data-action="collapse-right" title="Collapse from right" style="color:#8a4a4a;cursor:pointer;font-weight:bold">&lt;</span>';
   }
 
-  // ── CLOSE PAREN ──
+  // CLOSE PAREN
   if (hasOuterLevel) {
     html += '<span class="paren">)</span>';
   }
 
-  // ── OUTER RIGHT: neighbors of the chain-as-unit ──
+  // OUTER RIGHT paradigm box — what can appear after the group
   if (hasOuterLevel) {
     html += '<span class="sep">,</span>';
-    html += '<span class="plus" onclick="showAddPopup(\'outer-right\', event)" title="Add after group">+</span>';
+    const outerParadigm = chainData?._outerParadigm;
+    let orHtml = '<span class="plus" data-action="show-add" data-side="outer-right" title="Add after group">+</span>';
     if (filteredOuterRight.length > 0) {
-      html += '<span class="sep">,</span>';
-      let orHtml = '';
       for (const r of filteredOuterRight) {
-        const innerRender = await renderNodeHtml(r.uri, null, true);
-        orHtml += '<span class="option-item target" onclick="clickNode(\'' + encodeURIComponent(r.uri) + '\')" title="outer: ' + r.resolved + '">' + innerRender + '</span>';
+        const innerRender = renderNodeHtml(r.uri, true);
+        orHtml += '<span class="option-item target" data-action="expand-right" data-uri="' + encodeURIComponent(r.uri) + '" title="outer: ' + r.resolved + '">' + innerRender + '</span>';
       }
-      html += '<span class="options-stack">' + orHtml + '</span>';
     }
+    // Add constrain link for outer right paradigm — always available
+    {
+      const orPattern = outerParadigm?.rightPattern ?? [...chainValues, '?'];
+      const orPos = outerParadigm?.rightPosition ?? chainValues.length;
+      const orPatternId = '_orp_' + Date.now();
+      window[orPatternId] = orPattern;
+      orHtml += '<span data-action="constrain-paradigm" data-pattern-id="' + orPatternId + '" data-position="' + orPos + '" style="font-size:8px;color:#4a4a8a;cursor:pointer;text-align:center;padding:1px 4px;border-top:1px dashed #ccc;margin-top:1px" title="Constrain this outer paradigm">constrain</span>';
+    }
+    html += '<span class="options-stack">' + orHtml + '</span>';
   }
-
-  // No separate controls row — collapse buttons are inline (see below)
 
   display.innerHTML = html;
 
-  // Chain info — clean notation with commas, nested items in parens
+  // Chain info
   const chainItems = focusChain.map(u => {
     const n = allNodes.find(x => x.uri === u);
     if (!n) return '?';
@@ -640,13 +820,56 @@ async function renderChain() {
   info.textContent = '(' + chainItems.join(', ') + ')';
 }
 
+// ── Delegated event handler for chain display ──
+document.getElementById('chainDisplay').addEventListener('click', function(e) {
+  const target = e.target.closest('[data-action]');
+  if (!target) return;
+
+  e.stopPropagation();
+  const action = target.dataset.action;
+
+  switch (action) {
+    case 'click-node': {
+      if (target.tagName === 'A') e.preventDefault();
+      clickNode(target.dataset.uri);
+      break;
+    }
+    case 'show-add': {
+      showAddPopup(target.dataset.side, target);
+      break;
+    }
+    case 'expand-left': {
+      expandLeft(target.dataset.uri);
+      break;
+    }
+    case 'expand-right': {
+      expandRight(target.dataset.uri);
+      break;
+    }
+    case 'collapse-left': {
+      collapseLeft();
+      break;
+    }
+    case 'collapse-right': {
+      collapseRight();
+      break;
+    }
+    case 'constrain-paradigm': {
+      const patternId = target.dataset.patternId;
+      const position = parseInt(target.dataset.position, 10);
+      const pattern = window[patternId];
+      if (pattern) constrainParadigm(pattern, position);
+      break;
+    }
+  }
+});
+
 async function wrapChain() {
   if (focusChain.length < 2) return;
-  // Ingest the chain URIs as a fragment
   const resp = await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
   const data = await resp.json();
+  resolveCache = {};
   await refreshAll();
-  // The response has the top fragment URI
   if (data.uri) {
     focusChain = [data.uri];
   }
@@ -684,7 +907,6 @@ async function expandLeft(encodedUri) {
   const uri = decodeURIComponent(encodedUri);
   if (!allNodes.some(n => n.uri === uri)) { await refreshAll(); return; }
   focusChain.unshift(uri);
-  // Refetch chain data for new chain
   try {
     const chainResp = await fetch('/api/chain', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
     if (chainResp.ok) chainData = await chainResp.json();
@@ -709,28 +931,30 @@ async function expandRight(encodedUri) {
   renderGraph();
 }
 
-function showAddPopup(side, event) {
-  // Remove existing popup
+// showAddPopup now takes the clicked element instead of the raw event for positioning
+function showAddPopup(side, anchorEl) {
   document.querySelectorAll('.add-popup').forEach(p => p.remove());
 
   const popup = document.createElement('div');
   popup.className = 'add-popup';
-  popup.style.left = event.clientX + 'px';
+
+  // Position using getBoundingClientRect on the anchor element
+  const rect = anchorEl.getBoundingClientRect();
+  popup.style.left = rect.left + 'px';
   // Position above the chain panel
   const chainPanel = document.getElementById('chainPanel');
-  const panelTop = chainPanel ? chainPanel.getBoundingClientRect().top : event.clientY;
+  const panelTop = chainPanel.getBoundingClientRect().top;
   popup.style.bottom = (window.innerHeight - panelTop + 10) + 'px';
 
   const input = document.createElement('input');
-  input.placeholder = side === 'left' ? '+ source' : '+ target';
+  input.placeholder = side === 'left' || side === 'outer-left' || side === 'require-left' ? '+ source' : '+ target';
   input.autofocus = true;
 
   const dropdown = document.createElement('div');
   dropdown.className = 'dropdown';
 
-  // Check if shapes constrain this position
   let shapeConstrained = false;
-  let shapeCandidateUris = null; // null = no constraint, Set = only these allowed
+  let shapeCandidateUris = null;
   let shapeInfo = '';
 
   (async () => {
@@ -746,7 +970,6 @@ function showAddPopup(side, event) {
           shapeConstrained = true;
           shapeCandidateUris = new Set(data.candidates.map(c => c.uri));
           shapeInfo = data.constraints.join('; ');
-          // Re-render with constraint data
           renderDropdown(input.value);
         }
       }
@@ -756,7 +979,6 @@ function showAddPopup(side, event) {
   const renderDropdown = (q) => {
     let nodes = allNodes.filter(n => n.level !== 1);
     if (q) nodes = nodes.filter(n => n.resolved.toLowerCase().includes(q.toLowerCase()));
-    // Sort: ? first, then atoms before fragments, then alphabetical
     nodes.sort((a, b) => {
       if (a.resolved === '?') return -1;
       if (b.resolved === '?') return 1;
@@ -765,7 +987,6 @@ function showAddPopup(side, event) {
       return a.resolved.localeCompare(b.resolved);
     });
 
-    // If shape-constrained, filter to only valid candidates and show constraint info
     if (shapeConstrained && shapeCandidateUris) {
       const constrained = nodes.filter(n => shapeCandidateUris.has(n.uri));
       const unconstrained = nodes.filter(n => !shapeCandidateUris.has(n.uri));
@@ -777,7 +998,7 @@ function showAddPopup(side, event) {
       html += constrained.slice(0, 8).map(n => {
         const isF = n.level > 0;
         const label = isF ? '<span style="background:#e0e8ff;border:1px solid #88e;padding:1px 4px;border-radius:2px;font-size:9px">(' + n.resolved + ')</span>' : n.resolved;
-        return '<div class="dropdown-item" style="background:#f0fff0" onclick="addToChain(\'' + side + '\',\'' + encodeURIComponent(n.uri) + '\')">\u2705 ' + label + '</div>';
+        return '<div class="dropdown-item" data-action="add-to-chain" data-side="' + side + '" data-uri="' + encodeURIComponent(n.uri) + '" style="background:#f0fff0">\u2705 ' + label + '</div>';
       }).join('');
       if (unconstrained.length > 0) {
         html += '<div style="padding:3px 8px;font-size:9px;color:#999;border-top:1px solid #eee">Constraint not met:</div>';
@@ -786,25 +1007,37 @@ function showAddPopup(side, event) {
         }).join('');
       }
       if (q && q.trim()) {
-        html += '<div class="dropdown-item" style="border-top:1px solid #eee;color:#888" onclick="createAndAdd(\'' + side + '\',\'' + q.trim() + '\')">+ Create "' + q.trim() + '"</div>';
+        html += '<div class="dropdown-item" data-action="create-and-add" data-side="' + side + '" data-value="' + q.trim() + '" style="border-top:1px solid #eee;color:#888">+ Create "' + q.trim() + '"</div>';
       }
       dropdown.innerHTML = html;
     } else {
-      // No constraints — show all
       let html = nodes.slice(0, 10).map(n => {
         const isF = n.level > 0;
         const label = isF ? '<span style="background:#e0e8ff;border:1px solid #88e;padding:1px 4px;border-radius:2px;font-size:9px">(' + n.resolved + ')</span>' : n.resolved;
-        return '<div class="dropdown-item" onclick="addToChain(\'' + side + '\',\'' + encodeURIComponent(n.uri) + '\')">' + label + '</div>';
+        return '<div class="dropdown-item" data-action="add-to-chain" data-side="' + side + '" data-uri="' + encodeURIComponent(n.uri) + '">' + label + '</div>';
       }).join('');
       if (q && q.trim()) {
-        html += '<div class="dropdown-item" style="border-top:1px solid #eee;color:#888" onclick="createAndAdd(\'' + side + '\',\'' + q.trim() + '\')">+ Create "' + q.trim() + '"</div>';
+        html += '<div class="dropdown-item" data-action="create-and-add" data-side="' + side + '" data-value="' + q.trim() + '" style="border-top:1px solid #eee;color:#888">+ Create "' + q.trim() + '"</div>';
       }
       dropdown.innerHTML = html;
     }
   };
 
+  // Delegated click handler for dropdown items
+  dropdown.addEventListener('click', function(e) {
+    const item = e.target.closest('[data-action]');
+    if (!item) return;
+    e.stopPropagation();
+    if (item.dataset.action === 'add-to-chain') {
+      addToChain(item.dataset.side, item.dataset.uri);
+      popup.remove();
+    } else if (item.dataset.action === 'create-and-add') {
+      createAndAdd(item.dataset.side, item.dataset.value);
+      popup.remove();
+    }
+  });
+
   input.oninput = () => renderDropdown(input.value);
-  // Show all options immediately on open, and again after focus
   renderDropdown('');
   input.onfocus = () => renderDropdown(input.value);
 
@@ -836,7 +1069,6 @@ function showAddPopup(side, event) {
 async function addToChain(side, encodedUri) {
   const uri = decodeURIComponent(encodedUri);
 
-  // If adding to the require chain (constraint mode)
   if (side === 'require-right' || side === 'require-left') {
     requireChain.push(uri);
     document.querySelectorAll('.add-popup').forEach(p => p.remove());
@@ -848,7 +1080,6 @@ async function addToChain(side, encodedUri) {
   const actualSide = isOuter ? side.replace('outer-', '') : side;
 
   if (isOuter && focusChain.length >= 1) {
-    // Outer add: wrap current chain first, then add new element beside it
     let wrappedUri;
     if (focusChain.length >= 2) {
       const wrapResp = await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
@@ -857,22 +1088,21 @@ async function addToChain(side, encodedUri) {
     } else {
       wrappedUri = focusChain[0];
     }
+    resolveCache = {};
     await refreshAll();
     if (wrappedUri) {
       focusChain = actualSide === 'left' ? [uri, wrappedUri] : [wrappedUri, uri];
     }
   } else {
-    // Inner add: extend the sequence, using URI-based ingestion
     if (actualSide === 'left') focusChain.unshift(uri);
     else focusChain.push(uri);
   }
 
-  // Ingest the full chain as a structure — this creates the complete fragment
   if (focusChain.length >= 2) {
     await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
   }
+  resolveCache = {};
   await refreshAll();
-  // Refetch chain data for the new chain
   try {
     const chainResp = await fetch('/api/chain', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: focusChain}) });
     if (chainResp.ok) chainData = await chainResp.json();
@@ -884,6 +1114,7 @@ async function addToChain(side, encodedUri) {
 
 async function createAndAdd(side, value) {
   await fetch('/api/ingest', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({content: value}) });
+  resolveCache = {};
   await refreshAll();
   const atom = allNodes.find(n => n.resolved === value && n.level === 0);
   if (atom) {
@@ -907,22 +1138,17 @@ function toggleGraph() {
 }
 
 // ── Constraints ──
-// ? is just an atom. Build chains with ? in them.
-// A constraint links two chains that share ? at the same position.
-
 let constraintMode = false;
-let constraintStep = 0; // 0=inactive, 1=select position in A, 2=select op, 3=build B
+let constraintStep = 0;
 let constraintPatternA = [];
 let constraintPosA = -1;
 let constraintOp = null;
 let requireChain = [];
 
-// Two-click constraint: click paradigm A → click paradigm B → pick op → done
-let pendingParadigmA = null; // { pattern, position }
+let pendingParadigmA = null;
 
 function constrainParadigm(pattern, position) {
   if (!pendingParadigmA) {
-    // First click: store paradigm A, show instruction
     pendingParadigmA = { pattern, position };
     document.getElementById('constrainArea').style.display = 'block';
     document.getElementById('constrainBtn').style.display = 'none';
@@ -936,7 +1162,6 @@ function constrainParadigm(pattern, position) {
       '<div style="text-align:center;font-size:9px;color:#888">now click another paradigm box to relate</div>' +
       '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
   } else {
-    // Second click: show operation picker between A and B
     const pA = pendingParadigmA;
     const pB = { pattern, position };
 
@@ -944,11 +1169,11 @@ function constrainParadigm(pattern, position) {
     let htmlB = pB.pattern.map((v, i) => i === pB.position ? '<strong style="color:#228">?</strong>' : v).join(', ');
 
     const ops = [
-      { op: 'subset', symbol: '⊆', title: 'Subset — A must be in B\ne.g., employees ⊆ humans' },
-      { op: 'intersect', symbol: '∩', title: 'Intersect — must be in both A and B' },
-      { op: 'union', symbol: '∪', title: 'Union — can be in A or B' },
-      { op: 'exclude', symbol: '∖', title: 'Exclude — in A but not B' },
-      { op: 'equal', symbol: '=', title: 'Equal — A and B must be same set' },
+      { op: 'subset', symbol: '\u2286', title: 'Subset \u2014 A must be in B\ne.g., employees \u2286 humans' },
+      { op: 'intersect', symbol: '\u2229', title: 'Intersect \u2014 must be in both A and B' },
+      { op: 'union', symbol: '\u222a', title: 'Union \u2014 can be in A or B' },
+      { op: 'exclude', symbol: '\u2216', title: 'Exclude \u2014 in A but not B' },
+      { op: 'equal', symbol: '=', title: 'Equal \u2014 A and B must be same set' },
     ];
 
     document.getElementById('constrainArea').innerHTML =
@@ -959,7 +1184,6 @@ function constrainParadigm(pattern, position) {
       '<div style="text-align:center;font-size:10px;margin-top:2px">P(' + htmlB + ')</div>' +
       '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
 
-    // Store B for when op is picked
     window._pendingParadigmB = pB;
   }
 }
@@ -985,7 +1209,6 @@ async function finishConstraintTwoClick(op) {
 }
 
 function startConstraint() {
-  // Legacy: from the "+ constrain" button — start by selecting a position
   if (focusChain.length === 0) return;
   constraintMode = true;
   constraintStep = 1;
@@ -1033,7 +1256,6 @@ function renderConstraintArea() {
   let html = '';
 
   if (constraintStep === 1) {
-    // Select which position's paradigm to constrain
     html += '<div style="font-size:9px;color:#888;text-align:center;margin-bottom:4px">select the position to constrain:</div>';
     html += '<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap">';
     for (let i = 0; i < constraintPatternA.length; i++) {
@@ -1043,7 +1265,6 @@ function renderConstraintArea() {
     html += '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
 
   } else if (constraintStep === 2) {
-    // Show pattern with selected position highlighted, pick operation
     html += '<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin-bottom:6px">';
     for (let i = 0; i < constraintPatternA.length; i++) {
       const style = i === constraintPosA
@@ -1055,11 +1276,11 @@ function renderConstraintArea() {
     html += '<div style="font-size:9px;color:#888;text-align:center;margin-bottom:4px">paradigm operation:</div>';
     html += '<div style="display:flex;gap:4px;justify-content:center">';
     const ops = [
-      { op: 'subset', symbol: '⊆', label: '⊆ Subset (restricts to)', example: 'e.g., employees ⊆ humans — can only be employee if also human' },
-      { op: 'intersect', symbol: '∩', label: '∩ Intersection (must be in both)', example: 'e.g., managers ∩ engineers — must be both a manager and an engineer' },
-      { op: 'union', symbol: '∪', label: '∪ Union (can be in either)', example: 'e.g., staff = doctors ∪ nurses — can be either a doctor or a nurse' },
-      { op: 'exclude', symbol: '∖', label: '∖ Exclusion (must not be in)', example: 'e.g., volunteers ∖ employees — volunteers cannot also be employees' },
-      { op: 'equal', symbol: '=', label: '= Equality (must be same set)', example: 'e.g., citizens = voters — exact same set of people' },
+      { op: 'subset', symbol: '\u2286', label: '\u2286 Subset (restricts to)', example: 'e.g., employees \u2286 humans \u2014 can only be employee if also human' },
+      { op: 'intersect', symbol: '\u2229', label: '\u2229 Intersection (must be in both)', example: 'e.g., managers \u2229 engineers \u2014 must be both a manager and an engineer' },
+      { op: 'union', symbol: '\u222a', label: '\u222a Union (can be in either)', example: 'e.g., staff = doctors \u222a nurses \u2014 can be either a doctor or a nurse' },
+      { op: 'exclude', symbol: '\u2216', label: '\u2216 Exclusion (must not be in)', example: 'e.g., volunteers \u2216 employees \u2014 volunteers cannot also be employees' },
+      { op: 'equal', symbol: '=', label: '= Equality (must be same set)', example: 'e.g., citizens = voters \u2014 exact same set of people' },
     ];
     for (const o of ops) {
       html += '<button onclick="selectConstraintOp(\'' + o.op + '\')" style="background:#4a4a8a;color:#fff;border:none;padding:3px 8px;font-size:10px;border-radius:3px;cursor:pointer" title="' + o.label + '\n' + o.example + '">' + o.symbol + '</button>';
@@ -1068,7 +1289,6 @@ function renderConstraintArea() {
     html += '<div style="text-align:center;margin-top:4px"><button onclick="cancelConstraint()" style="background:#8a4a4a;color:#fff;border:none;padding:2px 8px;font-size:9px;border-radius:3px;cursor:pointer">cancel</button></div>';
 
   } else if (constraintStep === 3) {
-    // Show A pattern + op, build B pattern below
     html += '<div style="display:flex;gap:3px;justify-content:center;flex-wrap:wrap;margin-bottom:2px">';
     for (let i = 0; i < constraintPatternA.length; i++) {
       const style = i === constraintPosA ? 'background:#d0e0ff;border:1px solid #58f;font-weight:bold' : 'background:#f5f5f5;border:1px solid #ddd;color:#888';
@@ -1077,8 +1297,6 @@ function renderConstraintArea() {
     html += '</div>';
     html += '<div style="font-size:12px;text-align:center;color:#4a4a8a;font-weight:bold;margin:2px 0">' + constraintOp + '</div>';
 
-    // Require chain builder
-    const display = document.getElementById('requireChainDisplay');
     if (requireChain.length === 0) {
       html += '<div id="requireChainDisplay" class="chain-display" style="justify-content:center"><span class="plus" onclick="addToRequireChain(event)">+</span></div>';
     } else {
@@ -1105,20 +1323,23 @@ function renderConstraintArea() {
   area.innerHTML = html;
 }
 
+function renderRequireChain() {
+  renderConstraintArea();
+}
+
 function addToRequireChain(event) {
-  showAddPopup('require-right', event);
+  // Use the event target element for positioning
+  showAddPopup('require-right', event.target);
 }
 
 async function saveConstraint() {
   if (requireChain.length === 0 || constraintPosA < 0 || !constraintOp) return;
 
-  // Build pattern B from require chain
   const patternB = requireChain.map(u => {
     const n = allNodes.find(x => x.uri === u);
     return n ? n.resolved : '?';
   });
 
-  // Find position of ? in pattern B
   const positionB = patternB.indexOf('?');
   if (positionB < 0) {
     alert('The second pattern must contain ? at the variable position');
@@ -1136,9 +1357,9 @@ async function saveConstraint() {
     }),
   });
 
-  // Ingest the require chain into the lattice
   if (requireChain.length >= 2) {
     await fetch('/api/ingest-uris', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({uris: requireChain}) });
+    resolveCache = {};
     await refreshAll();
   }
 
@@ -1159,7 +1380,7 @@ async function refreshConstraints() {
     list.innerHTML = '<span style="color:#999">None</span>';
     return;
   }
-  const opNames = { 'subset': '⊆ restricts to', 'intersect': '∩ intersects', 'union': '∪ unions', 'exclude': '∖ excludes', 'equal': '= equals' };
+  const opNames = { 'subset': '\u2286 restricts to', 'intersect': '\u2229 intersects', 'union': '\u222a unions', 'exclude': '\u2216 excludes', 'equal': '= equals' };
   list.innerHTML = data.constraints.map(c =>
     '<div style="padding:3px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">' +
       '<div style="font-size:9px">' +

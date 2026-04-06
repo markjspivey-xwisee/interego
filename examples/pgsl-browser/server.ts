@@ -194,8 +194,26 @@ interface ParadigmConstraint {
 
 const constraintRegistry: ParadigmConstraint[] = [];
 
-// Compute a paradigm set: all atoms that appear at a given position
-// in chains matching a pattern (with ? at that position)
+// Resolve a node to its matchable value — works for both atoms and fragments.
+// Atoms return their value, fragments return their resolved text.
+// This allows paradigm matching at any level of the lattice.
+function nodeMatchValue(uri: IRI): string | null {
+  const node = pgsl.nodes.get(uri);
+  if (!node) return null;
+  if (node.kind === 'Atom') return String(node.value);
+  return pgslResolve(pgsl, uri);
+}
+
+// Compute a paradigm set: all nodes (atoms OR fragments) that appear at a
+// given position in chains matching a pattern (with ? at that position).
+//
+// This works at EVERY level of the lattice:
+//   - Inner paradigm: items in a chain are atoms → paradigm of atoms
+//   - Outer paradigm: items in a higher chain are fragments (groups)
+//     → paradigm of groups
+//
+// Pattern values are matched by resolved text, so both atoms and fragments
+// can appear in patterns and paradigm sets.
 function computeParadigm(pattern: string[], position: number): Set<string> {
   const paradigm = new Set<string>();
 
@@ -208,17 +226,19 @@ function computeParadigm(pattern: string[], position: number): Set<string> {
     for (let i = 0; i < pattern.length; i++) {
       if (i === position) continue; // skip the variable position
       if (pattern[i] === '?') continue; // skip other variable positions
-      // Check if atom at this position matches the pattern value
-      const itemNode = pgsl.nodes.get(node.items[i]!);
-      if (!itemNode || itemNode.kind !== 'Atom') { match = false; break; }
-      if (String((itemNode as any).value) !== pattern[i]) { match = false; break; }
+
+      // Match by resolved value — works for atoms AND fragments
+      const itemValue = nodeMatchValue(node.items[i]! as IRI);
+      if (itemValue === null || itemValue !== pattern[i]) { match = false; break; }
     }
 
     if (match) {
-      // Add the atom at the variable position to the paradigm set
-      const itemNode = pgsl.nodes.get(node.items[position]!);
-      if (itemNode && itemNode.kind === 'Atom' && String((itemNode as any).value) !== '?') {
-        paradigm.add(node.items[position]!);
+      // Add the node at the variable position to the paradigm set
+      // Can be an atom OR a fragment (group) — both are valid paradigm members
+      const itemUri = node.items[position]!;
+      const itemValue = nodeMatchValue(itemUri as IRI);
+      if (itemValue !== null && itemValue !== '?') {
+        paradigm.add(itemUri);
       }
     }
   }
@@ -751,82 +771,260 @@ app.get('/api/node/*', (req, res) => {
 
   const resolved = pgslResolve(pgsl, nodeUri);
   const annotations = computeContainmentAnnotations(pgsl, nodeUri);
+  const nodeHash = nodeUri.split(':').pop() ?? nodeUri;
 
-  // Build links (HATEOAS)
-  const links: Record<string, any> = {
-    self: { href: `/node/${encodeURIComponent(nodeUri)}`, rel: 'self' },
+  // ── Identity ──────────────────────────────────────────
+  // Every node is uniquely addressed and fully dereferenceable
+
+  const self = {
+    uri: nodeUri,
+    href: `/node/${encodeURIComponent(nodeUri)}`,
+    resolved,
+    kind: node.kind,
+    level: node.level,
+    hash: nodeHash,
+    ...(node.kind === 'Atom' ? { value: node.value } : {}),
+    ...(node.kind === 'Fragment' ? { height: node.height } : {}),
+    provenance: node.provenance,
   };
 
-  // Items (for fragments)
+  // ── Structure ─────────────────────────────────────────
+  // Downward: what this node contains (items, constituents)
+
+  const structure: Record<string, any> = {};
+
   if (node.kind === 'Fragment' && node.items) {
-    links.items = node.items.map((itemUri, i) => ({
-      href: `/node/${encodeURIComponent(itemUri)}`,
-      rel: 'item',
-      position: i,
-      resolved: pgslResolve(pgsl, itemUri),
-      level: pgsl.nodes.get(itemUri)?.level ?? 0,
-    }));
+    structure.items = node.items.map((itemUri, i) => {
+      const itemNode = pgsl.nodes.get(itemUri);
+      return {
+        uri: itemUri,
+        href: `/node/${encodeURIComponent(itemUri)}`,
+        resolved: pgslResolve(pgsl, itemUri),
+        kind: itemNode?.kind ?? 'unknown',
+        level: itemNode?.level ?? 0,
+        position: i,
+      };
+    });
   }
 
-  // Constituents (for level >= 2)
   if (node.kind === 'Fragment' && node.left) {
-    links.leftConstituent = { href: `/node/${encodeURIComponent(node.left)}`, rel: 'left-constituent', resolved: pgslResolve(pgsl, node.left) };
+    structure.leftConstituent = { uri: node.left, href: `/node/${encodeURIComponent(node.left)}`, resolved: pgslResolve(pgsl, node.left) };
   }
   if (node.kind === 'Fragment' && node.right) {
-    links.rightConstituent = { href: `/node/${encodeURIComponent(node.right)}`, rel: 'right-constituent', resolved: pgslResolve(pgsl, node.right) };
+    structure.rightConstituent = { uri: node.right, href: `/node/${encodeURIComponent(node.right)}`, resolved: pgslResolve(pgsl, node.right) };
   }
 
-  // Containing fragments (what contains this node)
+  // ── Context ───────────────────────────────────────────
+  // Upward: what contains this node, and positional context
+
   const containers: any[] = [];
   for (const [fUri, fNode] of pgsl.nodes) {
-    if (fNode.kind === 'Fragment' && fNode.items.includes(nodeUri)) {
-      const pos = fNode.items.indexOf(nodeUri);
-      containers.push({
-        href: `/node/${encodeURIComponent(fUri)}`,
-        rel: 'container',
-        resolved: pgslResolve(pgsl, fUri as IRI),
-        level: fNode.level,
-        position: pos,
-      });
-    }
+    if (fNode.kind !== 'Fragment' || !fNode.items.includes(nodeUri)) continue;
+    const pos = fNode.items.indexOf(nodeUri);
+    containers.push({
+      uri: fUri,
+      href: `/node/${encodeURIComponent(fUri)}`,
+      resolved: pgslResolve(pgsl, fUri as IRI),
+      level: fNode.level,
+      position: pos,
+      totalItems: fNode.items.length,
+    });
   }
-  if (containers.length > 0) links.containers = containers;
 
-  // Neighbors (left/right in containing fragments)
-  const leftN: any[] = [];
-  const rightN: any[] = [];
+  // ── Paradigm: Source & Target Options ─────────────────
+  // For this node as a chain of 1: what can go before (source)
+  // and after (target) it in existing structures?
+  // These ARE the paradigm sets — computed from actual usage.
+
+  const sourceOptions: any[] = [];  // what appears before this node
+  const targetOptions: any[] = [];  // what appears after this node
+  const seenLeft = new Set<string>();
+  const seenRight = new Set<string>();
+
   for (const c of containers) {
-    const cNode = pgsl.nodes.get(decodeURIComponent(c.href.replace('/node/', '')) as IRI);
+    const cNode = pgsl.nodes.get(c.uri as IRI);
     if (!cNode || cNode.kind !== 'Fragment') continue;
     const pos = cNode.items.indexOf(nodeUri);
     if (pos > 0) {
       const lu = cNode.items[pos - 1]!;
-      if (!leftN.some(n => n.uri === lu)) leftN.push({ href: `/node/${encodeURIComponent(lu)}`, rel: 'left-neighbor', uri: lu, resolved: pgslResolve(pgsl, lu) });
+      if (!seenLeft.has(lu)) {
+        seenLeft.add(lu);
+        const lNode = pgsl.nodes.get(lu);
+        sourceOptions.push({
+          uri: lu,
+          href: `/node/${encodeURIComponent(lu)}`,
+          resolved: pgslResolve(pgsl, lu),
+          kind: lNode?.kind ?? 'unknown',
+          level: lNode?.level ?? 0,
+          context: { container: c.uri, containerResolved: c.resolved },
+        });
+      }
     }
     if (pos < cNode.items.length - 1) {
       const ru = cNode.items[pos + 1]!;
-      if (!rightN.some(n => n.uri === ru)) rightN.push({ href: `/node/${encodeURIComponent(ru)}`, rel: 'right-neighbor', uri: ru, resolved: pgslResolve(pgsl, ru) });
+      if (!seenRight.has(ru)) {
+        seenRight.add(ru);
+        const rNode = pgsl.nodes.get(ru);
+        targetOptions.push({
+          uri: ru,
+          href: `/node/${encodeURIComponent(ru)}`,
+          resolved: pgslResolve(pgsl, ru),
+          kind: rNode?.kind ?? 'unknown',
+          level: rNode?.level ?? 0,
+          context: { container: c.uri, containerResolved: c.resolved },
+        });
+      }
     }
   }
-  if (leftN.length > 0) links.leftNeighbors = leftN;
-  if (rightN.length > 0) links.rightNeighbors = rightN;
 
-  // Controls (available operations)
-  const controls: any[] = [
-    { rel: 'ingest', method: 'POST', href: '/api/ingest', description: 'Ingest new content' },
-  ];
-  if (node.kind === 'Atom') {
-    controls.push({ rel: 'find-containing', method: 'GET', href: `/api/node/${encodeURIComponent(nodeUri)}`, description: 'Find all fragments containing this atom' });
+  // ── Constraints ───────────────────────────────────────
+  // Active paradigm constraints that affect this node's position
+
+  const activeConstraints: any[] = [];
+  const nodeValue = node.kind === 'Atom' ? String(node.value) : null;
+
+  for (const c of constraintRegistry) {
+    // Check if this node appears in pattern A or B
+    const inA = nodeValue && c.patternA.includes(nodeValue);
+    const inB = nodeValue && c.patternB.includes(nodeValue);
+    if (inA || inB) {
+      const pA = computeParadigm(c.patternA, c.positionA);
+      const pB = c.sparql ? computeParadigmFromSparql(c.sparql) : computeParadigm(c.patternB, c.positionB);
+      const result = applyParadigmOp(c.op, pA, pB);
+      activeConstraints.push({
+        id: c.id,
+        op: c.op,
+        opSymbol: OP_SYMBOLS[c.op],
+        patternA: c.patternA,
+        positionA: c.positionA,
+        patternB: c.patternB,
+        positionB: c.positionB,
+        validCandidates: [...result].map(u => ({
+          uri: u,
+          href: `/node/${encodeURIComponent(u)}`,
+          resolved: pgslResolve(pgsl, u as IRI),
+        })),
+        paradigmASize: pA.size,
+        paradigmBSize: pB.size,
+        resultSize: result.size,
+      });
+    }
   }
 
+  // ── Controls (Affordances) ────────────────────────────
+  // What actions can be performed FROM this node.
+  // Each control is a fully-specified hypermedia form.
+
+  const controls: any[] = [];
+
+  // Add source: extend a chain with this node, adding something before it
+  controls.push({
+    rel: 'add-source',
+    title: 'Add before this node in a chain',
+    method: 'POST',
+    href: '/api/ingest-uris',
+    fields: [
+      { name: 'uris', type: 'array', description: 'Array of URIs: [newSourceUri, thisNodeUri]', template: ['{{sourceUri}}', nodeUri] },
+    ],
+    sourceOptions: sourceOptions.map(o => ({ uri: o.uri, href: o.href, resolved: o.resolved })),
+  });
+
+  // Add target: extend a chain with this node, adding something after it
+  controls.push({
+    rel: 'add-target',
+    title: 'Add after this node in a chain',
+    method: 'POST',
+    href: '/api/ingest-uris',
+    fields: [
+      { name: 'uris', type: 'array', description: 'Array of URIs: [thisNodeUri, newTargetUri]', template: [nodeUri, '{{targetUri}}'] },
+    ],
+    targetOptions: targetOptions.map(o => ({ uri: o.uri, href: o.href, resolved: o.resolved })),
+  });
+
+  // Create new atom: ingest a new value to use as source or target
+  controls.push({
+    rel: 'create-atom',
+    title: 'Create a new atom to use in chains',
+    method: 'POST',
+    href: '/api/ingest',
+    fields: [
+      { name: 'content', type: 'string', description: 'Value for the new atom' },
+      { name: 'granularity', type: 'string', value: 'word' },
+    ],
+  });
+
+  // Constrain paradigm: create a constraint involving this node's position
+  if (containers.length > 0) {
+    controls.push({
+      rel: 'constrain-paradigm',
+      title: 'Create a paradigm constraint at this position',
+      method: 'POST',
+      href: '/api/constraints',
+      fields: [
+        { name: 'patternA', type: 'array', description: 'Pattern with ? at variable position' },
+        { name: 'positionA', type: 'number', description: 'Index of ? in patternA' },
+        { name: 'patternB', type: 'array', description: 'Second pattern with ? at variable position' },
+        { name: 'positionB', type: 'number', description: 'Index of ? in patternB' },
+        { name: 'op', type: 'string', enum: ['subset', 'intersect', 'union', 'exclude', 'equal'] },
+      ],
+    });
+  }
+
+  // SPARQL: query the materialized triples
+  controls.push({
+    rel: 'sparql',
+    title: 'Query this node via SPARQL',
+    method: 'POST',
+    href: '/api/sparql',
+    fields: [
+      { name: 'query', type: 'string', description: 'SPARQL SELECT or ASK query' },
+    ],
+  });
+
+  // Wrap as group: if this is an atom, wrap with other atoms into a fragment
+  if (node.kind === 'Atom') {
+    controls.push({
+      rel: 'wrap-group',
+      title: 'Wrap this atom with others into a structured group',
+      method: 'POST',
+      href: '/api/ingest-uris',
+      fields: [
+        { name: 'uris', type: 'array', description: 'URIs to compose as a fragment (this atom + others)' },
+      ],
+    });
+  }
+
+  // Navigate to chain view: see this node in chain context
+  controls.push({
+    rel: 'chain-view',
+    title: 'View this node in chain context with inner/outer neighbors',
+    method: 'POST',
+    href: '/api/chain',
+    fields: [
+      { name: 'uris', type: 'array', value: [nodeUri] },
+    ],
+  });
+
+  // ── Response ──────────────────────────────────────────
+
   res.json({
-    uri: nodeUri,
-    resolved,
-    kind: node.kind,
-    level: node.level,
-    _links: links,
+    ...self,
+    _structure: structure,
+    _context: {
+      containers,
+      annotations: annotations.map(a => ({ ...a, parentResolved: pgslResolve(pgsl, a.parentUri) })),
+    },
+    _paradigm: {
+      sourceOptions,
+      targetOptions,
+      constraints: activeConstraints,
+    },
     _controls: controls,
-    annotations: annotations.map(a => ({ ...a, parentResolved: pgslResolve(pgsl, a.parentUri) })),
+    _links: {
+      self: { href: `/node/${encodeURIComponent(nodeUri)}`, rel: 'self' },
+      ...(containers.length > 0 ? { up: containers.map(c => ({ href: c.href, rel: 'container', resolved: c.resolved })) } : {}),
+      ...(structure.items ? { down: structure.items.map((i: any) => ({ href: i.href, rel: 'item', resolved: i.resolved })) } : {}),
+    },
   });
 });
 
@@ -914,6 +1112,89 @@ app.post('/api/chain', (req, res) => {
     }
   }
 
+  // ── Outer paradigm patterns ──────────────────────────
+  // Build the pattern for the outer level: the chain-as-fragment sits
+  // at some position in a higher-level chain. The pattern uses resolved
+  // values so fragments (groups) can participate in constraints.
+  const outerParadigm: Record<string, any> = {};
+  if (chainFragUri) {
+    const chainResolved = pgslResolve(pgsl, chainFragUri);
+    // For each container, build the pattern with ? at the chain's position
+    for (const [fUri, fNode] of pgsl.nodes) {
+      if (fNode.kind !== 'Fragment') continue;
+      const pos = fNode.items.indexOf(chainFragUri);
+      if (pos < 0) continue;
+
+      // Build pattern: resolved values at each position, ? at chain position
+      const outerPattern = fNode.items.map((itemUri, i) => {
+        if (i === pos) return '?';
+        return nodeMatchValue(itemUri as IRI) ?? '?';
+      });
+
+      if (!outerParadigm.leftPattern && pos > 0) {
+        // Left outer paradigm: pattern with ? at pos-1
+        const leftPattern = fNode.items.map((itemUri, i) => {
+          if (i === pos - 1) return '?';
+          return nodeMatchValue(itemUri as IRI) ?? '?';
+        });
+        outerParadigm.leftPattern = leftPattern;
+        outerParadigm.leftPosition = pos - 1;
+      }
+      if (!outerParadigm.rightPattern && pos < fNode.items.length - 1) {
+        // Right outer paradigm: pattern with ? at pos+1
+        const rightPattern = fNode.items.map((itemUri, i) => {
+          if (i === pos + 1) return '?';
+          return nodeMatchValue(itemUri as IRI) ?? '?';
+        });
+        outerParadigm.rightPattern = rightPattern;
+        outerParadigm.rightPosition = pos + 1;
+      }
+      if (!outerParadigm.selfPattern) {
+        outerParadigm.selfPattern = outerPattern;
+        outerParadigm.selfPosition = pos;
+      }
+    }
+  }
+
+  // ── Controls for chain-level operations ─────────────
+  const chainControls: any[] = [];
+
+  // Constrain outer left paradigm
+  if (outerParadigm.leftPattern) {
+    chainControls.push({
+      rel: 'constrain-outer-source',
+      title: 'Constrain what can appear before this group',
+      method: 'POST',
+      href: '/api/constraints',
+      pattern: outerParadigm.leftPattern,
+      position: outerParadigm.leftPosition,
+    });
+  }
+
+  // Constrain outer right paradigm
+  if (outerParadigm.rightPattern) {
+    chainControls.push({
+      rel: 'constrain-outer-target',
+      title: 'Constrain what can appear after this group',
+      method: 'POST',
+      href: '/api/constraints',
+      pattern: outerParadigm.rightPattern,
+      position: outerParadigm.rightPosition,
+    });
+  }
+
+  // Constrain what can appear at this group's position (outer self paradigm)
+  if (outerParadigm.selfPattern) {
+    chainControls.push({
+      rel: 'constrain-outer-self',
+      title: 'Constrain what groups can appear at this position',
+      method: 'POST',
+      href: '/api/constraints',
+      pattern: outerParadigm.selfPattern,
+      position: outerParadigm.selfPosition,
+    });
+  }
+
   res.json({
     chain: items,
     chainFragment: chainFragUri ? { uri: chainFragUri, href: `/node/${encodeURIComponent(chainFragUri)}`, resolved: pgslResolve(pgsl, chainFragUri) } : null,
@@ -922,6 +1203,8 @@ app.post('/api/chain', (req, res) => {
       innerLeft, innerRight,
       outerLeft, outerRight,
     },
+    _outerParadigm: outerParadigm,
+    _controls: chainControls,
   });
 });
 
@@ -1379,29 +1662,56 @@ app.get('/api/shacl', (_req, res) => {
 });
 
 // ── Observatory API: Coherence ──
-import { verifyCoherence, computeCoverage } from '@foxxi/context-graphs';
+import {
+  verifyCoherence,
+  computeCoverage,
+  getCertificates,
+  extractObservations,
+  computeDecisionAffordances,
+  selectStrategy,
+  decideFromObservations,
+} from '@foxxi/context-graphs';
 
 app.post('/api/coherence/check', (req, res) => {
   const { agents } = req.body as { agents?: string[] };
 
-  // Use pod names as agent identifiers
-  const agentNames = agents ?? [...podRegistry.keys()].map(url => {
-    const match = url.match(/\/([^/]+)\/?$/);
-    return match ? match[1]! : url;
-  }).filter(n => n.length > 0);
+  // First check if we already have certificates from phase 7 or prior checks
+  const existingCerts = getCertificates();
+
+  // Determine agent names: prefer explicit, then certificates, then pods
+  let agentNames: string[];
+  if (agents && agents.length >= 2) {
+    agentNames = agents;
+  } else if (existingCerts.length > 0) {
+    // Use agents from existing certificates
+    const fromCerts = new Set<string>();
+    for (const c of existingCerts) { fromCerts.add(c.agentA); fromCerts.add(c.agentB); }
+    agentNames = [...fromCerts];
+  } else {
+    // Fall back to pod names
+    agentNames = [...podRegistry.keys()].map(url => {
+      const match = url.match(/\/([^/]+)\/?$/);
+      return match ? match[1]! : url;
+    }).filter(n => n.length > 0);
+  }
 
   if (agentNames.length < 2) {
-    res.json({ error: 'Need at least 2 agents', agents: agentNames });
+    res.json({ error: 'Need at least 2 agents. Run the TLA demo first, or add pods.', agents: agentNames });
     return;
   }
 
-  // For each pair, verify coherence using the shared PGSL lattice
-  // (In a full system, each agent would have its own lattice on its pod)
-  const certificates = [];
-  for (let i = 0; i < agentNames.length; i++) {
-    for (let j = i + 1; j < agentNames.length; j++) {
-      const cert = verifyCoherence(pgsl, pgsl, agentNames[i]!, agentNames[j]!, 'federation');
-      certificates.push(cert);
+  // Use existing certificates if available, otherwise run fresh checks
+  let certificates: typeof existingCerts;
+  if (existingCerts.length > 0) {
+    certificates = existingCerts;
+  } else {
+    // Run fresh coherence against the shared lattice
+    certificates = [];
+    for (let i = 0; i < agentNames.length; i++) {
+      for (let j = i + 1; j < agentNames.length; j++) {
+        const cert = verifyCoherence(pgsl, pgsl, agentNames[i]!, agentNames[j]!, 'federation');
+        certificates.push(cert);
+      }
     }
   }
 
@@ -1418,8 +1728,80 @@ app.post('/api/coherence/check', (req, res) => {
       sharedPatterns: c.sharedPatterns.length,
       obstruction: c.obstruction,
       sharedStructure: c.sharedStructure,
+      semanticProfile: c.semanticProfile.slice(0, 10).map(p => ({
+        atom: p.atom,
+        usagesA: p.usagesA,
+        usagesB: p.usagesB,
+        sharedUsages: p.sharedUsages,
+        overlap: p.overlap,
+      })),
     })),
   });
+});
+
+// ── Observatory API: Decisions ──
+app.post('/api/decisions', (_req, res) => {
+  // Get coherence certificates
+  const certificates = getCertificates();
+
+  // For each agent identity that appears in the lattice, run the decision functor
+  // Find agents by looking for atoms that appear as sources in coherence certificates,
+  // or by checking the demo wallets
+  const agentNames: string[] = [];
+
+  // Extract agent identifiers from coherence certificates
+  for (const cert of certificates) {
+    if (!agentNames.includes(cert.agentA)) agentNames.push(cert.agentA);
+    if (!agentNames.includes(cert.agentB)) agentNames.push(cert.agentB);
+  }
+
+  // If no certificates, try to infer agents from the lattice activity
+  if (agentNames.length === 0) {
+    // Check for known agent atoms
+    for (const [value] of pgsl.atoms) {
+      if (value === 'LRS' || value === 'Competency' || value === 'Credential' ||
+          value === 'ER' || value === 'Lab' || value === 'Pharmacy' ||
+          value === 'scanner' || value === 'analyst' || value === 'lead') {
+        agentNames.push(value);
+      }
+    }
+  }
+
+  if (agentNames.length === 0) {
+    res.json({ error: 'No agents found. Run the TLA demo or coherence checks first.', agents: [] });
+    return;
+  }
+
+  const results = agentNames.map(agent => {
+    const obs = extractObservations(pgsl, agent, certificates);
+    const affordances = computeDecisionAffordances(pgsl, obs);
+    const strategy = selectStrategy(obs, affordances);
+    const decision = decideFromObservations(pgsl, agent, certificates);
+
+    return {
+      agent,
+      strategy: decision.strategy,
+      observations: {
+        atomCount: obs.atoms.length,
+        patternCount: obs.patterns.length,
+        coherence: [...obs.coherenceWith.entries()].map(([a, o]) => ({
+          agent: a,
+          overlap: (o * 100).toFixed(0),
+        })),
+      },
+      affordanceCount: affordances.length,
+      coverage: (decision.coverage * 100).toFixed(0),
+      decisions: decision.decisions.slice(0, 5).map(d => ({
+        type: d.affordance.type,
+        description: d.affordance.description,
+        confidence: d.confidence,
+        justification: d.justification,
+      })),
+      ungrounded: decision.ungroundedObservations.slice(0, 5),
+    };
+  });
+
+  res.json({ agents: results });
 });
 
 // ── Observatory API: Activity Log ──
@@ -1490,7 +1872,7 @@ interface DemoState {
 }
 let demoState: DemoState | null = null;
 let demoPhase = 0;
-const PHASE_NAMES = ['', 'Setup', 'xAPI Ingestion', 'Competency Assessment', 'Credential Issuance', 'Learner Discovery', 'Verification'];
+const PHASE_NAMES = ['', 'Setup', 'xAPI Ingestion', 'Competency Assessment', 'Credential Issuance', 'Learner Discovery', 'Verification', 'Coherence & Decisions'];
 
 app.post('/api/demo/run', async (_req, res) => {
   demoPhase++;
@@ -1541,18 +1923,21 @@ app.post('/api/demo/run', async (_req, res) => {
         const info = LEARNER_INFO[learner]!;
         logActivity('LRS', 'ingest', `Parsing ${stmts.length} xAPI statements for ${info.name}`);
 
-        // Ingest each statement into PGSL using xAPI profile
+        // Ingest each statement into PGSL using xAPI profile (transformMulti)
+        // Atoms are short meaningful IDs: chen, completed, ils-approach-rwy-28L
+        // Global IRIs connected via identity chains, display names via name chains
         for (const s of stmts) {
           const xapiJson = {
-            actor: { name: info.name },
+            actor: { account: { homePage: 'https://learner.airforce.mil', name: learner }, name: info.name },
             verb: { id: `http://adlnet.gov/expapi/verbs/${s.verb}`, display: { 'en-US': s.verb } },
             object: { id: `urn:activity:${s.activity}`, definition: { name: { 'en-US': s.activityName } } },
             result: { score: { raw: s.score, max: 100 }, success: s.success, duration: s.duration },
             timestamp: s.timestamp,
+            context: { platform: 'T-38C' },
           };
-          const structured = xapiProfile.transform(xapiJson);
-          embedInPGSL(pgsl, structured, undefined, 'structured');
-          logActivity('LRS', 'pgsl', `xapi_ingest: ${structured}`);
+          ingestWithProfile(pgsl, 'xapi', xapiJson);
+          const chains = xapiProfile.transformMulti!(xapiJson);
+          logActivity('LRS', 'pgsl', `xapi_ingest: ${chains[0]} (+${chains.length - 1} identity/name/result chains)`);
         }
 
         // Classify with affordance engine
@@ -1851,7 +2236,98 @@ SELECT (COUNT(DISTINCT ?atom) AS ?sharedAtoms) WHERE { ?atom a pgsl:Atom . }`;
       logActivity('Verifier', 'summary', `Final PGSL: ${finalStats.atoms} atoms, ${finalStats.fragments} fragments across ${Object.keys(demoState.signatures).length} signed descriptors`);
 
       podRegistry.clear();
-      res.json({ phase, status: 'Full trust chain verified across cohort', next: 'Demo complete — click Reset to restart' });
+      res.json({ phase, status: 'Full trust chain verified across cohort', next: 'Coherence & Decisions' });
+
+    } else if (phase === 7) {
+      // ════════════════════════════════════════════════════════════
+      //  PHASE 7: Coherence & Decisions — Full stack verification
+      // ════════════════════════════════════════════════════════════
+      logActivity('System', 'phase', 'PHASE 7: Coherence & Decisions — Running full stack verification');
+
+      // Run coherence between the 3 TLA agents
+      const pgslLRS = createPGSL({ wasAttributedTo: 'did:web:lrs.training.mil' as IRI, generatedAtTime: new Date().toISOString() });
+      const pgslComp = createPGSL({ wasAttributedTo: 'did:web:competency.training.mil' as IRI, generatedAtTime: new Date().toISOString() });
+      const pgslCred = createPGSL({ wasAttributedTo: 'did:web:credential.training.mil' as IRI, generatedAtTime: new Date().toISOString() });
+
+      // Ingest relevant content into each agent's lattice using short atom IDs
+      // LRS has xAPI statements — use the xAPI profile (transformMulti)
+      for (const learner of ['chen', 'park', 'ortiz']) {
+        const stmts = XAPI_DATA[learner]!;
+        const info = LEARNER_INFO[learner]!;
+        for (const s of stmts) {
+          const xapiJson = {
+            actor: { account: { homePage: 'https://learner.airforce.mil', name: learner }, name: info.name },
+            verb: { id: `http://adlnet.gov/expapi/verbs/${s.verb}`, display: { 'en-US': s.verb } },
+            object: { id: `urn:activity:${s.activity}`, definition: { name: { 'en-US': s.activityName } } },
+            result: { score: { raw: s.score, max: 100 }, success: s.success, duration: s.duration },
+          };
+          ingestWithProfile(pgslLRS, 'xapi', xapiJson);
+        }
+      }
+
+      // Competency has assessments — short atoms with identity chains
+      for (const learner of ['chen', 'park', 'ortiz']) {
+        embedInPGSL(pgslComp, `${learner} instrument-landing Proficient`, undefined, 'word');
+        embedInPGSL(pgslComp, `${learner} vor-navigation Proficient`, undefined, 'word');
+        embedInPGSL(pgslComp, `${learner} gps-navigation Advanced`, undefined, 'word');
+        embedInPGSL(pgslComp, `instrument-landing identity urn:competency:instrument-landing`, undefined, 'word');
+        embedInPGSL(pgslComp, `vor-navigation identity urn:competency:vor-navigation`, undefined, 'word');
+        embedInPGSL(pgslComp, `gps-navigation identity urn:competency:gps-navigation`, undefined, 'word');
+      }
+
+      // Credential has issued creds — short atoms with identity chains
+      for (const learner of ['chen', 'park', 'ortiz']) {
+        embedInPGSL(pgslCred, `credential-issuer ${learner} usaf-instrument-rating Proficient`, undefined, 'word');
+        embedInPGSL(pgslCred, `credential-issuer identity did:web:credential.training.mil`, undefined, 'word');
+        embedInPGSL(pgslCred, `usaf-instrument-rating identity urn:credential:usaf-instrument-rating`, undefined, 'word');
+      }
+
+      // Run coherence
+      const certLC = verifyCoherence(pgslLRS, pgslComp, 'LRS', 'Competency', 'training-cohort');
+      const certLCr = verifyCoherence(pgslLRS, pgslCred, 'LRS', 'Credential', 'training-cohort');
+      const certCCr = verifyCoherence(pgslComp, pgslCred, 'Competency', 'Credential', 'training-cohort');
+
+      logActivity('Coherence', 'verify', `LRS ↔ Competency: ${certLC.status} (${(certLC.semanticOverlap * 100).toFixed(0)}% overlap)`);
+      logActivity('Coherence', 'verify', `LRS ↔ Credential: ${certLCr.status} (${(certLCr.semanticOverlap * 100).toFixed(0)}% overlap)`);
+      logActivity('Coherence', 'verify', `Competency ↔ Credential: ${certCCr.status} (${(certCCr.semanticOverlap * 100).toFixed(0)}% overlap)`);
+
+      const coverage = computeCoverage(['LRS', 'Competency', 'Credential']);
+      logActivity('Coherence', 'coverage', `${(coverage.coverage * 100).toFixed(0)}% coverage: ${coverage.verified} verified, ${coverage.divergent} divergent, ${coverage.unexamined} unexamined`);
+
+      // Run decision functor
+      const certs = getCertificates();
+      const lrsObs = extractObservations(pgslLRS, 'LRS', certs);
+      const compObs = extractObservations(pgslComp, 'Competency', certs);
+      const credObs = extractObservations(pgslCred, 'Credential', certs);
+
+      const lrsDecision = decideFromObservations(pgslLRS, 'LRS', certs);
+      const compDecision = decideFromObservations(pgslComp, 'Competency', certs);
+      const credDecision = decideFromObservations(pgslCred, 'Credential', certs);
+
+      logActivity('Decision', 'strategy', `LRS strategy: ${lrsDecision.strategy} (${lrsDecision.decisions.length} decisions, ${(lrsDecision.coverage * 100).toFixed(0)}% coverage)`);
+      logActivity('Decision', 'strategy', `Competency strategy: ${compDecision.strategy} (${compDecision.decisions.length} decisions, ${(compDecision.coverage * 100).toFixed(0)}% coverage)`);
+      logActivity('Decision', 'strategy', `Credential strategy: ${credDecision.strategy} (${credDecision.decisions.length} decisions, ${(credDecision.coverage * 100).toFixed(0)}% coverage)`);
+
+      // Log top decisions
+      for (const [name, dec] of [['LRS', lrsDecision], ['Competency', compDecision], ['Credential', credDecision]] as const) {
+        if (dec.decisions.length > 0) {
+          const top = dec.decisions[0]!;
+          logActivity('Decision', 'action', `${name} top: ${top.affordance.type} — ${top.affordance.description} (${(top.confidence * 100).toFixed(0)}% confidence)`);
+        }
+      }
+
+      // Push coherence results to the browser lattice
+      embedInPGSL(pgsl, `coherence LRS Competency ${certLC.status} overlap ${(certLC.semanticOverlap * 100).toFixed(0)}%`);
+      embedInPGSL(pgsl, `coherence LRS Credential ${certLCr.status} overlap ${(certLCr.semanticOverlap * 100).toFixed(0)}%`);
+      embedInPGSL(pgsl, `coherence Competency Credential ${certCCr.status} overlap ${(certCCr.semanticOverlap * 100).toFixed(0)}%`);
+      embedInPGSL(pgsl, `decision LRS strategy ${lrsDecision.strategy}`);
+      embedInPGSL(pgsl, `decision Competency strategy ${compDecision.strategy}`);
+      embedInPGSL(pgsl, `decision Credential strategy ${credDecision.strategy}`);
+
+      const finalStats = latticeStats(pgsl);
+      logActivity('System', 'summary', `Final PGSL: ${finalStats.atoms} atoms, ${finalStats.fragments} fragments — full stack complete`);
+
+      res.json({ phase, status: 'Coherence verified, decisions computed — full stack complete', next: 'Demo complete — click Reset to restart' });
 
     } else {
       // Reset

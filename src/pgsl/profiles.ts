@@ -43,6 +43,13 @@ export interface IngestionProfile {
    * that embedInPGSL with 'structured' granularity will recursively ingest.
    */
   transform(input: unknown): string;
+  /**
+   * Optional: return multiple chains for richer structure.
+   * Each chain is a space-separated sequence of atoms ingested at 'word' granularity.
+   * Preferred over transform() when multiple independent chains are needed
+   * (e.g., identity bindings, name chains, result properties).
+   */
+  transformMulti?(input: unknown): string[];
 }
 
 // ── Profile Registry ───────────────────────────────────────
@@ -74,6 +81,16 @@ export function ingestWithProfile(
   const profile = profileRegistry.get(profileName);
   if (!profile) throw new Error(`Unknown ingestion profile: ${profileName}`);
 
+  // Prefer transformMulti when available — produces multiple independent chains
+  if (profile.transformMulti) {
+    const chains = profile.transformMulti(input);
+    let topUri: IRI | undefined;
+    for (const chain of chains) {
+      topUri = embedInPGSL(pgsl, chain, undefined, 'word');
+    }
+    return topUri!;
+  }
+
   const structured = profile.transform(input);
   return embedInPGSL(pgsl, structured, undefined, 'structured');
 }
@@ -81,81 +98,168 @@ export function ingestWithProfile(
 // ── xAPI Profile ───────────────────────────────────────────
 
 export interface XapiStatement {
-  actor: { name?: string; mbox?: string; account?: { name: string; homePage: string } };
+  actor: { name?: string; mbox?: string; openid?: string; account?: { name: string; homePage: string } };
   verb: { id: string; display?: Record<string, string> };
-  object: { id: string; definition?: { name?: Record<string, string>; type?: string } };
-  result?: { score?: { scaled?: number; raw?: number; max?: number }; success?: boolean; duration?: string; completion?: boolean };
+  object: { id: string; objectType?: string; definition?: { name?: Record<string, string>; type?: string } };
+  result?: { score?: { scaled?: number; raw?: number; min?: number; max?: number }; success?: boolean; duration?: string; completion?: boolean; response?: string };
   timestamp?: string;
   context?: { platform?: string; instructor?: { name?: string; mbox?: string }; registration?: string; extensions?: Record<string, unknown> };
 }
 
 /**
- * xAPI ingestion profile.
+ * xAPI ingestion profile — PGSL native architecture.
  *
- * Transforms an xAPI JSON statement into structured PGSL notation:
- *   ((actor name), (verb display), (object name), (score, success, duration))
+ * Atoms are SHORT, MEANINGFUL, LOCALLY UNIQUE identifiers:
+ *   - Actor = short name derived from IFI (e.g., `chen`)
+ *   - Verb = last segment of IRI (e.g., `completed`)
+ *   - Object = last segment of activity ID (e.g., `ils-approach-rwy-28L`)
  *
- * Each component becomes a nested fragment in the lattice:
- *   - Actor fragment: content-addressed by actor name
- *   - Verb atom: the verb display text (e.g., "completed")
- *   - Object fragment: content-addressed by activity name
- *   - Result fragment: score + success + duration
+ * Global URIs are connected via `identity` chains — not used as atom values.
+ * Display names are connected via `name` chains — not used as atom values.
+ * Results are property chains off the actor-object pair.
  *
- * Shared components across statements reuse the same content-addressed URIs.
- * Two learners who "completed" the same activity share both the verb atom
- * AND the object fragment — structural overlap at the right granularity.
+ * Produces multiple chains per statement:
+ *   (chen, completed, ils-approach-rwy-28L)          ← core statement
+ *   (chen, identity, did:web:learner.airforce.mil:chen.sarah)  ← IFI binding
+ *   (chen, name, Sarah)                               ← display name
+ *   (completed, identity, http://adlnet.gov/expapi/verbs/completed)  ← verb IRI
+ *   (ils-approach-rwy-28L, name, ILS Approach Rwy 28L)  ← activity display
+ *   (chen, ils-approach-rwy-28L, score, 92)           ← result property
+ *
+ * Content-addressing: same actor across statements = same atom.
+ * Same verb across actors = same atom. The atom `completed` is shared
+ * across all learners who completed anything.
  */
 const xapiProfile: IngestionProfile = {
   name: 'xapi',
-  description: 'xAPI (Experience API) statement: actor/verb/object/result structure',
+  description: 'xAPI statement: short atom IDs with identity/name/result chains',
 
+  // Legacy transform — kept for backward compatibility
   transform(input: unknown): string {
     const stmt = input as XapiStatement;
 
-    // Actor: name or mbox or account
-    const actorName = stmt.actor.name
-      ?? stmt.actor.mbox?.replace('mailto:', '')
-      ?? stmt.actor.account?.name
-      ?? 'unknown';
+    // Derive short IDs using the same logic as transformMulti
+    const actorId = deriveActorId(stmt);
+    const verbId = stmt.verb.id.split('/').pop() ?? 'unknown';
+    const objectId = stmt.object.id.split(/[/:]/).pop() ?? 'unknown';
 
-    // Verb: display text (prefer en-US) or extract from URI
-    const verbDisplay = stmt.verb.display?.['en-US']
-      ?? stmt.verb.display?.[Object.keys(stmt.verb.display)[0] ?? '']
-      ?? stmt.verb.id.split('/').pop()
-      ?? 'unknown';
+    const parts = [actorId, verbId, objectId];
 
-    // Object: activity name or ID
-    const objectName = stmt.object.definition?.name?.['en-US']
-      ?? stmt.object.definition?.name?.[Object.keys(stmt.object.definition?.name ?? {})[0] ?? '']
-      ?? stmt.object.id.split('/').pop()?.replace(/-/g, ' ')
-      ?? 'unknown';
-
-    // Result: score, success, duration (if present)
-    const resultParts: string[] = [];
     if (stmt.result) {
-      if (stmt.result.score?.raw !== undefined) resultParts.push(String(stmt.result.score.raw));
-      else if (stmt.result.score?.scaled !== undefined) resultParts.push(String(Math.round(stmt.result.score.scaled * 100)));
-      if (stmt.result.success !== undefined) resultParts.push(stmt.result.success ? 'passed' : 'failed');
-      if (stmt.result.duration) resultParts.push(stmt.result.duration);
+      const resultParts: string[] = [];
+      if (stmt.result.score?.raw !== undefined) resultParts.push(`score:${stmt.result.score.raw}`);
+      if (stmt.result.score?.max !== undefined) resultParts.push(`max:${stmt.result.score.max}`);
+      if (stmt.result.success !== undefined) resultParts.push(`success:${stmt.result.success}`);
+      if (stmt.result.duration) resultParts.push(`duration:${stmt.result.duration}`);
+      if (resultParts.length > 0) parts.push(`(${resultParts.join(',')})`);
     }
-
-    // Build structured notation
-    // Actor words become a nested fragment
-    const actorPart = `(${actorName.split(/\s+/).join(',')})`;
-    // Verb is a single atom
-    const verbPart = verbDisplay;
-    // Object words become a nested fragment
-    const objectPart = `(${objectName.split(/\s+/).join(',')})`;
-    // Result becomes a nested fragment (if present)
-    const resultPart = resultParts.length > 0 ? `(${resultParts.join(',')})` : '';
-
-    // Outer structure: (actor, verb, object[, result])
-    const parts = [actorPart, verbPart, objectPart];
-    if (resultPart) parts.push(resultPart);
 
     return `(${parts.join(',')})`;
   },
+
+  transformMulti(input: unknown): string[] {
+    const stmt = input as XapiStatement;
+    const chains: string[] = [];
+
+    // Derive short actor ID from IFI
+    const actorId = deriveActorId(stmt);
+
+    // Derive short verb from IRI
+    const verbId = stmt.verb.id.split('/').pop() ?? 'unknown';
+
+    // Derive short object ID from IRI
+    const objectId = stmt.object.id.split(/[/:]/).pop() ?? 'unknown';
+
+    // Core statement
+    chains.push(`${actorId} ${verbId} ${objectId}`);
+
+    // Identity bindings (only if IFI available)
+    if (stmt.actor.account) {
+      chains.push(`${actorId} identity ${stmt.actor.account.homePage}:${stmt.actor.account.name}`);
+    } else if (stmt.actor.mbox) {
+      chains.push(`${actorId} identity ${stmt.actor.mbox}`);
+    } else if (stmt.actor.openid) {
+      chains.push(`${actorId} identity ${stmt.actor.openid}`);
+    }
+
+    // Display names
+    if (stmt.actor.name) {
+      for (const part of stmt.actor.name.split(/\s+/)) {
+        chains.push(`${actorId} name ${part}`);
+      }
+    }
+
+    // Verb identity
+    chains.push(`${verbId} identity ${stmt.verb.id}`);
+
+    // Verb display
+    const verbDisplay = stmt.verb.display?.['en-US'];
+    if (verbDisplay && verbDisplay !== verbId) {
+      chains.push(`${verbId} display ${verbDisplay}`);
+    }
+
+    // Object identity
+    chains.push(`${objectId} identity ${stmt.object.id}`);
+
+    // Object display name
+    const objName = stmt.object.definition?.name?.['en-US'];
+    if (objName) {
+      chains.push(`${objectId} name ${objName}`);
+    }
+
+    // Result properties (as chains off actor-object pair)
+    if (stmt.result) {
+      if (stmt.result.score?.raw !== undefined) {
+        chains.push(`${actorId} ${objectId} score ${stmt.result.score.raw}`);
+      }
+      if (stmt.result.score?.max !== undefined) {
+        chains.push(`${actorId} ${objectId} max ${stmt.result.score.max}`);
+      }
+      if (stmt.result.score?.scaled !== undefined) {
+        chains.push(`${actorId} ${objectId} scaled ${stmt.result.score.scaled}`);
+      }
+      if (stmt.result.success !== undefined) {
+        chains.push(`${actorId} ${objectId} success ${stmt.result.success}`);
+      }
+      if (stmt.result.completion !== undefined) {
+        chains.push(`${actorId} ${objectId} completion ${stmt.result.completion}`);
+      }
+      if (stmt.result.duration) {
+        chains.push(`${actorId} ${objectId} duration ${stmt.result.duration}`);
+      }
+      if (stmt.result.response) {
+        chains.push(`${actorId} ${objectId} response ${stmt.result.response}`);
+      }
+    }
+
+    // Context
+    if (stmt.context?.platform) {
+      chains.push(`${actorId} ${objectId} platform ${stmt.context.platform}`);
+    }
+    if (stmt.context?.instructor) {
+      const instrId = stmt.context.instructor.mbox
+        ? stmt.context.instructor.mbox
+        : stmt.context.instructor.name ?? 'unknown';
+      chains.push(`${actorId} ${objectId} instructor ${instrId}`);
+    }
+    if (stmt.context?.registration) {
+      chains.push(`${actorId} ${objectId} registration ${stmt.context.registration}`);
+    }
+
+    return chains;
+  },
 };
+
+/** Derive a short, meaningful actor ID from an xAPI statement's IFI */
+function deriveActorId(stmt: XapiStatement): string {
+  if (stmt.actor.account) {
+    return stmt.actor.account.name;
+  } else if (stmt.actor.mbox) {
+    return stmt.actor.mbox.replace('mailto:', '').split('@')[0]!;
+  } else {
+    return (stmt.actor.name ?? 'unknown').toLowerCase().split(/\s+/).pop()!;
+  }
+}
 
 // ── LERS Profile ───────────────────────────────────────────
 

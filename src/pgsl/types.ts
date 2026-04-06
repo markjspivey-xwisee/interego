@@ -232,6 +232,28 @@ export interface PGSLInstance {
   readonly nodes: NodeRepository;
   /** Default provenance for new nodes minted by this instance. */
   readonly defaultProvenance: NodeProvenance;
+
+  // ── Lazy Lattice Construction (opt-in) ─────────────────────
+
+  /**
+   * When true, ingest() only builds levels 0–2 eagerly.
+   * Higher levels are constructed on-demand when queried.
+   */
+  readonly lazyMode?: boolean;
+
+  /**
+   * If set, ingest() stops building at this level.
+   * Fragments at maxLevel store their items but don't build higher.
+   */
+  readonly maxLevel?: number;
+
+  /**
+   * Deferred chains for lazy construction.
+   * Maps a chain key (content hash of the atom URI sequence)
+   * to the full ordered atom URI sequence. Higher-level fragments
+   * are built from these on demand.
+   */
+  readonly deferredChains?: Map<string, IRI[]>;
 }
 
 // ── Direction (for QueryNeighbors) ──────────────────────────

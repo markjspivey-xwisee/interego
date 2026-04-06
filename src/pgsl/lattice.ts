@@ -74,14 +74,110 @@ function fragmentKey(items: readonly IRI[]): string {
 
 /**
  * Create a new empty PGSL instance.
+ *
+ * @param provenance - Default provenance for new nodes
+ * @param options - Optional configuration for lazy construction and level capping
  */
-export function createPGSL(provenance: NodeProvenance): PGSLInstance {
+export function createPGSL(
+  provenance: NodeProvenance,
+  options?: { lazy?: boolean; maxLevel?: number },
+): PGSLInstance {
   return {
     atoms: new Map(),
     fragments: new Map(),
     nodes: new Map(),
     defaultProvenance: provenance,
+    lazyMode: options?.lazy,
+    maxLevel: options?.maxLevel,
+    deferredChains: (options?.lazy) ? new Map() : undefined,
   };
+}
+
+// ── Deferred Chain Helpers (Lazy Construction) ─────────────
+
+/**
+ * Compute a deterministic key for a deferred chain from its atom URIs.
+ */
+function deferredChainKey(atomUris: readonly IRI[]): string {
+  return contentHash(`deferred:${atomUris.join('|')}`);
+}
+
+/**
+ * Build the lattice for a deferred chain from level startLevel up to targetLevel.
+ * Constructs all intermediate levels needed.
+ *
+ * @returns The URIs at the highest built level.
+ */
+function buildDeferredLevels(
+  pgsl: PGSLInstance,
+  atomUris: IRI[],
+  _startLevel: number,
+  targetLevel: number,
+  provenance: NodeProvenance,
+): IRI[] {
+  // Rebuild from level-1 wrappers upward to targetLevel
+  let currentLevel: IRI[] = atomUris.map(uri => ensureLevel1(pgsl, uri, provenance));
+
+  const effectiveMax = pgsl.maxLevel != null
+    ? Math.min(targetLevel, pgsl.maxLevel)
+    : targetLevel;
+
+  for (let lvl = 1; lvl < effectiveMax; lvl++) {
+    if (currentLevel.length <= 1) break;
+    const nextLevel: IRI[] = [];
+    for (let i = 0; i < currentLevel.length - 1; i++) {
+      const pair = buildOverlappingPair(pgsl, currentLevel[i]!, currentLevel[i + 1]!, provenance);
+      if (pair) nextLevel.push(pair);
+    }
+    if (nextLevel.length === 0) break;
+    currentLevel = nextLevel;
+  }
+  return currentLevel;
+}
+
+/**
+ * Ensure a URI is fully built in the lattice.
+ *
+ * If the URI already exists in nodes, this is a no-op.
+ * If the URI can be derived from a deferred chain (lazy mode),
+ * the needed levels are built on demand.
+ */
+export function ensureBuilt(pgsl: PGSLInstance, uri: IRI): void {
+  // Already built — nothing to do
+  if (pgsl.nodes.has(uri)) return;
+
+  // No deferred chains — nothing we can do
+  if (!pgsl.deferredChains || pgsl.deferredChains.size === 0) return;
+
+  const prov = pgsl.defaultProvenance;
+
+  // Try each deferred chain: build the full lattice and check if uri appears
+  for (const [key, atomUris] of pgsl.deferredChains) {
+    // Build the full lattice for this chain (up to the top or maxLevel)
+    const topLevel = atomUris.length;
+    buildDeferredLevels(pgsl, atomUris, 2, topLevel, prov);
+
+    // If the node now exists, we found it; remove the chain since it's fully built
+    if (pgsl.nodes.has(uri)) {
+      (pgsl.deferredChains as Map<string, IRI[]>).delete(key);
+      return;
+    }
+  }
+}
+
+/**
+ * Ensure all deferred chains are fully materialized.
+ * Called internally before operations that scan all nodes.
+ */
+function materializeAllDeferred(pgsl: PGSLInstance): void {
+  if (!pgsl.deferredChains || pgsl.deferredChains.size === 0) return;
+
+  const prov = pgsl.defaultProvenance;
+  for (const [, atomUris] of pgsl.deferredChains) {
+    const topLevel = atomUris.length;
+    buildDeferredLevels(pgsl, atomUris, 2, topLevel, prov);
+  }
+  (pgsl.deferredChains as Map<string, IRI[]>).clear();
 }
 
 // ── MintAtom: η (Unit of the PGSL Monad) ───────────────────
@@ -298,8 +394,26 @@ export function ingest(
   // Step 2: Build level-1 wrappers
   let currentLevel: IRI[] = atomUris.map(uri => ensureLevel1(pgsl, uri, prov));
 
+  // Determine how many levels to build eagerly
+  // In lazy mode: only build up to level 2 (atoms + level-1 + level-2 pairs)
+  // With maxLevel: stop at maxLevel
+  // Default: build all levels
+  const eagerLimit = pgsl.lazyMode ? 2 : Infinity;
+  const capLimit = pgsl.maxLevel != null ? pgsl.maxLevel : Infinity;
+  const buildLimit = Math.min(eagerLimit, capLimit);
+
   // Step 3: Build up the lattice level by level
+  let levelsBuilt = 1; // level-1 wrappers already built
   while (currentLevel.length > 1) {
+    if (levelsBuilt >= buildLimit) {
+      // In lazy mode, store the atom sequence as a deferred chain
+      if (pgsl.lazyMode && pgsl.deferredChains && atomUris.length > buildLimit) {
+        const chainKey = deferredChainKey(atomUris);
+        (pgsl.deferredChains as Map<string, IRI[]>).set(chainKey, [...atomUris]);
+      }
+      break;
+    }
+
     const nextLevel: IRI[] = [];
     for (let i = 0; i < currentLevel.length - 1; i++) {
       const pair = buildOverlappingPair(pgsl, currentLevel[i]!, currentLevel[i + 1]!, prov);
@@ -314,6 +428,7 @@ export function ingest(
     }
 
     currentLevel = nextLevel;
+    levelsBuilt++;
   }
 
   // Step 4: Return the top fragment
@@ -335,6 +450,9 @@ export function resolve(
   pgsl: PGSLInstance,
   uri: IRI,
 ): string {
+  // Lazy mode: ensure the node is built before resolving
+  ensureBuilt(pgsl, uri);
+
   const node = pgsl.nodes.get(uri);
   if (!node) return `<unresolved:${uri}>`;
 
@@ -374,6 +492,9 @@ export function queryNeighbors(
   uri: IRI,
   direction: Direction = 'both',
 ): Set<IRI> {
+  // Lazy mode: materialize all deferred chains so we scan complete data
+  materializeAllDeferred(pgsl);
+
   const neighbors = new Set<IRI>();
 
   for (const node of pgsl.nodes.values()) {
@@ -410,6 +531,7 @@ export function latticeStats(pgsl: PGSLInstance): {
   totalNodes: number;
   maxLevel: number;
   levels: Record<number, number>;
+  deferredChains?: number;
 } {
   let atomCount = 0;
   let fragmentCount = 0;
@@ -428,13 +550,26 @@ export function latticeStats(pgsl: PGSLInstance): {
     }
   }
 
-  return {
+  const result: {
+    atoms: number;
+    fragments: number;
+    totalNodes: number;
+    maxLevel: number;
+    levels: Record<number, number>;
+    deferredChains?: number;
+  } = {
     atoms: atomCount,
     fragments: fragmentCount,
     totalNodes: pgsl.nodes.size,
     maxLevel: maxLvl,
     levels,
   };
+
+  if (pgsl.deferredChains && pgsl.deferredChains.size > 0) {
+    result.deferredChains = pgsl.deferredChains.size;
+  }
+
+  return result;
 }
 
 // ── Per-Node IPFS CID Computation ────────────────────────────
@@ -484,6 +619,9 @@ export function computeContainmentAnnotations(
   pgsl: PGSLInstance,
   childUri: IRI,
 ): ContainmentAnnotation[] {
+  // Lazy mode: materialize all deferred chains so we scan complete data
+  materializeAllDeferred(pgsl);
+
   const annotations: ContainmentAnnotation[] = [];
   const childNode = pgsl.nodes.get(childUri);
   if (!childNode) return annotations;

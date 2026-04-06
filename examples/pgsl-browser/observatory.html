@@ -133,6 +133,7 @@
   <div class="tab" onclick="switchTab('sparql')">SPARQL</div>
   <div class="tab" onclick="switchTab('shacl')">SHACL</div>
   <div class="tab" onclick="switchTab('coherence')">Coherence</div>
+  <div class="tab" onclick="switchTab('decisions')">Decisions</div>
   <div class="tab" onclick="switchTab('lattice')">PGSL Lattice</div>
 </div>
 
@@ -239,6 +240,15 @@ SELECT ?atom ?value WHERE {
     <div id="coherenceResult" style="margin-top:12px"></div>
   </div>
 
+  <div class="panel" id="panel-decisions">
+    <div class="card">
+      <h3>Decision Functor (OODA Loop)</h3>
+      <p>Observe → Orient → Decide → Act. The decision functor maps observation presheaves to action categories. Each agent extracts observations from its lattice, orients via coherence verification, selects a strategy (exploit/explore/delegate/abstain), and produces ranked affordances.</p>
+      <button onclick="runDecisions()" style="background:#238636;color:#fff;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-size:11px;margin-top:8px">Run Decision Functor</button>
+    </div>
+    <div id="decisionsResult" style="margin-top:12px"></div>
+  </div>
+
   <div class="panel" id="panel-lattice">
     <div class="card">
       <h3>PGSL Lattice Browser</h3>
@@ -249,6 +259,14 @@ SELECT ?atom ?value WHERE {
       <h3>Lattice Stats</h3>
       <div id="latticeStatsDetail"></div>
     </div>
+    <div class="card" style="margin-top:12px">
+      <h3>Node Explorer</h3>
+      <div style="margin-bottom:8px">
+        <input id="nodeExplorerInput" placeholder="Enter atom value or URI..." style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:4px 8px;font-size:11px;border-radius:3px;width:300px">
+        <button onclick="exploreNode()" style="background:#238636;color:#fff;border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:11px;margin-left:4px">Explore</button>
+      </div>
+      <div id="nodeExplorerResult"></div>
+    </div>
   </div>
 
 </div>
@@ -258,7 +276,7 @@ SELECT ?atom ?value WHERE {
   <div class="activity-header">
     <h3>TLA Demo</h3>
     <button class="demo-btn" id="demoBtn" onclick="runDemoStep()">1: Setup</button>
-    <span id="demoStatus" style="font-size:11px;color:#8b949e">6 phases: Setup → xAPI → Competency → Credentials → Discovery → Verify</span>
+    <span id="demoStatus" style="font-size:11px;color:#8b949e">7 phases: Setup → xAPI → Competency → Credentials → Discovery → Verify → Coherence & Decisions</span>
     <button class="demo-reset" onclick="resetDemo()">Reset</button>
     <span style="font-size:10px;color:#484f58;margin-left:auto" id="pgslStats"></span>
   </div>
@@ -483,7 +501,7 @@ async function renderLatticeStats() {
 
 // ── Demo Runner ──
 
-const PHASE_LABELS = ['1: Setup', '2: xAPI Ingest', '3: Competency', '4: Credentials', '5: Discovery', '6: Verify', 'Reset'];
+const PHASE_LABELS = ['1: Setup', '2: xAPI Ingest', '3: Competency', '4: Credentials', '5: Discovery', '6: Verify', '7: Coherence & Decisions', 'Reset'];
 let currentPhase = 0;
 
 async function runDemoStep() {
@@ -517,7 +535,7 @@ async function resetDemo() {
   await fetch('/api/demo/reset', { method: 'POST' });
   currentPhase = 0;
   document.getElementById('demoBtn').textContent = '1: Setup';
-  document.getElementById('demoStatus').textContent = '6 phases: Setup → xAPI → Competency → Credentials → Discovery → Verify';
+  document.getElementById('demoStatus').textContent = '7 phases: Setup → xAPI → Competency → Credentials → Discovery → Verify → Coherence & Decisions';
   document.getElementById('activityScroll').innerHTML = '';
   document.getElementById('pgslStats').textContent = '';
   lastActivityTime = '';
@@ -591,11 +609,170 @@ async function runCoherence() {
           html += '</ul>';
         }
       }
+      // Add semantic profile display
+      if (cert.semanticProfile && cert.semanticProfile.length > 0) {
+        html += '<div style="margin-top:8px;font-size:10px">';
+        html += '<div style="color:#8b949e;margin-bottom:4px">Per-atom usage analysis:</div>';
+        for (const p of cert.semanticProfile.slice(0, 8)) {
+          const barWidth = Math.max(2, p.overlap * 100);
+          html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">';
+          html += '<span style="min-width:80px;color:#c9d1d9">' + p.atom + '</span>';
+          html += '<div style="flex:1;height:8px;background:#21262d;border-radius:4px;overflow:hidden"><div style="width:' + barWidth + '%;height:100%;background:' + (p.overlap > 0.7 ? '#3fb950' : p.overlap > 0.3 ? '#d29922' : '#f85149') + '"></div></div>';
+          html += '<span style="min-width:30px;text-align:right;color:#8b949e">' + (p.overlap * 100).toFixed(0) + '%</span>';
+          html += '</div>';
+        }
+        html += '</div>';
+      }
       html += '</div>';
     }
   }
 
   document.getElementById('coherenceResult').innerHTML = html;
+}
+
+// ── Decisions ──
+
+async function runDecisions() {
+  const resp = await fetch('/api/decisions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({}) });
+  const data = await resp.json();
+
+  let html = '';
+  if (data.error) {
+    html = '<div class="card"><p>' + data.error + '</p></div>';
+  } else {
+    for (const agent of data.agents) {
+      const stratColor = agent.strategy === 'exploit' ? '#3fb950' : agent.strategy === 'explore' ? '#58a6ff' : agent.strategy === 'delegate' ? '#d29922' : '#8b949e';
+      html += '<div class="card">';
+      html += '<h3 style="color:' + stratColor + '">' + agent.agent + ' → ' + agent.strategy.toUpperCase() + '</h3>';
+      html += '<p>Observations: ' + agent.observations.atomCount + ' atoms, ' + agent.observations.patternCount + ' patterns</p>';
+      html += '<p>Coherence: ' + (agent.observations.coherence || []).map(function(c) { return c.agent + '=' + c.overlap + '%'; }).join(', ') + '</p>';
+      html += '<p>Affordances: ' + agent.affordanceCount + ' | Coverage: ' + agent.coverage + '%</p>';
+      if (agent.decisions && agent.decisions.length > 0) {
+        html += '<div style="margin-top:8px">';
+        for (var d of agent.decisions.slice(0, 5)) {
+          var confColor = d.confidence > 0.7 ? '#3fb950' : d.confidence > 0.3 ? '#d29922' : '#8b949e';
+          html += '<div style="padding:4px 0;border-bottom:1px solid #21262d;font-size:11px">';
+          html += '<span style="color:' + confColor + '">' + (d.confidence * 100).toFixed(0) + '%</span> ';
+          html += '<span style="color:#58a6ff">' + d.type + '</span>: ' + d.description;
+          if (d.justification) html += '<div style="font-size:10px;color:#484f58;margin-top:2px">' + d.justification + '</div>';
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+  }
+  document.getElementById('decisionsResult').innerHTML = html;
+}
+
+// ── Node Explorer ──
+
+async function exploreNode() {
+  const input = document.getElementById('nodeExplorerInput').value.trim();
+  if (!input) return;
+
+  // Find the node — by URI, exact match, or partial match
+  let uri = input;
+  if (!input.startsWith('urn:')) {
+    const allResp = await fetch('/api/all');
+    const allData = await allResp.json();
+    // Try exact atom match first
+    var match = allData.nodes.find(function(n) { return n.resolved === input && n.level === 0; });
+    // Then exact match at any level
+    if (!match) match = allData.nodes.find(function(n) { return n.resolved === input; });
+    // Then partial match (contains the input)
+    if (!match) {
+      var partials = allData.nodes.filter(function(n) { return n.resolved.includes(input); }).sort(function(a,b) { return a.level - b.level; });
+      if (partials.length > 0) match = partials[0];
+    }
+    if (!match) {
+      document.getElementById('nodeExplorerResult').innerHTML = '<p style="color:#f85149">Not found: ' + input + '</p>';
+      return;
+    }
+    uri = match.uri;
+  }
+
+  const resp = await fetch('/api/node/' + encodeURIComponent(uri));
+  const data = await resp.json();
+
+  let html = '<div style="margin-bottom:12px">';
+  html += '<div style="font-size:14px;color:#58a6ff;font-weight:600">' + data.resolved + '</div>';
+  html += '<div style="font-size:10px;color:#484f58">' + data.uri + '</div>';
+  html += '<div style="font-size:11px;color:#8b949e;margin-top:4px">Kind: ' + data.kind + ' | Level: ' + data.level + '</div>';
+  html += '</div>';
+
+  // Structure — items (for fragments: clickable constituent atoms/sub-fragments)
+  if (data._structure && data._structure.items && data._structure.items.length > 0) {
+    html += '<div style="margin-bottom:12px">';
+    html += '<div style="font-size:12px;color:#f0883e;margin-bottom:6px">Structure (items)</div>';
+    html += '<div style="display:flex;flex-wrap:wrap;gap:4px">';
+    for (var item of data._structure.items) {
+      var itemColor = item.kind === 'Atom' ? '#f85149' : '#58a6ff';
+      var itemBg = item.kind === 'Atom' ? '#3d1f1f' : '#1c2840';
+      html += '<span style="background:' + itemBg + ';color:' + itemColor + ';padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer;border:1px solid ' + itemColor + '33" onclick="document.getElementById(\'nodeExplorerInput\').value=\'' + item.uri + '\';exploreNode()">' + item.resolved + ' <span style="font-size:9px;opacity:0.6">L' + item.level + '</span></span>';
+    }
+    html += '</div>';
+    if (data._structure.leftConstituent || data._structure.rightConstituent) {
+      html += '<div style="font-size:10px;color:#484f58;margin-top:4px">';
+      if (data._structure.leftConstituent) html += 'Left: <span style="color:#58a6ff;cursor:pointer" onclick="document.getElementById(\'nodeExplorerInput\').value=\'' + data._structure.leftConstituent.uri + '\';exploreNode()">' + data._structure.leftConstituent.resolved + '</span> ';
+      if (data._structure.rightConstituent) html += 'Right: <span style="color:#58a6ff;cursor:pointer" onclick="document.getElementById(\'nodeExplorerInput\').value=\'' + data._structure.rightConstituent.uri + '\';exploreNode()">' + data._structure.rightConstituent.resolved + '</span>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  // Paradigm
+  if (data._paradigm) {
+    html += '<div style="margin-bottom:12px">';
+    html += '<div style="font-size:12px;color:#3fb950;margin-bottom:6px">Paradigm Sets</div>';
+    if (data._paradigm.sourceOptions.length > 0) {
+      html += '<div style="font-size:11px;color:#8b949e;margin-bottom:2px">Source (before):</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">';
+      for (var s of data._paradigm.sourceOptions) {
+        html += '<span style="background:#1f3d2b;color:#3fb950;padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer" onclick="document.getElementById(\'nodeExplorerInput\').value=\'' + s.resolved + '\';exploreNode()">' + s.resolved + '</span>';
+      }
+      html += '</div>';
+    }
+    if (data._paradigm.targetOptions.length > 0) {
+      html += '<div style="font-size:11px;color:#8b949e;margin-bottom:2px">Target (after):</div>';
+      html += '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">';
+      for (var t of data._paradigm.targetOptions) {
+        html += '<span style="background:#1c2840;color:#58a6ff;padding:2px 8px;border-radius:4px;font-size:10px;cursor:pointer" onclick="document.getElementById(\'nodeExplorerInput\').value=\'' + t.resolved + '\';exploreNode()">' + t.resolved + '</span>';
+      }
+      html += '</div>';
+    }
+    if (data._paradigm.constraints && data._paradigm.constraints.length > 0) {
+      html += '<div style="font-size:11px;color:#d29922;margin-bottom:2px">Active Constraints:</div>';
+      for (var c of data._paradigm.constraints) {
+        html += '<div style="font-size:10px;color:#8b949e;padding:2px 0">' + c.opSymbol + ' ' + c.patternA.join(',') + ' ↔ ' + c.patternB.join(',') + ' (' + c.resultSize + ' valid)</div>';
+      }
+    }
+    html += '</div>';
+  }
+
+  // Controls
+  if (data._controls) {
+    html += '<div style="margin-bottom:12px">';
+    html += '<div style="font-size:12px;color:#d29922;margin-bottom:6px">HATEOAS Controls</div>';
+    for (var ctrl of data._controls) {
+      html += '<div style="font-size:10px;padding:3px 0;border-bottom:1px solid #21262d">';
+      html += '<span style="color:#58a6ff">' + ctrl.method + '</span> ' + ctrl.href + ' — <span style="color:#8b949e">' + ctrl.title + '</span>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
+  // Context (containers)
+  if (data._context && data._context.containers && data._context.containers.length > 0) {
+    html += '<div>';
+    html += '<div style="font-size:12px;color:#bc8cff;margin-bottom:6px">Containers (' + data._context.containers.length + ')</div>';
+    for (var cont of data._context.containers.slice(0, 10)) {
+      html += '<div style="font-size:10px;padding:2px 0;color:#8b949e;cursor:pointer" onclick="document.getElementById(\'nodeExplorerInput\').value=\'' + cont.uri + '\';exploreNode()">L' + cont.level + ': ' + cont.resolved + '</div>';
+    }
+    html += '</div>';
+  }
+
+  document.getElementById('nodeExplorerResult').innerHTML = html;
 }
 
 // Initial load

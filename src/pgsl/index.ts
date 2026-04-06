@@ -140,7 +140,7 @@ export type {
   TemporalQuestionParsed,
   AdvancedTemporalResult,
 } from './advanced-temporal.js';
-export { signNode, verifyNodeSignature } from './lattice.js';
+export { signNode, verifyNodeSignature, ensureBuilt } from './lattice.js';
 // Coherence verification
 export {
   verifyCoherence,
@@ -219,3 +219,40 @@ export type {
   ToolResult,
   ToolContext,
 } from './tools.js';
+// Decision functor
+export {
+  extractObservations,
+  computeAffordances,
+  selectStrategy,
+  decide,
+  composeDecisions,
+} from './decision-functor.js';
+export type {
+  Affordance,
+  Decision,
+  ObservationSection,
+  DecisionStrategy,
+  DecisionResult,
+} from './decision-functor.js';
+// Progressive persistence
+export {
+  createPersistenceRegistry,
+  recordPersistence,
+  getMaxTier,
+  getTierRecords,
+  getNodesAtTier,
+  promoteToLocal,
+  promoteToPod,
+  promoteToIpfs,
+  promoteToChain,
+  resolve as resolveFromTiers,
+  promoteBatch,
+  persistenceStats,
+  TierName,
+} from './persistence.js';
+export type {
+  PersistenceTier,
+  PersistenceRecord,
+  ResolutionResult,
+  PersistenceRegistry,
+} from './persistence.js';

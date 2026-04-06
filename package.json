@@ -89,6 +89,7 @@
     "@huggingface/transformers": "^3.8.1",
     "@noble/hashes": "^2.0.1",
     "ethers": "^6.16.0",
+    "express": "^5.2.1",
     "multiformats": "^13.4.2",
     "pdf-parse": "^2.4.5",
     "siwe": "^3.0.0",
