@@ -42,7 +42,9 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 │   │                 semiotic formalization (Sign functor, adjunction, field functor),
 │   │                 open facet registry with merge strategies
 │   ├── rdf/          Namespaces (23+), Turtle/JSON-LD/TriG serializers,
-│   │                 RDF 1.2 triple annotation support
+│   │                 RDF 1.2 triple annotation support, system ontology (OWL),
+│   │                 virtualized RDF layer, SPARQL Protocol, Hydra API descriptions,
+│   │                 DCAT/DPROD federation catalog
 │   ├── validation/   Programmatic SHACL-equivalent validator, SHACL shapes export
 │   ├── sparql/       Parameterized SPARQL 1.2 query pattern builders
 │   ├── solid/        publish(), discover(), subscribe(), directory, WebFinger,
@@ -51,25 +53,33 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 │   │                 in-memory SPARQL engine, three-layer SHACL validation,
 │   │                 LLM tool interface, ingestion profiles (xAPI, LERS, RDF),
 │   │                 entity/relation extraction, fact extraction, computation
-│   │                 (date arithmetic, counting, aggregation, abstention detection)
+│   │                 (date arithmetic, counting, aggregation, abstention detection),
+│   │                 coherence verification, decision functor (OODA), paradigm constraints,
+│   │                 progressive persistence (5-tier), lazy lattice construction
 │   ├── affordance/   Affordance engine integrating 8 frameworks:
 │   │                 Gibson, Norman, Pearl, Boyd (OODA), Endsley (SA),
 │   │                 Bratman (BDI), Friston (active inference), stigmergy
 │   ├── crypto/       Real cryptography — ethers.js ECDSA, NaCl E2E encryption,
 │   │                 ZK proofs (Merkle, range, temporal), SIWE (ERC-4361),
-│   │                 ERC-8004 agent identity, IPFS CID computation, Pinata pinning
+│   │                 ERC-8004 agent identity, IPFS CID computation, Pinata pinning,
+│   │                 progressive persistence tier system
 │   └── causality     Pearl's SCM: do-calculus, d-separation, backdoor/front-door
 │                     criteria, counterfactual evaluation
+│   │                 coherence verification (usage-based, certificates, coverage),
+│   │                 decision functor (OODA: observe→orient→decide→act),
+│   │                 paradigm constraints (5 set operations, emergent typing),
+│   │                 progressive persistence (memory→local→pod→IPFS→chain),
+│   │                 lazy lattice construction (deferred chains, level capping)
 ├── mcp-server/       MCP server (24 tools) for Claude Code / AI agents
 ├── deploy/           Dockerfiles, Azure Container Apps, identity server, relay
 │   ├── identity/     WebID + DID + Ed25519 + WebFinger + bearer tokens + SIWE
 │   ├── mcp-relay/    HTTP/REST bridge with auth, X402 payments, IPFS pinning
 │   └── css-config/   Community Solid Server configuration
 ├── examples/
-│   ├── multi-agent/  Team security audit demo + TLA/xAPI/LERS demo
-│   └── pgsl-browser/ PGSL lattice browser + Context Graphs Observatory
+│   ├── multi-agent/  Team audit + TLA/xAPI/LERS demo + Coherence demo
+│   └── pgsl-browser/ 8-tab observatory (Federation, Descriptors, Trust, Composition, SPARQL, SHACL, Coherence, Decisions)
 ├── benchmarks/       LongMemEval (89.2% agentic, 92.4% raw) evaluation suite
-└── tests/            324 tests across 14 suites
+└── tests/            384 tests across 15 suites
 ```
 
 ### Design Principles
@@ -92,7 +102,7 @@ git clone https://github.com/markjspivey-xwisee/context-graphs.git
 cd context-graphs
 npm install
 npm run build
-npm test  # 324 tests
+npm test  # 384 tests
 ```
 
 ### Build a Context Descriptor
@@ -216,6 +226,92 @@ const result = validateDomainShapes(pgsl, [{
 }]);
 ```
 
+### Coherence Verification
+
+Usage-based semantic agreement between agents. Two agents share a SIGN (atom) but only share MEANING if they USE it in the same syntagmatic contexts.
+
+```typescript
+import { createPGSL, embedInPGSL, verifyCoherence, computeCoverage } from '@foxxi/context-graphs';
+
+const pgslA = createPGSL({ wasAttributedTo: 'agent-a', generatedAtTime: new Date().toISOString() });
+const pgslB = createPGSL({ wasAttributedTo: 'agent-b', generatedAtTime: new Date().toISOString() });
+embedInPGSL(pgslA, 'patient status critical');
+embedInPGSL(pgslB, 'account status active');
+
+const cert = verifyCoherence(pgslA, pgslB, 'agent-a', 'agent-b', 'status');
+// cert.status === 'divergent' — "status" is shared but used differently
+// cert.semanticOverlap === 0.15 — continuous 0-1 measure
+// cert.obstruction.type === 'term-mismatch'
+// cert.semanticProfile — per-atom usage analysis
+
+const coverage = computeCoverage(['agent-a', 'agent-b', 'agent-c']);
+// coverage.unexamined === 2 — the DANGEROUS state
+```
+
+Three states: **Verified** (sections glue), **Divergent** (obstruction found), **Unexamined** (dangerous — agents proceed as if aligned without verification).
+
+### Paradigm Constraints
+
+Structural rules on what can fill positions in chains. The paradigm set P(S, i) is the set of all atoms appearing at position i across chains matching pattern S. Five operations: subset, intersect, union, exclude, equal.
+
+```typescript
+// P(?, completed, ?) — everything anyone completed
+// P(chen, ?, ?) — everything chen did  
+// P(?, type, Class) — all classes
+// Constraint: P(?, severity, critical) ⊆ P(?, escalate, ?) — criticals must be escalated
+```
+
+### Decision Functor (OODA Loop)
+
+Natural transformation from observation presheaves to action categories: Observe → Orient → Decide → Act.
+
+```typescript
+import { extractObservations, decide } from '@foxxi/context-graphs';
+
+const obs = extractObservations(pgsl, 'agent-a', certificates);
+const result = decide(pgsl, 'agent-a', certificates);
+// result.strategy === 'exploit' | 'explore' | 'delegate' | 'abstain'
+// result.decisions — ranked affordances with confidence scores
+```
+
+### Progressive Persistence
+
+Five-tier persistence with URI invariance — same content hash across all tiers:
+
+| Tier | Storage | Durability | Resolution |
+|------|---------|-----------|------------|
+| 0 | Memory | Ephemeral | Direct lookup |
+| 1 | Local disk | Survives restart | File read |
+| 2 | Solid Pod | Federated | HTTP + WAC auth |
+| 3 | IPFS | Global, immutable | CID gateway |
+| 4 | Blockchain | Permanent | On-chain hash verification |
+
+```typescript
+import { createPersistenceRegistry, recordPersistence, promoteToIpfs } from '@foxxi/context-graphs';
+
+const registry = createPersistenceRegistry();
+recordPersistence(registry, atomUri, 0, { promotedBy: 'agent-a' });
+const record = await promoteToIpfs(pgsl, atomUri, { provider: 'pinata', apiKey: '...' });
+// record.cid — globally dereferenceable IPFS CID
+```
+
+### Virtualized RDF Layer
+
+The entire system is queryable as standard RDF. Any SPARQL client (Comunica, Apache Jena, Protege) works.
+
+| Endpoint | What |
+|----------|------|
+| `GET /ontology` | Full OWL ontology (cg:, pgsl:, Hydra, DCAT, PROV-O) |
+| `GET /ontology/shacl` | System SHACL shapes |
+| `GET /api-doc` | Hydra API description |
+| `GET /catalog` | DCAT/DPROD federation catalog |
+| `GET/POST /sparql` | W3C SPARQL Protocol — full system materialized |
+| `POST /sparql/update` | SPARQL INSERT DATA with PGSL write-back |
+| `GET /dump.ttl` | Full system Turtle export |
+| `GET /dump.jsonld` | Full system JSON-LD export |
+
+Tested with Comunica SPARQL engine — standard RDF tooling interoperability confirmed.
+
 ### Ingestion Profiles
 
 ```typescript
@@ -223,13 +319,16 @@ import { ingestWithProfile } from '@foxxi/context-graphs';
 
 // xAPI profile: preserves actor/verb/object/result nesting
 const uri = ingestWithProfile(pgsl, 'xapi', {
-  actor: { name: 'CPT Sarah Chen' },
+  actor: { account: { homePage: 'https://example.com', name: 'chen' }, name: 'CPT Sarah Chen' },
   verb: { id: 'http://adlnet.gov/expapi/verbs/completed', display: { 'en-US': 'completed' } },
   object: { id: 'urn:activity:ils-approach', definition: { name: { 'en-US': 'ILS Approach Rwy 28L' } } },
   result: { score: { raw: 92, max: 100 }, success: true, duration: 'PT45M' },
 });
-// Ingested as: ((CPT,Sarah,Chen),completed,(ILS,Approach,Rwy,28L),(92,passed,PT45M))
-// Actor, object, and result are nested fragments — shared across statements
+// Ingested as multiple chains: core statement + identity/name/result chains
+// (chen, completed, ils-approach-rwy-28L) — core, short atoms
+// (chen, identity, https://learner.airforce.mil:chen) — IFI binding
+// (chen, name, Sarah) — display name
+// (chen, ils-approach-rwy-28L, score, 92) — result property
 
 // LERS profile: issuer/subject/achievement/evidence nesting
 const credUri = ingestWithProfile(pgsl, 'lers', {
@@ -262,9 +361,9 @@ PORT=5001 npx tsx examples/pgsl-browser/server.ts
 # → PGSL Lattice Browser at http://localhost:5001/
 ```
 
-**Tabs:** Federation (pod registry), Descriptors (facet browsing), Trust (chain visualization), Composition (algebraic operators), SPARQL (query interface), SHACL (validation), PGSL Lattice (original browser)
+**Tabs:** Federation (pod registry), Descriptors (facet browsing), Trust (chain visualization), Composition (algebraic operators), SPARQL (query interface), SHACL (validation), Coherence (usage-based verification with semantic profiles), Decisions (OODA decision functor per agent), PGSL Lattice (browser + Node Explorer)
 
-**Interactive Demo:** Click "Run Next Phase" to step through a 6-phase TLA pipeline with real-time activity logging — agents publishing, discovering, signing, composing, and verifying across live Solid pods.
+**Interactive Demo:** Click through 7 phases of the TLA pipeline — agents publishing, discovering, signing, composing, verifying, and running coherence verification + decision functor across live Solid pods.
 
 ---
 
@@ -295,6 +394,16 @@ npx tsx examples/multi-agent/team-demo.ts --keep-alive
 ```
 
 Shows: trust escalation (SelfAsserted → ThirdPartyAttested → CryptographicallyVerified), composition operators, PGSL structural overlap, provenance chains.
+
+### Healthcare Coherence Demo
+
+Three agents (ER, Radiology, Pharmacy) independently document a patient visit, then verify semantic alignment:
+
+```bash
+npx tsx examples/multi-agent/coherence-demo.ts
+```
+
+Shows: usage-based coherence verification, emergent data contracts from structural overlap, coherence certificates with per-atom semantic profiles.
 
 ---
 
@@ -516,7 +625,7 @@ Deploys: CSS (Solid server), Dashboard (observation UI), MCP Relay (HTTP bridge)
 ```bash
 npm install
 npm run build        # TypeScript → dist/
-npm test             # 324 tests across 14 suites
+npm test             # 384 tests across 15 suites
 npm run test:watch   # Watch mode
 ```
 
@@ -537,6 +646,19 @@ npm run test:watch   # Watch mode
 | `crypto.test.ts` | 25 | Wallets, ECDSA, delegation, SIWE |
 | `encryption-zk.test.ts` | 30 | NaCl encryption, ZK proofs, selective disclosure |
 | `sdk-extractors.test.ts` | 17 | Category theory, semiotic functor |
+| `xapi-conformance.test.ts` | 60 | xAPI profile, IFI priority, result/context structure |
+| `pgsl-coherence.test.ts` | 9 | Coherence verification, coverage, certificates |
+
+---
+
+## Specifications
+
+| Document | What it covers |
+|----------|---------------|
+| [Context Graphs 1.0 WD](https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html) | Core spec: descriptors, facets, composition, serialization |
+| [Paradigm Constraints](spec/paradigm-constraints.md) | Emergent semantics, coherence verification, decision functor, causal integration |
+| [Progressive Persistence](spec/progressive-persistence.md) | 5-tier persistence, URI invariance, structural encryption |
+| [Presentation Notes](spec/presentation-notes.md) | 10-slide W3C presentation outline with demo instructions |
 
 ---
 
@@ -560,5 +682,8 @@ Implements the [Context Graphs 1.0 Working Draft](https://markjspivey-xwisee.git
 - Section 5: All facet types with W3C vocabulary alignment
 - Section 6: Serialization (Turtle, JSON-LD, TriG)
 - Section 7: SPARQL 1.2 query patterns
+
+- Paradigm Constraints (spec/paradigm-constraints.md): syntagm/paradigm, 5 operations, emergent semantics, coherence protocol, decision functor
+- Progressive Persistence (spec/progressive-persistence.md): 5-tier persistence, URI invariance, resolution protocol, structural encryption
 
 Extensions beyond the spec: PGSL substrate, Pearl causality, affordance engine, E2E encryption, ZK proofs, IPFS anchoring, structural computation, cognitive strategy routing.
