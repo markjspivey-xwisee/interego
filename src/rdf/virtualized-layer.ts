@@ -670,7 +670,14 @@ export function systemToTurtle(state: SystemState): string {
 
 /** Format an object value for Turtle output */
 function formatTurtleObject(obj: string): string {
-  if (obj.startsWith('"')) return obj;
+  if (obj.startsWith('"')) {
+    // Fix typed literals: "value"^^datatype → "value"^^<datatype>
+    const typedMatch = obj.match(/^(".*?")\^\^(.+)$/);
+    if (typedMatch && !typedMatch[2]!.startsWith('<')) {
+      return `${typedMatch[1]}^^<${typedMatch[2]}>`;
+    }
+    return obj;
+  }
   if (obj.startsWith('_:')) return obj;
   return `<${obj}>`;
 }
