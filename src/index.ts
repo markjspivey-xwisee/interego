@@ -193,6 +193,27 @@ export {
   sparqlPrefixes,
 } from './rdf/index.js';
 
+// ── System Ontology & Virtualized RDF Layer ─────────────────
+export {
+  systemOntology,
+  systemShaclShapes,
+  systemHydraApi,
+  systemDcatCatalog,
+  allPrefixes,
+  CG_NS,
+  materializeSystem,
+  executeSparqlProtocol,
+  writeBackTriples,
+  sparqlUpdateHandler,
+  systemToTurtle,
+  systemToJsonLd,
+} from './rdf/index.js';
+export type {
+  SystemState,
+  SparqlProtocolResult,
+  WriteBackResult,
+} from './rdf/index.js';
+
 // ── Validation ───────────────────────────────────────────────
 export {
   validate,

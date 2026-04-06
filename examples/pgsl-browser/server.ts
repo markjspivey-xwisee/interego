@@ -56,6 +56,19 @@ import {
   // Ingestion profiles
   ingestWithProfile,
   getProfile,
+  // System ontology & virtualized RDF layer
+  systemOntology,
+  systemShaclShapes,
+  systemHydraApi,
+  systemDcatCatalog,
+  allPrefixes,
+  materializeSystem,
+  executeSparqlProtocol,
+  writeBackTriples,
+  sparqlUpdateHandler,
+  systemToTurtle,
+  systemToJsonLd,
+  getCertificates,
 } from '@foxxi/context-graphs';
 
 // Get the xAPI profile for direct transform calls
@@ -1661,11 +1674,107 @@ app.get('/api/shacl', (_req, res) => {
   });
 });
 
+// ── Virtualized RDF Layer ──────────────────────────────────
+
+// Helper: build system state for the virtualized layer
+function getSystemState() {
+  return {
+    pgsl,
+    descriptors: [] as ContextDescriptorData[], // TODO: collect from pod registry
+    certificates: getCertificates(),
+    constraints: constraintRegistry,
+    pods: [...podRegistry.values()].map(p => ({
+      url: p.url, name: p.name, status: p.status, descriptorCount: p.entries.length,
+    })),
+  };
+}
+
+// OWL Ontology — the full system described as RDF
+app.get('/ontology', (_req, res) => {
+  res.set('Content-Type', 'text/turtle');
+  res.send(systemOntology());
+});
+
+// SHACL Shapes — full system validation shapes
+app.get('/ontology/shacl', (_req, res) => {
+  res.set('Content-Type', 'text/turtle');
+  res.send(systemShaclShapes());
+});
+
+// Hydra API Description — machine-readable API documentation
+app.get('/api-doc', (_req, res) => {
+  res.set('Content-Type', 'application/ld+json');
+  const hydra = systemHydraApi();
+  res.send(hydra);
+});
+
+// DCAT Catalog — federation as linked data catalog
+app.get('/catalog', (_req, res) => {
+  const pods = [...podRegistry.values()].map(p => ({
+    url: p.url, name: p.name, descriptorCount: p.entries.length,
+  }));
+  res.set('Content-Type', 'text/turtle');
+  res.send(systemDcatCatalog(pods));
+});
+
+// W3C SPARQL Protocol endpoint — full system virtualized as RDF
+// Accepts both GET (query param) and POST (body)
+app.get('/sparql', (req, res) => {
+  const query = req.query['query'] as string;
+  if (!query) { res.status(400).send('Missing query parameter'); return; }
+  try {
+    const state = getSystemState();
+    const result = executeSparqlProtocol(state, query, req.headers.accept);
+    res.set('Content-Type', result.contentType);
+    res.send(result.body);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+app.post('/sparql', (req, res) => {
+  const query = req.body?.query ?? req.body;
+  if (!query || typeof query !== 'string') { res.status(400).send('Missing query'); return; }
+  try {
+    const state = getSystemState();
+    const result = executeSparqlProtocol(state, query, req.headers.accept);
+    res.set('Content-Type', result.contentType);
+    res.send(result.body);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+// SPARQL UPDATE — write-back into PGSL
+app.post('/sparql/update', (req, res) => {
+  const update = req.body?.update ?? req.body;
+  if (!update || typeof update !== 'string') { res.status(400).send('Missing update'); return; }
+  try {
+    const result = sparqlUpdateHandler(pgsl, update);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+// Full system dump as Turtle
+app.get('/dump.ttl', (_req, res) => {
+  const state = getSystemState();
+  res.set('Content-Type', 'text/turtle');
+  res.send(systemToTurtle(state));
+});
+
+// Full system dump as JSON-LD
+app.get('/dump.jsonld', (_req, res) => {
+  const state = getSystemState();
+  res.set('Content-Type', 'application/ld+json');
+  res.send(JSON.stringify(systemToJsonLd(state), null, 2));
+});
+
 // ── Observatory API: Coherence ──
 import {
   verifyCoherence,
   computeCoverage,
-  getCertificates,
   extractObservations,
   computeDecisionAffordances,
   selectStrategy,
