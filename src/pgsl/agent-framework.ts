@@ -1088,3 +1088,73 @@ export function createAATDecorator(
     },
   };
 }
+
+// ══════════════════════════════════════════════════════════════
+// 9. Integration Wrappers
+// ══════════════════════════════════════════════════════════════
+
+import { verifyCoherence } from './coherence.js';
+import type { CoherenceCertificate } from './coherence.js';
+
+/**
+ * Verify coherence with automatic PROV tracing.
+ * Wraps verifyCoherence from coherence.ts with trace recording.
+ *
+ * @param pgslA - First agent's PGSL instance
+ * @param pgslB - Second agent's PGSL instance
+ * @param agentA - First agent ID
+ * @param agentB - Second agent ID
+ * @param topic - Shared topic to verify
+ * @param traceStore - PROV trace store for recording
+ * @param agentAAT - AAT identifier for the initiating agent (default: 'aat:unknown')
+ * @returns The coherence certificate (also recorded as a PROV trace)
+ */
+export function verifyCoherenceTraced(
+  pgslA: PGSLInstance, pgslB: PGSLInstance,
+  agentA: string, agentB: string, topic: string,
+  traceStore: TraceStore, agentAAT: string = 'aat:unknown',
+): CoherenceCertificate {
+  const startedAt = new Date().toISOString();
+  const cert = verifyCoherence(pgslA, pgslB, agentA, agentB, topic);
+  recordTrace(traceStore, {
+    id: `urn:prov:coherence:${createHash('sha256').update(`${agentA}|${agentB}|${startedAt}`).digest('hex').slice(0, 16)}`,
+    activity: 'verify-coherence',
+    agent: agentA,
+    agentAAT,
+    entity: cert.id,
+    startedAt,
+    endedAt: new Date().toISOString(),
+    wasAssociatedWith: agentA,
+    wasGeneratedBy: cert.id,
+    used: [agentA, agentB],
+    success: true,
+  });
+  return cert;
+}
+
+/**
+ * Create a fully-configured agent context: AAT + Policy + Tracing + Broker.
+ * This is the one-call setup for an agent joining the system.
+ *
+ * @param agentId - Unique agent identifier
+ * @param aat - The agent's Abstract Agent Type
+ * @param pgsl - The agent's personal PGSL instance
+ * @returns An object containing the broker, trace store, policy engine, and decorator
+ */
+export function createAgentContext(
+  agentId: string,
+  aat: AbstractAgentType,
+  pgsl: PGSLInstance,
+): {
+  broker: PersonalBroker;
+  traceStore: TraceStore;
+  policyEngine: PolicyEngine;
+  decorator: AffordanceDecorator;
+} {
+  const traceStore = createTraceStore();
+  const policyEngine = createPolicyEngine();
+  for (const rule of defaultPolicies()) { addRule(policyEngine, rule); }
+  const broker = createPersonalBroker(agentId, aat, pgsl);
+  const decorator = createAATDecorator(aat, policyEngine, traceStore);
+  return { broker, traceStore, policyEngine, decorator };
+}

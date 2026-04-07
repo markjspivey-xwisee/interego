@@ -29,7 +29,9 @@ import { ContextDescriptor } from './model/descriptor.js';
 import { toTurtle } from './rdf/serializer.js';
 import { validate } from './validation/validator.js';
 import { publish, discover, subscribe as solidSubscribe } from './solid/client.js';
-import { createPGSL, resolve as pgslResolve, embedInPGSL, latticeMeet, latticeStats } from './pgsl/index.js';
+import { createPGSL, resolve as pgslResolve, latticeStats } from './pgsl/lattice.js';
+import { latticeMeet } from './pgsl/category.js';
+import { embedInPGSL } from './pgsl/geometric.js';
 import { computeCid, pinToIpfs } from './crypto/ipfs.js';
 
 // ── Types ────────────────────────────────────────────────────

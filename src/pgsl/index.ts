@@ -265,6 +265,8 @@ export {
   createTraceStore, recordTrace, getTraces, traceToTurtle, wrapWithTracing,
   createPersonalBroker, startConversation, addMessage, getMemoryStats, setPresence,
   createAATDecorator,
+  verifyCoherenceTraced,
+  createAgentContext,
 } from './agent-framework.js';
 export type {
   AbstractAgentType, AATRegistry,
