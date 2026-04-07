@@ -251,26 +251,211 @@ function answer(
     return `=== Session ${s.index + 1}${dateLabel}${tag} ===\n${s.text}`;
   }).join('\n\n');
 
-  // Question-type instructions
-  let instructions = '';
-  if (/which.*first|which.*before|which.*earlier/i.test(question)) {
-    instructions = `TEMPORAL ORDERING: Find SPECIFIC DATES for each item. Compare dates. Earlier date = happened first.
-IMPORTANT: "pre-ordered" ≠ "got/received". Use the date they actually GOT the item.
-Quote the relevant sentences with dates, then answer.`;
-  } else if (/how many (days|weeks|months|years)/i.test(question)) {
-    instructions = `TIME DURATION: Find the EXACT two dates. If a date is implied (not explicit), use session dates and context to infer. Show your work: Date 1 = ___, Date 2 = ___, Difference = ___.`;
-  } else if (/how many/i.test(question)) {
-    instructions = `COUNTING: List EVERY matching item across ALL sessions. Later sessions may UPDATE earlier ones.
-Quote each item found. Then count unique items. Show your work.`;
-  } else if (/how old/i.test(question)) {
-    instructions = `AGE CALCULATION: Find birth date and event date. Compute the difference in years.`;
-  } else if (strategy.questionType === 'single-session-preference') {
-    instructions = `PREFERENCE: Identify the user's stated preferences from their messages.`;
+  // ── DECOMPOSITION for temporal ordering questions ──
+  // Don't ask LLM to find + compare in one shot.
+  // Step 1: Extract date for thing A
+  // Step 2: Extract date for thing B
+  // Step 3: Compare in code
+  if (/which.*first|which.*before|which.*earlier|which.*start.*first/i.test(question) && !/what was the date|when did/i.test(question)) {
+    // Parse the two things being compared
+    const thingsPrompt = llm(
+      `What are the TWO things being compared in this question? Return them on two separate lines, exact names only.\n\nQuestion: ${question}\n\nThing 1:\nThing 2:`
+    );
+    const things = thingsPrompt.split('\n').map(l => l.replace(/^(Thing [12]:?\s*)/i, '').trim()).filter(l => l.length > 2).slice(0, 2);
+
+    if (things.length >= 2) {
+      // Extract verb from question for precision
+      const verb = question.match(/did I (\w+)/i)?.[1] ?? 'start';
+
+      // Find sessions mentioning each thing
+      const sessionsForA = ranked.filter(r => r.session.text.toLowerCase().includes(things[0]!.toLowerCase().slice(0, 15)));
+      const sessionsForB = ranked.filter(r => r.session.text.toLowerCase().includes(things[1]!.toLowerCase().slice(0, 15)));
+
+      const textForA = (sessionsForA.length > 0 ? sessionsForA : ranked).slice(0, 3).map(r => {
+        return `Session ${r.session.index + 1} (Date: ${r.session.date ?? 'unknown'}):\n${r.session.text.slice(0, 3000)}`;
+      }).join('\n\n');
+
+      const textForB = (sessionsForB.length > 0 ? sessionsForB : ranked).slice(0, 3).map(r => {
+        return `Session ${r.session.index + 1} (Date: ${r.session.date ?? 'unknown'}):\n${r.session.text.slice(0, 3000)}`;
+      }).join('\n\n');
+
+      // Step 1: Find when thing A happened — FOCUSED on relevant sessions only
+      const dateA = llm(
+        `When did the user ${verb} "${things[0]}"? Find the date or time reference.\n\nCRITICAL: If the text says "about a month ago", "last week", "two weeks ago", etc., you MUST compute the actual date from the session date. For example, if the session date is 2023/05/20 and the user says "about a month ago", the date is approximately 2023-04-20.\n\n"Pre-ordered" ≠ "got/received". Use the date they actually ${verb} it.\n\n${textForA}\n\nQuote the exact sentence mentioning "${things[0]}" with a time reference, then compute the date.\n\nDate (YYYY-MM-DD):`
+      );
+
+      // Step 2: Find when thing B happened
+      const dateB = llm(
+        `When did the user ${verb} "${things[1]}"? Find the date or time reference.\n\nCRITICAL: If the text says "about a month ago", "last week", "14 days", etc., COMPUTE the actual date from the session date.\n\n"Pre-ordered" ≠ "got/received". Use the date they actually ${verb} it.\n\n${textForB}\n\nQuote the exact sentence mentioning "${things[1]}" with a time reference, then compute the date.\n\nDate (YYYY-MM-DD):`
+      );
+
+      // Step 3: Compare in code
+      const datesA = dateA.match(/\d{4}-\d{2}-\d{2}/g) || [];
+      const datesB = dateB.match(/\d{4}-\d{2}-\d{2}/g) || [];
+
+      if (datesA.length > 0 && datesB.length > 0) {
+        const dA = parseDate(datesA[datesA.length - 1]!);
+        const dB = parseDate(datesB[datesB.length - 1]!);
+        if (dA && dB) {
+          const first = dA < dB ? things[0]! : things[1]!;
+          return {
+            answer: first,
+            method: 'pgsl-temporal-decomposed',
+            reasoning: `Decomposed: "${things[0]}"=${datesA[datesA.length - 1]} vs "${things[1]}"=${datesB[datesB.length - 1]} → ${first} was first`,
+          };
+        }
+      }
+
+      // Fallback: couldn't extract dates, ask LLM directly
+      const directAnswer = llm(
+        `Based on the sessions, which happened first: "${things[0]}" or "${things[1]}"? The verb is "${verb}". Consider: "pre-ordered" ≠ "received/got". Use the date they actually ${verb} it.\n\n${allSorted}\n\nWhich happened first? Answer with ONLY the name:`
+      );
+      return { answer: directAnswer, method: 'pgsl-temporal-direct', reasoning: `Direct LLM comparison` };
+    }
   }
 
-  const prompt = `${instructions ? instructions + '\n\n' : ''}Read ALL sessions. ${relevantCount} of ${index.sessions.length} sessions were flagged as relevant by structural analysis.${questionDate ? ` Current date: ${questionDate}.` : ''}
+  // ── DECOMPOSITION for duration questions ──
+  if (/how many (days|weeks|months|years)/i.test(question)) {
+    // Step 1: Identify what two events/dates the question asks about
+    const eventId = llm(
+      `This question asks about a time duration between two events/dates. What are the TWO events or dates?\n\nIMPORTANT: If the question says "ago" (e.g., "how many months ago"), the second date is the question date: ${questionDate ?? 'unknown'}. NOT today's real date.\n\nQuestion: ${question}\n\nEvent 1:\nEvent 2:`
+    );
 
-Answer the question based ONLY on information in the sessions. Be SPECIFIC and CONCISE.
+    const events = eventId.split('\n').map(l => l.replace(/^(Event [12]:?\s*)/i, '').trim()).filter(l => l.length > 2).slice(0, 2);
+
+    if (events.length >= 2) {
+      // Step 2: Find exact date for each event
+      const dateContext = questionDate ? `\n\nIMPORTANT: The question is being asked on ${questionDate}. If the question says "ago", the reference date is ${questionDate}, NOT today's real date.` : '';
+
+      // For "ago" questions, the second date is the question date — don't ask LLM
+      const isAgo = /ago/i.test(question);
+      const questionDateParsed = questionDate ? parseDate(questionDate.split(' ')[0]!.replace(/\//g, '-') ?? '') : null;
+
+      const date1 = llm(
+        `When did "${events[0]}" happen? Find the EXACT date from the sessions. If the text uses relative time ("a month ago", "last week"), compute the actual date from the session date.${dateContext}\n\n${allSorted}\n\nQuote the relevant text, then give YYYY-MM-DD:\n\nDate:`
+      );
+
+      let date2: string;
+      if (isAgo && questionDateParsed) {
+        // For "ago" questions, second date IS the question date
+        const qd = questionDate!.split(' ')[0]!.replace(/\//g, '-');
+        date2 = `The reference date is ${qd}`;
+      } else {
+        date2 = llm(
+          `When did "${events[1]}" happen? Find the EXACT date.${dateContext}\n\n${allSorted}\n\nQuote the relevant text, then give YYYY-MM-DD:\n\nDate:`
+        );
+      }
+
+      const d1Matches = date1.match(/\d{4}-\d{2}-\d{2}/g) || [];
+      const d2Matches = isAgo && questionDateParsed
+        ? [questionDate!.split(' ')[0]!.replace(/\//g, '-')]
+        : (date2.match(/\d{4}-\d{2}-\d{2}/g) || []);
+
+      if (d1Matches.length > 0 && d2Matches.length > 0) {
+        const d1 = parseDate(d1Matches[d1Matches.length - 1]!);
+        const d2 = parseDate(d2Matches[d2Matches.length - 1]!);
+        if (d1 && d2) {
+          const days = Math.abs(daysBetween(d1, d2));
+          const unit = /week/i.test(question) ? 'weeks' : /month/i.test(question) ? 'months' : /year/i.test(question) ? 'years' : 'days';
+          let ans: string;
+          if (unit === 'weeks') ans = `${Math.round(days / 7)}`;
+          else if (unit === 'months') ans = `${Math.round(days / 30.44)}`;
+          else if (unit === 'years') ans = `${Math.round(days / 365.25)}`;
+          else ans = `${days}`;
+          return { answer: `${ans} ${unit}`, method: 'pgsl-duration-decomposed', reasoning: `"${events[0]}"=${d1Matches[d1Matches.length - 1]} "${events[1]}"=${d2Matches[d2Matches.length - 1]} = ${days} days` };
+        }
+      }
+    }
+  }
+
+  // ── DECOMPOSITION for "how old" questions ──
+  if (/how old/i.test(question)) {
+    const birthDate = llm(
+      `Find the user's birth date from the sessions. If not explicit, compute from age mentions + session dates.\n\n${allSorted}\n\nBirth date (YYYY-MM-DD):`
+    );
+    const eventDate = llm(
+      `Find the date of the event the question asks about.\n\n${allSorted}\n\nQuestion: ${question}\n\nEvent date (YYYY-MM-DD):`
+    );
+    const bd = (birthDate.match(/\d{4}-\d{2}-\d{2}/g) || []).pop();
+    const ed = (eventDate.match(/\d{4}-\d{2}-\d{2}/g) || []).pop();
+    if (bd && ed) {
+      const d1 = parseDate(bd);
+      const d2 = parseDate(ed);
+      if (d1 && d2) {
+        const years = Math.floor(Math.abs(daysBetween(d1, d2)) / 365.25);
+        return { answer: `${years}`, method: 'pgsl-age-decomposed', reasoning: `Birth ${bd}, Event ${ed} = ${years} years` };
+      }
+    }
+  }
+
+  // ── DECOMPOSITION for counting questions ──
+  if (/how many/i.test(question) && !/how many (days|weeks|months|years)/i.test(question)) {
+    // Step 1: What are we counting?
+    const category = llm(`What specific category is being counted? Short phrase only.\n\nQuestion: ${question}\n\nCategory:`).trim();
+
+    // Step 2: For each session, extract items in that category
+    const allItems: Array<{item: string; session: number}> = [];
+    for (const s of index.sessions) {
+      const items = llm(
+        `List EVERY "${category}" EXPLICITLY mentioned by the user in this session. One per line, exact name. Say NONE if none.\n\nSession ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 5000)}\n\nItems:`
+      );
+      if (!items.toLowerCase().startsWith('none')) {
+        for (const line of items.split('\n')) {
+          const item = line.replace(/^[-•*\d.)\s]+/, '').trim();
+          if (item.length > 1 && item.length < 200 && !item.toLowerCase().startsWith('none')) {
+            allItems.push({ item, session: s.index });
+          }
+        }
+      }
+    }
+
+    // Step 3: If counting before/after a reference, filter by time
+    if (/before|after/i.test(question)) {
+      // Let LLM handle this with the full list
+      const countAnswer = llm(
+        `I found these "${category}":\n${allItems.map(i => `  Session ${i.session + 1}: ${i.item}`).join('\n')}\n\nQuestion: ${question}\n\nCount the ones that match the question's criteria (before/after the reference event). Give ONLY the number:`
+      );
+      const num = countAnswer.match(/\d+/);
+      if (num) return { answer: num[0]!, method: 'pgsl-count-decomposed', reasoning: `Found ${allItems.length} items, filtered: ${num[0]}` };
+    }
+
+    // Step 3 (no before/after): deduplicate and count
+    if (allItems.length > 0) {
+      const isUpdate = /currently|do I have|do I own/i.test(question);
+      if (isUpdate) {
+        const reconciled = llm(
+          `Current count of "${category}" considering all sessions (later updates earlier):\n${allItems.map(i => `  Session ${i.session + 1}: ${i.item}`).join('\n')}\n\nQ: ${question}\nCount (number only):`
+        );
+        const num = reconciled.match(/\d+/);
+        if (num) return { answer: num[0]!, method: 'pgsl-count-reconciled', reasoning: `${allItems.length} items reconciled to ${num[0]}` };
+      }
+      const unique = new Set(allItems.map(i => i.item.toLowerCase().trim()));
+      return { answer: `${unique.size}`, method: 'pgsl-count-decomposed', reasoning: `${unique.size} unique "${category}"` };
+    }
+  }
+
+  // ── DECOMPOSITION for "which most/least" (superlative counting) ──
+  if (/which.*most|which.*least|which.*more|which.*fewer/i.test(question)) {
+    // This is counting + comparison. Decompose into: list all items per category, count, compare.
+    const superlativeAnswer = llm(
+      `This question asks which category has the MOST/LEAST of something. To answer correctly:\n1. List ALL items in each category mentioned\n2. Count each category\n3. Compare counts\n\nShow your work — list every item found per category, then give the answer.\n\n${allSorted}\n\nQuestion: ${question}\n\nWork:\n`
+    );
+    // Extract the final answer
+    const lastLine = superlativeAnswer.split('\n').filter(l => l.trim().length > 0).pop() ?? superlativeAnswer;
+    return { answer: lastLine, method: 'pgsl-superlative', reasoning: 'Superlative counting decomposition' };
+  }
+
+  // ── GENERAL: LLM reads with focused instructions ──
+  let instructions = '';
+  if (strategy.questionType === 'single-session-preference') {
+    instructions = `PREFERENCE: Identify the user's stated preferences.`;
+  } else if (strategy.questionType === 'knowledge-update') {
+    instructions = `KNOWLEDGE UPDATE: Later sessions override earlier information. Use LATEST.`;
+  }
+
+  const prompt = `${instructions ? instructions + '\n\n' : ''}Read ALL sessions.${questionDate ? ` Current date: ${questionDate}.` : ''}
+
+Answer based ONLY on information in the sessions. Be SPECIFIC and CONCISE.
 If the specific thing asked about is NOT in any session, say "The information provided is not enough to answer this question."
 
 ${allSorted}
