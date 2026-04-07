@@ -74,6 +74,26 @@ import {
   getCertificates,
 } from '@foxxi/context-graphs';
 
+import {
+  ObserverAAT, AnalystAAT, ExecutorAAT, ArbiterAAT, ArchivistAAT, FullAccessAAT,
+  createAATRegistry, registerAAT, getAAT, validateAction, filterAffordancesByAAT,
+  createPolicyEngine, addRule, defaultPolicies, evaluate as evaluatePolicy,
+  createTraceStore, recordTrace, getTraces, traceToTurtle,
+  createPersonalBroker, startConversation, addMessage, getMemoryStats,
+} from '../../src/pgsl/agent-framework.js';
+
+import {
+  createEnclaveRegistry, createEnclave, forkEnclave, getEnclave, listEnclaves,
+  freezeEnclave, mergeEnclave, abandonEnclave, enclaveStats,
+  createCheckpointStore, createCheckpoint, restoreCheckpoint, listCheckpoints, diffCheckpoints,
+} from '../../src/pgsl/infrastructure.js';
+
+import {
+  createMarketplace, registerListing, removeListing, discoverByCapability,
+  discoverByType, marketplaceToHydra, marketplaceStats,
+  generateMetagraph, ingestMetagraph, validateMetagraph, queryMetagraph,
+} from '../../src/pgsl/discovery.js';
+
 // Get the xAPI profile for direct transform calls
 const xapiProfile = getProfile('xapi')!;
 import type {
@@ -98,6 +118,23 @@ let pgsl: PGSLInstance = createPGSL({
 
 // Affordance decorator registry — all decorators active for this server
 const decoratorRegistry = createDefaultRegistry();
+
+// Agent framework state
+const aatRegistry = createAATRegistry();
+registerAAT(aatRegistry, ObserverAAT);
+registerAAT(aatRegistry, AnalystAAT);
+registerAAT(aatRegistry, ExecutorAAT);
+registerAAT(aatRegistry, ArbiterAAT);
+registerAAT(aatRegistry, ArchivistAAT);
+registerAAT(aatRegistry, FullAccessAAT);
+
+const policyEngine = createPolicyEngine();
+for (const rule of defaultPolicies()) { addRule(policyEngine, rule); }
+
+const traceStore = createTraceStore();
+const enclaveRegistry = createEnclaveRegistry();
+const checkpointStore = createCheckpointStore();
+const marketplace = createMarketplace();
 
 // Federation state — descriptors discovered from all pods
 interface PodState {
@@ -319,6 +356,16 @@ app.post('/api/constraints', (req, res) => {
     createdAt: new Date().toISOString(),
   };
   constraintRegistry.push(constraint);
+  recordTrace(traceStore, {
+    id: `urn:prov:trace:${Date.now()}`,
+    activity: 'constraints',
+    agent: 'browser-user',
+    agentAAT: 'aat:full-access',
+    entity: constraint.id as IRI,
+    startedAt: new Date().toISOString(),
+    wasAssociatedWith: 'browser-user',
+    success: true,
+  });
 
   // Compute the paradigm sets for display
   const pA = computeParadigm(patternA, positionA);
@@ -1167,6 +1214,16 @@ app.post('/api/ingest', (req, res) => {
     const uri = embedInPGSL(pgsl, content, undefined, granularity ?? 'word');
     const resolved = pgslResolve(pgsl, uri);
     const stats = latticeStats(pgsl);
+    recordTrace(traceStore, {
+      id: `urn:prov:trace:${Date.now()}`,
+      activity: 'ingest',
+      agent: 'browser-user',
+      agentAAT: 'aat:full-access',
+      entity: uri,
+      startedAt: new Date().toISOString(),
+      wasAssociatedWith: 'browser-user',
+      success: true,
+    });
     res.json({ uri, resolved, stats });
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
@@ -1190,6 +1247,16 @@ app.post('/api/ingest-uris', (req, res) => {
     const topUri = ingest(pgsl, uris as IRI[]);
     const resolved = pgslResolve(pgsl, topUri);
     const stats = latticeStats(pgsl);
+    recordTrace(traceStore, {
+      id: `urn:prov:trace:${Date.now()}`,
+      activity: 'ingest',
+      agent: 'browser-user',
+      agentAAT: 'aat:full-access',
+      entity: topUri,
+      startedAt: new Date().toISOString(),
+      wasAssociatedWith: 'browser-user',
+      success: true,
+    });
     res.json({ uri: topUri, resolved, stats });
   } catch (err) {
     res.status(400).json({ error: (err as Error).message });
@@ -1861,6 +1928,132 @@ app.get('/api/activity', (_req, res) => {
   } else {
     res.json({ events: activityLog, total: activityLog.length });
   }
+});
+
+// ── Agent Framework Endpoints ──
+
+// AAT Endpoints
+app.get('/api/aat', (_req, res) => {
+  const aats = ['observer', 'analyst', 'executor', 'arbiter', 'archivist', 'full-access']
+    .map(id => getAAT(aatRegistry, `aat:${id}`))
+    .filter(Boolean);
+  res.json({ aats });
+});
+
+app.post('/api/aat/validate', (req, res) => {
+  const { aatId, action } = req.body;
+  const aat = getAAT(aatRegistry, aatId);
+  if (!aat) { res.status(404).json({ error: 'AAT not found' }); return; }
+  const result = validateAction(aat, action);
+  res.json(result);
+});
+
+// Policy Endpoints
+app.get('/api/policy', (_req, res) => {
+  res.json({ rules: policyEngine.rules });
+});
+
+app.post('/api/policy', (req, res) => {
+  const rule = req.body;
+  addRule(policyEngine, { ...rule, id: `rule:${Date.now()}` });
+  res.json({ added: true, total: policyEngine.rules.length });
+});
+
+// PROV Trace Endpoints
+app.get('/api/traces', (req, res) => {
+  const agent = req.query['agent'] as string | undefined;
+  const activity = req.query['activity'] as string | undefined;
+  const traces = getTraces(traceStore, { agent, activity });
+  res.json({ traces, total: traces.length });
+});
+
+app.get('/api/traces/turtle', (_req, res) => {
+  const traces = getTraces(traceStore);
+  const turtle = traces.map(t => traceToTurtle(t)).join('\n\n');
+  res.set('Content-Type', 'text/turtle');
+  res.send(turtle);
+});
+
+// Enclave Endpoints
+app.post('/api/enclaves', (req, res) => {
+  const { agentId, agentDid } = req.body;
+  const enclave = createEnclave(enclaveRegistry, agentId ?? 'anonymous', pgsl.defaultProvenance, agentDid);
+  res.json({ id: enclave.id, agentId: enclave.agentId, status: enclave.status });
+});
+
+app.get('/api/enclaves', (_req, res) => {
+  const all = listEnclaves(enclaveRegistry);
+  res.json({ enclaves: all.map(e => ({ id: e.id, agentId: e.agentId, status: e.status, createdAt: e.createdAt })), stats: enclaveStats(enclaveRegistry) });
+});
+
+app.post('/api/enclaves/:id/freeze', (req, res) => {
+  freezeEnclave(enclaveRegistry, req.params.id!);
+  res.json({ frozen: true });
+});
+
+app.post('/api/enclaves/:id/merge', (req, res) => {
+  const { targetId, operator } = req.body;
+  const report = mergeEnclave(enclaveRegistry, req.params.id!, targetId, operator ?? 'union');
+  res.json(report);
+});
+
+// Checkpoint Endpoints
+app.post('/api/checkpoints', (req, res) => {
+  const { label, enclaveId } = req.body;
+  const cp = createCheckpoint(checkpointStore, pgsl, 'browser', label, enclaveId);
+  res.json({ id: cp.id, atomCount: cp.atomCount, fragmentCount: cp.fragmentCount, contentHash: cp.contentHash });
+});
+
+app.get('/api/checkpoints', (_req, res) => {
+  const all = listCheckpoints(checkpointStore);
+  res.json({ checkpoints: all.map(c => ({ id: c.id, label: c.label, atomCount: c.atomCount, fragmentCount: c.fragmentCount, createdAt: c.createdAt })) });
+});
+
+// Marketplace Endpoints
+app.get('/api/marketplace', (_req, res) => {
+  res.json({ ...marketplaceStats(marketplace), listings: [...marketplace.listings.values()] });
+});
+
+app.post('/api/marketplace', (req, res) => {
+  const listing = { ...req.body, id: req.body.id ?? `listing:${Date.now()}`, registeredAt: new Date().toISOString() };
+  registerListing(marketplace, listing);
+  res.json({ registered: true, id: listing.id });
+});
+
+app.get('/api/marketplace/discover', (req, res) => {
+  const capabilities = (req.query['capabilities'] as string)?.split(',') ?? [];
+  const type = req.query['type'] as string | undefined;
+  const results = type ? discoverByType(marketplace, type as any) : discoverByCapability(marketplace, capabilities);
+  res.json({ results, count: results.length });
+});
+
+app.get('/api/marketplace/hydra', (_req, res) => {
+  res.set('Content-Type', 'text/turtle');
+  res.send(marketplaceToHydra(marketplace));
+});
+
+// Metagraph Endpoints
+app.get('/api/metagraph', (_req, res) => {
+  const meta = generateMetagraph(pgsl);
+  res.json(meta);
+});
+
+app.post('/api/metagraph/ingest', (_req, res) => {
+  const meta = generateMetagraph(pgsl);
+  ingestMetagraph(pgsl, meta);
+  res.json({ ingested: true, metaAtoms: meta.metaAtoms.length });
+});
+
+app.get('/api/metagraph/validate', (_req, res) => {
+  const meta = generateMetagraph(pgsl);
+  const discrepancies = validateMetagraph(pgsl, meta);
+  res.json({ valid: discrepancies.length === 0, discrepancies });
+});
+
+app.post('/api/metagraph/query', (req, res) => {
+  const { question } = req.body;
+  const answer = queryMetagraph(pgsl, question);
+  res.json({ question, answer });
 });
 
 // ── Observatory API: Comprehensive TLA Demo ──

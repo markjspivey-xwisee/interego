@@ -134,6 +134,8 @@
   <div class="tab" onclick="switchTab('shacl')">SHACL</div>
   <div class="tab" onclick="switchTab('coherence')">Coherence</div>
   <div class="tab" onclick="switchTab('decisions')">Decisions</div>
+  <div class="tab" onclick="switchTab('traces')">Traces</div>
+  <div class="tab" onclick="switchTab('marketplace')">Marketplace</div>
   <div class="tab" onclick="switchTab('lattice')">PGSL Lattice</div>
 </div>
 
@@ -247,6 +249,25 @@ SELECT ?atom ?value WHERE {
       <button onclick="runDecisions()" style="background:#238636;color:#fff;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-size:11px;margin-top:8px">Run Decision Functor</button>
     </div>
     <div id="decisionsResult" style="margin-top:12px"></div>
+  </div>
+
+  <div class="panel" id="panel-traces">
+    <div class="card">
+      <h3>PROV Action Traces</h3>
+      <p>W3C PROV-O audit trail of every action across the federation. Every ingest, compose, constrain, and discover is recorded with agent, timestamp, and policy decision.</p>
+      <button onclick="refreshTraces()" style="background:#238636;color:#fff;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-size:11px;margin-top:8px">Refresh Traces</button>
+      <button onclick="exportTracesTurtle()" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:11px;margin-left:4px">Export Turtle</button>
+    </div>
+    <div id="tracesResult" style="margin-top:12px"></div>
+  </div>
+
+  <div class="panel" id="panel-marketplace">
+    <div class="card">
+      <h3>Agent & Service Marketplace</h3>
+      <p>Hydra-driven discovery of agents, data sources, decorators, and ingestion profiles across the federation.</p>
+      <button onclick="refreshMarketplace()" style="background:#238636;color:#fff;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;font-size:11px;margin-top:8px">Refresh</button>
+    </div>
+    <div id="marketplaceResult" style="margin-top:12px"></div>
   </div>
 
   <div class="panel" id="panel-lattice">
@@ -762,6 +783,20 @@ async function exploreNode() {
     html += '</div>';
   }
 
+  // Suggestions from decorators
+  if (data._suggestions && data._suggestions.length > 0) {
+    html += '<div style="margin-bottom:12px">';
+    html += '<div style="font-size:12px;color:#f0883e;margin-bottom:6px">Structural Suggestions</div>';
+    for (var sug of data._suggestions) {
+      html += '<div style="padding:4px 8px;background:#2d1c06;border:1px solid #d29922;border-radius:4px;margin-bottom:4px;font-size:10px">';
+      html += '<span style="color:#d29922">[' + sug.type + ']</span> ' + sug.description;
+      if (sug.proposed) html += '<div style="color:#8b949e;margin-top:2px">Proposed: ' + sug.proposed + '</div>';
+      html += '<div style="color:#484f58;margin-top:2px">' + sug.rationale + '</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+
   // Context (containers)
   if (data._context && data._context.containers && data._context.containers.length > 0) {
     html += '<div>';
@@ -773,6 +808,60 @@ async function exploreNode() {
   }
 
   document.getElementById('nodeExplorerResult').innerHTML = html;
+}
+
+// ── Traces ──
+
+async function refreshTraces() {
+  const resp = await fetch('/api/traces');
+  const data = await resp.json();
+  let html = '<div class="card"><h3>' + data.total + ' Traces</h3></div>';
+  for (const t of (data.traces || []).slice(-20).reverse()) {
+    html += '<div class="card" style="padding:8px 12px">';
+    html += '<div style="display:flex;justify-content:space-between">';
+    html += '<span style="color:#58a6ff">' + t.activity + '</span>';
+    html += '<span style="color:#484f58;font-size:10px">' + new Date(t.startedAt).toLocaleTimeString() + '</span>';
+    html += '</div>';
+    html += '<div style="font-size:10px;color:#8b949e">Agent: ' + t.agent + ' | AAT: ' + t.agentAAT + '</div>';
+    html += '<div style="font-size:10px;color:#8b949e">Entity: ' + t.entity + '</div>';
+    html += '<div style="font-size:10px;color:' + (t.success ? '#3fb950' : '#f85149') + '">' + (t.success ? 'Success' : 'Failed: ' + (t.error || '')) + '</div>';
+    html += '</div>';
+  }
+  document.getElementById('tracesResult').innerHTML = html;
+}
+
+async function exportTracesTurtle() {
+  const resp = await fetch('/api/traces/turtle');
+  const text = await resp.text();
+  const blob = new Blob([text], {type: 'text/turtle'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'traces.ttl';
+  a.click();
+}
+
+// ── Marketplace ──
+
+async function refreshMarketplace() {
+  const resp = await fetch('/api/marketplace');
+  const data = await resp.json();
+  let html = '<div class="card"><h3>' + data.total + ' Listings</h3>';
+  html += '<p>Agents: ' + (data.byType?.agent || 0) + ' | Sources: ' + (data.byType?.['data-source'] || 0) + ' | Decorators: ' + (data.byType?.decorator || 0) + '</p></div>';
+  for (const l of (data.listings || [])) {
+    html += '<div class="card">';
+    html += '<h3 style="color:#58a6ff">' + l.name + ' <span style="font-size:10px;color:#8b949e">(' + l.type + ')</span></h3>';
+    html += '<p>' + l.description + '</p>';
+    html += '<p style="font-size:10px;color:#8b949e">Provider: ' + l.provider + ' | Trust: ' + l.trustLevel + '</p>';
+    if (l.capabilities && l.capabilities.length > 0) {
+      html += '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">';
+      for (var cap of l.capabilities) {
+        html += '<span style="background:#1c2840;color:#58a6ff;padding:2px 6px;border-radius:4px;font-size:9px">' + cap + '</span>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  document.getElementById('marketplaceResult').innerHTML = html;
 }
 
 // Initial load

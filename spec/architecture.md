@@ -111,7 +111,8 @@ The system is grounded in Peircean triadic semiotics:
 
 ## 3. Layer Architecture
 
-The system is organized in 9 layers, each building on the one below.
+The system is organized in 9 core layers plus 12 extension layers, each
+building on the ones below.
 
 ### 3.1 Layer 1: PGSL (Poly-Granular Sequence Lattice)
 
@@ -550,6 +551,287 @@ VALUES, REGEX, and property paths.
 | `rdf/jsonld.ts` | 413 | JSON-LD serializer and parser |
 | `rdf/namespaces.ts` | 321 | 23+ W3C namespace constants, class/property IRIs |
 
+### 3.10 Agent Framework
+
+Abstract Agent Types (AAT) provide role-based behavioral contracts for
+multi-agent systems operating over PGSL.
+
+**Six agent types:**
+
+| Type | Role | Capabilities |
+|------|------|-------------|
+| Observer | Read-only monitoring | canPerceive only |
+| Analyst | Read + analyze | canPerceive, can derive insights |
+| Executor | Read + write | canPerceive, canAct |
+| Arbiter | Conflict resolution | canPerceive, canAct, adjudicates disputes |
+| Archivist | Preservation-focused | canPerceive, mustPreserve |
+| FullAccess | Unrestricted | canPerceive, canAct, all capabilities |
+
+**Behavioral contracts:** Each agent type declares `canPerceive`,
+`canAct`, and `mustPreserve` boolean flags. These contracts filter the
+affordance space before any other processing --- the agent framework
+integrates as a decorator with priority 1 (highest), ensuring that
+role-based restrictions are applied before all other decorators in the
+chain.
+
+**Key module:** `pgsl/agent-framework.ts`.
+
+### 3.11 Deontic Policy Engine
+
+Fine-grained normative policies evaluated per-affordance in the decorator
+chain.
+
+**PolicyRule structure:**
+
+- `mode`: `DeonticMode` --- one of `permit`, `deny`, or `duty`
+- `subject`: agent or role the rule applies to
+- `action`: the affordance or action class governed
+- `condition`: optional predicate for conditional rules
+
+**Evaluation semantics:**
+
+- **Deny overrides permit:** If any deny rule matches, the affordance is
+  blocked regardless of permits.
+- **Duties accumulate:** All matching duty rules are collected and must be
+  fulfilled.
+- **Default policies:** Three built-in defaults:
+  1. Immutable atoms --- atoms cannot be mutated after creation
+  2. Require provenance --- all writes must include provenance metadata
+  3. Escalate critical --- critical actions are escalated to Arbiter agents
+
+Policies are evaluated per-affordance within the decorator chain,
+after the agent framework filter and before domain-specific decorators.
+
+**Key module:** `pgsl/agent-framework.ts`.
+
+### 3.12 PROV Action Tracing
+
+Every action in the system produces a W3C PROV-O compliant provenance
+record.
+
+**Trace structure:**
+
+- `agent`: the acting agent
+- `activity`: the action performed
+- `entity`: the artifact produced or modified
+- `startedAtTime` / `endedAtTime`: temporal bounds
+- `wasGeneratedBy` / `used` / `wasAssociatedWith`: PROV-O relations
+
+**Append-only trace store:** All traces are stored in an append-only log.
+No trace can be deleted or modified after creation.
+
+**TracedAffordance wrapper:** Wraps any affordance to automatically
+capture a PROV-O record when the affordance is exercised. This ensures
+complete audit trails without manual instrumentation.
+
+**Turtle serialization:** Traces can be exported as standard PROV-O
+Turtle for interoperability with external provenance tools.
+
+**Key module:** `pgsl/agent-framework.ts`.
+
+### 3.13 Affordance Decorators
+
+A pluggable decorator chain that enriches HATEOAS responses with
+contextual affordances from multiple sources.
+
+**Architecture:** Each decorator implements a standard interface and is
+composed in a priority-ordered chain. Decorators receive the current
+affordance set and return an enriched set.
+
+**7 built-in decorators:**
+
+| Decorator | Priority | Purpose |
+|-----------|----------|---------|
+| Core | 0 | Base PGSL affordances (mint, ingest, resolve, navigate) |
+| Ontology Pattern | 2 | RDF/OWL-derived structural suggestions |
+| Coherence | 3 | Coherence-state-aware affordance filtering |
+| Persistence | 4 | Tier-promotion affordances |
+| xAPI Domain | 5 | xAPI-specific affordances for learning data |
+| Federation | 6 | Cross-pod discovery and sync affordances |
+| LLM Advisor | 7 | AI-suggested structural improvements |
+
+**Affordance metadata:** Each decorator-contributed affordance includes:
+
+- `trustLevel`: confidence in the suggestion source
+- `confidence`: numeric score [0, 1]
+- `rationale`: human-readable explanation
+
+**Structural suggestions:** Decorators can suggest structural operations
+including `nest` (create containment), `reify` (make implicit structure
+explicit), `group` (aggregate related items), and `split` (decompose
+complex structures).
+
+**Key module:** `pgsl/affordance-decorators.ts`.
+
+### 3.14 Enclaves
+
+DID-bound isolated PGSL instances for sandboxed experimentation and
+controlled collaboration.
+
+**Lifecycle:**
+
+- `fork(source, did)`: Create a new enclave as a snapshot of an existing
+  PGSL instance, bound to a DID.
+- `freeze(enclave)`: Make the enclave read-only, preserving its state.
+- `merge(enclave, target, strategy)`: Merge enclave content back. Merge
+  strategies include `union` (all content) and `intersection` (only
+  shared content).
+- `abandon(enclave)`: Discard the enclave and its content.
+
+**Full audit trail:** Every enclave operation (fork, freeze, merge,
+abandon) is recorded with timestamps, agent identity, and PROV-O
+provenance.
+
+**Key module:** `pgsl/infrastructure.ts`.
+
+### 3.15 Checkpoint/Recovery
+
+Immutable state snapshots with content hashing for reliable state
+management.
+
+**Operations:**
+
+- `checkpoint(pgsl)`: Capture an immutable snapshot of the current PGSL
+  state. The snapshot is content-hashed (SHA-256) for integrity
+  verification.
+- `restore(checkpoint)`: Restore PGSL state from a checkpoint. The
+  content hash is verified before restoration.
+- `diff(checkpointA, checkpointB)`: Compute the structural difference
+  between two checkpoints, reporting added, removed, and modified nodes.
+
+**Serialization:** Checkpoints serialize the complete PGSL state
+(nodes, provenance, options) to a portable format for backup and
+transfer.
+
+**Key module:** `pgsl/infrastructure.ts`.
+
+### 3.16 CRDT Sync
+
+Conflict-free replicated data type (CRDT) synchronization for
+eventually-consistent multi-agent collaboration.
+
+**Vector clocks:** Each agent maintains a vector clock tracking causal
+ordering of operations. Operations are merged using vector clock
+comparison to detect concurrency.
+
+**Causal ordering:** Operations are applied in causal order. Concurrent
+operations are merged using CRDT semantics.
+
+**Idempotent operations:** The core PGSL operations (`mint-atom`,
+`ingest-chain`) are naturally idempotent due to content-addressing ---
+minting the same atom twice produces the same URI with no side effects.
+
+**PGSL as grow-only CRDT:** The PGSL lattice is a natural grow-only
+CRDT (G-Set). Atoms and fragments are only added, never removed.
+Content-addressing ensures convergence: all replicas that have seen
+the same set of operations will have identical state.
+
+**Key module:** `pgsl/infrastructure.ts`.
+
+### 3.17 Introspection Agents
+
+Automated discovery and ingestion of external data sources into PGSL.
+
+**Supported source types:**
+
+- **JSON:** Auto-scan JSON objects and arrays, generating chains from
+  key-value paths.
+- **CSV:** Parse tabular data, generating chains from column headers
+  and row values.
+- **RDF:** Ingest existing RDF datasets, mapping triples to PGSL chains.
+- **API:** Crawl REST/Hydra API endpoints, discovering structure and
+  generating representative chains.
+
+**Generated artifacts:**
+
+- PGSL chains representing the discovered structure
+- SHACL shapes describing the inferred schema
+- Paradigm constraints capturing observed regularities
+
+**Key module:** `pgsl/discovery.ts`.
+
+### 3.18 Zero-Copy Virtual Layer
+
+Lazy-loading virtual references for large-scale PGSL instances.
+
+**Reference-based access:** Virtual references point to PGSL content
+without loading it into memory. Content is resolved on demand when
+accessed.
+
+**Cache management:**
+
+- **LRU (Least Recently Used):** Evicts the least recently accessed
+  content when the cache reaches capacity.
+- **FIFO (First In, First Out):** Evicts the oldest cached content.
+
+**Resolve on demand:** Virtual references are transparently resolved
+when their content is needed, with resolved values cached according
+to the active eviction policy.
+
+**Key module:** `pgsl/discovery.ts`.
+
+### 3.19 Homoiconic Metagraph
+
+The PGSL lattice describes itself using its own representational
+primitives.
+
+**Self-description:** The lattice contains meta-atoms that describe
+the lattice's own structure:
+
+- **Counts:** Number of atoms, fragments, and levels
+- **Levels:** Depth and breadth of the lattice hierarchy
+- **Invariants:** Structural properties that hold across the lattice
+
+**Self-referential query:** SPARQL queries over the metagraph enable
+introspective analysis --- the system can reason about its own
+structure using the same query mechanisms used for domain content.
+
+**Key module:** `pgsl/discovery.ts`.
+
+### 3.20 Marketplace Discovery
+
+Hydra-driven registry for discovering and composing system components.
+
+**Registration:** Components register themselves via Hydra API
+descriptions, advertising their capabilities and interfaces.
+
+**Discoverable component types:**
+
+- **Agents:** Available agent instances with their AAT types and
+  capabilities
+- **Data sources:** PGSL instances and external data endpoints
+- **Decorators:** Affordance decorators available for composition
+- **Profiles:** Ingestion profiles for domain-specific data mapping
+
+**Capability-based discovery:** Consumers query the marketplace by
+required capabilities rather than by name, enabling loose coupling
+and substitutability.
+
+**Key module:** `pgsl/discovery.ts`.
+
+### 3.21 Personal Broker
+
+Per-agent PGSL instance managing an agent's private knowledge and
+conversational state.
+
+**Per-agent PGSL:** Each agent maintains its own PGSL lattice for
+private knowledge that is not shared with the federation unless
+explicitly published.
+
+**Memory types:**
+
+- **Semantic memory:** Facts and relationships (PGSL chains)
+- **Episodic memory:** Temporal sequences of events and experiences
+- **Procedural memory:** Learned strategies and action patterns
+
+**Conversations:** The broker manages multi-turn conversational state,
+tracking context across interactions.
+
+**Presence status:** Agents publish presence information (online,
+offline, busy) through the broker for coordination.
+
+**Key module:** `pgsl/agent-framework.ts`.
+
 ---
 
 ## 4. Ingestion Profiles
@@ -882,12 +1164,16 @@ conversion.
 
 ## 11. Test Coverage
 
-387 tests across 15 suites. Zero type errors.
+608 tests across 19 suites. Zero type errors.
 
 | Suite | Tests | Coverage |
 |-------|-------|----------|
-| `context-graphs.test.ts` | 44 | Builder, composition, validation, serialization |
+| `agent-framework.test.ts` | 68 | AAT types, deontic policies, PROV tracing, personal broker |
 | `xapi-conformance.test.ts` | 60 | xAPI profile, IFI priority, result/context structure |
+| `multi-agent-integration.test.ts` | 59 | Multi-agent coordination, enclaves, CRDT sync |
+| `discovery.test.ts` | 50 | Introspection, virtual layer, metagraph, marketplace |
+| `infrastructure.test.ts` | 47 | Enclaves, checkpoint/recovery, CRDT sync |
+| `context-graphs.test.ts` | 44 | Builder, composition, validation, serialization |
 | `causality.test.ts` | 38 | SCM, do-calculus, d-separation, counterfactual |
 | `encryption-zk.test.ts` | 33 | NaCl encryption, ZK proofs, selective disclosure |
 | `pgsl.test.ts` | 31 | Lattice, category, geometric morphism |
@@ -959,6 +1245,10 @@ Complete table of all TypeScript modules in `src/`, sorted by directory.
 | `entity-extraction.ts` | 207 | Named entity extraction |
 | `temporal-retrieval.ts` | 171 | Temporal query resolution |
 | `tools.ts` | 458 | LLM tool interface (5 tools), multi-turn dispatch loop |
+| `agent-framework.ts` | --- | AAT types, deontic policies, PROV tracing, personal broker |
+| `affordance-decorators.ts` | --- | Pluggable decorator chain, 7 built-in decorators |
+| `infrastructure.ts` | --- | Enclaves, checkpoint/recovery, CRDT sync |
+| `discovery.ts` | --- | Introspection agents, virtual layer, metagraph, marketplace |
 
 ### 12.4 RDF (`src/rdf/`)
 
@@ -1066,6 +1356,18 @@ specification:
 - Three-layer SHACL validation
 - Virtualized RDF layer with SPARQL Protocol
 - MCP server for AI agent integration
+- Abstract Agent Types (AAT) with behavioral contracts
+- Deontic policy engine (permit/deny/duty)
+- W3C PROV-O action tracing with append-only trace store
+- Pluggable affordance decorator chain (7 built-in decorators)
+- DID-bound enclaves (fork, freeze, merge, abandon)
+- Checkpoint/recovery with content-hashed snapshots
+- CRDT sync with vector clocks and causal ordering
+- Introspection agents (JSON, CSV, RDF, API auto-scan)
+- Zero-copy virtual layer with LRU/FIFO cache
+- Homoiconic metagraph (self-describing lattice)
+- Marketplace discovery (Hydra-driven component registry)
+- Personal broker (per-agent PGSL, semantic/episodic/procedural memory)
 
 ---
 
