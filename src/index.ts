@@ -397,6 +397,12 @@ export {
   selectStrategy,
   decide as decideFromObservations,
   composeDecisions,
+  // Affordance decorators
+  createDecoratorRegistry,
+  createDefaultRegistry,
+  registerDecorator,
+  removeDecorator,
+  decorateNode,
 } from './pgsl/index.js';
 
 export type {
@@ -449,6 +455,13 @@ export type {
   ObservationSection,
   DecisionStrategy,
   DecisionResult,
+  // Decorator types
+  AffordanceDecorator,
+  DecoratorContext,
+  DecoratedAffordance,
+  StructuralSuggestion,
+  DecoratorResult,
+  DecoratorRegistry,
 } from './pgsl/index.js';
 
 // ── Affordance Engine ────────────────────────────────────────

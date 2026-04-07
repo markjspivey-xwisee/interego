@@ -56,6 +56,9 @@ import {
   // Ingestion profiles
   ingestWithProfile,
   getProfile,
+  // Affordance decorators
+  createDefaultRegistry,
+  decorateNode,
   // System ontology & virtualized RDF layer
   systemOntology,
   systemShaclShapes,
@@ -92,6 +95,9 @@ let pgsl: PGSLInstance = createPGSL({
   wasAttributedTo: `urn:pgsl-browser:${POD_NAME}` as IRI,
   generatedAtTime: new Date().toISOString(),
 });
+
+// Affordance decorator registry — all decorators active for this server
+const decoratorRegistry = createDefaultRegistry();
 
 // Federation state — descriptors discovered from all pods
 interface PodState {
@@ -924,99 +930,31 @@ app.get('/api/node/*', (req, res) => {
     }
   }
 
-  // ── Controls (Affordances) ────────────────────────────
-  // What actions can be performed FROM this node.
-  // Each control is a fully-specified hypermedia form.
+  // ── Controls (Affordances) — Decorator Chain ──────────
+  // Instead of hardcoded controls, run the decorator chain.
+  // Each decorator adds affordances based on its expertise.
 
-  const controls: any[] = [];
+  const decoratorContext = {
+    uri: nodeUri,
+    value: node.kind === 'Atom' ? node.value : undefined,
+    kind: node.kind as 'Atom' | 'Fragment',
+    level: node.level,
+    resolved,
+    items: node.kind === 'Fragment' ? node.items.map((itemUri: IRI, i: number) => {
+      const itemNode = pgsl.nodes.get(itemUri);
+      return { uri: itemUri, resolved: pgslResolve(pgsl, itemUri), kind: itemNode?.kind ?? 'unknown', level: itemNode?.level ?? 0 };
+    }) : undefined,
+    sourceOptions: sourceOptions.map(o => ({ uri: o.uri as IRI, resolved: o.resolved })),
+    targetOptions: targetOptions.map(o => ({ uri: o.uri as IRI, resolved: o.resolved })),
+    constraints: activeConstraints,
+    containers: containers.map(c => ({ uri: c.uri as IRI, resolved: c.resolved, level: c.level, position: c.position })),
+    pgsl,
+    existingAffordances: [],
+  };
 
-  // Add source: extend a chain with this node, adding something before it
-  controls.push({
-    rel: 'add-source',
-    title: 'Add before this node in a chain',
-    method: 'POST',
-    href: '/api/ingest-uris',
-    fields: [
-      { name: 'uris', type: 'array', description: 'Array of URIs: [newSourceUri, thisNodeUri]', template: ['{{sourceUri}}', nodeUri] },
-    ],
-    sourceOptions: sourceOptions.map(o => ({ uri: o.uri, href: o.href, resolved: o.resolved })),
-  });
-
-  // Add target: extend a chain with this node, adding something after it
-  controls.push({
-    rel: 'add-target',
-    title: 'Add after this node in a chain',
-    method: 'POST',
-    href: '/api/ingest-uris',
-    fields: [
-      { name: 'uris', type: 'array', description: 'Array of URIs: [thisNodeUri, newTargetUri]', template: [nodeUri, '{{targetUri}}'] },
-    ],
-    targetOptions: targetOptions.map(o => ({ uri: o.uri, href: o.href, resolved: o.resolved })),
-  });
-
-  // Create new atom: ingest a new value to use as source or target
-  controls.push({
-    rel: 'create-atom',
-    title: 'Create a new atom to use in chains',
-    method: 'POST',
-    href: '/api/ingest',
-    fields: [
-      { name: 'content', type: 'string', description: 'Value for the new atom' },
-      { name: 'granularity', type: 'string', value: 'word' },
-    ],
-  });
-
-  // Constrain paradigm: create a constraint involving this node's position
-  if (containers.length > 0) {
-    controls.push({
-      rel: 'constrain-paradigm',
-      title: 'Create a paradigm constraint at this position',
-      method: 'POST',
-      href: '/api/constraints',
-      fields: [
-        { name: 'patternA', type: 'array', description: 'Pattern with ? at variable position' },
-        { name: 'positionA', type: 'number', description: 'Index of ? in patternA' },
-        { name: 'patternB', type: 'array', description: 'Second pattern with ? at variable position' },
-        { name: 'positionB', type: 'number', description: 'Index of ? in patternB' },
-        { name: 'op', type: 'string', enum: ['subset', 'intersect', 'union', 'exclude', 'equal'] },
-      ],
-    });
-  }
-
-  // SPARQL: query the materialized triples
-  controls.push({
-    rel: 'sparql',
-    title: 'Query this node via SPARQL',
-    method: 'POST',
-    href: '/api/sparql',
-    fields: [
-      { name: 'query', type: 'string', description: 'SPARQL SELECT or ASK query' },
-    ],
-  });
-
-  // Wrap as group: if this is an atom, wrap with other atoms into a fragment
-  if (node.kind === 'Atom') {
-    controls.push({
-      rel: 'wrap-group',
-      title: 'Wrap this atom with others into a structured group',
-      method: 'POST',
-      href: '/api/ingest-uris',
-      fields: [
-        { name: 'uris', type: 'array', description: 'URIs to compose as a fragment (this atom + others)' },
-      ],
-    });
-  }
-
-  // Navigate to chain view: see this node in chain context
-  controls.push({
-    rel: 'chain-view',
-    title: 'View this node in chain context with inner/outer neighbors',
-    method: 'POST',
-    href: '/api/chain',
-    fields: [
-      { name: 'uris', type: 'array', value: [nodeUri] },
-    ],
-  });
+  const decorated = decorateNode(decoratorRegistry, decoratorContext);
+  const controls = decorated.affordances;
+  const suggestions = decorated.suggestions;
 
   // ── Response ──────────────────────────────────────────
 
@@ -1033,6 +971,7 @@ app.get('/api/node/*', (req, res) => {
       constraints: activeConstraints,
     },
     _controls: controls,
+    _suggestions: suggestions.length > 0 ? suggestions : undefined,
     _links: {
       self: { href: `/node/${encodeURIComponent(nodeUri)}`, rel: 'self' },
       ...(containers.length > 0 ? { up: containers.map(c => ({ href: c.href, rel: 'container', resolved: c.resolved })) } : {}),

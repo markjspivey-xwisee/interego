@@ -234,6 +234,29 @@ export type {
   DecisionStrategy,
   DecisionResult,
 } from './decision-functor.js';
+// Affordance decorators
+export {
+  createDecoratorRegistry,
+  createDefaultRegistry,
+  registerDecorator,
+  removeDecorator,
+  decorateNode,
+  coreSystemDecorator,
+  ontologyPatternDecorator,
+  coherenceDecorator,
+  persistenceDecorator,
+  xapiDomainDecorator,
+  federationDecorator,
+  llmAdvisorDecorator,
+} from './affordance-decorators.js';
+export type {
+  AffordanceDecorator,
+  DecoratorContext,
+  DecoratedAffordance,
+  StructuralSuggestion,
+  DecoratorResult,
+  DecoratorRegistry,
+} from './affordance-decorators.js';
 // Progressive persistence
 export {
   createPersistenceRegistry,
