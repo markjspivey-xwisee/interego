@@ -267,9 +267,11 @@ function answer(
       // Extract verb from question for precision
       const verb = question.match(/did I (\w+)/i)?.[1] ?? 'start';
 
-      // Find sessions mentioning each thing
-      const sessionsForA = ranked.filter(r => r.session.text.toLowerCase().includes(things[0]!.toLowerCase().slice(0, 15)));
-      const sessionsForB = ranked.filter(r => r.session.text.toLowerCase().includes(things[1]!.toLowerCase().slice(0, 15)));
+      // Find sessions mentioning each thing — use content words, not just first N chars
+      const keywordsA = things[0]!.toLowerCase().split(/\s+/).filter(w => w.length > 3 && !['the', 'with', 'from', 'that', 'this', 'about'].includes(w));
+      const keywordsB = things[1]!.toLowerCase().split(/\s+/).filter(w => w.length > 3 && !['the', 'with', 'from', 'that', 'this', 'about'].includes(w));
+      const sessionsForA = ranked.filter(r => keywordsA.some(kw => r.session.text.toLowerCase().includes(kw)));
+      const sessionsForB = ranked.filter(r => keywordsB.some(kw => r.session.text.toLowerCase().includes(kw)));
 
       const textForA = (sessionsForA.length > 0 ? sessionsForA : ranked).slice(0, 3).map(r => {
         return `Session ${r.session.index + 1} (Date: ${r.session.date ?? 'unknown'}):\n${r.session.text.slice(0, 3000)}`;
@@ -279,17 +281,34 @@ function answer(
         return `Session ${r.session.index + 1} (Date: ${r.session.date ?? 'unknown'}):\n${r.session.text.slice(0, 3000)}`;
       }).join('\n\n');
 
-      // Step 1: Find when thing A happened — FOCUSED on relevant sessions only
-      const dateA = llm(
-        `When did the user ${verb} "${things[0]}"? Find the date or time reference.\n\nCRITICAL: If the text says "about a month ago", "last week", "two weeks ago", etc., you MUST compute the actual date from the session date. For example, if the session date is 2023/05/20 and the user says "about a month ago", the date is approximately 2023-04-20.\n\n"Pre-ordered" ≠ "got/received". Use the date they actually ${verb} it.\n\n${textForA}\n\nQuote the exact sentence mentioning "${things[0]}" with a time reference, then compute the date.\n\nDate (YYYY-MM-DD):`
-      );
+      // Extract date for each event separately, with focused session text
+      // Key: include session dates so relative times can be computed
+      // Extract date for each event with EXPLICIT relative-time computation
+      function extractDate(thing: string, sessionText: string): string {
+        // First: find relative time expressions
+        const relCheck = llm(
+          `Does the text mention "${thing}" with a RELATIVE time expression like "a month ago", "last week", "recently", "14 days ago", "X weeks ago"? Quote the exact phrase if yes. Say NO if the date is explicit (like "on February 20th").\n\n${sessionText.slice(0, 3000)}\n\nRelative time expression:`
+        );
 
-      // Step 2: Find when thing B happened
-      const dateB = llm(
-        `When did the user ${verb} "${things[1]}"? Find the date or time reference.\n\nCRITICAL: If the text says "about a month ago", "last week", "14 days", etc., COMPUTE the actual date from the session date.\n\n"Pre-ordered" ≠ "got/received". Use the date they actually ${verb} it.\n\n${textForB}\n\nQuote the exact sentence mentioning "${things[1]}" with a time reference, then compute the date.\n\nDate (YYYY-MM-DD):`
-      );
+        const hasRelative = !relCheck.toLowerCase().startsWith('no') && relCheck.length > 3;
 
-      // Step 3: Compare in code
+        if (hasRelative) {
+          // Extract session date from the text header
+          const sessionDateMatch = sessionText.match(/Date:\s*([^\])\n]+)/);
+          const sessDate = sessionDateMatch?.[1]?.trim() ?? '';
+          return llm(
+            `The session date is ${sessDate}.\nThe user says: "${relCheck}"\n\nCompute the actual date. For example:\n- "a month ago" from 2023/05/30 = 2023-04-30\n- "last week" from 2023/05/30 = approximately 2023-05-23\n- "14 days ago" from 2023/05/30 = 2023-05-16\n\nActual date (YYYY-MM-DD only):`
+          );
+        } else {
+          return llm(
+            `When did the user ${verb} "${thing}"? Find the explicit date.\n\n"Pre-ordered" ≠ "got/received" — use when they actually ${verb} it.\n\n${sessionText.slice(0, 3000)}\n\nDate (YYYY-MM-DD only):`
+          );
+        }
+      }
+
+      const dateA = extractDate(things[0]!, textForA);
+      const dateB = extractDate(things[1]!, textForB);
+
       const datesA = dateA.match(/\d{4}-\d{2}-\d{2}/g) || [];
       const datesB = dateB.match(/\d{4}-\d{2}-\d{2}/g) || [];
 
@@ -297,6 +316,14 @@ function answer(
         const dA = parseDate(datesA[datesA.length - 1]!);
         const dB = parseDate(datesB[datesB.length - 1]!);
         if (dA && dB) {
+          const diffDays = Math.abs(daysBetween(dA, dB));
+          if (diffDays === 0) {
+            // Same day — can't determine from dates alone, ask LLM with focused text
+            const tiebreak = llm(
+              `Both "${things[0]}" and "${things[1]}" happened on the same date (${datesA[datesA.length - 1]}). Based on the conversation context, which one happened FIRST (earlier in the day, or was done/set up first)?\n\n${allSorted}\n\nWhich was first? Answer with ONLY the name:`
+            );
+            return { answer: tiebreak, method: 'pgsl-temporal-tiebreak', reasoning: `Same date ${datesA[datesA.length - 1]} — LLM tiebreak` };
+          }
           const first = dA < dB ? things[0]! : things[1]!;
           return {
             answer: first,
@@ -306,11 +333,31 @@ function answer(
         }
       }
 
-      // Fallback: couldn't extract dates, ask LLM directly
+      // RETRY with combined focused approach (catches "a month ago" patterns)
+      if (datesA.length > 0 && datesB.length > 0) {
+        // We got dates but they might be wrong. Try the combined approach as verification.
+        const verifyBoth = llm(
+          `Two events:\nA: "${things[0]}"\nB: "${things[1]}"\n\nFor each, find when the user ${verb} it. If "a month ago" or "last week", COMPUTE from the session date.\n\n${textForA}\n\n${textForB}\n\nA date (YYYY-MM-DD):\nB date (YYYY-MM-DD):\nWhich was first?`
+        );
+        const verifyDates = verifyBoth.match(/\d{4}-\d{2}-\d{2}/g) || [];
+        if (verifyDates.length >= 2) {
+          const vdA = parseDate(verifyDates[0]!);
+          const vdB = parseDate(verifyDates[1]!);
+          if (vdA && vdB && Math.abs(daysBetween(vdA, vdB)) > 0) {
+            const first = vdA < vdB ? things[0]! : things[1]!;
+            return { answer: first, method: 'pgsl-temporal-verified', reasoning: `Verified: "${things[0]}"=${verifyDates[0]} vs "${things[1]}"=${verifyDates[1]} → ${first}` };
+          }
+        }
+      }
+
+      // Fallback: couldn't extract dates cleanly. Ask LLM to do the full comparison with explicit reasoning.
       const directAnswer = llm(
-        `Based on the sessions, which happened first: "${things[0]}" or "${things[1]}"? The verb is "${verb}". Consider: "pre-ordered" ≠ "received/got". Use the date they actually ${verb} it.\n\n${allSorted}\n\nWhich happened first? Answer with ONLY the name:`
+        `I need to determine which happened first: "${things[0]}" or "${things[1]}". The verb is "${verb}".\n\n"Pre-ordered" ≠ "received/got". Use the date they actually ${verb} it.\n\nFor EACH item, quote the sentence that gives the date, then state the date.\n\n${allSorted}\n\n"${things[0]}" date: [quote + date]\n"${things[1]}" date: [quote + date]\n\nWhich was first? (name only):`
       );
-      return { answer: directAnswer, method: 'pgsl-temporal-direct', reasoning: `Direct LLM comparison` };
+      // Extract last line as answer
+      const directLines = directAnswer.split('\n').filter(l => l.trim().length > 0);
+      const directFinal = directLines[directLines.length - 1]?.trim() ?? directAnswer;
+      return { answer: directFinal.replace(/^(Answer|Which was first)[:\s]*/i, '').trim(), method: 'pgsl-temporal-direct', reasoning: `Direct LLM with quote-then-answer` };
     }
   }
 
@@ -356,6 +403,15 @@ function answer(
         const d2 = parseDate(d2Matches[d2Matches.length - 1]!);
         if (d1 && d2) {
           const days = Math.abs(daysBetween(d1, d2));
+
+          // Sanity check: if 0 days, the extraction probably got the same date for both. Retry with direct LLM.
+          if (days === 0) {
+            const retryAnswer = llm(
+              `${allSorted}\n\n${questionDate ? `Question date: ${questionDate}.` : ''}\n\nQuestion: ${question}\n\nCompute the time duration. Quote the relevant dates from the text, then calculate. Give ONLY the number and unit:`
+            );
+            return { answer: retryAnswer, method: 'pgsl-duration-retry', reasoning: 'Decomposition got 0 days — LLM retry' };
+          }
+
           const unit = /week/i.test(question) ? 'weeks' : /month/i.test(question) ? 'months' : /year/i.test(question) ? 'years' : 'days';
           let ans: string;
           if (unit === 'weeks') ans = `${Math.round(days / 7)}`;
@@ -394,10 +450,11 @@ function answer(
     const category = llm(`What specific category is being counted? Short phrase only.\n\nQuestion: ${question}\n\nCategory:`).trim();
 
     // Step 2: For each session, extract items in that category
+    // Use the FULL QUESTION as context so the LLM understands what counts
     const allItems: Array<{item: string; session: number}> = [];
     for (const s of index.sessions) {
       const items = llm(
-        `List EVERY "${category}" EXPLICITLY mentioned by the user in this session. One per line, exact name. Say NONE if none.\n\nSession ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 5000)}\n\nItems:`
+        `The question is: "${question}"\n\nThe category being counted is: "${category}"\n\nList EVERY item matching this category in this session. Include items the user participated in, attended, volunteered at, organized, or was involved with. One per line, exact name. Say NONE if none found.\n\nSession ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 5000)}\n\nItems:`
       );
       if (!items.toLowerCase().startsWith('none')) {
         for (const line of items.split('\n')) {
@@ -409,14 +466,50 @@ function answer(
       }
     }
 
-    // Step 3: If counting before/after a reference, filter by time
-    if (/before|after/i.test(question)) {
-      // Let LLM handle this with the full list
-      const countAnswer = llm(
-        `I found these "${category}":\n${allItems.map(i => `  Session ${i.session + 1}: ${i.item}`).join('\n')}\n\nQuestion: ${question}\n\nCount the ones that match the question's criteria (before/after the reference event). Give ONLY the number:`
+    // Step 3: If counting before/after a reference, we need DATES for each item
+    if (/before|after/i.test(question) && allItems.length > 0) {
+      // Get dates for each item AND the reference event
+      const uniqueItems = [...new Set(allItems.map(i => i.item))];
+      const itemsWithDates = llm(
+        `Find the DATE for each of these items AND the reference event from the question.\n\nItems found:\n${uniqueItems.map(i => `  - ${i}`).join('\n')}\n\nQuestion: ${question}\n\nFor each item, find its date from the sessions below. Also find the date of the reference event mentioned in the question.\n\n${allSorted}\n\nReturn ONE line per item: name | YYYY-MM-DD\nInclude the reference event too.`
       );
-      const num = countAnswer.match(/\d+/);
-      if (num) return { answer: num[0]!, method: 'pgsl-count-decomposed', reasoning: `Found ${allItems.length} items, filtered: ${num[0]}` };
+
+      // Parse dates
+      const itemDates: Array<{name: string; date: Date}> = [];
+      let refDate: Date | null = null;
+      const refMatch = question.match(/before (?:the )?['"]?(.+?)['"]?\s*(?:event|$)/i) || question.match(/after (?:the )?['"]?(.+?)['"]?\s*(?:event|$)/i);
+      const refName = refMatch?.[1]?.trim().toLowerCase() ?? '';
+
+      for (const line of itemsWithDates.split('\n')) {
+        const m = line.match(/(.+?)\s*\|\s*(\d{4}-\d{2}-\d{2})/);
+        if (m) {
+          const name = m[1]!.trim();
+          const d = parseDate(m[2]!);
+          if (d) {
+            if (refName && name.toLowerCase().includes(refName.slice(0, 12))) {
+              refDate = d;
+            }
+            itemDates.push({ name, date: d });
+          }
+        }
+      }
+
+      if (refDate && itemDates.length > 0) {
+        const isBefore = /before/i.test(question);
+        const filtered = itemDates.filter(i => {
+          if (i.name.toLowerCase().includes(refName.slice(0, 12))) return false; // exclude reference itself
+          return isBefore ? i.date < refDate! : i.date > refDate!;
+        });
+        const unique = [...new Set(filtered.map(i => i.name.toLowerCase()))];
+        return { answer: `${unique.length}`, method: 'pgsl-count-temporal', reasoning: `${unique.length} "${category}" ${isBefore ? 'before' : 'after'} ${refName}: ${unique.join(', ')}` };
+      }
+
+      // Fallback: let LLM count with full context
+      const fallbackCount = llm(
+        `${allSorted}\n\nQuestion: ${question}\n\nList each "${category}" that matches the before/after criteria with its date, then give the count. Number only at the end:`
+      );
+      const num = fallbackCount.match(/(\d+)\s*$/m);
+      if (num) return { answer: num[1]!, method: 'pgsl-count-fallback', reasoning: `LLM counted with full context: ${num[1]}` };
     }
 
     // Step 3 (no before/after): deduplicate and count
@@ -436,13 +529,20 @@ function answer(
 
   // ── DECOMPOSITION for "which most/least" (superlative counting) ──
   if (/which.*most|which.*least|which.*more|which.*fewer/i.test(question)) {
-    // This is counting + comparison. Decompose into: list all items per category, count, compare.
-    const superlativeAnswer = llm(
-      `This question asks which category has the MOST/LEAST of something. To answer correctly:\n1. List ALL items in each category mentioned\n2. Count each category\n3. Compare counts\n\nShow your work — list every item found per category, then give the answer.\n\n${allSorted}\n\nQuestion: ${question}\n\nWork:\n`
+    // Step 1: LLM lists and counts
+    const work = llm(
+      `List ALL items per category, count each, then identify the winner.\n\n${allSorted}\n\nQuestion: ${question}\n\nShow work, then on the LAST line write ONLY the answer (just the name):`
     );
-    // Extract the final answer
-    const lastLine = superlativeAnswer.split('\n').filter(l => l.trim().length > 0).pop() ?? superlativeAnswer;
-    return { answer: lastLine, method: 'pgsl-superlative', reasoning: 'Superlative counting decomposition' };
+    // Step 2: Extract just the final answer name
+    const lines = work.split('\n').filter(l => l.trim().length > 0);
+    let finalAnswer = lines[lines.length - 1]?.trim() ?? work;
+    // Clean markdown/bold
+    finalAnswer = finalAnswer.replace(/\*\*/g, '').replace(/^(Answer|Final answer|The answer is)[:\s]*/i, '').trim();
+    // If still long, ask LLM to extract just the name
+    if (finalAnswer.length > 80) {
+      finalAnswer = llm(`From this analysis, what is the single answer to "${question}"? Give ONLY the name, nothing else.\n\n${work.slice(-500)}\n\nAnswer:`);
+    }
+    return { answer: finalAnswer, method: 'pgsl-superlative', reasoning: 'Superlative counting' };
   }
 
   // ── GENERAL: LLM reads with focused instructions ──
