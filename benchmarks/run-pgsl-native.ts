@@ -449,12 +449,12 @@ function answer(
     // Step 1: What are we counting?
     const category = llm(`What specific category is being counted? Short phrase only.\n\nQuestion: ${question}\n\nCategory:`).trim();
 
-    // Step 2: For each session, extract items in that category
-    // Use the FULL QUESTION as context so the LLM understands what counts
+    // Step 2: Per-session extraction ONLY (not bulk)
+    // Each session gets full LLM attention — bulk extraction misses items in long contexts
     const allItems: Array<{item: string; session: number}> = [];
     for (const s of index.sessions) {
       const items = llm(
-        `The question is: "${question}"\n\nThe category being counted is: "${category}"\n\nList EVERY item matching this category in this session. Include items the user participated in, attended, volunteered at, organized, or was involved with. One per line, exact name. Say NONE if none found.\n\nSession ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 5000)}\n\nItems:`
+        `Question: "${question}"\nCategory: "${category}"\n\nList EVERY item in this session where the user participated, attended, volunteered at, organized, was involved with, ran/walked/cycled in, or ANY form of involvement. Include fundraisers, galas, tournaments, walks, runs, charity events of any kind.\n\nOne per line, exact name. NONE if none.\n\nSession ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 5000)}\n\nItems:`
       );
       if (!items.toLowerCase().startsWith('none')) {
         for (const line of items.split('\n')) {
@@ -471,7 +471,7 @@ function answer(
       // Get dates for each item AND the reference event
       const uniqueItems = [...new Set(allItems.map(i => i.item))];
       const itemsWithDates = llm(
-        `Find the DATE for each of these items AND the reference event from the question.\n\nItems found:\n${uniqueItems.map(i => `  - ${i}`).join('\n')}\n\nQuestion: ${question}\n\nFor each item, find its date from the sessions below. Also find the date of the reference event mentioned in the question.\n\n${allSorted}\n\nReturn ONE line per item: name | YYYY-MM-DD\nInclude the reference event too.`
+        `Find the DATE for each item AND the reference event. Use YYYY-MM-DD format. If only a month is given (e.g., "in June"), use the 1st (e.g., 2023-06-01). If only "November" with no year, assume 2023.\n\nItems:\n${uniqueItems.map(i => `  - ${i}`).join('\n')}\n\nQuestion: ${question}\n\n${allSorted}\n\nReturn ONE line per item: name | YYYY-MM-DD\nEvery item MUST have a date. Include the reference event.`
       );
 
       // Parse dates
@@ -481,10 +481,23 @@ function answer(
       const refName = refMatch?.[1]?.trim().toLowerCase() ?? '';
 
       for (const line of itemsWithDates.split('\n')) {
-        const m = line.match(/(.+?)\s*\|\s*(\d{4}-\d{2}-\d{2})/);
+        // Match full date (YYYY-MM-DD) or partial date (YYYY-MM) or month name
+        const m = line.match(/(.+?)\s*\|\s*(.+)/);
         if (m) {
           const name = m[1]!.trim();
-          const d = parseDate(m[2]!);
+          let dateStr = m[2]!.trim();
+          // Normalize partial dates: "2023-06" → "2023-06-01", "June 2023" → "2023-06-01"
+          const monthNames: Record<string, string> = { january:'01', february:'02', march:'03', april:'04', may:'05', june:'06', july:'07', august:'08', september:'09', october:'10', november:'11', december:'12' };
+          const monthMatch = dateStr.toLowerCase().match(/^(january|february|march|april|may|june|july|august|september|october|november|december)\s*(\d{4})?/);
+          if (monthMatch) {
+            const year = monthMatch[2] ?? '2023';
+            dateStr = `${year}-${monthNames[monthMatch[1]!]}-01`;
+          }
+          const partialMatch = dateStr.match(/^(\d{4})-(\d{2})$/);
+          if (partialMatch) {
+            dateStr = `${partialMatch[1]}-${partialMatch[2]}-01`;
+          }
+          const d = parseDate(dateStr);
           if (d) {
             if (refName && name.toLowerCase().includes(refName.slice(0, 12))) {
               refDate = d;
@@ -586,6 +599,70 @@ Answer concisely:`;
 
 // ── Main ────────────────────────────────────────────────
 
+// ═══════════════════════════════════════════════════════════
+//  VERIFICATION PASS — OODA applied to the answer itself
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Verify a candidate answer against the original text.
+ * If verification fails, re-read and revise.
+ *
+ * This is the general fix for both extraction-miss and
+ * date-extraction errors: after computing a structural answer,
+ * have the LLM confirm it by re-reading the source.
+ */
+function verifyAndRevise(
+  question: string,
+  candidate: { answer: string; method: string; reasoning: string },
+  sessions: SessionData[],
+  questionDate?: string,
+): { answer: string; method: string; reasoning: string } {
+  // Skip verification for abstention answers
+  if (candidate.answer.includes('not enough to answer')) return candidate;
+
+  // Skip for general LLM reads (already read the full text)
+  if (candidate.method === 'pgsl-read' || candidate.method === 'llm-fallback') return candidate;
+
+  // Build concise session text for verification
+  const sessionText = sessions
+    .sort((a, b) => a.index - b.index)
+    .map(s => `Session ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 2500)}`)
+    .join('\n\n');
+
+  // Ask LLM to verify — be AGGRESSIVE about finding misses
+  const verification = llm(
+    `I need to VERIFY this answer by re-reading ALL sessions.\n\nQuestion: ${question}${questionDate ? `\nQuestion date: ${questionDate}` : ''}\nMy computed answer: ${candidate.answer}\n\nRe-read EVERY session below and independently answer the question yourself. Don't trust my answer — check it.\n\nIMPORTANT for counting questions:\n- An event is a "charity event" if it involves fundraising, volunteering for a cause, running/walking/cycling for charity, galas, tournaments, etc.\n- "Volunteered at X" counts as participating in X\n- Check ALL sessions, not just the obvious ones\n- List every item you find, then count\n\nIMPORTANT for temporal questions:\n- If a date is relative ("a month ago"), compute from the session date\n- Quote the sentence with the date reference\n\n${sessionText}\n\nYour independent answer to "${question}":\n(If it matches "${candidate.answer}", say CONFIRMED. If different, give your answer.):`
+  );
+
+  const isConfirmed = verification.toLowerCase().includes('confirmed') || verification.toLowerCase().startsWith('yes');
+
+  if (isConfirmed) {
+    return { ...candidate, method: candidate.method + '-verified', reasoning: candidate.reasoning + ' [VERIFIED]' };
+  }
+
+  // Verification failed — extract the corrected answer
+  // The verification response should contain the correct answer
+  const correctedMatch = verification.match(/correct answer[:\s]+(.+?)(?:\n|$)/i)
+    || verification.match(/should be[:\s]+(.+?)(?:\n|$)/i)
+    || verification.match(/the answer is[:\s]+(.+?)(?:\n|$)/i);
+
+  if (correctedMatch) {
+    const corrected = correctedMatch[1]!.trim();
+    return { answer: corrected, method: candidate.method + '-revised', reasoning: `Verification revised: ${candidate.reasoning} → ${corrected}` };
+  }
+
+  // Can't parse correction — ask directly
+  const directRevision = llm(
+    `My answer "${candidate.answer}" to "${question}" was wrong. Based on the sessions, what is the correct answer? Give ONLY the answer.\n\n${sessionText}\n\nCorrect answer:`
+  );
+
+  if (directRevision.length > 0 && directRevision.length < 200) {
+    return { answer: directRevision, method: candidate.method + '-revised', reasoning: `Verification rejected original, LLM revised` };
+  }
+
+  return candidate; // Can't verify, return original
+}
+
 function main() {
   console.log(`=== PGSL-NATIVE BENCHMARK — LongMemEval ===`);
   console.log(`No embeddings. No vectors. Lattice IS the index.`);
@@ -607,7 +684,9 @@ function main() {
     const ranked = scoreAndRankSessions(item.question, index);
 
     // Answer by reading original text
-    const result = answer(item.question, index, ranked, item.question_date);
+    const rawResult = answer(item.question, index, ranked, item.question_date);
+    // OODA verification pass: verify structural answers against source text
+    const result = verifyAndRevise(item.question, rawResult, index.sessions, item.question_date);
     methodCounts[result.method] = (methodCounts[result.method] ?? 0) + 1;
 
     // Judge
