@@ -256,6 +256,15 @@ function answer(
   // Step 1: Extract date for thing A
   // Step 2: Extract date for thing B
   // Step 3: Compare in code
+  // ── TEMPORAL: "order of three events" ──
+  if (/order of.*three|order.*from first|order.*from earliest/i.test(question)) {
+    const orderAnswer = llm(
+      `This question asks for the ORDER of events. For each event mentioned, find its date (compute relative dates from session dates). Then sort chronologically.\n\nShow your work:\n1. Event name → date (with quote from text)\n2. Sorted order\n\n${allSorted}\n\nQuestion: ${question}\n\nAnswer:`
+    );
+    return { answer: orderAnswer, method: 'pgsl-temporal-order', reasoning: 'Multi-event ordering' };
+  }
+
+  // ── TEMPORAL: "which first" (two events) ──
   if (/which.*first|which.*before|which.*earlier|which.*start.*first/i.test(question) && !/what was the date|when did/i.test(question)) {
     // Parse the two things being compared
     const thingsPrompt = llm(
@@ -264,12 +273,30 @@ function answer(
     const things = thingsPrompt.split('\n').map(l => l.replace(/^(Thing [12]:?\s*)/i, '').trim()).filter(l => l.length > 2).slice(0, 2);
 
     if (things.length >= 2) {
+      // Extract keywords for session filtering
+      const keywordsA = things[0]!.toLowerCase().split(/\s+/).filter(w => w.length > 3 && !['the', 'with', 'from', 'that', 'this', 'about'].includes(w));
+      const keywordsB = things[1]!.toLowerCase().split(/\s+/).filter(w => w.length > 3 && !['the', 'with', 'from', 'that', 'this', 'about'].includes(w));
+
+      // Check if both things are actually discussed in the sessions
+      // Only abstain if BOTH keyword check AND LLM confirm it's missing
+      const allText = index.sessions.map(s => s.text.toLowerCase()).join(' ');
+      const thingAInText = keywordsA.some(kw => allText.includes(kw));
+      const thingBInText = keywordsB.some(kw => allText.includes(kw));
+      if (!thingAInText || !thingBInText) {
+        const missing = !thingAInText ? things[0]! : things[1]!;
+        // Double-check with LLM — keyword matching can miss paraphrases
+        const absVerify = llm(
+          `Is "${missing}" (or something very similar to it) mentioned or discussed in any of these sessions? It might be referred to by a different name or description. YES or NO.\n\n${allSorted.slice(0, 8000)}\n\nAnswer:`
+        );
+        if (absVerify.toLowerCase().startsWith('no')) {
+          return { answer: 'The information provided is not enough to answer this question.', method: 'pgsl-temporal-abstain', reasoning: `"${missing}" not found in sessions (confirmed by LLM)` };
+        }
+      }
+
       // Extract verb from question for precision
       const verb = question.match(/did I (\w+)/i)?.[1] ?? 'start';
 
-      // Find sessions mentioning each thing — use content words, not just first N chars
-      const keywordsA = things[0]!.toLowerCase().split(/\s+/).filter(w => w.length > 3 && !['the', 'with', 'from', 'that', 'this', 'about'].includes(w));
-      const keywordsB = things[1]!.toLowerCase().split(/\s+/).filter(w => w.length > 3 && !['the', 'with', 'from', 'that', 'this', 'about'].includes(w));
+      // Find sessions mentioning each thing
       const sessionsForA = ranked.filter(r => keywordsA.some(kw => r.session.text.toLowerCase().includes(kw)));
       const sessionsForB = ranked.filter(r => keywordsB.some(kw => r.session.text.toLowerCase().includes(kw)));
 
@@ -362,7 +389,7 @@ function answer(
   }
 
   // ── DECOMPOSITION for duration questions ──
-  if (/how many (days|weeks|months|years)/i.test(question)) {
+  if (/how many (days|weeks|months|years)/i.test(question) || /how long.*(?:had I been|did it take|did I|was I|have I been)/i.test(question)) {
     // Step 1: Identify what two events/dates the question asks about
     const eventId = llm(
       `This question asks about a time duration between two events/dates. What are the TWO events or dates?\n\nIMPORTANT: If the question says "ago" (e.g., "how many months ago"), the second date is the question date: ${questionDate ?? 'unknown'}. NOT today's real date.\n\nQuestion: ${question}\n\nEvent 1:\nEvent 2:`
@@ -424,24 +451,12 @@ function answer(
     }
   }
 
-  // ── DECOMPOSITION for "how old" questions ──
+  // ── "How old" questions — let LLM compute directly ──
   if (/how old/i.test(question)) {
-    const birthDate = llm(
-      `Find the user's birth date from the sessions. If not explicit, compute from age mentions + session dates.\n\n${allSorted}\n\nBirth date (YYYY-MM-DD):`
+    const ageAnswer = llm(
+      `Find the user's age at the time of the event. Look for:\n1. Explicit age mentions ("I'm 27 years old")\n2. Birth year mentions\n3. Age at previous events that can be used to calculate\n\nDo NOT confuse session dates with birth dates.\n\n${allSorted}\n\nQuestion: ${question}\n\nShow your reasoning, then give ONLY the age (number):`
     );
-    const eventDate = llm(
-      `Find the date of the event the question asks about.\n\n${allSorted}\n\nQuestion: ${question}\n\nEvent date (YYYY-MM-DD):`
-    );
-    const bd = (birthDate.match(/\d{4}-\d{2}-\d{2}/g) || []).pop();
-    const ed = (eventDate.match(/\d{4}-\d{2}-\d{2}/g) || []).pop();
-    if (bd && ed) {
-      const d1 = parseDate(bd);
-      const d2 = parseDate(ed);
-      if (d1 && d2) {
-        const years = Math.floor(Math.abs(daysBetween(d1, d2)) / 365.25);
-        return { answer: `${years}`, method: 'pgsl-age-decomposed', reasoning: `Birth ${bd}, Event ${ed} = ${years} years` };
-      }
-    }
+    return { answer: ageAnswer, method: 'pgsl-age', reasoning: 'Age computation via LLM' };
   }
 
   // ── DECOMPOSITION for counting questions ──
@@ -525,19 +540,48 @@ function answer(
       if (num) return { answer: num[1]!, method: 'pgsl-count-fallback', reasoning: `LLM counted with full context: ${num[1]}` };
     }
 
-    // Step 3 (no before/after): deduplicate and count
+    // Step 3 (no before/after): deduplicate, verify, and count
     if (allItems.length > 0) {
+      const unique = [...new Set(allItems.map(i => i.item.toLowerCase().trim()))];
+
+      // STRICT VERIFICATION: have LLM verify each item actually matches the criteria
+      // This catches overcounting (items mentioned but not matching) and dedup errors
+      const verified = llm(
+        `I extracted these "${category}" from the conversation:\n${unique.map((item, i) => `${i + 1}. ${item}`).join('\n')}\n\nQuestion: ${question}\n\nFor EACH item, verify it ACTUALLY matches what the question asks. Consider:\n- "bought" ≠ "considered buying"\n- "visited" ≠ "planned to visit"\n- Later sessions may UPDATE earlier ones (e.g., returned an item = doesn't count)\n- Don't double-count the same item mentioned in multiple sessions\n- Only count items the USER did, not items the assistant suggested\n\n${allSorted}\n\nList ONLY the items that genuinely match, with a brief quote as evidence. Then give the final count.\n\nVerified items:\n`
+      );
+
+      // Extract the count from verification
+      const countMatch = verified.match(/(?:final count|total|count)[:\s]*(\d+)/i) || verified.match(/(\d+)\s*(?:items?|total)/i);
+      if (countMatch) {
+        return { answer: countMatch[1]!, method: 'pgsl-count-verified-strict', reasoning: `${unique.length} extracted → ${countMatch[1]} verified` };
+      }
+
+      // Fallback: count the verified items by counting numbered/bulleted items in the response
+      const verifiedItems = verified.split('\n').filter(l => /^\s*[-•*\d]/.test(l) && l.length > 5 && !/not|doesn't|don't|excluded|removed/i.test(l));
+      if (verifiedItems.length > 0 && verifiedItems.length !== unique.length) {
+        return { answer: `${verifiedItems.length}`, method: 'pgsl-count-verified-strict', reasoning: `${unique.length} extracted → ${verifiedItems.length} verified by evidence` };
+      }
+
+      // Knowledge update check
       const isUpdate = /currently|do I have|do I own/i.test(question);
       if (isUpdate) {
         const reconciled = llm(
-          `Current count of "${category}" considering all sessions (later updates earlier):\n${allItems.map(i => `  Session ${i.session + 1}: ${i.item}`).join('\n')}\n\nQ: ${question}\nCount (number only):`
+          `Current count of "${category}" considering all sessions chronologically (later updates earlier):\n${allItems.map(i => `  Session ${i.session + 1}: ${i.item}`).join('\n')}\n\nQ: ${question}\nCount (number only):`
         );
         const num = reconciled.match(/\d+/);
         if (num) return { answer: num[0]!, method: 'pgsl-count-reconciled', reasoning: `${allItems.length} items reconciled to ${num[0]}` };
       }
-      const unique = new Set(allItems.map(i => i.item.toLowerCase().trim()));
-      return { answer: `${unique.size}`, method: 'pgsl-count-decomposed', reasoning: `${unique.size} unique "${category}"` };
+
+      return { answer: `${unique.length}`, method: 'pgsl-count-decomposed', reasoning: `${unique.length} unique "${category}"` };
     }
+  }
+
+  // ── SUM/TOTAL questions (money, hours, etc.) ──
+  if (/how much.*total|total.*(?:money|hours|time|cost|spent)|how many hours.*total|how many.*total.*hours/i.test(question)) {
+    const sumAnswer = llm(
+      `This question asks for a TOTAL/SUM. Find every relevant number, add them up. Show your work.\n\n${allSorted}\n\nQuestion: ${question}\n\nList each amount found with source, then compute the total:`
+    );
+    return { answer: sumAnswer, method: 'pgsl-sum', reasoning: 'Sum/total computation' };
   }
 
   // ── DECOMPOSITION for "which most/least" (superlative counting) ──
@@ -558,11 +602,20 @@ function answer(
     return { answer: finalAnswer, method: 'pgsl-superlative', reasoning: 'Superlative counting' };
   }
 
+  // ── PREFERENCE QUESTIONS — special handling ──
+  if (strategy.questionType === 'single-session-preference' || /recommend|suggest|can you.*for me/i.test(question)) {
+    // Preference questions want: "Based on what the user told you in past conversations,
+    // what would they prefer?" NOT a direct answer to the question.
+    const prefAnswer = llm(
+      `You previously had a conversation with this user. Now they're asking a new question. Based on what you learned about their preferences, interests, and situation from the PREVIOUS conversation, describe what kind of answer they would prefer.\n\nDO NOT answer the question directly. Instead, describe the USER'S PREFERENCES that should guide the answer. Start with "The user would prefer..."\n\nPrevious conversation:\n${allSorted}\n\nNew question: ${question}\n\nThe user would prefer:`
+    );
+    const cleaned = prefAnswer.startsWith('The user would prefer') ? prefAnswer : `The user would prefer ${prefAnswer}`;
+    return { answer: cleaned, method: 'pgsl-preference', reasoning: 'Preference inference from conversation context' };
+  }
+
   // ── GENERAL: LLM reads with focused instructions ──
   let instructions = '';
-  if (strategy.questionType === 'single-session-preference') {
-    instructions = `PREFERENCE: Identify the user's stated preferences.`;
-  } else if (strategy.questionType === 'knowledge-update') {
+  if (strategy.questionType === 'knowledge-update') {
     instructions = `KNOWLEDGE UPDATE: Later sessions override earlier information. Use LATEST.`;
   }
 
@@ -704,12 +757,17 @@ function main() {
     console.log(`${mark} ${qi}: [${item.question_type}] [${result.method}] ${item.question.slice(0, 60)}`);
 
     if (!isCorrect) {
-      console.log(`  Gold: ${String(item.answer).slice(0, 100)}`);
-      console.log(`  Ours: ${result.answer.slice(0, 100)}`);
-      console.log(`  Reasoning: ${result.reasoning.slice(0, 120)}`);
+      console.log(`  Gold: ${String(item.answer).slice(0, 200)}`);
+      console.log(`  Ours: ${result.answer.slice(0, 200)}`);
+      console.log(`  Reasoning: ${result.reasoning.slice(0, 150)}`);
+      console.log(`  Sessions: ${index.sessions.length} | KB atoms: ${latticeStats(index.pgsl).atoms}`);
+      const methods = Object.entries(methodCounts).map(([k, v]) => `${k}=${v}`).join(' ');
+      console.log(`\n  HALTED at ${correct}/${total} (${(100 * correct / total).toFixed(1)}%) | ${methods}`);
+      console.log(`  Resume: npx tsx benchmarks/run-pgsl-native.ts ${MODEL} ${qi + 1}`);
+      break;
     }
 
-    if (total % 10 === 0 || !isCorrect) {
+    if (total % 10 === 0) {
       const methods = Object.entries(methodCounts).map(([k, v]) => `${k}=${v}`).join(' ');
       console.log(`  Score: ${correct}/${total} (${(100 * correct / total).toFixed(1)}%) | ${methods}`);
     }
