@@ -232,8 +232,9 @@ function answer(
     return { answer: finalName, method: 'pgsl-temporal-first', reasoning: 'Single-call which-first' };
   }
 
-  // ── TEMPORAL: "how many days/weeks/months" or "how long" ──
-  if (/how many (days|weeks|months|years)/i.test(question) || /how long.*(?:had I been|did it take|did I|was I|have I been)/i.test(question)) {
+  // ── TEMPORAL: "how many days/weeks/months" or "how long [did/did it take]" ──
+  // Note: "how long have I been working" without two specific events → falls through to general read
+  if (/how many (days|weeks|months|years)/i.test(question) || /how long (?:did it take|did I take|had I been.*(?:when|before|after|until))/i.test(question)) {
     const dateContext = questionDate ? `\nIMPORTANT: The question is being asked on ${questionDate}. If the question says "ago", the reference date is ${questionDate}, NOT today's real date.` : '';
     const isAgo = /ago/i.test(question);
     const questionDateParsed = questionDate ? parseDate(questionDate.split(' ')[0]!.replace(/\//g, '-') ?? '') : null;
