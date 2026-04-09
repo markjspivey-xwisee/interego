@@ -310,6 +310,14 @@ function answer(
 
       // Extract date for each event separately, with focused session text
       // Key: include session dates so relative times can be computed
+      // CONSENSUS approach: get answer from multiple methods, take majority
+      // Method 1: Direct LLM read (no date extraction)
+      const directAnswer = llm(
+        `Which happened first: "${things[0]}" or "${things[1]}"?\n\nIMPORTANT: "pre-ordered" or "ordered" is NOT the same as "got" or "received". The question asks about "${verb}" — use the date they actually ${verb} it.\n\n${textForA}\n\n${textForB}\n\nQuote the relevant date for each, then say which was first. Answer with ONLY the name on the last line:`
+      );
+      const directName = directAnswer.split('\n').filter(l => l.trim().length > 0).pop()?.replace(/\*\*/g, '').replace(/^(Answer|Which)[:\s]*/i, '').trim() ?? '';
+
+      // Method 2: Date extraction + code comparison
       // Extract date for each event with EXPLICIT relative-time computation
       function extractDate(thing: string, sessionText: string): string {
         // First: find relative time expressions
@@ -351,10 +359,24 @@ function answer(
             );
             return { answer: tiebreak, method: 'pgsl-temporal-tiebreak', reasoning: `Same date ${datesA[datesA.length - 1]} — LLM tiebreak` };
           }
-          const first = dA < dB ? things[0]! : things[1]!;
+          const structuralFirst = dA < dB ? things[0]! : things[1]!;
 
-          // If dates are close (within 7 days), the extraction might be wrong.
-          // Do a confirmation read — ask LLM to verify by re-reading the text.
+          // CONSENSUS: compare structural answer with direct LLM answer
+          const directMatchesA = directName.toLowerCase().includes(things[0]!.toLowerCase().slice(0, 10));
+          const directMatchesB = directName.toLowerCase().includes(things[1]!.toLowerCase().slice(0, 10));
+          const directFirst = directMatchesA ? things[0]! : directMatchesB ? things[1]! : '';
+
+          if (directFirst && directFirst !== structuralFirst) {
+            // Disagreement! Get a third opinion as tiebreaker
+            const tiebreaker = llm(
+              `Two methods gave different answers for: "${question}"\nMethod 1 (date extraction): ${structuralFirst} (dates: ${datesA[datesA.length-1]} vs ${datesB[datesB.length-1]})\nMethod 2 (direct reading): ${directFirst}\n\nRe-read the text carefully. Remember: "pre-ordered Jan 28" but "arrived Feb 25" means they GOT it Feb 25. "Started seeds since Feb 20" means they started Feb 20.\n\n${textForA}\n\n${textForB}\n\nWhich is correct? Answer with ONLY the name:`
+            );
+            return { answer: tiebreaker.replace(/\*\*/g, '').trim(), method: 'pgsl-temporal-consensus', reasoning: `Structural=${structuralFirst}, Direct=${directFirst}, Tiebreaker=${tiebreaker.trim()}` };
+          }
+
+          const first = structuralFirst;
+
+          // If dates are close (within 7 days), also confirm
           if (diffDays <= 7) {
             const confirmRead = llm(
               `I extracted these dates:\n- "${things[0]}": ${datesA[datesA.length - 1]}\n- "${things[1]}": ${datesB[datesB.length - 1]}\n\nBased on the sessions below, is this correct? Which one ACTUALLY happened first?\n\nRemember: "since February 20th" means it started on Feb 20. "Arrived on March 3rd" means it arrived March 3. Compute relative dates from session dates.\n\n${allSorted}\n\nWhich happened first? Answer with ONLY the name:`
@@ -389,14 +411,15 @@ function answer(
         }
       }
 
-      // Fallback: couldn't extract dates cleanly. Ask LLM to do the full comparison with explicit reasoning.
-      const directAnswer = llm(
-        `I need to determine which happened first: "${things[0]}" or "${things[1]}". The verb is "${verb}".\n\n"Pre-ordered" ≠ "received/got". Use the date they actually ${verb} it.\n\nFor EACH item, quote the sentence that gives the date, then state the date.\n\n${allSorted}\n\n"${things[0]}" date: [quote + date]\n"${things[1]}" date: [quote + date]\n\nWhich was first? (name only):`
+      // Fallback: couldn't extract dates cleanly. Use the direct answer from consensus method 1.
+      if (directName.length > 2) {
+        return { answer: directName, method: 'pgsl-temporal-direct', reasoning: 'Date extraction failed, using direct LLM answer' };
+      }
+      // Last resort
+      const fallbackAnswer = llm(
+        `Which happened first: "${things[0]}" or "${things[1]}"? "Pre-ordered" ≠ "got". Answer with ONLY the name.\n\n${allSorted}\n\nAnswer:`
       );
-      // Extract last line as answer
-      const directLines = directAnswer.split('\n').filter(l => l.trim().length > 0);
-      const directFinal = directLines[directLines.length - 1]?.trim() ?? directAnswer;
-      return { answer: directFinal.replace(/^(Answer|Which was first)[:\s]*/i, '').trim(), method: 'pgsl-temporal-direct', reasoning: `Direct LLM with quote-then-answer` };
+      return { answer: fallbackAnswer.replace(/\*\*/g, '').trim(), method: 'pgsl-temporal-fallback', reasoning: 'All extraction methods failed' };
     }
   }
 
