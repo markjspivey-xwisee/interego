@@ -497,12 +497,16 @@ function verify(
     || verification.match(/should be[:\s]+(.+?)(?:\n|$)/i)?.[1]?.trim()
     || verification.match(/the answer is[:\s]+(.+?)(?:\n|$)/i)?.[1]?.trim();
 
-  if (corrected && corrected.length < 200) {
+  if (corrected && corrected.length < 200
+    && !corrected.toLowerCase().includes('cannot be determined')
+    && !corrected.toLowerCase().includes('not enough')
+    && !corrected.toLowerCase().includes('insufficient')
+    && !corrected.toLowerCase().includes('unable to')) {
     return { answer: corrected, method: candidate.method + '-revised', reasoning: `Verification revised: ${candidate.answer} → ${corrected}` };
   }
 
-  // Can't parse correction cleanly — keep original
-  return candidate;
+  // Can't parse correction, or correction is a non-answer — keep original
+  return { ...candidate, method: candidate.method + '-verified', reasoning: candidate.reasoning + ' [verification inconclusive, kept original]' };
 }
 
 // ── Main ────────────────────────────────────────────────
