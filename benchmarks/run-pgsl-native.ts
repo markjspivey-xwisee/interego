@@ -352,6 +352,18 @@ function answer(
             return { answer: tiebreak, method: 'pgsl-temporal-tiebreak', reasoning: `Same date ${datesA[datesA.length - 1]} — LLM tiebreak` };
           }
           const first = dA < dB ? things[0]! : things[1]!;
+
+          // If dates are close (within 7 days), the extraction might be wrong.
+          // Do a confirmation read — ask LLM to verify by re-reading the text.
+          if (diffDays <= 7) {
+            const confirmRead = llm(
+              `I extracted these dates:\n- "${things[0]}": ${datesA[datesA.length - 1]}\n- "${things[1]}": ${datesB[datesB.length - 1]}\n\nBased on the sessions below, is this correct? Which one ACTUALLY happened first?\n\nRemember: "since February 20th" means it started on Feb 20. "Arrived on March 3rd" means it arrived March 3. Compute relative dates from session dates.\n\n${allSorted}\n\nWhich happened first? Answer with ONLY the name:`
+            );
+            if (confirmRead.length > 2 && confirmRead.length < 200) {
+              return { answer: confirmRead.replace(/\*\*/g, '').trim(), method: 'pgsl-temporal-confirmed', reasoning: `Close dates (${diffDays} days apart) — LLM confirmed: ${confirmRead.trim()}` };
+            }
+          }
+
           return {
             answer: first,
             method: 'pgsl-temporal-decomposed',
