@@ -404,7 +404,7 @@ function answer(
   // ── SUPERLATIVE: "which most/least" ──
   if (/which.*most|which.*least|which.*more|which.*fewer/i.test(question)) {
     const work = llm(
-      `List ALL items per category, count each, identify the winner.\n\n${allSorted}\n\nQuestion: ${question}\n\nShow work, then on the LAST line write ONLY the answer (just the name):`
+      `List ALL items per category, count each, identify the SINGLE winner. If tied, pick the one mentioned first or most prominently.\n\n${allSorted}\n\nQuestion: ${question}\n\nShow work, then on the LAST line write ONLY the single answer (just the name, no ties):`
     );
     const lines = work.split('\n').filter(l => l.trim().length > 0);
     let finalAnswer = lines[lines.length - 1]?.trim() ?? work;
