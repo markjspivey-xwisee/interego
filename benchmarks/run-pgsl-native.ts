@@ -453,9 +453,9 @@ function answer(
   }
 
   // ── PREFERENCE ──
-  if (strategy.questionType === 'single-session-preference' || /recommend|suggest|can you.*for me/i.test(question)) {
+  if (strategy.questionType === 'single-session-preference' || /recommend|suggest|any tips|any advice|can you.*for me|what should I|do you have.*suggestion/i.test(question)) {
     const prefAnswer = llm(
-      `You previously had a conversation with this user. Now they're asking a new question. Based on what you learned about their preferences, interests, and situation from the PREVIOUS conversation, describe what kind of answer they would prefer.\n\nDO NOT answer the question directly. Instead, describe the USER'S PREFERENCES that should guide the answer. Start with "The user would prefer..."\n\nPrevious conversation:\n${allSorted}\n\nNew question: ${question}\n\nThe user would prefer:`
+      `You previously had this conversation with a user. Now they're asking a NEW question (below). Based ONLY on what was discussed in the previous conversation, what SPECIFIC DOMAIN PREFERENCES should guide your response?\n\nFocus on:\n- What specific tools/brands/products they mentioned using\n- What specific topics/areas they expressed interest in\n- What level of expertise they demonstrated\n- What they explicitly said they liked or disliked\n- What types of recommendations they would NOT want (too generic, wrong domain, etc.)\n\nDO NOT describe communication style preferences. Focus on CONTENT/DOMAIN preferences.\n\nPrevious conversation:\n${allSorted}\n\nNew question: ${question}\n\nThe user would prefer responses that`
     );
     const cleaned = prefAnswer.startsWith('The user would prefer') ? prefAnswer : `The user would prefer ${prefAnswer}`;
     return { answer: cleaned, method: 'pgsl-preference', reasoning: 'Preference inference' };
