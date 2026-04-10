@@ -508,7 +508,13 @@ function verify(
   // Skip verification for: abstention, general reads, preferences, age, sum, superlative, order
   // Also skip for duration computations that produced reasonable results (verification often makes these worse)
   if (candidate.answer.includes('not enough to answer')) return candidate;
-  if (['pgsl-read', 'pgsl-preference', 'pgsl-age', 'pgsl-sum', 'pgsl-superlative', 'pgsl-temporal-order', 'pgsl-temporal-first'].includes(candidate.method)) return candidate;
+  // Skip verification for these methods — verification often overrides correct answers
+  if (candidate.method.startsWith('pgsl-read') || candidate.method.startsWith('pgsl-preference') ||
+      candidate.method.startsWith('pgsl-age') || candidate.method.startsWith('pgsl-sum') ||
+      candidate.method.startsWith('pgsl-superlative') || candidate.method.startsWith('pgsl-temporal-order') ||
+      candidate.method.startsWith('pgsl-temporal-first') || candidate.method.startsWith('pgsl-count')) {
+    return candidate;
+  }
   // Duration: only verify if result looks suspicious (0 days or >10 years)
   if (candidate.method === 'pgsl-duration-computed') {
     const dayMatch = candidate.reasoning.match(/(\d+) days/);
