@@ -317,7 +317,7 @@ function answer(
     const allItems: Array<{ item: string; session: number }> = [];
     for (const s of index.sessions) {
       const items = llm(
-        `Question: "${question}"\nCategory: "${category}"\n\nList EVERY item in this session where the user participated, attended, volunteered at, organized, was involved with, ran/walked/cycled in, or ANY form of involvement. Include fundraisers, galas, tournaments, walks, runs, charity events of any kind.\n\nOne per line, exact name. NONE if none.\n\nSession ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 5000)}\n\nItems:`
+        `Question: "${question}"\nCategory: "${category}"\n\nList EVERY "${category}" mentioned in this session. Include anything the user bought, received, ordered, picked up, returned, exchanged, visited, attended, participated in, or was involved with in ANY way.\n\nOne per line, exact name/description. NONE if none found.\n\nSession ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 5000)}\n\nItems:`
       );
       if (!items.toLowerCase().startsWith('none')) {
         for (const line of items.split('\n')) {
