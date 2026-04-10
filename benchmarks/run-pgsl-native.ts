@@ -442,6 +442,7 @@ function answer(
 
 Answer based ONLY on information in the sessions. Be SPECIFIC and CONCISE.
 If the specific thing asked about is NOT in any session, say "The information provided is not enough to answer this question."
+IMPORTANT: If the question contains minor inaccuracies (e.g., wrong gender, slightly wrong name), still answer the question based on the closest match. Do NOT refuse to answer just because of a small discrepancy in the question.
 
 ${allSorted}
 
