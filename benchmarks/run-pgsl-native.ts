@@ -235,8 +235,16 @@ function answer(
   // ── TEMPORAL: "how many days/weeks/months" or "how long [did/did it take]" ──
   // Note: "how long have I been working" without two specific events → falls through to general read
   if (/how many (days|weeks|months|years)/i.test(question) || /how long (?:did it take|did I take|had I been.*(?:when|before|after|until))/i.test(question)) {
-    const dateContext = questionDate ? `\nIMPORTANT: The question is being asked on ${questionDate}. If the question says "ago", the reference date is ${questionDate}, NOT today's real date.` : '';
+    // For "ago" questions, use direct LLM reading — structural computation often picks wrong dates
     const isAgo = /ago/i.test(question);
+    if (isAgo) {
+      const agoAnswer = llm(
+        `${allSorted}\n\n${questionDate ? `The question is being asked on ${questionDate}.` : ''}\n\nQuestion: ${question}\n\nFind the relevant event date, then compute how long ago it was from the question date. Give ONLY the number and unit:`
+      );
+      return { answer: agoAnswer, method: 'pgsl-duration-ago', reasoning: `Direct LLM for "ago" question` };
+    }
+
+    const dateContext = questionDate ? `\nIMPORTANT: The question is being asked on ${questionDate}. If the question says "ago", the reference date is ${questionDate}, NOT today's real date.` : '';
     const questionDateParsed = questionDate ? parseDate(questionDate.split(' ')[0]!.replace(/\//g, '-') ?? '') : null;
 
     // Call 1: Extract the two dates
