@@ -628,11 +628,45 @@ function main() {
     // 2. Score and rank sessions
     const ranked = scoreAndRankSessions(item.question, index);
 
-    // 3-4. Route and answer with focused LLM call
-    const rawResult = answer(item.question, index, ranked, item.question_date);
+    // 3-4. Route and answer — with consensus for non-deterministic question types
+    const questionType = item.question_type;
+    const isNonDeterministic = ['multi-session', 'single-session-preference'].includes(questionType)
+      || /how many|how old|which.*first/i.test(item.question);
 
-    // 5. ONE verification pass (structural answers only)
-    const result = verify(item.question, rawResult, index.sessions, item.question_date);
+    let result: { answer: string; method: string; reasoning: string };
+
+    if (isNonDeterministic) {
+      // Run up to 3 times, take consensus
+      const attempts: Array<{ answer: string; method: string; reasoning: string }> = [];
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const raw = answer(item.question, index, ranked, item.question_date);
+        const verified = verify(item.question, raw, index.sessions, item.question_date);
+        attempts.push(verified);
+
+        // If first two agree, skip third
+        if (attempt === 1 && attempts[0]!.answer === attempts[1]!.answer) break;
+      }
+
+      if (attempts.length === 1) {
+        result = attempts[0]!;
+      } else {
+        // Find most common answer (normalize: extract just the key content)
+        const normalize = (a: string) => a.replace(/[*_\n]/g, '').trim().toLowerCase().slice(0, 50);
+        const counts = new Map<string, { count: number; full: typeof attempts[0] }>();
+        for (const a of attempts) {
+          const key = normalize(a.answer);
+          const existing = counts.get(key);
+          if (existing) existing.count++;
+          else counts.set(key, { count: 1, full: a });
+        }
+        const best = [...counts.values()].sort((a, b) => b.count - a.count)[0]!;
+        result = { ...best.full!, method: best.full!.method + (best.count > 1 ? '-consensus' : ''), reasoning: best.full!.reasoning + ` [${best.count}/${attempts.length} agree]` };
+      }
+    } else {
+      // Deterministic path — single run
+      const rawResult = answer(item.question, index, ranked, item.question_date);
+      result = verify(item.question, rawResult, index.sessions, item.question_date);
+    }
     methodCounts[result.method] = (methodCounts[result.method] ?? 0) + 1;
 
     // Judge
