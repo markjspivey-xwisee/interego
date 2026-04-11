@@ -331,21 +331,38 @@ function answer(
   if (/how many/i.test(question) && !/how many (days|weeks|months|years)/i.test(question)) {
     const category = llm(`What specific category is being counted? Short phrase only.\n\nQuestion: ${question}\n\nCategory:`).trim();
 
-    // Per-session extraction (ONE call per session — unavoidable for accuracy)
-    const allItems: Array<{ item: string; session: number }> = [];
-    for (const s of index.sessions) {
-      const items = llm(
-        `Question: "${question}"\nCategory: "${category}"\n\nList EVERY "${category}" mentioned in this session. Include anything the user bought, received, ordered, picked up, returned, exchanged, visited, attended, participated in, or was involved with in ANY way.\n\nOne per line, exact name/description. NONE if none found.\n\nSession ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 5000)}\n\nItems:`
-      );
-      if (!items.toLowerCase().startsWith('none')) {
-        for (const line of items.split('\n')) {
-          const item = line.replace(/^[-•*\d.)\s]+/, '').trim();
-          if (item.length > 1 && item.length < 200 && !item.toLowerCase().startsWith('none')) {
-            allItems.push({ item, session: s.index });
+    // DUAL EXTRACTION: Two passes with slightly different prompts, merge for consensus
+    // This reduces non-determinism — items found by BOTH passes are high-confidence
+
+    function extractItems(variant: string): Array<{ item: string; session: number }> {
+      const items: Array<{ item: string; session: number }> = [];
+      for (const s of index.sessions) {
+        const prompt = variant === 'A'
+          ? `Question: "${question}"\nCategory: "${category}"\n\nList EVERY "${category}" mentioned in this session. Include anything the user bought, received, ordered, picked up, returned, exchanged, visited, attended, participated in, or was involved with in ANY way.\n\nOne per line, exact name/description. NONE if none found.\n\nSession ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 5000)}\n\nItems:`
+          : `In this session, find ALL instances of "${category}" that the user mentions. This includes items they acquired, used, made, attended, experienced, or interacted with. List each one.\n\nSession ${s.index + 1} (${s.date ?? ''}):\n${s.text.slice(0, 5000)}\n\nList (one per line, NONE if none):`;
+        const result = llm(prompt);
+        if (!result.toLowerCase().startsWith('none')) {
+          for (const line of result.split('\n')) {
+            const item = line.replace(/^[-•*\d.)\s]+/, '').trim();
+            if (item.length > 1 && item.length < 200 && !item.toLowerCase().startsWith('none') && !item.toLowerCase().startsWith('list')) {
+              items.push({ item, session: s.index });
+            }
           }
         }
       }
+      return items;
     }
+
+    const passA = extractItems('A');
+    const passB = extractItems('B');
+
+    // Merge: union of both passes (catches items missed by either)
+    const allItemsMap = new Map<string, { item: string; session: number }>();
+    for (const i of [...passA, ...passB]) {
+      const key = i.item.toLowerCase().trim();
+      if (!allItemsMap.has(key)) allItemsMap.set(key, i);
+    }
+    const allItems = [...allItemsMap.values()];
 
     // If counting before/after a reference date
     if (/before|after/i.test(question) && allItems.length > 0) {
@@ -399,12 +416,23 @@ function answer(
       if (num) return { answer: num[1]!, method: 'pgsl-count-fallback', reasoning: `LLM counted: ${num[1]}` };
     }
 
-    // ONE verification call with evidence quotes
+    // Verification: for each item, binary YES/NO with evidence
     if (allItems.length > 0) {
       const unique = [...new Set(allItems.map(i => i.item.toLowerCase().trim()))];
 
+      // For knowledge-update questions, let LLM reconcile across sessions
+      const isUpdate = /currently|do I have|do I own|am I|how many.*total/i.test(question);
+      if (isUpdate) {
+        const reconciled = llm(
+          `I found these "${category}" across sessions:\n${allItems.map(i => `  Session ${i.session + 1}: ${i.item}`).join('\n')}\n\nQuestion: ${question}\n\nLater sessions may UPDATE earlier ones. What is the CURRENT count? Give ONLY the number:`
+        );
+        const num = reconciled.match(/\d+/);
+        if (num) return { answer: num[0]!, method: 'pgsl-count-reconciled', reasoning: `${allItems.length} items reconciled to ${num[0]}` };
+      }
+
+      // For non-update: verify each item matches the question's criteria
       const verified = llm(
-        `I extracted these "${category}" from the conversation:\n${unique.map((item, i) => `${i + 1}. ${item}`).join('\n')}\n\nQuestion: ${question}\n\nFor EACH item, verify it ACTUALLY matches what the question asks. Consider:\n- "bought" ≠ "considered buying"\n- "visited" ≠ "planned to visit"\n- Later sessions may UPDATE earlier ones (e.g., returned an item = doesn't count)\n- Don't double-count the same item mentioned in multiple sessions\n- Only count items the USER did, not items the assistant suggested\n\n${allSorted}\n\nList ONLY the items that genuinely match, with a brief quote as evidence. Then give the final count.\n\nVerified items:\n`
+        `I found these "${category}":\n${unique.map((item, i) => `${i + 1}. ${item}`).join('\n')}\n\nQuestion: "${question}"\n\nFor each item, answer YES (matches what the question asks) or NO (doesn't match, or was only suggested/planned, not actually done). Consider:\n- "bought" ≠ "considered buying"\n- "visited" ≠ "planned to visit"\n- Same item in multiple sessions = count once\n- Only count what the USER actually did\n\n${allSorted}\n\nFor each item: number. YES or NO (brief reason)\nFinal count of YES items:`
       );
 
       const countMatch = verified.match(/(?:final count|total|count)[:\s]*(\d+)/i) || verified.match(/(\d+)\s*(?:items?|total)/i);
@@ -454,8 +482,14 @@ function answer(
 
   // ── PREFERENCE ──
   if (strategy.questionType === 'single-session-preference' || /recommend|suggest|any tips|any advice|can you.*for me|what should I|do you have.*suggestion/i.test(question)) {
+    // Use PGSL atom frequency to identify key topics from the conversation
+    const topAtoms = [...index.pgsl.atoms.keys()]
+      .filter(v => v.length > 3 && !/^(the|and|for|that|with|this|have|from|been|also|some|just|like|would|could|about|they|their|what|when|where|which|your|more|very)$/i.test(v))
+      .slice(0, 30);
+    const topicHint = topAtoms.length > 0 ? `\n\nKey topics from the conversation (by frequency): ${topAtoms.join(', ')}` : '';
+
     const prefAnswer = llm(
-      `You previously had this conversation with a user. Now they're asking a NEW question (below). Based ONLY on what was discussed in the previous conversation, what SPECIFIC DOMAIN PREFERENCES should guide your response?\n\nFocus on:\n- What specific tools/brands/products they mentioned using\n- What specific topics/areas they expressed interest in\n- What level of expertise they demonstrated\n- What they explicitly said they liked or disliked\n- What types of recommendations they would NOT want (too generic, wrong domain, etc.)\n\nDO NOT describe communication style preferences. Focus on CONTENT/DOMAIN preferences.\n\nPrevious conversation:\n${allSorted}\n\nNew question: ${question}\n\nThe user would prefer responses that`
+      `You previously had this conversation with a user. Now they're asking a NEW question (below). Based ONLY on what was discussed in the previous conversation, what SPECIFIC DOMAIN PREFERENCES should guide your response?\n\nFocus on:\n- What specific tools/brands/products/technologies they mentioned using or discussing\n- What specific topics/areas they expressed interest in\n- What level of expertise they demonstrated\n- What they explicitly said they liked or disliked\n- What specific context (their situation, constraints, goals) should shape recommendations\n- What types of recommendations they would NOT want (too generic, wrong domain, wrong level)\n\nDO NOT describe communication style preferences. Focus on CONTENT/DOMAIN preferences.${topicHint}\n\nPrevious conversation:\n${allSorted}\n\nNew question: ${question}\n\nThe user would prefer responses that`
     );
     const cleaned = prefAnswer.startsWith('The user would prefer') ? prefAnswer : `The user would prefer ${prefAnswer}`;
     return { answer: cleaned, method: 'pgsl-preference', reasoning: 'Preference inference' };
