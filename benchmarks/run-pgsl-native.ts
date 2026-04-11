@@ -335,29 +335,45 @@ function answer(
     // extract→verify→count because the LLM sees the full context and
     // can handle deduplication, knowledge-updates, and criteria matching
     // in a single reasoning pass.
-    const countAnswer = llm(
-      `Read ALL sessions below carefully. Then answer the counting question step by step.\n\nSTEPS:\n1. Read each session and find EVERY item matching the question\n2. For each item found, quote the relevant sentence as evidence\n3. Deduplicate: if the same item appears in multiple sessions, count it ONCE\n4. If later sessions UPDATE earlier ones (e.g., "I returned the X" means X no longer counts), adjust\n5. Verify each item actually matches what the question asks (e.g., "bought" ≠ "considered buying")\n6. List the final verified items, numbered\n7. Give the count\n\nIMPORTANT:\n- Only count items that CLEARLY match what the question asks\n- Read EVERY session — items can be spread across sessions\n- "Currently" or "do I have" means the LATEST state after all updates\n- If later sessions contradict earlier ones, use the latest information\n- Don't count items the assistant suggested — only what the user actually did/has\n- If an item was returned, exchanged, sold, or given away, it may no longer count\n\n${allSorted}\n\nQuestion: ${question}\n\nStep-by-step:\n`
+    // Chain-of-thought counting with dual-run consensus
+    const countPrompt = `Read ALL sessions below carefully. Then answer the counting question step by step.\n\nSTEPS:\n1. Read each session and find EVERY item matching the question\n2. For each item found, quote the relevant sentence as evidence\n3. Deduplicate: if the same item appears in multiple sessions, count it ONCE\n4. If later sessions UPDATE earlier ones (e.g., "I returned the X" means X no longer counts), adjust\n5. Verify each item actually matches what the question asks (e.g., "bought" ≠ "considered buying")\n6. List the final verified items, numbered\n7. Give the count\n\nIMPORTANT:\n- Only count items that CLEARLY match what the question asks\n- Read EVERY session — items can be spread across sessions\n- "Currently" or "do I have" means the LATEST state after all updates\n- If later sessions contradict earlier ones, use the latest information\n- Don't count items the assistant suggested — only what the user actually did/has\n- If an item was returned, exchanged, sold, or given away, it may no longer count\n\n${allSorted}\n\nQuestion: ${question}\n\nStep-by-step:\n`;
+
+    function extractCount(text: string): number | null {
+      const m = text.match(/(?:count|total|answer)[:\s]*(\d+)/i)
+        || text.match(/\b(\d+)\s*(?:items?|total|in total|overall)\b/i);
+      if (m) return parseInt(m[1]!);
+      const nums = text.match(/\b(\d+)\b/g);
+      return nums && nums.length > 0 ? parseInt(nums[nums.length - 1]!) : null;
+    }
+
+    // Run 1
+    const count1Text = llm(countPrompt);
+    const count1 = extractCount(count1Text);
+
+    // Run 2 (slightly different prompt to reduce correlation)
+    const count2Text = llm(
+      `${allSorted}\n\nQuestion: ${question}\n\nCount step by step. For each item, quote evidence from the sessions. List all items, then give the final count:\n`
     );
+    const count2 = extractCount(count2Text);
 
-    // Extract the count — look for the final number
-    const countLines = countAnswer.split('\n').filter(l => l.trim().length > 0);
-    // Try to find explicit "count: N" or "total: N" or just the last number
-    const countMatch = countAnswer.match(/(?:count|total|answer)[:\s]*(\d+)/i)
-      || countAnswer.match(/\b(\d+)\s*(?:items?|total|in total|overall)\b/i);
-
-    if (countMatch) {
-      return { answer: countMatch[1]!, method: 'pgsl-count-cot', reasoning: `Chain-of-thought counting: ${countMatch[1]}` };
+    if (count1 !== null && count2 !== null) {
+      if (count1 === count2) {
+        // Both agree — high confidence
+        return { answer: `${count1}`, method: 'pgsl-count-consensus', reasoning: `Dual-run consensus: both say ${count1}` };
+      }
+      // Disagree — use a third call as tiebreaker
+      const count3Text = llm(
+        `Two counting attempts gave different answers (${count1} and ${count2}) for this question.\n\nRe-read ALL sessions very carefully. List EVERY matching item with a quote as evidence. Then give the correct count.\n\n${allSorted}\n\nQuestion: ${question}\n\nItems with evidence:\n`
+      );
+      const count3 = extractCount(count3Text);
+      // Take majority or median
+      const counts = [count1, count2, count3 ?? count1].sort((a, b) => a - b);
+      const median = counts[1]!;
+      return { answer: `${median}`, method: 'pgsl-count-tiebreak', reasoning: `Counts: ${count1}, ${count2}, ${count3 ?? 'N/A'} → median ${median}` };
     }
 
-    // Fallback: find the last number in the response
-    const allNums = countAnswer.match(/\b(\d+)\b/g);
-    if (allNums && allNums.length > 0) {
-      const lastNum = allNums[allNums.length - 1]!;
-      return { answer: lastNum, method: 'pgsl-count-cot', reasoning: `Chain-of-thought counting (last number): ${lastNum}` };
-    }
-
-    // Last resort: general read
-    return { answer: countAnswer, method: 'pgsl-count-read', reasoning: 'Counting via general read' };
+    if (count1 !== null) return { answer: `${count1}`, method: 'pgsl-count-cot', reasoning: `Chain-of-thought: ${count1}` };
+    return { answer: count1Text, method: 'pgsl-count-read', reasoning: 'Counting via general read' };
   }
 
   // Keep the before/after counting path — it needs date filtering
