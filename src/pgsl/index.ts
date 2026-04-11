@@ -302,6 +302,25 @@ export type {
   MetagraphDescriptor,
   MarketplaceListing, MarketplaceOperation, Marketplace,
 } from './discovery.js';
+// Runtime evaluation
+export {
+  computeConfidence,
+  confidenceLevel,
+  evaluate as runtimeEvaluate,
+  answerWithEval,
+  createRuntimeEvalDecorator,
+  getEvalHistory,
+  recordEvalOutcome,
+  historicalAccuracy,
+  DEFAULT_EVAL_CONFIG,
+} from './runtime-eval.js';
+export type {
+  ConfidenceLevel,
+  StructuralSignals,
+  RuntimeEval,
+  EvalHistoryEntry,
+  RuntimeEvalConfig,
+} from './runtime-eval.js';
 // Progressive persistence
 export {
   createPersistenceRegistry,
