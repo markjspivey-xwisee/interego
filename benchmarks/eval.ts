@@ -102,16 +102,15 @@ function llm(prompt: string): string {
 // ── Run one question (import the answer function from run-pgsl-native) ──
 
 async function runQuestion(qi: number): Promise<{ correct: boolean; method: string; answer: string; gold: string }> {
-  // Dynamic import to get the latest code
-  const mod = await import('./run-pgsl-native.js');
-  // Since we can't easily import the answer function, just shell out
+  // Shell out to the runner so each question is an isolated subprocess.
+  // (Don't import the runner — its main() executes at import time using
+  // eval.ts's argv, which would run the wrong question range.)
   const result = execSync(
     `cd "${resolve(__dirname, '..')}" && npx tsx benchmarks/run-pgsl-native.ts ${MODEL} ${qi} ${qi + 1}`,
     { maxBuffer: 4 * 1024 * 1024, timeout: 300000, encoding: 'utf-8' }
   );
 
   const passed = result.includes(`✓ ${qi}:`);
-  const failed = result.includes(`✗ ${qi}:`);
 
   const goldMatch = result.match(/Gold: (.+)/);
   const oursMatch = result.match(/Ours: (.+)/);
