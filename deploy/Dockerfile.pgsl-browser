@@ -1,5 +1,9 @@
 FROM node:20-slim
 
+# Skip onnxruntime-node CUDA binary (no GPU in containerapp, CPU backend
+# is sufficient, GitHub release binary has flaky 504s).
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
 WORKDIR /lib
 
 # Build the context-graphs library first
