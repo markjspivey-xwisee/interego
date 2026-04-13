@@ -1,5 +1,11 @@
 FROM node:20-slim
 
+# Skip CUDA binary download for onnxruntime-node (transitive dep via
+# @huggingface/transformers). The containerapp has no GPU, the CPU
+# backend still works, and the CUDA binary comes from a GitHub release
+# that is intermittently 504'ing.
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
 WORKDIR /lib
 
 # Build the context-graphs library first
