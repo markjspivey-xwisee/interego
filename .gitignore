@@ -5,8 +5,12 @@ dist/
 .env.*
 {src/
 
-# MCP server dependencies (installed separately)
+# MCP server dependencies and build output (installed/built separately)
 mcp-server/node_modules/
+mcp-server/dist/
+mcp-server/LICENSE
+foxxi-context-graphs-*.tgz
+foxxi-context-graphs-mcp-*.tgz
 
 # Example dependencies
 examples/*/node_modules/

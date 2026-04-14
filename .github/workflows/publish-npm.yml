@@ -1,0 +1,185 @@
+name: Publish to npm
+
+# Triggered when you push a git tag like v0.2.0, v1.0.0, etc.
+# Publishes both packages — first the library, then the MCP server which
+# depends on the freshly published library version.
+#
+# Setup (one-time):
+#   1. Generate an npm Granular Access Token at https://www.npmjs.com/settings/<user>/tokens
+#      - Permission: "Read and write" for both packages
+#      - Or use a Classic "Automation" token if you don't need granular scopes
+#   2. Add it as a repo secret: gh secret set NPM_TOKEN
+#   3. Tag a release: git tag v0.2.0 && git push --tags
+#
+# To release a new version:
+#   1. Bump the version in package.json AND mcp-server/package.json
+#      (and the library version range in mcp-server/package.json's dependencies)
+#   2. Commit: git commit -am "Release v0.2.1"
+#   3. Tag: git tag v0.2.1
+#   4. Push: git push && git push --tags
+#
+# This workflow does the actual publishing in CI, so the npm token never
+# touches your local machine.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Override version (e.g. 0.2.0). Leave empty to use package.json version.'
+        required: false
+      dry_run:
+        description: 'Dry-run only — do not actually publish'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write   # for npm provenance attestations
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish-library:
+    name: Publish @foxxi/context-graphs
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Read library version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Library version: $VERSION"
+
+      - name: Build library
+        run: npm run build
+
+      - name: Publish to npm (with provenance)
+        if: ${{ !inputs.dry_run }}
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Dry-run publish
+        if: ${{ inputs.dry_run }}
+        run: npm publish --dry-run --access public
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### @foxxi/context-graphs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dry run:** ${{ inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **npm:** https://www.npmjs.com/package/@foxxi/context-graphs" >> $GITHUB_STEP_SUMMARY
+
+  publish-mcp-server:
+    name: Publish @foxxi/context-graphs-mcp
+    runs-on: ubuntu-latest
+    needs: publish-library
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Wait for the library to be available on the registry, then install
+      # mcp-server's deps from the public npm registry. This way the published
+      # mcp-server tarball depends on the published library version range,
+      # not on a file: link.
+      - name: Wait for library to be available on npm
+        if: ${{ !inputs.dry_run }}
+        run: |
+          LIB_VERSION="${{ needs.publish-library.outputs.version }}"
+          echo "Waiting for @foxxi/context-graphs@$LIB_VERSION on npm..."
+          for i in {1..30}; do
+            if npm view "@foxxi/context-graphs@$LIB_VERSION" version >/dev/null 2>&1; then
+              echo "✓ @foxxi/context-graphs@$LIB_VERSION is available"
+              exit 0
+            fi
+            echo "  attempt $i/30 — not yet, sleeping 10s"
+            sleep 10
+          done
+          echo "✗ @foxxi/context-graphs@$LIB_VERSION did not appear within 5 minutes"
+          exit 1
+
+      # For dry-runs (or local-source builds), install the library from the
+      # local tarball so we can build mcp-server without depending on the
+      # registry being up to date.
+      - name: Install library from local tarball (dry-run path)
+        if: ${{ inputs.dry_run }}
+        run: |
+          npm install
+          npm run build
+          npm pack
+          mv foxxi-context-graphs-*.tgz mcp-server/lib.tgz
+          cd mcp-server
+          npm install ./lib.tgz --no-save
+
+      - name: Install mcp-server deps from npm
+        if: ${{ !inputs.dry_run }}
+        working-directory: mcp-server
+        run: npm install
+
+      - name: Copy LICENSE into mcp-server
+        run: cp LICENSE mcp-server/LICENSE
+
+      - name: Build mcp-server
+        working-directory: mcp-server
+        run: npm run build
+
+      - name: Read MCP server version
+        id: version
+        working-directory: mcp-server
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "MCP server version: $VERSION"
+
+      - name: Publish to npm (with provenance)
+        if: ${{ !inputs.dry_run }}
+        working-directory: mcp-server
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Dry-run publish
+        if: ${{ inputs.dry_run }}
+        working-directory: mcp-server
+        run: npm publish --dry-run --access public
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### @foxxi/context-graphs-mcp" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Library dep:** @foxxi/context-graphs@${{ needs.publish-library.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dry run:** ${{ inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **npm:** https://www.npmjs.com/package/@foxxi/context-graphs-mcp" >> $GITHUB_STEP_SUMMARY
+          echo "- **Use it:** \`npx -y @foxxi/context-graphs-mcp\`" >> $GITHUB_STEP_SUMMARY

@@ -97,13 +97,106 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 
 ## Quick Start
 
+Pick the path that matches who you are:
+
+### 🤖 I'm an AI coding agent (Claude Code, Cursor, Windsurf, Cline)
+
+The fastest way to use Context Graphs is via the **MCP server**, which exposes 28 tools (publish, discover, ingest, resolve, compose, ontology lookup, runtime eval, identity, federation) to any MCP-capable client.
+
+Add this to your MCP client config:
+
+```jsonc
+// Claude Code: ~/.claude.json   |   Claude Desktop: claude_desktop_config.json
+// Cursor: .cursor/mcp.json      |   Windsurf: ~/.codeium/windsurf/mcp_config.json
+{
+  "mcpServers": {
+    "context-graphs": {
+      "command": "npx",
+      "args": ["-y", "@foxxi/context-graphs-mcp"]
+    }
+  }
+}
+```
+
+Restart your client. You can now say things like *"publish this graph to my pod with high trust"*, *"what affordances does this lattice node have?"*, *"resolve this PGSL atom and show its containment chain"* — and the LLM will pick the right tool.
+
+[→ Full MCP server docs](mcp-server/README.md) · [→ All 28 tools](#mcp-server--28-tools-for-ai-agents)
+
+### 🧑‍💻 I'm a developer building a TypeScript app
+
+```bash
+npm install @foxxi/context-graphs
+```
+
+```typescript
+import {
+  ContextDescriptor,
+  createPGSL,
+  embedInPGSL,
+  loadOntology,        // load any of the four canonical .ttl ontologies
+  computeConfidence,   // runtime eval over PGSL signals
+} from '@foxxi/context-graphs';
+
+// 1. Build a context descriptor (the typed-context layer)
+const desc = ContextDescriptor.create('urn:cg:my-analysis:1')
+  .describes('urn:graph:my-data')
+  .temporal({ validFrom: '2026-04-13T00:00:00Z' })
+  .asserted(0.92)
+  .build();
+
+// 2. Use the PGSL substrate
+const pgsl = createPGSL({ wasAttributedTo: 'urn:my-app', generatedAtTime: new Date().toISOString() });
+embedInPGSL(pgsl, "The user prefers Adobe Premiere Pro for video editing.");
+
+// 3. Load the canonical harness ontology
+const harnessTtl = loadOntology('harness');  // 982 lines, 810 triples
+```
+
+[→ See the full developer guide](docs/developer-guide.md)
+
+### 🐍 I'm scripting in Python / Go / Rust / anything else
+
+Hit the deployed HTTP relay (any HTTP client works — no MCP, no SDK):
+
+```bash
+curl -X POST https://context-graphs-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/tools/discover_context \
+  -H "Content-Type: application/json" \
+  -d '{"namespace": "cg"}'
+```
+
+Every MCP tool is exposed as a `POST /tools/{tool_name}` endpoint with a JSON body matching the tool's input schema.
+
+### 👀 I just want to look around
+
+Open one of the deployed web UIs in your browser — no install required:
+
+- **PGSL Browser:** https://context-graphs-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io
+- **Dashboard:** https://context-graphs-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io
+- **Identity setup:** https://context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io
+
+### 🛠 I want to clone and hack on the system itself
+
 ```bash
 git clone https://github.com/markjspivey-xwisee/context-graphs.git
 cd context-graphs
 npm install
 npm run build
-npm test  # 608 tests
+npm test  # 642 tests across 20 files
+
+# Build the MCP server too
+cd mcp-server
+npm install ../foxxi-context-graphs-*.tgz --no-save  # or set up workspaces
+npm run build
+
+# Deploy to your own Azure (one-time)
+./deploy/azure-deploy.sh
 ```
+
+CI auto-deploys to Azure Container Apps on every push to `master` ([workflow](.github/workflows/deploy-azure.yml)). Tagging a release as `vX.Y.Z` triggers npm publish for both packages ([workflow](.github/workflows/publish-npm.yml)).
+
+---
+
+## Detailed Examples
 
 ### Build a Context Descriptor
 

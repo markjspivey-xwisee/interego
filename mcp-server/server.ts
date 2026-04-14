@@ -1,6 +1,6 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 /**
- * @foxxi/context-graphs-mcp v0.3.0
+ * @foxxi/context-graphs-mcp v0.4.1
  *
  * MCP server for federated context-annotated knowledge graphs.
  *
@@ -1836,7 +1836,7 @@ mcpServer.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 // ── Start ───────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  log('Starting Context Graphs MCP server v0.3.0...');
+  log('Starting Context Graphs MCP server v0.4.1...');
   log(`Owner: ${MY_OWNER_WEBID}${MY_OWNER_NAME ? ` (${MY_OWNER_NAME})` : ''}`);
   log(`Agent: ${MY_AGENT_ID}`);
   log(`Home pod: ${HOME_POD}`);

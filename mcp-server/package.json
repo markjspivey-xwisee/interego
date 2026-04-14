@@ -1,21 +1,63 @@
 {
   "name": "@foxxi/context-graphs-mcp",
-  "version": "0.1.0",
+  "version": "0.4.1",
   "description": "MCP server for Context Graphs — gives AI coding agents the ability to publish, discover, and compose context-annotated knowledge graphs through Solid pods",
+  "author": "Mark Spivey <mark.spivey@xwisee.com> (https://foxximediums.com)",
+  "license": "CC-BY-4.0",
   "type": "module",
-  "main": "server.ts",
+  "main": "./dist/server.js",
+  "types": "./dist/server.d.ts",
+  "bin": {
+    "context-graphs-mcp": "./dist/server.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "start": "tsx server.ts"
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx server.ts",
+    "clean": "rm -rf dist/",
+    "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "@foxxi/context-graphs": "file:../",
-    "@solid/community-server": "^7.0.0",
+    "@foxxi/context-graphs": "^0.2.0",
     "ws": "^8.19.0",
-    "tsx": "^4.0.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@types/ws": "^8.18.1"
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "context-graphs",
+    "rdf",
+    "solid",
+    "knowledge-graph",
+    "ai-agent",
+    "claude",
+    "anthropic"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/markjspivey-xwisee/context-graphs.git",
+    "directory": "mcp-server"
+  },
+  "homepage": "https://github.com/markjspivey-xwisee/context-graphs/tree/master/mcp-server",
+  "bugs": {
+    "url": "https://github.com/markjspivey-xwisee/context-graphs/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

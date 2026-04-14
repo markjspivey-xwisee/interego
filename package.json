@@ -1,10 +1,13 @@
 {
   "name": "@foxxi/context-graphs",
-  "version": "0.1.0",
-  "description": "Reference implementation of Context Graphs 1.0 — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs",
+  "version": "0.2.0",
+  "description": "Reference implementation of Context Graphs 1.0 — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs, with PGSL substrate, harness ontology, and runtime evaluation",
   "author": "Mark Spivey <mark.spivey@xwisee.com> (https://foxximediums.com)",
   "license": "CC-BY-4.0",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -69,11 +72,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/foxximediums/context-graphs.git"
+    "url": "git+https://github.com/markjspivey-xwisee/context-graphs.git"
   },
   "homepage": "https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html",
   "bugs": {
-    "url": "https://github.com/foxximediums/context-graphs/issues"
+    "url": "https://github.com/markjspivey-xwisee/context-graphs/issues"
   },
   "engines": {
     "node": ">=20.0.0"
