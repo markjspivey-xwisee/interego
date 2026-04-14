@@ -45,7 +45,7 @@ concurrency:
 
 jobs:
   publish-library:
-    name: Publish @interego/context-graphs
+    name: Publish @interego/core
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -88,14 +88,14 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "### @interego/context-graphs" >> $GITHUB_STEP_SUMMARY
+          echo "### @interego/core" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Dry run:** ${{ inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **npm:** https://www.npmjs.com/package/@interego/context-graphs" >> $GITHUB_STEP_SUMMARY
+          echo "- **npm:** https://www.npmjs.com/package/@interego/core" >> $GITHUB_STEP_SUMMARY
 
   publish-mcp-server:
-    name: Publish @interego/context-graphs-mcp
+    name: Publish @interego/mcp
     runs-on: ubuntu-latest
     needs: publish-library
     steps:
@@ -116,16 +116,16 @@ jobs:
         if: ${{ !inputs.dry_run }}
         run: |
           LIB_VERSION="${{ needs.publish-library.outputs.version }}"
-          echo "Waiting for @interego/context-graphs@$LIB_VERSION on npm..."
+          echo "Waiting for @interego/core@$LIB_VERSION on npm..."
           for i in {1..30}; do
-            if npm view "@interego/context-graphs@$LIB_VERSION" version >/dev/null 2>&1; then
-              echo "✓ @interego/context-graphs@$LIB_VERSION is available"
+            if npm view "@interego/core@$LIB_VERSION" version >/dev/null 2>&1; then
+              echo "✓ @interego/core@$LIB_VERSION is available"
               exit 0
             fi
             echo "  attempt $i/30 — not yet, sleeping 10s"
             sleep 10
           done
-          echo "✗ @interego/context-graphs@$LIB_VERSION did not appear within 5 minutes"
+          echo "✗ @interego/core@$LIB_VERSION did not appear within 5 minutes"
           exit 1
 
       # For dry-runs (or local-source builds), install the library from the
@@ -176,10 +176,10 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "### @interego/context-graphs-mcp" >> $GITHUB_STEP_SUMMARY
+          echo "### @interego/mcp" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Library dep:** @interego/context-graphs@${{ needs.publish-library.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Library dep:** @interego/core@${{ needs.publish-library.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Dry run:** ${{ inputs.dry_run || 'false' }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **npm:** https://www.npmjs.com/package/@interego/context-graphs-mcp" >> $GITHUB_STEP_SUMMARY
-          echo "- **Use it:** \`npx -y @interego/context-graphs-mcp\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **npm:** https://www.npmjs.com/package/@interego/mcp" >> $GITHUB_STEP_SUMMARY
+          echo "- **Use it:** \`npx -y @interego/mcp\`" >> $GITHUB_STEP_SUMMARY

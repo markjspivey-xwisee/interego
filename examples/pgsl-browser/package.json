@@ -6,7 +6,7 @@
     "start": "tsx server.ts"
   },
   "dependencies": {
-    "@interego/context-graphs": "file:../../",
+    "@interego/core": "file:../../",
     "express": "^4.21.0",
     "tsx": "^4.0.0"
   },

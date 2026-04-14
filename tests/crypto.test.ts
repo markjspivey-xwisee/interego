@@ -278,7 +278,7 @@ describe('SIWE (real crypto)', () => {
     const msg = createSiweMessage(
       'context-graphs.example.com',
       '0x1234567890abcdef1234567890abcdef12345678',
-      'Sign in to Context Graphs',
+      'Sign in to Interego',
       'https://context-graphs.example.com',
       1,
       ['https://pod.example.com/markj/'],

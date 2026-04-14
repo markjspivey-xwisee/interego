@@ -1,10 +1,10 @@
 /**
  * @module sdk
- * @description 3-line developer SDK for Context Graphs.
+ * @description 3-line developer SDK for Interego.
  *
  * Usage:
  * ```ts
- * import { ContextGraphs } from '@interego/context-graphs';
+ * import { ContextGraphs } from '@interego/core';
  *
  * const cg = new ContextGraphs({ podUrl: 'https://css.example.com/alice/', token: 'cg_...' });
  * await cg.publish('urn:graph:my-data', turtleContent, { confidence: 0.95 });

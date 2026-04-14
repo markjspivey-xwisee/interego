@@ -1,8 +1,8 @@
 {
-  "name": "@interego/context-graphs-mcp",
+  "name": "@interego/mcp",
   "version": "0.4.1",
-  "description": "MCP server for Context Graphs — gives AI coding agents the ability to publish, discover, and compose context-annotated knowledge graphs through Solid pods",
-  "author": "Mark Spivey <mark.spivey@xwisee.com>",
+  "description": "MCP server for Interego — gives AI coding agents the ability to publish, discover, and compose context-annotated knowledge graphs through Solid pods",
+  "author": "Interego",
   "license": "CC-BY-4.0",
   "type": "module",
   "main": "./dist/server.js",
@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "@interego/context-graphs": "^0.2.0",
+    "@interego/core": "^0.2.0",
     "ws": "^8.19.0",
     "zod": "^3.23.0"
   },
@@ -50,12 +50,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/markjspivey-xwisee/context-graphs.git",
+    "url": "git+https://github.com/interego/interego.git",
     "directory": "mcp-server"
   },
-  "homepage": "https://github.com/markjspivey-xwisee/context-graphs/tree/master/mcp-server",
+  "homepage": "https://github.com/interego/interego/tree/master/mcp-server",
   "bugs": {
-    "url": "https://github.com/markjspivey-xwisee/context-graphs/issues"
+    "url": "https://github.com/interego/interego/issues"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Test Context Graphs with Comunica SPARQL engine.
+ * Test Interego with Comunica SPARQL engine.
  *
  * Comunica queries our /dump.ttl endpoint as a standard RDF source,
  * proving that external RDF tooling can interact with the system
@@ -14,14 +14,14 @@ const DUMP_URL = process.env['DUMP_URL'] ?? 'http://localhost:5000/dump.ttl';
 async function main() {
   const engine = new QueryEngine();
 
-  console.log('Comunica SPARQL Engine → Context Graphs Virtualized RDF Layer');
+  console.log('Comunica SPARQL Engine → Interego Virtualized RDF Layer');
   console.log(`Source: ${DUMP_URL}`);
   console.log('');
 
   // ── Query 1: All atoms and their values ──
   console.log('=== Query 1: All PGSL Atoms ===');
   const q1 = `
-    PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+    PREFIX pgsl: <https://interego.dev/ns/pgsl#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     SELECT ?atom ?value WHERE {
       ?atom rdf:type pgsl:Atom .
@@ -39,7 +39,7 @@ async function main() {
   // ── Query 2: All fragments at level 3 ──
   console.log('=== Query 2: Level 3 Fragments ===');
   const q2 = `
-    PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+    PREFIX pgsl: <https://interego.dev/ns/pgsl#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     SELECT ?frag ?level WHERE {
       ?frag rdf:type pgsl:Fragment .
@@ -55,7 +55,7 @@ async function main() {
   // ── Query 3: Provenance — who attributed what ──
   console.log('=== Query 3: Provenance ===');
   const q3 = `
-    PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+    PREFIX pgsl: <https://interego.dev/ns/pgsl#>
     PREFIX prov: <http://www.w3.org/ns/prov#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     SELECT DISTINCT ?agent WHERE {
@@ -73,7 +73,7 @@ async function main() {
   // ── Query 4: Fragment containment ──
   console.log('=== Query 4: Fragment Items (containment) ===');
   const q4 = `
-    PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+    PREFIX pgsl: <https://interego.dev/ns/pgsl#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     SELECT ?frag ?item WHERE {
       ?frag rdf:type pgsl:Fragment .
@@ -90,7 +90,7 @@ async function main() {
   // ── Query 5: ASK — does a specific atom exist? ──
   console.log('=== Query 5: ASK — does atom "chen" exist? ===');
   const q5 = `
-    PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+    PREFIX pgsl: <https://interego.dev/ns/pgsl#>
     ASK {
       ?atom pgsl:value "chen" .
     }
@@ -102,7 +102,7 @@ async function main() {
   // ── Query 6: System metadata (pods, coherence) ──
   console.log('=== Query 6: System Metadata ===');
   const q6 = `
-    PREFIX cg: <https://markjspivey-xwisee.github.io/context-graphs/ns/cg#>
+    PREFIX cg: <https://interego.dev/ns/cg#>
     PREFIX dcat: <http://www.w3.org/ns/dcat#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     SELECT ?pod ?title WHERE {
@@ -125,7 +125,7 @@ async function main() {
   // ── Query 7: Lattice statistics ──
   console.log('=== Query 7: Lattice Statistics ===');
   const q7 = `
-    PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+    PREFIX pgsl: <https://interego.dev/ns/pgsl#>
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     SELECT
       (COUNT(DISTINCT ?atom) AS ?atomCount)
@@ -147,7 +147,7 @@ async function main() {
   }
 
   console.log('');
-  console.log('✓ Comunica successfully queried the Context Graphs system via the virtualized RDF layer');
+  console.log('✓ Comunica successfully queried the Interego system via the virtualized RDF layer');
   console.log('  Any SPARQL client can do the same against /dump.ttl or /sparql');
 }
 

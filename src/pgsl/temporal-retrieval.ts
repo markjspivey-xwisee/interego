@@ -1,6 +1,6 @@
 /**
  * @module pgsl/temporal-retrieval
- * @description Temporal-aware retrieval for Context Graphs.
+ * @description Temporal-aware retrieval for Interego.
  *
  * For temporal reasoning questions ("When did X happen?", "What happened first?"),
  * extract temporal markers from text and match against session timestamps.

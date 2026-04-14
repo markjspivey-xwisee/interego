@@ -1,4 +1,4 @@
-@prefix pgsl:  <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#> .
+@prefix pgsl:  <https://interego.dev/ns/pgsl#> .
 @prefix sh:    <http://www.w3.org/ns/shacl#> .
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
@@ -26,14 +26,14 @@
 #  file is the authoritative version.
 # ══════════════════════════════════════════════════════════════
 
-<https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl-shapes#>
+<https://interego.dev/ns/pgsl-shapes#>
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
     dct:title "PGSL 1.0 SHACL Shapes" ;
     dct:description "SHACL validation shapes for PGSL serializations. Enforces atom/fragment invariants, pullback square commutativity, and required PROV-O provenance triples." ;
     dct:license <https://creativecommons.org/licenses/by/4.0/> ;
     dct:created "2026-04-13"^^xsd:date ;
-    rdfs:seeAlso <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#> .
+    rdfs:seeAlso <https://interego.dev/ns/pgsl#> .
 
 # ══════════════════════════════════════════════════════════════
 #  Atom Shape

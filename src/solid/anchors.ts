@@ -1,6 +1,6 @@
 /**
  * @module solid/anchors
- * @description Zero-copy anchor receipts for Context Graphs.
+ * @description Zero-copy anchor receipts for Interego.
  *
  * Architecture:
  *   Physical layer:  IPFS pin, CSS pod resource, PGSL atom, wallet key

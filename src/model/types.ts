@@ -1,6 +1,6 @@
 /**
  * @module model/types
- * @description Core type definitions for Context Graphs 1.0
+ * @description Core type definitions for Interego 1.0
  *
  * These types encode the abstract data model from §3 of the specification:
  *   - Context Descriptors (§3.1)

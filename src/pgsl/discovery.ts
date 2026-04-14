@@ -1099,7 +1099,7 @@ export function marketplaceToHydra(marketplace: Marketplace): string {
     '@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .',
     '',
     '<urn:cg:marketplace> a hydra:ApiDocumentation ;',
-    `  hydra:title "Context Graphs Marketplace" ;`,
+    `  hydra:title "Interego Marketplace" ;`,
     `  hydra:description "Hydra-driven discovery of agents, data sources, and decorators" .`,
     '',
   ];

@@ -327,7 +327,7 @@ describe('SPARQL Queryability', () => {
     const store = materializeTriples(pgsl);
     const valueTriples = matchPattern(
       store, undefined,
-      'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#value',
+      'https://interego.dev/ns/pgsl#value',
       undefined,
     );
     const values = valueTriples.map(t => t.object.replace(/"/g, ''));
@@ -339,7 +339,7 @@ describe('SPARQL Queryability', () => {
     const store = materializeTriples(pgsl);
     const valueTriples = matchPattern(
       store, undefined,
-      'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#value',
+      'https://interego.dev/ns/pgsl#value',
       undefined,
     );
     const values = valueTriples.map(t => t.object.replace(/"/g, ''));
@@ -351,7 +351,7 @@ describe('SPARQL Queryability', () => {
     const store = materializeTriples(pgsl);
     const valueTriples = matchPattern(
       store, undefined,
-      'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#value',
+      'https://interego.dev/ns/pgsl#value',
       undefined,
     );
     const values = valueTriples.map(t => t.object.replace(/"/g, ''));
@@ -364,7 +364,7 @@ describe('SPARQL Queryability', () => {
     const atomTypes = matchPattern(
       store, undefined,
       'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
-      'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#Atom',
+      'https://interego.dev/ns/pgsl#Atom',
     );
     expect(atomTypes.length).toBeGreaterThan(0);
   });
@@ -375,7 +375,7 @@ describe('SPARQL Queryability', () => {
     const fragTypes = matchPattern(
       store, undefined,
       'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
-      'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#Fragment',
+      'https://interego.dev/ns/pgsl#Fragment',
     );
     expect(fragTypes.length).toBeGreaterThan(0);
   });
@@ -385,7 +385,7 @@ describe('SPARQL Queryability', () => {
     const store = materializeTriples(pgsl);
     const itemTriples = matchPattern(
       store, undefined,
-      'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#item',
+      'https://interego.dev/ns/pgsl#item',
       undefined,
     );
     expect(itemTriples.length).toBeGreaterThan(0);

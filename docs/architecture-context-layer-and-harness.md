@@ -1,10 +1,10 @@
-# Context Graphs: Context Layer + Harness
+# Interego: Context Layer + Harness
 
 _A note on how the system is positioned, and why the distinction is load-bearing._
 
 ## TL;DR
 
-Context Graphs is **both a context layer and a harness**, and the two halves are designed for each other. The context layer is the PGSL substrate — a content-addressed, lattice-structured memory that anything can plug into. The harness is the scaffolding around LLMs and agents — panels, routing, runtime eval, decorators, tracing — that relies on the substrate's structure to make its decisions. You can peel off the harness and still have a useful context layer. You cannot peel off the context layer, because the harness's reliability comes from having a real substrate to reason over instead of raw prompt strings.
+Interego is **both a context layer and a harness**, and the two halves are designed for each other. The context layer is the PGSL substrate — a content-addressed, lattice-structured memory that anything can plug into. The harness is the scaffolding around LLMs and agents — panels, routing, runtime eval, decorators, tracing — that relies on the substrate's structure to make its decisions. You can peel off the harness and still have a useful context layer. You cannot peel off the context layer, because the harness's reliability comes from having a real substrate to reason over instead of raw prompt strings.
 
 ## The two layers
 
@@ -51,7 +51,7 @@ What's novel here is that **the harness and the context layer are designed for e
 
 ## The cleaner framing
 
-Think of Context Graphs as:
+Think of Interego as:
 
 > **A context layer that comes with its own reliability harness** —
 > or equivalently,
@@ -75,5 +75,5 @@ The headline number (86.6% raw / 89.2% adjusted on the full 500, stable 90.3% on
 ## See also
 
 - [`developer-guide.md`](developer-guide.md) — how to use the library
-- [Context Graphs 1.0 spec](spec/) — the formal specification
+- [Interego 1.0 spec](spec/) — the formal specification
 - [`CLAUDE.md`](../CLAUDE.md) — project-level guidance for Claude Code

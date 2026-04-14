@@ -1,5 +1,5 @@
 /**
- * Test suite for @interego/context-graphs
+ * Test suite for @interego/core
  *
  * Covers: descriptor builder, composition operators, serialization,
  *         validation, and SPARQL pattern generation.
@@ -469,7 +469,7 @@ describe('JSON-LD Serialization', () => {
 describe('Namespaces', () => {
   it('expand resolves prefixed names', () => {
     expect(expand('cg:ContextDescriptor'))
-.toBe('https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#ContextDescriptor');
+.toBe('https://interego.dev/ns/cg#ContextDescriptor');
     expect(expand('prov:Entity'))
 .toBe('http://www.w3.org/ns/prov#Entity');
   });

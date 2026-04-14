@@ -1,6 +1,6 @@
 /**
  * @module model/causality
- * @description Pearl's Causal Reasoning Engine for Context Graphs
+ * @description Pearl's Causal Reasoning Engine for Interego
  *
  * Implements:
  *   - Structural Causal Model (SCM) construction and DAG operations

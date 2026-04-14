@@ -1,6 +1,6 @@
 /**
  * @module validation/shacl-shapes
- * @description SHACL shapes for Context Graphs 1.0 (§6)
+ * @description SHACL shapes for Interego 1.0 (§6)
  *
  * Exports the normative SHACL shapes as a Turtle string for use
  * with external SHACL validation engines (e.g., TopQuadrant SHACL,
@@ -10,7 +10,7 @@
  */
 
 export const SHACL_SHAPES_TURTLE = `\
-@prefix cg:    <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#> .
+@prefix cg:    <https://interego.dev/ns/cg#> .
 @prefix sh:    <http://www.w3.org/ns/shacl#> .
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
 @prefix prov:  <http://www.w3.org/ns/prov#> .

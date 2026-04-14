@@ -3,8 +3,8 @@
  * Publish descriptors to real Solid pods and verify cross-pod discovery.
  * Requires CSS running at localhost:3456 and browser at localhost:5000.
  */
-import { ContextDescriptor, publish, discover } from '@interego/context-graphs';
-import type { IRI, FetchFn } from '@interego/context-graphs';
+import { ContextDescriptor, publish, discover } from '@interego/core';
+import type { IRI, FetchFn } from '@interego/core';
 
 const solidFetch: FetchFn = async (url, init) => {
   const resp = await fetch(url, init as RequestInit);

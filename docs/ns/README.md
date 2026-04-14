@@ -1,12 +1,12 @@
-# Context Graphs — Ontology Reference
+# Interego — Ontology Reference
 
-This directory contains the **canonical, versioned, hand-authored OWL/RDFS/SHACL ontologies** that define the Context Graphs 1.0 system. These files are the single source of truth for every class, property, and SKOS concept scheme in the three co-designed layers of the system.
+This directory contains the **canonical, versioned, hand-authored OWL/RDFS/SHACL ontologies** that define the Interego 1.0 system. These files are the single source of truth for every class, property, and SKOS concept scheme in the three co-designed layers of the system.
 
-**Namespace root:** `https://markjspivey-xwisee.github.io/context-graphs/ns/`
+**Namespace root:** `https://interego.dev/ns/`
 
 ## The four layers
 
-Context Graphs is a three-layer system (substrate → typed context → agent harness) plus a cross-layer alignment ontology that ties them together.
+Interego is a three-layer system (substrate → typed context → agent harness) plus a cross-layer alignment ontology that ties them together.
 
 | File | Prefix | Kind | Lines | Triples | What it defines |
 |---|---|---|---|---|---|
@@ -67,7 +67,7 @@ Every file in this directory follows these principles:
 
 ## Runtime access
 
-The library ships the Turtle files with the npm package (see `"files"` in `package.json`) and exposes loaders from `@interego/context-graphs`:
+The library ships the Turtle files with the npm package (see `"files"` in `package.json`) and exposes loaders from `@interego/core`:
 
 ```ts
 import {
@@ -75,7 +75,7 @@ import {
   loadFullOntology,
   loadFullShapes,
   ONTOLOGY_MANIFEST,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 // Load one named ontology file as a Turtle string
 const pgslTtl = loadOntology('pgsl');
@@ -100,12 +100,12 @@ for (const entry of ONTOLOGY_MANIFEST) {
 
 The canonical URLs resolve to this directory via GitHub Pages:
 
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs.ttl`
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl.ttl`
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl-shapes.ttl`
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/harness.ttl`
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/harness-shapes.ttl`
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/alignment.ttl`
+- `https://interego.dev/ns/cg.ttl`
+- `https://interego.dev/ns/pgsl.ttl`
+- `https://interego.dev/ns/pgsl-shapes.ttl`
+- `https://interego.dev/ns/harness.ttl`
+- `https://interego.dev/ns/harness-shapes.ttl`
+- `https://interego.dev/ns/alignment.ttl`
 
 Each ontology's `vann:preferredNamespaceUri` matches the hashed namespace URI in its `owl:Ontology` declaration.
 

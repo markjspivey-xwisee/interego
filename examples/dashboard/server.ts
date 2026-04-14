@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Context Graphs — Real-time Observation Dashboard
+ * Interego — Real-time Observation Dashboard
  *
  * A purely observational dashboard that monitors actual Solid pods
  * and displays real-time agent activity. No simulations, no demos.

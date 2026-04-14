@@ -1,6 +1,6 @@
 /**
  * @module rdf/serializer
- * @description Turtle and TriG serialization for Context Graphs 1.0
+ * @description Turtle and TriG serialization for Interego 1.0
  *
  * Generates valid Turtle [RDF12-TURTLE] / TriG [RDF12-TRIG] output
  * for ContextDescriptorData instances, using prefixed names for all

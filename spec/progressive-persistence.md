@@ -1,26 +1,26 @@
-# Context Graphs 1.0: Progressive Persistence Tier System
+# Interego 1.0: Progressive Persistence Tier System
 
 **W3C Community Group Draft Specification Addendum**
 
 **Latest version:** This document
 
-**Editors:** Context Graphs Community Group
+**Editors:** Interego Community Group
 
 **Abstract:** This document specifies the progressive persistence tier system
-for Context Graphs 1.0. Content-addressed PGSL nodes may reside at one or more
+for Interego 1.0. Content-addressed PGSL nodes may reside at one or more
 persistence tiers ranging from ephemeral in-process memory to blockchain-anchored
 proof of existence. The URI of a node is derived from its content hash and is
 invariant across tiers. What changes between tiers: availability, durability,
 resolution requirements, and trust proof strength.
 
 **Status:** Draft. This specification addendum is intended for discussion within
-the W3C Context Graphs Community Group.
+the W3C Interego Community Group.
 
 ---
 
 ## 1. Overview
 
-Context Graphs operates on content-addressed knowledge structures (PGSL atoms,
+Interego operates on content-addressed knowledge structures (PGSL atoms,
 chains, and fragments). In a federated multi-agent environment, the same
 content may need to exist at different levels of persistence depending on its
 lifecycle stage, trust requirements, and audience.
@@ -507,8 +507,8 @@ Implementations MAY additionally support:
 
 ## References
 
-- **[CG-CORE]** Context Graphs 1.0 Core Specification.
-- **[CG-PARADIGM]** Context Graphs 1.0: Paradigm Constraints, Emergent
+- **[CG-CORE]** Interego 1.0 Core Specification.
+- **[CG-PARADIGM]** Interego 1.0: Paradigm Constraints, Emergent
   Semantics, and Coherence Verification.
 - **[PGSL]** PGSL: Content-Addressed Lattice for Structured Knowledge.
 - **[SOLID]** Solid Protocol. W3C Community Group Report.

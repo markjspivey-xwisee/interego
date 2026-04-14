@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Context Graphs 1.0 — TLA / xAPI / LERS Demo
+ * Interego 1.0 — TLA / xAPI / LERS Demo
  *
  * Total Learning Architecture pipeline across 3 agents on 3 Solid pods:
  *
@@ -48,9 +48,9 @@ import {
   sparqlQueryPGSL,
   sparqlFragmentsContaining,
   validateAllPGSL,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
-import type { IRI, FetchFn } from '@interego/context-graphs';
+import type { IRI, FetchFn } from '@interego/core';
 
 // ── Configuration ───────────────────────────────────────────
 
@@ -596,7 +596,7 @@ async function agentCredential(lrsDesc: any, compDesc: any) {
 async function main(): Promise<void> {
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════');
-  console.log('  Context Graphs 1.0 — TLA / xAPI / IEEE LERS Demo');
+  console.log('  Interego 1.0 — TLA / xAPI / IEEE LERS Demo');
   console.log('  Flight Simulator → LRS → Competency → LERS Credential');
   console.log('═══════════════════════════════════════════════════════════════');
   console.log('');

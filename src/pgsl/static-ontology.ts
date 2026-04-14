@@ -2,29 +2,26 @@
  * @module pgsl/static-ontology
  * @description Loaders for the static, canonical ontology files in docs/ns/.
  *
- * The Context Graphs system has three co-designed ontology layers
- * plus a cross-layer alignment ontology, all authored by hand in
+ * Interego has five co-designed ontology layers, all authored by hand in
  * Turtle under `docs/ns/`:
  *
- *   - context-graphs.ttl  — the typed context descriptor layer (cg:)
+ *   - interego.ttl        — the interrogatives core (ie:)
+ *                           the user-facing grammar of the system
  *   - pgsl.ttl            — the substrate lattice layer (pgsl:)
+ *   - cg.ttl              — the typed context descriptor layer (cg:)
  *   - harness.ttl         — the agent/eval/decorator harness layer (cgh:)
  *   - alignment.ttl       — cross-layer mappings (align:)
  *
- * Each also has a SHACL shapes file:
+ * Each lower layer has a matching SHACL shapes file:
  *
+ *   - interego-shapes.ttl
  *   - pgsl-shapes.ttl
  *   - harness-shapes.ttl
  *
- * These static files are the canonical, versioned, ontology-engineered
- * definitions. The functions in this module load them at runtime
- * (Node only — browser consumers should bundle the.ttl files
+ * These static files are the canonical, versioned definitions.
+ * The functions in this module load them at runtime
+ * (Node only — browser consumers should bundle the .ttl files
  * themselves via their build tool).
- *
- * The older `pgslOwlOntology()` / `pgslShaclShapes()` generators in
- * `rdf.ts` remain available for minimal in-memory serialization, but
- * for the full authoritative ontology with all rdfs:comment text,
- * SKOS concept schemes, and cross-layer alignments, use these loaders.
  */
 
 import { readFileSync } from 'node:fs';
@@ -35,9 +32,11 @@ import { fileURLToPath } from 'node:url';
  * Named ontology files available for loading.
  */
 export type OntologyName =
-  | 'context-graphs'
+  | 'interego'
+  | 'interego-shapes'
   | 'pgsl'
   | 'pgsl-shapes'
+  | 'cg'
   | 'harness'
   | 'harness-shapes'
   | 'alignment';
@@ -61,11 +60,13 @@ function resolveNsDir(): string {
  *
  * @example
  * ```ts
- * import { loadOntology } from '@interego/context-graphs';
+ * import { loadOntology } from '@interego/core';
  *
- * const pgslTtl = loadOntology('pgsl');
- * const harnessTtl = loadOntology('harness');
- * const alignmentTtl = loadOntology('alignment');
+ * const interegoTtl = loadOntology('interego');  // interrogatives core
+ * const pgslTtl = loadOntology('pgsl');          // substrate layer
+ * const cgTtl = loadOntology('cg');              // typed-context layer
+ * const harnessTtl = loadOntology('harness');    // agent harness
+ * const alignmentTtl = loadOntology('alignment'); // cross-layer axioms
  * ```
  */
 export function loadOntology(name: OntologyName): string {
@@ -74,11 +75,11 @@ export function loadOntology(name: OntologyName): string {
 }
 
 /**
- * Load ALL four ontologies (cg, pgsl, harness, alignment) as a single
- * concatenated Turtle document. Useful when you want to load the full
- * system into a triple store in one pass.
+ * Load ALL five ontologies (interego + pgsl + cg + harness + alignment)
+ * as a single concatenated Turtle document. Useful when you want to
+ * load the full system into a triple store in one pass.
  *
- * Note that the four files each declare their own prefix list; the
+ * Note that the five files each declare their own prefix list; the
  * concatenated output repeats them, which most Turtle parsers handle
  * correctly (later declarations simply redeclare the same prefixes).
  * If your parser is strict, load each file individually.
@@ -86,12 +87,15 @@ export function loadOntology(name: OntologyName): string {
 export function loadFullOntology(): string {
   const parts: string[] = [
     '# ═══════════════════════════════════════════════════════════',
-    '# Context Graphs 1.0 — Full Ontology (cg + pgsl + harness + alignment)',
+    '# Interego 1.0 — Full Ontology',
+    '# (interego + pgsl + cg + harness + alignment)',
     '# ═══════════════════════════════════════════════════════════',
     '',
-    loadOntology('context-graphs'),
+    loadOntology('interego'),
     '',
     loadOntology('pgsl'),
+    '',
+    loadOntology('cg'),
     '',
     loadOntology('harness'),
     '',
@@ -101,14 +105,17 @@ export function loadFullOntology(): string {
 }
 
 /**
- * Load all SHACL shape files (pgsl-shapes + harness-shapes) concatenated.
+ * Load all SHACL shape files (interego + pgsl + harness) concatenated.
  * Use this to validate an RDF graph against the full system's constraints.
  */
 export function loadFullShapes(): string {
   const parts: string[] = [
     '# ═══════════════════════════════════════════════════════════',
-    '# Context Graphs 1.0 — Full SHACL Shapes (pgsl + harness)',
+    '# Interego 1.0 — Full SHACL Shapes',
+    '# (interego + pgsl + harness)',
     '# ═══════════════════════════════════════════════════════════',
+    '',
+    loadOntology('interego-shapes'),
     '',
     loadOntology('pgsl-shapes'),
     '',
@@ -135,16 +142,24 @@ export interface OntologyManifestEntry {
  */
 export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   {
-    name: 'context-graphs',
-    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#',
-    prefix: 'cg',
+    name: 'interego',
+    namespace: 'https://interego.dev/ns/interego#',
+    prefix: 'ie',
     kind: 'ontology',
     description:
-      'Typed context descriptor layer. Seven facet types (Temporal, Provenance, Agent, AccessControl, Semiotic, Trust, Federation), composition operators (union, intersection, restriction, override), and federation primitives.',
+      'Interrogatives core. The user-facing grammar of Interego: eleven canonical interrogatives (Who, What, Where, When, Why, How, Which, WhatKind, HowMuch, Whose, Whether) as a SKOS concept scheme, plus Acts, Responses, the Peircean sign/object/interpretant triad, and Signification as the unit of emergent meaning.',
+  },
+  {
+    name: 'interego-shapes',
+    namespace: 'https://interego.dev/ns/interego#',
+    prefix: 'ie',
+    kind: 'shapes',
+    description:
+      'SHACL shapes for the interrogatives core: Act well-formedness, Response confidence bounds, Interpretant agent-relativity, Signification emergent-antecedent requirement.',
   },
   {
     name: 'pgsl',
-    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#',
+    namespace: 'https://interego.dev/ns/pgsl#',
     prefix: 'pgsl',
     kind: 'ontology',
     description:
@@ -152,23 +167,31 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   },
   {
     name: 'pgsl-shapes',
-    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#',
+    namespace: 'https://interego.dev/ns/pgsl#',
     prefix: 'pgsl',
     kind: 'shapes',
     description:
       'SHACL shapes that validate PGSL serializations: atom/fragment invariants, pullback commutativity, PROV-O provenance triples.',
   },
   {
+    name: 'cg',
+    namespace: 'https://interego.dev/ns/cg#',
+    prefix: 'cg',
+    kind: 'ontology',
+    description:
+      'Typed context descriptor layer. Seven facet types (Temporal, Provenance, Agent, AccessControl, Semiotic, Trust, Federation), composition operators (union, intersection, restriction, override), and federation primitives. The technical machinery that answers the ie:When / ie:Who / ie:Where / ie:Why / ie:Whose / ie:WhatKind / ie:Whether interrogatives.',
+  },
+  {
     name: 'harness',
-    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/harness#',
+    namespace: 'https://interego.dev/ns/harness#',
     prefix: 'cgh',
     kind: 'ontology',
     description:
-      'Agent harness layer. Abstract Agent Types (AAT), policy engine with ODRL alignment, PROV traces, runtime evaluation with confidence scoring, decision functor, and affordance decorators.',
+      'Agent harness layer. Abstract Agent Types (AAT), policy engine with ODRL alignment, PROV traces, runtime evaluation with confidence scoring, decision functor, and affordance decorators. Answers ie:Who (what AAT am I?), ie:Which (which action to take?), and ie:Whether (permitted? reliable?).',
   },
   {
     name: 'harness-shapes',
-    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/harness#',
+    namespace: 'https://interego.dev/ns/harness#',
     prefix: 'cgh',
     kind: 'shapes',
     description:
@@ -176,11 +199,11 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   },
   {
     name: 'alignment',
-    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#',
+    namespace: 'https://interego.dev/ns/alignment#',
     prefix: 'align',
     kind: 'ontology',
     description:
-      'Cross-layer alignment ontology tying cg, pgsl, and cgh together. Includes SKOS concept-scheme matches, external W3C vocabulary alignments (PROV-O, Hydra, ODRL, ACL, VC, DCAT, OWL-Time), and named integration patterns.',
+      'Cross-layer alignment ontology tying interego, pgsl, cg, and cgh together. Includes the interrogative-to-layer mapping (which layer answers which ie: interrogative), SKOS concept-scheme matches, external W3C vocabulary alignments (PROV-O, Hydra, ODRL, ACL, VC, DCAT, OWL-Time), and named integration patterns.',
   },
 ];
 

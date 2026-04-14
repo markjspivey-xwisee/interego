@@ -1,6 +1,6 @@
 /**
  * @module crypto/encryption
- * @description End-to-end encryption for Context Graphs.
+ * @description End-to-end encryption for Interego.
  *
  * Uses tweetnacl (NaCl) for real, audited cryptography:
  *   - X25519 key exchange (Curve25519 Diffie-Hellman)

@@ -1,6 +1,6 @@
 /**
  * @module rdf/system-ontology
- * @description Full Context Graphs system as an OWL ontology with SHACL shapes,
+ * @description Full Interego system as an OWL ontology with SHACL shapes,
  * Hydra API description, and DCAT/DPROD catalog generation.
  *
  * Extends the PGSL-layer ontology (pgsl/rdf.ts) to cover every concept in the
@@ -15,7 +15,7 @@ import {
 
 // ── Namespace Constants ─────────────────────────────────────
 
-export const CG_NS    = 'https://markjspivey-xwisee.github.io/context-graphs/ns/cg#' as const;
+export const CG_NS    = 'https://interego.dev/ns/cg#' as const;
 export const WAC_NS   = ACL;
 export const HYDRA_NS = HYDRA;
 export const DCAT_NS  = DCAT;
@@ -56,19 +56,19 @@ export function allPrefixes(): string {
 // ── OWL Ontology ────────────────────────────────────────────
 
 /**
- * Returns the complete Context Graphs OWL ontology as Turtle,
+ * Returns the complete Interego OWL ontology as Turtle,
  * covering every concept in the system.
  */
 export function systemOntology(): string {
   return `${allPrefixes()}
 
 # ════════════════════════════════════════════════════════════
-# Context Graphs System Ontology
+# Interego System Ontology
 # ════════════════════════════════════════════════════════════
 
 <${CG_NS}> a owl:Ontology ;
-    rdfs:label "Context Graphs System Ontology" ;
-    rdfs:comment "Complete OWL ontology for Context Graphs 1.0 — composable, verifiable, federated context infrastructure." ;
+    rdfs:label "Interego System Ontology" ;
+    rdfs:comment "Complete OWL ontology for Interego 1.0 — composable, verifiable, federated context infrastructure." ;
     owl:versionInfo "1.0.0" ;
     owl:imports <${PGSL_NS}> .
 
@@ -510,13 +510,13 @@ cg:PodAddRequest a owl:Class ;
 // ── SHACL Shapes ────────────────────────────────────────────
 
 /**
- * Returns SHACL shapes for validating the full Context Graphs system.
+ * Returns SHACL shapes for validating the full Interego system.
  */
 export function systemShaclShapes(): string {
   return `${allPrefixes()}
 
 # ════════════════════════════════════════════════════════════
-# Context Graphs SHACL Shapes
+# Interego SHACL Shapes
 # ════════════════════════════════════════════════════════════
 
 # ── Context Descriptor Shape ─────────────────────────────────
@@ -688,12 +688,12 @@ export function systemHydraApi(): string {
   return `${allPrefixes()}
 
 # ════════════════════════════════════════════════════════════
-# Context Graphs Hydra API Documentation
+# Interego Hydra API Documentation
 # ════════════════════════════════════════════════════════════
 
 cg:ApiDocumentation a hydra:ApiDocumentation ;
-    hydra:title "Context Graphs API" ;
-    hydra:description "HATEOAS-driven API for the Context Graphs system." ;
+    hydra:title "Interego API" ;
+    hydra:description "HATEOAS-driven API for the Interego system." ;
     hydra:entrypoint </api> ;
     hydra:supportedClass
         cg:NodeEndpoint,
@@ -766,7 +766,7 @@ cg:ConstrainOperation a hydra:Operation ;
 cg:QueryOperation a hydra:Operation ;
     hydra:method "POST" ;
     hydra:title "SPARQL query" ;
-    hydra:description "Execute a SPARQL 1.2 query against the Context Graphs store." ;
+    hydra:description "Execute a SPARQL 1.2 query against the Interego store." ;
     hydra:expects cg:QueryRequest ;
     hydra:returns cg:QueryResponse .
 
@@ -848,12 +848,12 @@ export function systemDcatCatalog(pods: readonly PodInfo[]): string {
   return `${allPrefixes()}
 
 # ════════════════════════════════════════════════════════════
-# Context Graphs Federation Catalog (DCAT + DPROD)
+# Interego Federation Catalog (DCAT + DPROD)
 # ════════════════════════════════════════════════════════════
 
 <urn:catalog:context-graphs> a dcat:Catalog ;
-    dcterms:title "Context Graphs Federation" ;
-    dcterms:description "Federated catalog of Context Graphs pods." ;
+    dcterms:title "Interego Federation" ;
+    dcterms:description "Federated catalog of Interego pods." ;
     dcat:dataset ${podList} .
 ${podEntries.join('\n')}
 `;

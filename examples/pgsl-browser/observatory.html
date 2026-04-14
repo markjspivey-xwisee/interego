@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Context Graphs Observatory</title>
+<title>Interego Observatory</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; }
@@ -121,7 +121,7 @@
 <body>
 
 <div class="header">
-  <h1>Context Graphs Observatory</h1>
+  <h1>Interego Observatory</h1>
   <div class="stats" id="headerStats">Loading...</div>
 </div>
 
@@ -208,7 +208,7 @@
       <h3>SPARQL Query</h3>
       <p>Execute SPARQL queries against the materialized PGSL triple store. The triple store contains all atoms, fragments, levels, constituents, and provenance from the lattice.</p>
     </div>
-    <textarea class="sparql-input" id="sparqlInput">PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+    <textarea class="sparql-input" id="sparqlInput">PREFIX pgsl: <https://interego.dev/ns/pgsl#>
 
 SELECT ?atom ?value WHERE {
   ?atom a pgsl:Atom ;

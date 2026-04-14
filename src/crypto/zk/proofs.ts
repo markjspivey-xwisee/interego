@@ -1,6 +1,6 @@
 /**
  * @module crypto/zk/proofs
- * @description Zero-knowledge proof system for Context Graphs.
+ * @description Zero-knowledge proof system for Interego.
  *
  * Implements practical ZK proofs without heavy circuit tooling:
  *

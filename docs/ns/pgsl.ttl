@@ -1,5 +1,5 @@
-@prefix pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
-@prefix cg:   <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+@prefix pgsl: <https://interego.dev/ns/pgsl#>.
+@prefix cg:   <https://interego.dev/ns/cg#>.
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#>.
@@ -15,13 +15,13 @@
 # ══════════════════════════════════════════════════════════════
 #
 #  PGSL is the content-addressed, lattice-structured substrate
-#  underneath the Context Graphs system. Every text fragment, atom,
+#  underneath the Interego system. Every text fragment, atom,
 #  and composed expression gets a stable atom identity, and the
 #  compositional relationships between them form a bounded lattice
 #  with categorical operations: meet, join, fiber products,
 #  pullbacks, constituent morphisms, and transitive containment.
 #
-#  PGSL is the substrate layer. The Context Graphs ontology
+#  PGSL is the substrate layer. The Interego ontology
 #  (cg:) describes typed contexts ABOUT graphs; PGSL describes
 #  the granular structure of the content INSIDE those graphs.
 #  The harness ontology (cgh:) describes the agent/eval machinery
@@ -34,25 +34,25 @@
 #    - Category theory (lattice meet/join, pullback squares)
 # ══════════════════════════════════════════════════════════════
 
-<https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+<https://interego.dev/ns/pgsl#>
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
     dct:title "PGSL — Poly-Granular Sequence Lattice 1.0 Ontology" ;
-    dct:description "Content-addressed, lattice-structured representation of text where every fragment gets a stable atom identity and compositional relationships form a bounded lattice. Defines atoms (level 0), fragments (level ≥ 1), pullback squares for the overlapping pair construction, constituent morphisms, transitive containment, and the co-occurrence matrix that grounds usage-based semantics. Aligned with W3C PROV-O for full provenance and designed to compose with the Context Graphs (cg:) typed context layer above it." ;
+    dct:description "Content-addressed, lattice-structured representation of text where every fragment gets a stable atom identity and compositional relationships form a bounded lattice. Defines atoms (level 0), fragments (level ≥ 1), pullback squares for the overlapping pair construction, constituent morphisms, transitive containment, and the co-occurrence matrix that grounds usage-based semantics. Aligned with W3C PROV-O for full provenance and designed to compose with the Interego (cg:) typed context layer above it." ;
     dct:creator [
         a foaf:Person ;
-        foaf:name "Mark Spivey" ;
-        foaf:homepage <https://github.com/markjspivey-xwisee>
+        foaf:name "Interego" ;
+        foaf:homepage <https://github.com/interego>
     ] ;
     dct:license <https://creativecommons.org/licenses/by/4.0/> ;
     dct:created "2026-04-13"^^xsd:date ;
     dct:modified "2026-04-13"^^xsd:date ;
     vann:preferredNamespacePrefix "pgsl" ;
-    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#" ;
+    vann:preferredNamespaceUri "https://interego.dev/ns/pgsl#" ;
     owl:imports <http://www.w3.org/ns/prov-o> ;
-    rdfs:seeAlso <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#> ,
-                 <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#> ,
-                 <https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html>.
+    rdfs:seeAlso <https://interego.dev/ns/cg#> ,
+                 <https://interego.dev/ns/harness#> ,
+                 <https://interego.dev/spec/interego-1.0.html>.
 
 # ══════════════════════════════════════════════════════════════
 #  Classes
@@ -63,38 +63,38 @@
 pgsl:Node a owl:Class ;
     rdfs:label "PGSL Node" ;
     rdfs:comment "Abstract supertype for any node in the Poly-Granular Sequence Lattice. Every node has a content-addressed URI, a level (granularity), and provenance attribution. Atoms and Fragments are the two concrete subtypes; they are mutually disjoint and partition the set of nodes." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:Atom a owl:Class ;
     rdfs:subClassOf pgsl:Node , prov:Entity ;
     owl:disjointWith pgsl:Fragment ;
     rdfs:label "Atom" ;
     rdfs:comment "A leaf node in the lattice containing a single primitive value (string, number, or boolean). Atoms have level 0 by definition and are the minimum granularity unit. Two atoms are equal if and only if their values are content-equal — atom identity is canonical and content-addressed." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:Fragment a owl:Class ;
     rdfs:subClassOf pgsl:Node , prov:Entity ;
     owl:disjointWith pgsl:Atom ;
     rdfs:label "Fragment" ;
     rdfs:comment "A composite node spanning multiple atoms or sub-fragments. Fragments have level ≥ 1, where the level equals the number of base atoms transitively spanned. A fragment is content-addressed by the canonical CID of its ordered item list, so two fragments with the same items in the same order are the same fragment." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:Lattice a owl:Class ;
     rdfs:label "PGSL Lattice" ;
     rdfs:comment "A complete instance of a Poly-Granular Sequence Lattice — the closure of all nodes under the lattice operations (meet, join, pullback). A Lattice resource exposes summary statistics (atom count, fragment count, max level) and serves as a navigable root for SPARQL or HATEOAS access." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 # ── Categorical operations ────────────────────────────────────
 
 pgsl:PullbackSquare a owl:Class ;
     rdfs:label "Pullback Square" ;
     rdfs:comment "The categorical pullback encoding the overlapping pair construction: given two fragments that share a common sub-fragment, the pullback square (apex, leftConstituent, rightConstituent, overlap) commutes — both projections from the apex equal the inclusions into the overlap. This is the formal mechanism by which PGSL captures sequence overlap without duplication." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:ConstituentMorphism a owl:Class ;
     rdfs:label "Constituent Morphism" ;
     rdfs:comment "An arrow in the lattice category: a structure-preserving inclusion of one node into a fragment that contains it. Constituent morphisms compose to form the transitive containment relation and witness the lattice's order structure." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Properties
@@ -106,21 +106,21 @@ pgsl:value a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "value" ;
     rdfs:comment "The primitive value of an atom. Functional: each atom has exactly one value. The value type may be xsd:string, xsd:integer, xsd:double, or xsd:boolean depending on the original datum." ;
     rdfs:domain pgsl:Atom ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:level a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "level" ;
     rdfs:comment "The granularity level of a node, equal to the number of base atoms it transitively spans. Level 0 ⇔ atom; level ≥ 1 ⇔ fragment. Functional: each node has exactly one level." ;
     rdfs:domain pgsl:Node ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:height a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "height" ;
     rdfs:comment "The topological depth of a fragment from the lattice root. Height is distinct from level — two fragments may share a level but have different heights if one was constructed by deeper nested compositions. Functional." ;
     rdfs:domain pgsl:Fragment ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 # ── Containment relations ─────────────────────────────────────
 
@@ -130,14 +130,14 @@ pgsl:item a owl:ObjectProperty ;
     rdfs:domain pgsl:Fragment ;
     rdfs:range pgsl:Node ;
     owl:inverseOf pgsl:constituentOf ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:itemList a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "item list" ;
     rdfs:comment "The ordered sequence of constituent nodes, encoded as an RDF list (rdf:first / rdf:rest / rdf:nil). Order is significant — two fragments with the same items in different orders are distinct fragments with distinct CIDs." ;
     rdfs:domain pgsl:Fragment ;
     rdfs:range rdf:List ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:constituentOf a owl:ObjectProperty ;
     rdfs:label "constituent of" ;
@@ -145,14 +145,14 @@ pgsl:constituentOf a owl:ObjectProperty ;
     rdfs:domain pgsl:Node ;
     rdfs:range pgsl:Fragment ;
     owl:inverseOf pgsl:item ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:contains a owl:ObjectProperty , owl:TransitiveProperty ;
     rdfs:label "contains" ;
     rdfs:comment "Transitive containment: this fragment contains the target node either directly or via a chain of intermediate fragments. Equivalent to the reflexive-transitive closure of pgsl:item over a fragment subtree." ;
     rdfs:domain pgsl:Fragment ;
     rdfs:range pgsl:Node ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 # ── Pullback square structure ─────────────────────────────────
 
@@ -161,28 +161,28 @@ pgsl:apex a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:comment "The apex fragment of a pullback square — the fragment that simultaneously contains both the left and right constituents and equals their categorical pullback over the shared overlap. Functional." ;
     rdfs:domain pgsl:PullbackSquare ;
     rdfs:range pgsl:Fragment ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:leftConstituent a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "left constituent" ;
     rdfs:comment "The left fragment in the overlapping pair construction. Functional: a pullback square has exactly one left constituent." ;
     rdfs:domain pgsl:PullbackSquare ;
     rdfs:range pgsl:Fragment ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:rightConstituent a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "right constituent" ;
     rdfs:comment "The right fragment in the overlapping pair construction. Functional: a pullback square has exactly one right constituent." ;
     rdfs:domain pgsl:PullbackSquare ;
     rdfs:range pgsl:Fragment ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:overlap a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "overlap" ;
     rdfs:comment "The shared sub-node (pullback fiber product) of the overlapping pair. The overlap is what makes the pullback square commute: both the left and right constituents project down onto it via constituent morphisms. Functional." ;
     rdfs:domain pgsl:PullbackSquare ;
     rdfs:range pgsl:Node ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 # ── Constituent morphism structure ────────────────────────────
 
@@ -191,14 +191,14 @@ pgsl:source a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:comment "The source (domain) of a constituent morphism — the smaller node that is being included into a containing fragment." ;
     rdfs:domain pgsl:ConstituentMorphism ;
     rdfs:range pgsl:Node ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:target a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "target" ;
     rdfs:comment "The target (codomain) of a constituent morphism — the containing fragment that the source is being included into." ;
     rdfs:domain pgsl:ConstituentMorphism ;
     rdfs:range pgsl:Fragment ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 # ── Lattice statistics (queryability) ─────────────────────────
 
@@ -207,21 +207,21 @@ pgsl:atomCount a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:comment "The total number of atoms (level-0 nodes) in a lattice instance. Used for retrieval scoring and SPARQL summary queries." ;
     rdfs:domain pgsl:Lattice ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:fragmentCount a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "fragment count" ;
     rdfs:comment "The total number of fragments (level ≥ 1 nodes) in a lattice instance." ;
     rdfs:domain pgsl:Lattice ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 pgsl:maxLevel a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "max level" ;
     rdfs:comment "The maximum level reached by any fragment in a lattice instance — equivalently, the size of the longest contained sequence." ;
     rdfs:domain pgsl:Lattice ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/pgsl#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Provenance Alignment

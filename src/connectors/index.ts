@@ -1,6 +1,6 @@
 /**
  * @module connectors
- * @description Source connectors for Context Graphs.
+ * @description Source connectors for Interego.
  *
  * Each connector watches an external source for changes,
  * extracts content, ingests into PGSL, and publishes to a pod.

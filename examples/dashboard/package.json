@@ -7,7 +7,7 @@
     "start": "tsx server.ts"
   },
   "dependencies": {
-    "@interego/context-graphs": "file:../../",
+    "@interego/core": "file:../../",
     "@solid/community-server": "^7.0.0",
     "tsx": "^4.0.0",
     "ws": "^8.19.0",

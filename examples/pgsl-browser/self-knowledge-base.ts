@@ -2,7 +2,7 @@
 /**
  * Self-Referential Knowledge Base
  *
- * Karpathy's LLM Wiki pattern, implemented using Context Graphs first principles.
+ * Karpathy's LLM Wiki pattern, implemented using Interego first principles.
  * The source material IS our own codebase — the system ingests itself.
  *
  * Instead of:
@@ -39,9 +39,9 @@ import {
   validate,
   intersection,
   union,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
-import type { IRI, PGSLInstance } from '@interego/context-graphs';
+import type { IRI, PGSLInstance } from '@interego/core';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, extname, basename } from 'node:path';
 
@@ -141,7 +141,7 @@ async function main() {
   const srcDir = join(process.cwd(), 'src');
 
   console.log(`${C.h}`);
-  console.log('  Context Graphs — Self-Referential Knowledge Base');
+  console.log('  Interego — Self-Referential Knowledge Base');
   console.log('  The system ingests itself. No LLM wiki. No markdown.');
   console.log('  Structure emerges from composition.');
   console.log(`${C.r}`);

@@ -1,4 +1,4 @@
-# Context Graphs Developer Guide
+# Interego Developer Guide
 
 ## Getting Started
 
@@ -10,7 +10,7 @@
 ### Installation
 
 ```bash
-git clone https://github.com/markjspivey-xwisee/context-graphs.git
+git clone https://github.com/interego/interego.git
 cd context-graphs
 npm install
 npm run build
@@ -61,7 +61,7 @@ PORT=5000 CLEAN=1 npx tsx examples/pgsl-browser/server.ts
 Atoms are the ground-level units of meaning, content-addressed by short, human-readable names. Each atom gets a deterministic URN based on its value:
 
 ```typescript
-import { createPGSL, mintAtom, pgslResolve } from '@interego/context-graphs';
+import { createPGSL, mintAtom, pgslResolve } from '@interego/core';
 
 const pgsl = createPGSL({
   wasAttributedTo: 'urn:agent:my-agent',
@@ -80,7 +80,7 @@ Atoms are level-0 nodes. They are content-addressed: the same string always prod
 Chains are typed relationships between atoms (or other fragments). They represent syntagmatic structure — the sequential ordering of signs in context:
 
 ```typescript
-import { embedInPGSL } from '@interego/context-graphs';
+import { embedInPGSL } from '@interego/core';
 
 // Embed a natural-language statement; the system tokenizes and creates
 // atoms + a fragment chain automatically
@@ -94,7 +94,7 @@ Under the hood, this creates atoms for each token and a level-1 fragment that ch
 Fragments are composed chains at higher levels of the lattice. A level-1 fragment chains atoms; a level-2 fragment chains level-1 fragments, and so on. This recursive composition is the core structural principle:
 
 ```typescript
-import { ingest, latticeStats } from '@interego/context-graphs';
+import { ingest, latticeStats } from '@interego/core';
 
 // Ingest multiple statements — the lattice automatically builds
 // higher-level fragments where structural overlap occurs
@@ -139,7 +139,7 @@ Paradigm constraints relate two paradigm sets via algebraic operations:
 Context Descriptors annotate Named Graphs with 9 typed facets. Every piece of knowledge gets rich metadata:
 
 ```typescript
-import { ContextDescriptor, validate, toTurtle } from '@interego/context-graphs';
+import { ContextDescriptor, validate, toTurtle } from '@interego/core';
 
 const desc = ContextDescriptor.create('urn:cg:my-context')
 .describes('urn:graph:observations-2026-Q1')
@@ -175,7 +175,7 @@ The 9 facet types:
 Context Descriptors compose algebraically via four operators that form a bounded lattice:
 
 ```typescript
-import { union, intersection, restriction, override } from '@interego/context-graphs';
+import { union, intersection, restriction, override } from '@interego/core';
 
 // Union: merge two descriptors (widest temporal range, highest trust, etc.)
 const merged = union(descA, descB);
@@ -193,7 +193,7 @@ const overridden = override(descA, descB);
 
 ## Building an Agent
 
-Context Graphs uses Agent Accountability Types (AATs) to control what agents can do. Here is the full lifecycle.
+Interego uses Agent Accountability Types (AATs) to control what agents can do. Here is the full lifecycle.
 
 ### 1. Choose an AAT
 
@@ -214,7 +214,7 @@ Built-in AATs define capability profiles:
 import {
   createAATRegistry, registerAAT, ObserverAAT, AnalystAAT,
   validateAction
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 const registry = createAATRegistry();
 registerAAT(registry, ObserverAAT);
@@ -272,7 +272,7 @@ Feed content into the PGSL lattice. The system tokenizes, builds atoms, chains, 
 Write context-annotated knowledge to a Solid pod:
 
 ```typescript
-import { publish, ContextDescriptor, toTurtle } from '@interego/context-graphs';
+import { publish, ContextDescriptor, toTurtle } from '@interego/core';
 
 const desc = ContextDescriptor.create('urn:cg:obs-1')
 .describes('urn:graph:chen-training')
@@ -296,7 +296,7 @@ await publish(
 Discover descriptors across the federation:
 
 ```typescript
-import { discover } from '@interego/context-graphs';
+import { discover } from '@interego/core';
 
 const entries = await discover('http://localhost:3456/other-pod/', undefined, {
   fetch: solidFetch,
@@ -656,7 +656,7 @@ Or on failure:
 The built-in xAPI ingestion profile transforms xAPI statements into PGSL chains. Each statement becomes a multi-atom chain with actor, verb, object, result, and timestamp:
 
 ```typescript
-import { ingestWithProfile, getProfile } from '@interego/context-graphs';
+import { ingestWithProfile, getProfile } from '@interego/core';
 
 const xapiStatement = {
   actor: { name: 'Chen', mbox: 'mailto:chen@example.com' },
@@ -738,7 +738,7 @@ Decorators are applied automatically when exploring nodes via `/api/node/{uri}`.
 ### Writing a Custom Decorator
 
 ```typescript
-import { createDefaultRegistry, decorateNode } from '@interego/context-graphs';
+import { createDefaultRegistry, decorateNode } from '@interego/core';
 
 const registry = createDefaultRegistry();
 
@@ -768,14 +768,14 @@ const suggestions = decorateNode(registry, pgsl, nodeUri);
 
 ### Solid Pods
 
-Context Graphs uses Solid (Social Linked Data) pods as the persistence and identity layer. Each agent has a pod that stores:
+Interego uses Solid (Social Linked Data) pods as the persistence and identity layer. Each agent has a pod that stores:
 
 - **Context Descriptors** (`.ttl` files): typed metadata about knowledge
 - **Graph content** (`.trig` files): the actual RDF knowledge graphs
 - **Manifests**: indexes of all descriptors on the pod
 
 ```typescript
-import { discover, publish } from '@interego/context-graphs';
+import { discover, publish } from '@interego/core';
 
 // Discover all descriptors on a pod
 const entries = await discover('http://localhost:3456/alice/');
@@ -821,7 +821,7 @@ These operators form a bounded lattice with well-defined merge semantics per fac
 A multi-agent security audit where Scanner, Analyst, and Lead collaborate:
 
 ```typescript
-import { createPGSL, ingest, embedInPGSL } from '@interego/context-graphs';
+import { createPGSL, ingest, embedInPGSL } from '@interego/core';
 
 // Agent 1: Scanner — ingests raw findings
 const pgsl = createPGSL({
@@ -896,7 +896,7 @@ This creates a fixed-point: the lattice containing accurate descriptions of itse
 For programmatic access, use the high-level SDK:
 
 ```typescript
-import { ContextGraphsSDK } from '@interego/context-graphs';
+import { ContextGraphsSDK } from '@interego/core';
 
 const cg = new ContextGraphsSDK({
   podUrl: 'http://localhost:3456/alice/',

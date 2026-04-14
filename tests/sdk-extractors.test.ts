@@ -52,13 +52,13 @@ describe('Content Extraction', () => {
 
   it('extracts from JSON', async () => {
     const json = JSON.stringify({
-      name: 'Context Graphs',
+      name: 'Interego',
       description: 'Federated context for AI agents',
       nested: { deep: 'value here' },
     });
     const result = await extract(json);
     expect(result.format).toBe('json');
-    expect(result.text).toContain('Context Graphs');
+    expect(result.text).toContain('Interego');
     expect(result.text).toContain('Federated context for AI agents');
     expect(result.text).toContain('value here');
   });

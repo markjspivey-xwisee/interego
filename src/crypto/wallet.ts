@@ -208,7 +208,7 @@ export function exportPrivateKey(address: string): string {
 //  Real Wallet Delegation (EIP-712 Typed Data)
 // ═════════════════════════════════════════════════════════════
 
-/** EIP-712 domain for Context Graphs delegations */
+/** EIP-712 domain for Interego delegations */
 const DELEGATION_DOMAIN = {
   name: 'ContextGraphsDelegation',
   version: '1',
@@ -303,7 +303,7 @@ export async function signDescriptor(
   const signedAt = new Date().toISOString();
 
   // Sign a structured message containing the descriptor ID and content hash
-  const message = `Context Graphs Descriptor Signature\nDescriptor: ${descriptorId}\nContent Hash: ${contentHash}\nSigned At: ${signedAt}`;
+  const message = `Interego Descriptor Signature\nDescriptor: ${descriptorId}\nContent Hash: ${contentHash}\nSigned At: ${signedAt}`;
   const signature = await signer.signMessage(message);
 
   return {
@@ -335,7 +335,7 @@ export async function verifyDescriptorSignature(
   // 2. Recover signer from signature
   try {
     // Reconstruct the signed message
-    const message = `Context Graphs Descriptor Signature\nDescriptor: ${signed.descriptorId}\nContent Hash: ${signed.contentHash}\nSigned At: ${signed.signedAt}`;
+    const message = `Interego Descriptor Signature\nDescriptor: ${signed.descriptorId}\nContent Hash: ${signed.contentHash}\nSigned At: ${signed.signedAt}`;
     const recoveredAddress = ethers.verifyMessage(message, signed.signature);
 
     if (recoveredAddress.toLowerCase() !== signed.signerAddress.toLowerCase()) {

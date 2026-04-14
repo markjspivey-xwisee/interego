@@ -7,8 +7,8 @@
  * codebase that nobody explicitly documented.
  */
 
-import { createPGSL, embedInPGSL, latticeStats, pgslResolve } from '@interego/context-graphs';
-import type { IRI } from '@interego/context-graphs';
+import { createPGSL, embedInPGSL, latticeStats, pgslResolve } from '@interego/core';
+import type { IRI } from '@interego/core';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 

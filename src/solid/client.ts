@@ -1,6 +1,6 @@
 /**
  * @module solid/client
- * @description Solid pod runtime for Context Graphs 1.0
+ * @description Solid pod runtime for Interego 1.0
  *
  * Three functions that bridge the data-model layer to a live
  * decentralized storage layer:
@@ -117,7 +117,7 @@ function wrapAsTriG(
 function manifestHeaderTurtle(podUrl: string): string {
   const manifestUrl = `${podUrl}${MANIFEST_PATH}`;
   return [
-    `# Context Graphs Manifest — Hydra-aware, DPROD-aligned`,
+    `# Interego Manifest — Hydra-aware, DPROD-aligned`,
     ``,
     `<${manifestUrl}> a hydra:Collection, cg:DataProduct ;`,
     `    hydra:manages [`,

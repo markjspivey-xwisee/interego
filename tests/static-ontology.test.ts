@@ -29,13 +29,15 @@ function parseTtl(ttl: string): number {
 }
 
 describe('static ontology manifest', () => {
-  it('lists all six ontology files', () => {
+  it('lists all eight ontology files', () => {
     const names = ONTOLOGY_MANIFEST.map(e => e.name).sort();
     expect(names).toEqual([
       'alignment',
-      'context-graphs',
+      'cg',
       'harness',
       'harness-shapes',
+      'interego',
+      'interego-shapes',
       'pgsl',
       'pgsl-shapes',
     ]);
@@ -70,8 +72,8 @@ describe('static ontology files exist and parse as Turtle', () => {
   }
 });
 
-describe('context-graphs.ttl — key concepts present', () => {
-  const ttl = loadOntology('context-graphs');
+describe('cg.ttl — key concepts present', () => {
+  const ttl = loadOntology('cg');
 
   it('declares the ContextDescriptor class', () => {
     expect(ttl).toMatch(/cg:ContextDescriptor\s+a\s+owl:Class/);
@@ -172,7 +174,7 @@ describe('alignment.ttl — cross-layer axioms present', () => {
 
   it('imports all three layer ontologies', () => {
     expect(ttl).toContain('pgsl#');
-    expect(ttl).toContain('context-graphs#');
+    expect(ttl).toContain('/cg#');
     expect(ttl).toContain('harness#');
   });
 
@@ -226,20 +228,94 @@ describe('harness-shapes.ttl — key SHACL shapes present', () => {
   });
 });
 
+describe('interego.ttl — interrogatives core', () => {
+  const ttl = loadOntology('interego');
+
+  it('declares Interrogative as a SKOS concept scheme', () => {
+    expect(ttl).toContain('ie:Interrogative a owl:Class , skos:ConceptScheme');
+  });
+
+  it('declares all eleven canonical interrogatives', () => {
+    for (const interrogative of [
+      'Who',
+      'What',
+      'Where',
+      'When',
+      'Why',
+      'How',
+      'Which',
+      'WhatKind',
+      'HowMuch',
+      'Whose',
+      'Whether',
+    ]) {
+      expect(ttl).toContain(`ie:${interrogative} a skos:Concept`);
+    }
+  });
+
+  it('declares Act as a subclass of prov:Activity', () => {
+    expect(ttl).toMatch(/ie:Act\s+a\s+owl:Class\s*;\s*rdfs:subClassOf\s+prov:Activity/);
+  });
+
+  it('declares Response as a subclass of prov:Entity', () => {
+    expect(ttl).toMatch(/ie:Response\s+a\s+owl:Class\s*;\s*rdfs:subClassOf\s+prov:Entity/);
+  });
+
+  it('declares the Peircean triad (Sign, Object, Interpretant)', () => {
+    expect(ttl).toContain('ie:Sign a owl:Class');
+    expect(ttl).toContain('ie:Object a owl:Class');
+    expect(ttl).toContain('ie:Interpretant a owl:Class');
+  });
+
+  it('declares Signification with emergesFrom and improvisesOn', () => {
+    expect(ttl).toContain('ie:Signification a owl:Class');
+    expect(ttl).toContain('ie:emergesFrom');
+    expect(ttl).toContain('ie:improvisesOn');
+  });
+
+  it('enforces agent-relativity of Interpretants via functional forAgent', () => {
+    expect(ttl).toMatch(/ie:forAgent\s+a\s+owl:ObjectProperty\s*,\s*owl:FunctionalProperty/);
+  });
+});
+
+describe('interego-shapes.ttl — interrogatives SHACL shapes', () => {
+  const ttl = loadOntology('interego-shapes');
+
+  it('targets Act, Response, Sign, Interpretant, Signification', () => {
+    expect(ttl).toContain('sh:targetClass ie:Act');
+    expect(ttl).toContain('sh:targetClass ie:Response');
+    expect(ttl).toContain('sh:targetClass ie:Sign');
+    expect(ttl).toContain('sh:targetClass ie:Interpretant');
+    expect(ttl).toContain('sh:targetClass ie:Signification');
+  });
+
+  it('requires posedBy on every Act', () => {
+    expect(ttl).toMatch(/sh:path ie:posedBy\s*;[^.]*sh:minCount 1/);
+  });
+
+  it('bounds Response confidence to [0,1]', () => {
+    expect(ttl).toContain('sh:path ie:confidence');
+    expect(ttl).toContain('sh:minInclusive "0.0"^^xsd:double');
+    expect(ttl).toContain('sh:maxInclusive "1.0"^^xsd:double');
+  });
+});
+
 describe('loadFullOntology and loadFullShapes', () => {
-  it('loadFullOntology returns a concatenation of the four ontology files', () => {
+  it('loadFullOntology returns a concatenation of the five ontology files', () => {
     const full = loadFullOntology();
     expect(parseTtl(full)).toBeGreaterThan(1000);
     // Should contain concepts from every layer
+    expect(full).toContain('ie:Interrogative');
     expect(full).toContain('cg:ContextDescriptor');
     expect(full).toContain('pgsl:Atom');
     expect(full).toContain('cgh:AbstractAgentType');
     expect(full).toContain('align:IntegrationPattern');
   });
 
-  it('loadFullShapes returns a concatenation of the two shapes files', () => {
+  it('loadFullShapes returns a concatenation of the three shapes files', () => {
     const full = loadFullShapes();
     expect(parseTtl(full)).toBeGreaterThan(400);
+    expect(full).toContain('sh:targetClass ie:Act');
     expect(full).toContain('sh:targetClass pgsl:Atom');
     expect(full).toContain('sh:targetClass cgh:ProvTrace');
   });

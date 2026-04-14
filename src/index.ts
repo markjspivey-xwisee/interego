@@ -1,16 +1,16 @@
 /**
- * @interego/context-graphs
+ * @interego/core
  *
- * Reference implementation of Context Graphs 1.0 — a compositional
+ * Reference implementation of Interego 1.0 — a compositional
  * framework for typed graph contexts over RDF 1.2 Named Graphs.
  *
- * Spec: https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html
- * Author: Mark Spivey <mark.spivey@xwisee.com>
+ * Spec: https://interego.dev/spec/interego-1.0.html
+ * Author: Interego
  * License: CC-BY-4.0
  *
  * @example
  * ```ts
- * import { ContextDescriptor, toTurtle, validate } from '@interego/context-graphs';
+ * import { ContextDescriptor, toTurtle, validate } from '@interego/core';
  *
  * const desc = ContextDescriptor.create('urn:cg:my-context')
  *.describes('urn:graph:observations-2026-Q1')

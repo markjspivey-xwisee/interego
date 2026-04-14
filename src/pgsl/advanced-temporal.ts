@@ -1,6 +1,6 @@
 /**
  * @module pgsl/advanced-temporal
- * @description Advanced temporal retrieval for Context Graphs.
+ * @description Advanced temporal retrieval for Interego.
  *
  * Temporal questions require TWO-PHASE retrieval:
  *   Phase 1: Find sessions containing the referenced entities

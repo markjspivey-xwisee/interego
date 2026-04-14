@@ -1,10 +1,10 @@
-# @interego/context-graphs
+# @interego/core
 
-Reference implementation of **[Context Graphs 1.0](https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html)** — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
+Reference implementation of **[Interego 1.0](https://interego.dev/spec/interego-1.0.html)** — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
 
-Context Graphs gives autonomous AI agents the infrastructure to publish, discover, compose, and reason over knowledge graphs with full provenance, trust, temporal validity, semiotic metadata, causal models, and cryptographic verification — federated across decentralized Solid pods.
+Interego gives autonomous AI agents the infrastructure to publish, discover, compose, and reason over knowledge graphs with full provenance, trust, temporal validity, semiotic metadata, causal models, and cryptographic verification — federated across decentralized Solid pods.
 
-**Author:** Mark Spivey
+**Author:** Interego
 **License:** CC-BY-4.0
 **W3C Community Group:** [Context Graph CG](https://www.w3.org/community/context-graph/) (launching March 2026)
 
@@ -12,7 +12,7 @@ Context Graphs gives autonomous AI agents the infrastructure to publish, discove
 
 ## What It Does
 
-Every Named Graph has context: who created it, when, under what interpretive frame, at what confidence, with what trust credential, through what causal model. Context Graphs makes that context **structured, composable, machine-readable, and cryptographically verifiable**.
+Every Named Graph has context: who created it, when, under what interpretive frame, at what confidence, with what trust credential, through what causal model. Interego makes that context **structured, composable, machine-readable, and cryptographically verifiable**.
 
 An AI agent (Claude Code, Codex, OpenClaw, etc.) produces a knowledge graph. This library wraps that graph with a **Context Descriptor** declaring:
 
@@ -35,7 +35,7 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 ## Architecture
 
 ```
-@interego/context-graphs
+@interego/core
 ├── src/
 │   ├── model/        Core types, ContextDescriptor builder, composition operators,
 │   │                 delegation, category theory (presheaf, naturality, lattice laws),
@@ -101,7 +101,7 @@ Pick the path that matches who you are:
 
 ### 🤖 I'm an AI coding agent (Claude Code, Cursor, Windsurf, Cline)
 
-The fastest way to use Context Graphs is via the **MCP server**, which exposes 28 tools (publish, discover, ingest, resolve, compose, ontology lookup, runtime eval, identity, federation) to any MCP-capable client.
+The fastest way to use Interego is via the **MCP server**, which exposes 28 tools (publish, discover, ingest, resolve, compose, ontology lookup, runtime eval, identity, federation) to any MCP-capable client.
 
 Add this to your MCP client config:
 
@@ -112,7 +112,7 @@ Add this to your MCP client config:
   "mcpServers": {
     "context-graphs": {
       "command": "npx",
-      "args": ["-y", "@interego/context-graphs-mcp"]
+      "args": ["-y", "@interego/mcp"]
     }
   }
 }
@@ -125,7 +125,7 @@ Restart your client. You can now say things like *"publish this graph to my pod 
 ### 🧑‍💻 I'm a developer building a TypeScript app
 
 ```bash
-npm install @interego/context-graphs
+npm install @interego/core
 ```
 
 ```typescript
@@ -135,7 +135,7 @@ import {
   embedInPGSL,
   loadOntology,        // load any of the four canonical.ttl ontologies
   computeConfidence,   // runtime eval over PGSL signals
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 // 1. Build a context descriptor (the typed-context layer)
 const desc = ContextDescriptor.create('urn:cg:my-analysis:1')
@@ -177,7 +177,7 @@ Open one of the deployed web UIs in your browser — no install required:
 ### 🛠 I want to clone and hack on the system itself
 
 ```bash
-git clone https://github.com/markjspivey-xwisee/context-graphs.git
+git clone https://github.com/interego/interego.git
 cd context-graphs
 npm install
 npm run build
@@ -185,7 +185,7 @@ npm test  # 642 tests across 20 files
 
 # Build the MCP server too
 cd mcp-server
-npm install ../interego-context-graphs-*.tgz --no-save
+npm install ../interego-core-*.tgz --no-save
 npm run build
 
 # Deploy to your own Azure (one-time)
@@ -201,8 +201,8 @@ CI auto-deploys to Azure Container Apps on every push to `master` ([workflow](.g
 ### Build a Context Descriptor
 
 ```typescript
-import { ContextDescriptor, validate, toTurtle } from '@interego/context-graphs';
-import type { IRI } from '@interego/context-graphs';
+import { ContextDescriptor, validate, toTurtle } from '@interego/core';
+import type { IRI } from '@interego/core';
 
 const descriptor = ContextDescriptor.create('urn:cg:my-analysis:1' as IRI)
 .describes('urn:graph:project:arch-v1' as IRI)
@@ -229,7 +229,7 @@ console.log(toTurtle(descriptor));
 ### Publish to a Solid Pod
 
 ```typescript
-import { publish, discover, subscribe } from '@interego/context-graphs';
+import { publish, discover, subscribe } from '@interego/core';
 
 const result = await publish(descriptor, graphTurtle, 'https://pod.example.com/alice/');
 // → { descriptorUrl, graphUrl, manifestUrl }
@@ -248,7 +248,7 @@ const sub = await subscribe('https://pod.example.com/bob/', (event) => {
 ### Compose Descriptors
 
 ```typescript
-import { union, intersection, restriction } from '@interego/context-graphs';
+import { union, intersection, restriction } from '@interego/core';
 
 const merged = union(descriptorA, descriptorB);
 const common = intersection(descriptorA, descriptorB);
@@ -262,7 +262,7 @@ const trustOnly = restriction(merged, ['Trust', 'Semiotic']);
 The content substrate. Deterministic hierarchical data structure representing sequential data as a lattice of overlapping sub-structures with content-addressed canonical URIs.
 
 ```typescript
-import { createPGSL, embedInPGSL, pgslResolve, latticeMeet } from '@interego/context-graphs';
+import { createPGSL, embedInPGSL, pgslResolve, latticeMeet } from '@interego/core';
 
 const pgsl = createPGSL({ wasAttributedTo: 'did:web:alice', generatedAtTime: new Date().toISOString() });
 
@@ -290,11 +290,11 @@ PGSL provides:
 ### SPARQL Engine
 
 ```typescript
-import { sparqlQueryPGSL, materializeTriples, executeSparqlString } from '@interego/context-graphs';
+import { sparqlQueryPGSL, materializeTriples, executeSparqlString } from '@interego/core';
 
 // Execute SPARQL against the PGSL lattice
 const result = sparqlQueryPGSL(pgsl, `
-  PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+  PREFIX pgsl: <https://interego.dev/ns/pgsl#>
   SELECT ?atom ?value WHERE {
     ?atom a pgsl:Atom ; pgsl:value ?value.
   } LIMIT 10
@@ -305,7 +305,7 @@ console.log(result.bindings.length); // number of matching atoms
 ### SHACL Validation
 
 ```typescript
-import { validateAllPGSL, validateDomainShapes } from '@interego/context-graphs';
+import { validateAllPGSL, validateDomainShapes } from '@interego/core';
 
 // Validate lattice with all 3 layers (core + structural + domain)
 const result = validateAllPGSL(pgsl);
@@ -324,7 +324,7 @@ const result = validateDomainShapes(pgsl, [{
 Usage-based semantic agreement between agents. Two agents share a SIGN (atom) but only share MEANING if they USE it in the same syntagmatic contexts.
 
 ```typescript
-import { createPGSL, embedInPGSL, verifyCoherence, computeCoverage } from '@interego/context-graphs';
+import { createPGSL, embedInPGSL, verifyCoherence, computeCoverage } from '@interego/core';
 
 const pgslA = createPGSL({ wasAttributedTo: 'agent-a', generatedAtTime: new Date().toISOString() });
 const pgslB = createPGSL({ wasAttributedTo: 'agent-b', generatedAtTime: new Date().toISOString() });
@@ -359,7 +359,7 @@ Structural rules on what can fill positions in chains. The paradigm set P(S, i) 
 Natural transformation from observation presheaves to action categories: Observe → Orient → Decide → Act.
 
 ```typescript
-import { extractObservations, decide } from '@interego/context-graphs';
+import { extractObservations, decide } from '@interego/core';
 
 const obs = extractObservations(pgsl, 'agent-a', certificates);
 const result = decide(pgsl, 'agent-a', certificates);
@@ -380,7 +380,7 @@ Five-tier persistence with URI invariance — same content hash across all tiers
 | 4 | Blockchain | Permanent | On-chain hash verification |
 
 ```typescript
-import { createPersistenceRegistry, recordPersistence, promoteToIpfs } from '@interego/context-graphs';
+import { createPersistenceRegistry, recordPersistence, promoteToIpfs } from '@interego/core';
 
 const registry = createPersistenceRegistry();
 recordPersistence(registry, atomUri, 0, { promotedBy: 'agent-a' });
@@ -408,7 +408,7 @@ Tested with Comunica SPARQL engine — standard RDF tooling interoperability con
 ### Ingestion Profiles
 
 ```typescript
-import { ingestWithProfile } from '@interego/context-graphs';
+import { ingestWithProfile } from '@interego/core';
 
 // xAPI profile: preserves actor/verb/object/result nesting
 const uri = ingestWithProfile(pgsl, 'xapi', {
@@ -432,7 +432,7 @@ const credUri = ingestWithProfile(pgsl, 'lers', {
 });
 
 // Custom profiles: register your own
-import { registerProfile } from '@interego/context-graphs';
+import { registerProfile } from '@interego/core';
 registerProfile({
   name: 'fhir',
   description: 'FHIR observation: patient/encounter/observation nesting',
@@ -444,7 +444,7 @@ registerProfile({
 
 ## Observatory
 
-The Context Graphs Observatory is a real-time dashboard for monitoring multi-agent federation:
+The Interego Observatory is a real-time dashboard for monitoring multi-agent federation:
 
 ```bash
 CSS_URL=http://localhost:3456/ \
@@ -516,7 +516,7 @@ Integrates 8 theoretical frameworks for autonomous agent decision-making:
 | **Stigmergy** | Affordance landscape tracking across pods | `StigmergicField` |
 
 ```typescript
-import { computeAffordances, computeCognitiveStrategy } from '@interego/context-graphs';
+import { computeAffordances, computeCognitiveStrategy } from '@interego/core';
 
 // What can this agent do with this descriptor?
 const affordances = computeAffordances(agentProfile, descriptor);
@@ -532,7 +532,7 @@ const strategy = computeCognitiveStrategy('How many days between X and Y?');
 ## Causality — Pearl's SCM Framework
 
 ```typescript
-import { buildSCM, doIntervention, isDSeparated, evaluateCounterfactual } from '@interego/context-graphs';
+import { buildSCM, doIntervention, isDSeparated, evaluateCounterfactual } from '@interego/core';
 
 const scm = buildSCM({
   variables: [{ name: 'X' }, { name: 'Y' }, { name: 'Z' }],
@@ -557,7 +557,7 @@ All real. No mocks.
 ### E2E Encryption (NaCl)
 
 ```typescript
-import { generateKeyPair, createEncryptedEnvelope, openEncryptedEnvelope } from '@interego/context-graphs';
+import { generateKeyPair, createEncryptedEnvelope, openEncryptedEnvelope } from '@interego/core';
 
 const owner = generateKeyPair();  // X25519
 const agent = generateKeyPair();
@@ -568,7 +568,7 @@ const decrypted = openEncryptedEnvelope(envelope, agent); // only authorized age
 ### Zero-Knowledge Proofs
 
 ```typescript
-import { proveConfidenceAboveThreshold, proveDelegationMembership, proveTemporalOrdering } from '@interego/context-graphs';
+import { proveConfidenceAboveThreshold, proveDelegationMembership, proveTemporalOrdering } from '@interego/core';
 
 // Prove confidence > 0.8 without revealing exact value
 const { proof } = proveConfidenceAboveThreshold(0.95, 0.8);
@@ -583,7 +583,7 @@ const temporalProof = proveTemporalOrdering(myTimestamp, deadline);
 ### Wallets & SIWE
 
 ```typescript
-import { createWallet, createDelegation, signDescriptor, verifySiweSignature } from '@interego/context-graphs';
+import { createWallet, createDelegation, signDescriptor, verifySiweSignature } from '@interego/core';
 
 const humanWallet = await createWallet('human', 'Alice');  // real secp256k1
 const agentWallet = await createWallet('agent', 'Claude');
@@ -594,7 +594,7 @@ const signed = await signDescriptor(descriptorId, turtle, agentWallet); // real 
 ### IPFS Pinning
 
 ```typescript
-import { pinDescriptor, computeCid } from '@interego/context-graphs';
+import { pinDescriptor, computeCid } from '@interego/core';
 
 const cid = computeCid(turtleContent);  // real SHA-256 CID
 const anchor = await pinDescriptor(descriptorId, turtle, { provider: 'pinata', apiKey: '...' });
@@ -752,7 +752,7 @@ npm run test:watch   # Watch mode
 
 | Document | What it covers |
 |----------|---------------|
-| [Context Graphs 1.0 WD](https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html) | Core spec: descriptors, facets, composition, serialization |
+| [Interego 1.0 WD](https://interego.dev/spec/interego-1.0.html) | Core spec: descriptors, facets, composition, serialization |
 | [Paradigm Constraints](spec/paradigm-constraints.md) | Emergent semantics, coherence verification, decision functor, causal integration |
 | [Progressive Persistence](spec/progressive-persistence.md) | 5-tier persistence, URI invariance, structural encryption |
 | [Presentation Notes](spec/presentation-notes.md) | 10-slide W3C presentation outline with demo instructions |
@@ -771,7 +771,7 @@ This library is designed to compose with several adjacent theoretical frameworks
 
 ## Spec Compliance
 
-Implements the [Context Graphs 1.0 Working Draft](https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html):
+Implements the [Interego 1.0 Working Draft](https://interego.dev/spec/interego-1.0.html):
 
 - Section 3.1: Context Descriptor structure
 - Section 3.4: Composition operators forming a bounded lattice

@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Full Stack Demo — Every Layer of Context Graphs
+ * Full Stack Demo — Every Layer of Interego
  *
  * Shows how each layer builds on the one below:
  *
@@ -41,14 +41,14 @@ import {
   // Decision Functor (Layer 5)
   extractObservations,
   selectStrategy,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 import {
   computeAffordances as computeDecisionAffordances,
   decide as decideFromObservations,
 } from '../../src/pgsl/decision-functor.js';
 
-import type { IRI, PGSLInstance } from '@interego/context-graphs';
+import type { IRI, PGSLInstance } from '@interego/core';
 
 // ── Browser API ─────────────────────────────────────────
 
@@ -94,7 +94,7 @@ function log(color: string, label: string, msg: string) {
 
 async function main() {
   console.log(`${C.layer}`);
-  console.log(`  Context Graphs 1.0 — Full Stack Demo`);
+  console.log(`  Interego 1.0 — Full Stack Demo`);
   console.log(`  Every layer, from PGSL atoms to federated decisions`);
   console.log(`${C.reset}`);
 

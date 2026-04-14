@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Context Graphs 1.0</title>
+<title>Interego 1.0</title>
 <style>
   :root {
     --w3c-blue: #005A9C;
@@ -103,27 +103,27 @@
 <!-- ═══════════════════════════════════════════════════════════════ -->
 
 <div class="header-block">
-  <h1>Context Graphs 1.0</h1>
+  <h1>Interego 1.0</h1>
   <p class="subtitle">A Compositional Framework for Typed Graph Contexts on the Web</p>
   <p class="subtitle">Specification Draft — 17 March 2026</p>
   <dl>
     <dt>This version:</dt>
-    <dd><a href="https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html/">https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html/</a></dd><br>
+    <dd><a href="https://interego.dev/spec/interego-1.0.html/">https://interego.dev/spec/interego-1.0.html/</a></dd><br>
     <dt>Latest published version:</dt>
-    <dd><a href="https://markjspivey-xwisee.github.io/context-graphs/spec/">https://markjspivey-xwisee.github.io/context-graphs/spec/</a></dd><br>
+    <dd><a href="https://interego.dev/spec/">https://interego.dev/spec/</a></dd><br>
     <dt>Author:</dt>
-    <dd>Mark Spivey &lt;<a href="mailto:mark.spivey@xwisee.com">mark.spivey@xwisee.com</a>&gt;</dd><br>
+    <dd>Interego &lt;<a href="mailto:noreply@interego.dev">noreply@interego.dev</a>&gt;</dd><br>
     <dt>Repository:</dt>
-    <dd><a href="https://github.com/markjspivey-xwisee/context-graphs">github.com/markjspivey-xwisee/context-graphs</a></dd>
+    <dd><a href="https://github.com/interego/interego">github.com/interego/interego</a></dd>
   </dl>
 </div>
 
 <div class="abstract">
   <h2 style="border:none; margin-top:0;">Abstract</h2>
   <p>
-    This specification defines <em>Context Graphs</em>, an abstract data model and RDF vocabulary for
+    This specification defines <em>Interego</em>, an abstract data model and RDF vocabulary for
     representing, composing, and querying <em>typed contextual metadata</em> over RDF graphs and datasets.
-    Context Graphs provide a principled mechanism for annotating RDF Named Graphs [<a href="https://www.w3.org/TR/rdf12-concepts/">RDF12-CONCEPTS</a>]
+    Interego provide a principled mechanism for annotating RDF Named Graphs [<a href="https://www.w3.org/TR/rdf12-concepts/">RDF12-CONCEPTS</a>]
     with structured provenance [<a href="https://www.w3.org/TR/prov-o/">PROV-O</a>],
     temporal extent, agent attribution, access control policies, semiotic interpretation frames,
     and compositional relationships&mdash;all expressed as first-class RDF resources.
@@ -158,7 +158,7 @@
   </p>
   <p>
     Comments on this specification are welcome. Please file issues on the
-    <a href="https://github.com/markjspivey-xwisee/context-graphs/issues">GitHub repository</a>.
+    <a href="https://github.com/interego/interego/issues">GitHub repository</a>.
   </p>
 </div>
 
@@ -239,9 +239,9 @@
 </p>
 
 <p>
-  The <em>Context Graphs</em> specification addresses this gap by defining a formal, composable layer of
+  The <em>Interego</em> specification addresses this gap by defining a formal, composable layer of
   <strong>typed contextual metadata</strong> over RDF Named Graphs. Rather than inventing new
-  primitives, Context Graphs profiles and composes existing W3C vocabularies into a coherent
+  primitives, Interego profiles and composes existing W3C vocabularies into a coherent
   framework with well-defined algebraic composition semantics.
 </p>
 
@@ -275,7 +275,7 @@
 <p>
   <strong>Statement-level context.</strong> RDF 1.2 triple terms (RDF-star) enable statements about
   statements, but the relationship between triple-level annotations and graph-level context is
-  undefined. Context Graphs bridges this gap by defining how triple term annotations inherit from,
+  undefined. Interego bridges this gap by defining how triple term annotations inherit from,
   override, or refine their enclosing graph's context.
 </p>
 
@@ -304,7 +304,7 @@
 </p>
 
 <p>
-  <strong>DG4. Decentralization.</strong> Context Graphs are designed for decentralized environments
+  <strong>DG4. Decentralization.</strong> Interego are designed for decentralized environments
   (Solid, federated SPARQL, linked data). No central authority is required for context creation,
   validation, or resolution.
 </p>
@@ -322,7 +322,7 @@
     <tr><th>Specification</th><th>Version</th><th>Relationship</th></tr>
   </thead>
   <tbody>
-    <tr><td>RDF Concepts</td><td>1.2 (WD)</td><td>Foundation. Context Graphs extends Named Graphs and Triple Terms.</td></tr>
+    <tr><td>RDF Concepts</td><td>1.2 (WD)</td><td>Foundation. Interego extends Named Graphs and Triple Terms.</td></tr>
     <tr><td>RDF Schema</td><td>1.2 (WD)</td><td>Vocabulary definitions use RDFS classes and properties.</td></tr>
     <tr><td>SPARQL Query</td><td>1.2 (WD)</td><td>Context-aware query patterns defined via SPARQL extension functions.</td></tr>
     <tr><td>JSON-LD</td><td>1.1 (Rec)</td><td>JSON-LD context document provided for serialization.</td></tr>
@@ -400,7 +400,7 @@
 <h2 id="data-model">Data Model</h2>
 
 <p>
-  The Context Graphs data model extends the RDF 1.2 Dataset model [<a href="https://www.w3.org/TR/rdf12-concepts/#section-dataset">RDF12-CONCEPTS §5</a>]
+  The Interego data model extends the RDF 1.2 Dataset model [<a href="https://www.w3.org/TR/rdf12-concepts/#section-dataset">RDF12-CONCEPTS §5</a>]
   with three new abstract constructs: <em>Context Descriptors</em>, <em>Context Facets</em>, and
   <em>Context&ndash;Graph Bindings</em>. These constructs are themselves represented as RDF resources,
   ensuring that the meta-layer is fully expressible in the object language.
@@ -572,7 +572,7 @@
 
 <p>
   RDF 1.2 introduces <em>triple terms</em> [<a href="https://www.w3.org/TR/rdf12-concepts/#section-triple-terms">RDF12-CONCEPTS §3.5</a>],
-  enabling statements about statements. Context Graphs defines a mechanism for triple-level
+  enabling statements about statements. Interego defines a mechanism for triple-level
   context annotations that interact with graph-level Context Descriptors.
 </p>
 
@@ -617,10 +617,10 @@
 <h3 id="namespace">Namespace and Prefix</h3>
 
 <p>
-  The Context Graphs vocabulary is identified by the namespace IRI:
+  The Interego vocabulary is identified by the namespace IRI:
 </p>
 
-<pre><code>https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#</code></pre>
+<pre><code>https://interego.dev/ns/cg#</code></pre>
 
 <p>
   The conventional prefix is <code>cg:</code>.
@@ -633,7 +633,7 @@
 <table class="prefix-table">
   <thead><tr><th>Prefix</th><th>Namespace IRI</th><th>Specification</th></tr></thead>
   <tbody>
-    <tr><td><code>cg:</code></td><td>https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#</td><td>This specification</td></tr>
+    <tr><td><code>cg:</code></td><td>https://interego.dev/ns/cg#</td><td>This specification</td></tr>
     <tr><td><code>rdf:</code></td><td>http://www.w3.org/1999/02/22-rdf-syntax-ns#</td><td>RDF 1.2</td></tr>
     <tr><td><code>rdfs:</code></td><td>http://www.w3.org/2000/01/rdf-schema#</td><td>RDF Schema 1.2</td></tr>
     <tr><td><code>xsd:</code></td><td>http://www.w3.org/2001/XMLSchema#</td><td>XML Schema Datatypes</td></tr>
@@ -1066,7 +1066,7 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
   <span class="rfc2119">MUST</span> implement these shapes.
 </p>
 
-<pre><code>@prefix cg:    &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#&gt;.
+<pre><code>@prefix cg:    &lt;https://interego.dev/ns/cg#&gt;.
 @prefix sh:    &lt;http://www.w3.org/ns/shacl#&gt;.
 @prefix xsd:   &lt;http://www.w3.org/2001/XMLSchema#&gt;.
 @prefix prov:  &lt;http://www.w3.org/ns/prov#&gt;.
@@ -1202,14 +1202,14 @@ cg:TrustFacetShape a sh:NodeShape ;
 <p>
   The following JSON-LD 1.1 [<a href="https://www.w3.org/TR/json-ld11/">JSON-LD11</a>] context
   document enables compact serialization of Context Graph data. Conformant producers
-  <span class="rfc2119">SHOULD</span> reference this context when serializing Context Graphs as
+  <span class="rfc2119">SHOULD</span> reference this context when serializing Interego as
   JSON-LD.
 </p>
 
 <pre><code>{
   "@context": {
     "@version": 1.1,
-    "cg": "https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#",
+    "cg": "https://interego.dev/ns/cg#",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
     "xsd": "http://www.w3.org/2001/XMLSchema#",
@@ -1283,14 +1283,14 @@ cg:TrustFacetShape a sh:NodeShape ;
 <h2 id="sparql-extensions">SPARQL Integration</h2>
 
 <p>
-  Context Graphs data is queryable via standard SPARQL 1.2 [<a href="https://w3c.github.io/sparql-query/spec/">SPARQL12-QUERY</a>]
+  Interego data is queryable via standard SPARQL 1.2 [<a href="https://w3c.github.io/sparql-query/spec/">SPARQL12-QUERY</a>]
   using <code>GRAPH</code> patterns and property paths. This section defines recommended query
   patterns and optional extension functions for context-aware querying.
 </p>
 
 <h3>Query Pattern: Retrieving Context for a Named Graph</h3>
 
-<pre><code>PREFIX cg:   &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#&gt;
+<pre><code>PREFIX cg:   &lt;https://interego.dev/ns/cg#&gt;
 PREFIX prov: &lt;http://www.w3.org/ns/prov#&gt;
 
 SELECT ?descriptor ?facetType ?validFrom ?validUntil ?agent
@@ -1311,7 +1311,7 @@ WHERE {
 
 <h3>Query Pattern: Filtering Graphs by Temporal Context</h3>
 
-<pre><code>PREFIX cg: &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#&gt;
+<pre><code>PREFIX cg: &lt;https://interego.dev/ns/cg#&gt;
 
 SELECT ?graph ?content
 WHERE {
@@ -1331,7 +1331,7 @@ WHERE {
 
 <h3>Query Pattern: Filtering by Modal Status (Semiotic Facet)</h3>
 
-<pre><code>PREFIX cg: &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#&gt;
+<pre><code>PREFIX cg: &lt;https://interego.dev/ns/cg#&gt;
 
 # Find all graphs whose content is asserted (not hypothetical or quoted)
 SELECT ?graph
@@ -1386,7 +1386,7 @@ WHERE {
 
 <p>
   In a Solid [<a href="https://solidproject.org/TR/protocol">Solid Protocol</a>] deployment,
-  Context Graphs integrate as follows:
+  Interego integrate as follows:
 </p>
 
 <p>
@@ -1490,7 +1490,7 @@ WHERE {
 
 <h3>Example 1: Sensor Data with Full Context</h3>
 
-<pre><code>@prefix cg:    &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#&gt;.
+<pre><code>@prefix cg:    &lt;https://interego.dev/ns/cg#&gt;.
 @prefix prov:  &lt;http://www.w3.org/ns/prov#&gt;.
 @prefix time:  &lt;http://www.w3.org/2006/time#&gt;.
 @prefix xsd:   &lt;http://www.w3.org/2001/XMLSchema#&gt;.
@@ -1573,7 +1573,7 @@ GRAPH ex:graph-sensor-2026Q1 {
 
 <h3>Example 2: Federated Context Composition</h3>
 
-<pre><code>@prefix cg: &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#&gt;.
+<pre><code>@prefix cg: &lt;https://interego.dev/ns/cg#&gt;.
 @prefix ex: &lt;https://example.org/&gt;.
 
 # Alice's context descriptor (from her Solid Pod)
@@ -1620,7 +1620,7 @@ ex:ctx-composed a cg:ComposedDescriptor ;
 <h3>Example 3: JSON-LD Compact Serialization</h3>
 
 <pre><code>{
-  "@context": "https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs/v1",
+  "@context": "https://interego.dev/ns/cg/v1",
   "@id": "urn:cg:desc:quickstart-1",
   "@type": "ContextDescriptor",
   "version": 0,
@@ -1743,8 +1743,8 @@ ex:ctx-composed a cg:ComposedDescriptor ;
 <hr>
 
 <footer style="text-align: center; color: #888; font-size: 0.85em; padding: 2em 0;">
-  <p>Context Graphs 1.0 &mdash; Specification Draft &mdash; 17 March 2026</p>
-  <p>Copyright &copy; 2026 Mark Spivey Published under the
+  <p>Interego 1.0 &mdash; Specification Draft &mdash; 17 March 2026</p>
+  <p>Copyright &copy; 2026 Interego Published under the
   <a href="https://creativecommons.org/licenses/by/4.0/" style="color:#888">CC BY 4.0</a> license.</p>
   <p style="font-size: 0.9em; margin-top: 0.5em;">
     This specification reuses and profiles vocabulary from W3C Recommendations (RDF 1.2, SPARQL 1.2, PROV-O,

@@ -1,8 +1,8 @@
 /**
  * @module pgsl/geometric
- * @description Geometric morphism between PGSL and Context Graphs topoi
+ * @description Geometric morphism between PGSL and Interego topoi
  *
- * The PGSL presheaf topos Set^(L^op) and the Context Graphs presheaf topos
+ * The PGSL presheaf topos Set^(L^op) and the Interego presheaf topos
  * Set^(F^op) are connected by a geometric morphism:
  *
  *   f*: Set^(F^op) → Set^(L^op)    (inverse image — embed CG into PGSL)
@@ -27,10 +27,10 @@ import type { PGSLInstance, Fragment, NodeProvenance } from './types.js';
 import { ingest, mintAtom } from './lattice.js';
 import { latticeMeet } from './category.js';
 
-// ── Direct Image: f_* (PGSL → Context Graphs) ──────────────
+// ── Direct Image: f_* (PGSL → Interego) ──────────────
 
 /**
- * The direct image functor f_*: PGSL → Context Graphs.
+ * The direct image functor f_*: PGSL → Interego.
  *
  * Takes a PGSL fragment URI and a set of facets, and produces
  * a Context Descriptor that describes the fragment as a named graph.
@@ -57,10 +57,10 @@ export function liftToDescriptor(
   };
 }
 
-// ── Inverse Image: f* (Context Graphs → PGSL) ──────────────
+// ── Inverse Image: f* (Interego → PGSL) ──────────────
 
 /**
- * The inverse image functor f*: Context Graphs → PGSL.
+ * The inverse image functor f*: Interego → PGSL.
  *
  * Takes a Context Descriptor and the graph content it describes,
  * ingests the content into the PGSL lattice, and returns the
@@ -197,7 +197,7 @@ function tokenizeStructured(content: string): string[] {
 /**
  * Verify that the geometric morphism preserves intersection.
  *
- * Given two descriptors A and B, their intersection in Context Graphs
+ * Given two descriptors A and B, their intersection in Interego
  * should correspond to the lattice meet of their PGSL embeddings.
  *
  * Returns true if the coherence condition holds.

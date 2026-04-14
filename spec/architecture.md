@@ -1,31 +1,31 @@
-# Context Graphs 1.0 --- System Architecture
+# Interego 1.0 --- System Architecture
 
 **W3C Community Group Draft Specification**
 
 **Latest version:** This document
 
-**Editors:** Mark Spivey
+**Editors:** Interego
 
 **Abstract:** This document is the single source of truth for the architecture
-of Context Graphs 1.0 --- a compositional framework for typed graph contexts
+of Interego 1.0 --- a compositional framework for typed graph contexts
 over RDF 1.2 Named Graphs. It describes the complete system as implemented in
-the `@interego/context-graphs` reference implementation: a zero-dependency
+the `@interego/core` reference implementation: a zero-dependency
 TypeScript library (ESM, Node 20+) totaling 22,636 lines across 66 modules.
 
-**Status:** Draft. Intended for discussion within the W3C Context Graphs
+**Status:** Draft. Intended for discussion within the W3C Interego
 Community Group.
 
 ---
 
 ## 1. Overview
 
-Context Graphs is composable, verifiable, federated context infrastructure.
+Interego is composable, verifiable, federated context infrastructure.
 It provides a massively multi-agent shared memory with typed context, trust,
 algebraic composition, and structural intelligence.
 
 Every Named Graph has context: who created it, when, under what interpretive
 frame, at what confidence, with what trust credential, through what causal
-model. Context Graphs makes that context structured, composable,
+model. Interego makes that context structured, composable,
 machine-readable, and cryptographically verifiable.
 
 The system is NOT a knowledge graph and NOT a RAG alternative. It is the
@@ -1126,8 +1126,8 @@ Full identity provider supporting:
 
 | Prefix | Namespace | Scope |
 |--------|-----------|-------|
-| `cg:` | `https://markjspivey-xwisee.github.io/context-graphs/ns/cg#` | Context Graphs system |
-| `pgsl:` | `https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#` | PGSL lattice |
+| `cg:` | `https://interego.dev/ns/cg#` | Interego system |
+| `pgsl:` | `https://interego.dev/ns/pgsl#` | PGSL lattice |
 
 ### 10.2 W3C Standard Namespaces
 
@@ -1316,10 +1316,10 @@ Complete table of all TypeScript modules in `src/`, sorted by directory.
 
 ## 13. Conformance
 
-### 13.1 W3C Context Graphs 1.0 Working Draft
+### 13.1 W3C Interego 1.0 Working Draft
 
 The reference implementation conforms to the
-[Context Graphs 1.0 Working Draft](https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html):
+[Interego 1.0 Working Draft](https://interego.dev/spec/interego-1.0.html):
 
 - **Section 3.1:** Context Descriptor structure --- `ContextDescriptorData` type
 - **Section 3.2:** Context facets --- 9 facet types (Temporal, Provenance, Agent, AccessControl, Semiotic, Trust, Federation, Causal, Projection)
@@ -1373,9 +1373,9 @@ specification:
 
 ## References
 
-- **[CG-CORE]** Context Graphs 1.0 Core Specification. W3C Community Group Draft.
-- **[CG-PARADIGM]** Context Graphs 1.0: Paradigm Constraints, Emergent Semantics, and Coherence Verification.
-- **[CG-PERSIST]** Context Graphs 1.0: Progressive Persistence Tier System.
+- **[CG-CORE]** Interego 1.0 Core Specification. W3C Community Group Draft.
+- **[CG-PARADIGM]** Interego 1.0: Paradigm Constraints, Emergent Semantics, and Coherence Verification.
+- **[CG-PERSIST]** Interego 1.0: Progressive Persistence Tier System.
 - **[PGSL]** PGSL: Content-Addressed Lattice for Structured Knowledge.
 - **[RDF]** W3C RDF 1.1 Concepts and Abstract Syntax. W3C Recommendation.
 - **[SPARQL]** W3C SPARQL 1.1 Query Language. W3C Recommendation.

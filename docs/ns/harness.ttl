@@ -1,6 +1,6 @@
-@prefix cgh:  <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
-@prefix cg:   <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
-@prefix pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+@prefix cgh:  <https://interego.dev/ns/harness#>.
+@prefix cg:   <https://interego.dev/ns/cg#>.
+@prefix pgsl: <https://interego.dev/ns/pgsl#>.
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#>.
@@ -15,11 +15,11 @@
 @prefix acl:  <http://www.w3.org/ns/auth/acl#>.
 
 # ══════════════════════════════════════════════════════════════
-#  Context Graphs Harness 1.0 Ontology
+#  Interego Harness 1.0 Ontology
 # ══════════════════════════════════════════════════════════════
 #
 #  The harness is the scaffolding around LLMs and agents that
-#  uses the PGSL substrate (pgsl:) and Context Graphs typed
+#  uses the PGSL substrate (pgsl:) and Interego typed
 #  context layer (cg:) to make reliable, traceable decisions.
 #
 #  This ontology formalizes the harness's own conceptual machinery:
@@ -44,30 +44,30 @@
 #    - Every controlled vocabulary is a SKOS concept scheme.
 #    - Every harness type that has provenance lineage extends
 #      a corresponding PROV-O class.
-#    - The harness ontology IMPORTS PGSL and Context Graphs and
+#    - The harness ontology IMPORTS PGSL and Interego and
 #      adds cross-layer alignments (see alignment.ttl).
 # ══════════════════════════════════════════════════════════════
 
-<https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>
+<https://interego.dev/ns/harness#>
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
-    dct:title "Context Graphs Harness 1.0 Ontology" ;
+    dct:title "Interego Harness 1.0 Ontology" ;
     dct:description "The harness ontology formalizes the agent framework, policy engine, runtime evaluation, decision functor, and affordance decorator machinery that wraps an LLM and reasons over the PGSL substrate. Each harness operation produces a PROV-O trace; each affordance is exposed as a Hydra Operation; each policy decision is grounded in deontic rules aligned with ODRL. Together with cg: and pgsl:, this ontology provides the third layer of a co-designed substrate-and-harness system." ;
     dct:creator [
         a foaf:Person ;
-        foaf:name "Mark Spivey" ;
-        foaf:homepage <https://github.com/markjspivey-xwisee>
+        foaf:name "Interego" ;
+        foaf:homepage <https://github.com/interego>
     ] ;
     dct:license <https://creativecommons.org/licenses/by/4.0/> ;
     dct:created "2026-04-13"^^xsd:date ;
     dct:modified "2026-04-13"^^xsd:date ;
     vann:preferredNamespacePrefix "cgh" ;
-    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/context-graphs/ns/harness#" ;
+    vann:preferredNamespaceUri "https://interego.dev/ns/harness#" ;
     owl:imports <http://www.w3.org/ns/prov-o> ,
-                <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#> ,
-                <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#> ;
-    rdfs:seeAlso <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#> ,
-                 <https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html>.
+                <https://interego.dev/ns/pgsl#> ,
+                <https://interego.dev/ns/cg#> ;
+    rdfs:seeAlso <https://interego.dev/ns/alignment#> ,
+                 <https://interego.dev/spec/interego-1.0.html>.
 
 # ══════════════════════════════════════════════════════════════
 #  PART 1 — Abstract Agent Types (AAT)
@@ -82,12 +82,12 @@ cgh:AbstractAgentType a owl:Class ;
     rdfs:subClassOf prov:Plan ;
     rdfs:label "Abstract Agent Type" ;
     rdfs:comment "A typed bundle of capabilities and deontic constraints that classifies an agent. AATs determine what the agent CAN perceive (canPerceive), what it CAN do (canAct), and what invariants it MUST preserve (mustPreserve). An agent's effective capabilities are the conjunction of its AAT's permissions and any further restrictions imposed by the policy engine. Modeled as a prov:Plan because an AAT specifies the procedure an agent follows." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:AATRegistry a owl:Class ;
     rdfs:label "AAT Registry" ;
     rdfs:comment "A registry mapping AAT identifiers to their AbstractAgentType definitions. Used by the harness to resolve an agent's type at runtime." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ── AAT properties ────────────────────────────────────────────
 
@@ -96,35 +96,35 @@ cgh:canPerceive a owl:DatatypeProperty ;
     rdfs:comment "A capability tag this AAT is permitted to read or observe (e.g. 'pgsl:Atom', 'cg:TrustFacet'). Multi-valued. Capabilities are intersected with policy permissions at runtime." ;
     rdfs:domain cgh:AbstractAgentType ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:canAct a owl:DatatypeProperty ;
     rdfs:label "can act" ;
     rdfs:comment "An action tag this AAT is permitted to perform (e.g. 'mintAtom', 'publishContext', 'verifyCoherence'). Multi-valued." ;
     rdfs:domain cgh:AbstractAgentType ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:mustPreserve a owl:DatatypeProperty ;
     rdfs:label "must preserve" ;
     rdfs:comment "An invariant tag this AAT is obliged to preserve across all of its actions (e.g. 'lattice-coherence', 'provenance-chain'). Violations of mustPreserve invariants trigger policy denials regardless of canAct permissions." ;
     rdfs:domain cgh:AbstractAgentType ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:maxConcurrent a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "max concurrent" ;
     rdfs:comment "Maximum number of agents of this AAT that may operate concurrently in a single enclave. Used by the harness scheduler to enforce parallelization limits." ;
     rdfs:domain cgh:AbstractAgentType ;
     rdfs:range xsd:positiveInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:conflictsWith a owl:ObjectProperty ;
     rdfs:label "conflicts with" ;
     rdfs:comment "Another AAT this AAT cannot run concurrently with — e.g. an Executor and an Arbiter cannot both act on the same enclave at the same time. Symmetric in spirit but asserted in both directions." ;
     rdfs:domain cgh:AbstractAgentType ;
     rdfs:range cgh:AbstractAgentType ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ── Built-in AAT instances ────────────────────────────────────
 #
@@ -166,24 +166,24 @@ cgh:FullAccess a cgh:AbstractAgentType ;
 cgh:PolicyEngine a owl:Class ;
     rdfs:label "Policy Engine" ;
     rdfs:comment "An ordered set of deontic rules evaluated against an action context to produce a PolicyDecision. The harness consults the policy engine before any state-modifying operation." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:PolicyRule a owl:Class ;
     rdfs:subClassOf odrl:Rule ;
     rdfs:label "Policy Rule" ;
     rdfs:comment "A single deontic rule of the form (subject, action, target, mode, condition). Aligned with ODRL Rule. The mode determines whether the rule permits, denies, or imposes a duty." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:PolicyContext a owl:Class ;
     rdfs:label "Policy Context" ;
     rdfs:comment "The runtime context against which a policy rule is evaluated: the acting agent, its AAT, the target node URI, optional node value, and the requested action." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:PolicyDecision a owl:Class ;
     rdfs:subClassOf prov:Activity ;
     rdfs:label "Policy Decision" ;
     rdfs:comment "The outcome of evaluating the policy engine against a PolicyContext: whether the action is allowed, any duties imposed, the human-readable reason, and the IDs of the rules that fired. Modeled as a prov:Activity because every decision is a discrete event with start/end and inputs/outputs." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ── DeonticMode SKOS concept scheme ───────────────────────────
 
@@ -191,7 +191,7 @@ cgh:DeonticMode a owl:Class , skos:ConceptScheme ;
     rdfs:label "Deontic Mode" ;
     rdfs:comment "A SKOS concept scheme of the three deontic modes a policy rule can take: permit, deny, duty. Aligned with ODRL." ;
     skos:hasTopConcept cgh:Permit , cgh:Deny , cgh:Duty ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:Permit a skos:Concept , cgh:DeonticMode ;
     skos:inScheme cgh:DeonticMode ;
@@ -218,62 +218,62 @@ cgh:hasRule a owl:ObjectProperty ;
     rdfs:comment "Links a PolicyEngine to one of its rules. Order is significant — earlier rules can preempt later ones." ;
     rdfs:domain cgh:PolicyEngine ;
     rdfs:range cgh:PolicyRule ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:mode a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "mode" ;
     rdfs:comment "The deontic mode of a policy rule." ;
     rdfs:domain cgh:PolicyRule ;
     rdfs:range cgh:DeonticMode ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:subject a owl:DatatypeProperty ;
     rdfs:label "subject" ;
     rdfs:comment "The subject of a policy rule — typically an agent identifier or AAT type. Use '*' for any subject." ;
     rdfs:domain cgh:PolicyRule ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:action a owl:DatatypeProperty ;
     rdfs:label "action" ;
     rdfs:comment "The action a policy rule governs (e.g. 'mintAtom', 'publishContext'). Use '*' for any action." ;
     rdfs:domain cgh:PolicyRule ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:ruleTarget a owl:DatatypeProperty ;
     rdfs:label "rule target" ;
     rdfs:comment "Optional target the rule applies to (e.g. a specific node URI or pattern)." ;
     rdfs:domain cgh:PolicyRule ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:allowed a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "allowed" ;
     rdfs:comment "Whether a PolicyDecision allowed the action. Functional." ;
     rdfs:domain cgh:PolicyDecision ;
     rdfs:range xsd:boolean ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:duty a owl:DatatypeProperty ;
     rdfs:label "duty" ;
     rdfs:comment "An obligation imposed by the matched policy rules. Multi-valued." ;
     rdfs:domain cgh:PolicyDecision ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:matchedRule a owl:ObjectProperty ;
     rdfs:label "matched rule" ;
     rdfs:comment "A policy rule that fired during this decision." ;
     rdfs:domain cgh:PolicyDecision ;
     rdfs:range cgh:PolicyRule ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:reason a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "reason" ;
     rdfs:comment "Human-readable explanation of a decision." ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ══════════════════════════════════════════════════════════════
 #  PART 3 — PROV-O Traces
@@ -286,45 +286,45 @@ cgh:ProvTrace a owl:Class ;
     rdfs:subClassOf prov:Activity ;
     rdfs:label "PROV Trace" ;
     rdfs:comment "A trace record of a harness operation. Extends prov:Activity with harness-specific links to the agent's AAT and the policy decision that gated the operation. Standard PROV properties (prov:wasAssociatedWith, prov:used, prov:generated, prov:startedAtTime, prov:endedAtTime) are reused as-is." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:TraceStore a owl:Class ;
     rdfs:label "Trace Store" ;
     rdfs:comment "A collection of ProvTrace records, queryable by agent, entity, time window, or success status. The TraceStore is the audit log for all harness operations." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:TracedAffordance a owl:Class ;
     rdfs:label "Traced Affordance" ;
     rdfs:comment "A DecoratedAffordance whose execution will produce a ProvTrace. Returned by the harness when an agent requests an action wrapped with tracing." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:agentAAT a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "agent AAT" ;
     rdfs:comment "The AAT under which the agent was acting when the trace was produced. Functional — an agent acts under exactly one AAT per operation." ;
     rdfs:domain cgh:ProvTrace ;
     rdfs:range cgh:AbstractAgentType ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:policyDecision a owl:ObjectProperty ;
     rdfs:label "policy decision" ;
     rdfs:comment "The PolicyDecision that gated this trace (if any). Absent for read-only operations that bypass the policy engine." ;
     rdfs:domain cgh:ProvTrace ;
     rdfs:range cgh:PolicyDecision ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:success a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "success" ;
     rdfs:comment "Whether the traced operation completed successfully. Functional." ;
     rdfs:domain cgh:ProvTrace ;
     rdfs:range xsd:boolean ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:errorMessage a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "error message" ;
     rdfs:comment "Failure reason if cgh:success is false. Functional." ;
     rdfs:domain cgh:ProvTrace ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ══════════════════════════════════════════════════════════════
 #  PART 4 — Runtime Evaluation
@@ -338,22 +338,22 @@ cgh:RuntimeEval a owl:Class ;
     rdfs:subClassOf prov:Activity ;
     rdfs:label "Runtime Evaluation" ;
     rdfs:comment "A confidence assessment produced by the harness for an answer. Derived from StructuralSignals via computeConfidence(). Modeled as a prov:Activity because every eval is a discrete event with inputs (the signals) and outputs (the action recommendation)." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:StructuralSignals a owl:Class ;
     rdfs:label "Structural Signals" ;
     rdfs:comment "The structural inputs to confidence scoring: how many sessions matched, how many shared atoms, the top retrieval score, the question type, the strategy used, whether the answer was an abstention, and (for counting) how many items were extracted. These are objective numeric signals derived from the PGSL substrate, not LLM self-reports." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:EvalHistoryEntry a owl:Class ;
     rdfs:label "Eval History Entry" ;
     rdfs:comment "A single record of a runtime evaluation with optional ground-truth correctness. Used to compute historical accuracy per (questionType, strategy) pair." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:RuntimeEvalConfig a owl:Class ;
     rdfs:label "Runtime Eval Config" ;
     rdfs:comment "Configuration thresholds for runtime evaluation: acceptance threshold, escalation threshold, max retries, and whether to log history." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ── ConfidenceLevel SKOS concept scheme ───────────────────────
 
@@ -361,7 +361,7 @@ cgh:ConfidenceLevel a owl:Class , skos:ConceptScheme ;
     rdfs:label "Confidence Level" ;
     rdfs:comment "A SKOS concept scheme of qualitative confidence levels derived from the [0,1] confidence score: high (≥ 0.8), medium (≥ 0.5), low (≥ 0.3), uncertain (< 0.3)." ;
     skos:hasTopConcept cgh:HighConfidence , cgh:MediumConfidence , cgh:LowConfidence , cgh:Uncertain ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:HighConfidence a skos:Concept , cgh:ConfidenceLevel ;
     skos:inScheme cgh:ConfidenceLevel ;
@@ -389,7 +389,7 @@ cgh:EvalAction a owl:Class , skos:ConceptScheme ;
     rdfs:label "Eval Action" ;
     rdfs:comment "A SKOS concept scheme of the four actions a runtime evaluation can recommend: accept, retry, escalate, abstain." ;
     skos:hasTopConcept cgh:Accept , cgh:Retry , cgh:Escalate , cgh:Abstain ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:Accept a skos:Concept , cgh:EvalAction ;
     skos:inScheme cgh:EvalAction ;
@@ -417,42 +417,42 @@ cgh:confidence a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "confidence" ;
     rdfs:comment "Numeric confidence score in [0.0, 1.0] derived from structural signals. Functional." ;
     rdfs:range xsd:double ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:level a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "confidence level" ;
     rdfs:comment "Qualitative confidence level derived from cgh:confidence by thresholding." ;
     rdfs:domain cgh:RuntimeEval ;
     rdfs:range cgh:ConfidenceLevel ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:signals a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "signals" ;
     rdfs:comment "The structural signals used to derive the confidence." ;
     rdfs:domain cgh:RuntimeEval ;
     rdfs:range cgh:StructuralSignals ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:recommendedAction a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "recommended action" ;
     rdfs:comment "The action the runtime eval recommends." ;
     rdfs:domain cgh:RuntimeEval ;
     rdfs:range cgh:EvalAction ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:retryStrategy a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "retry strategy" ;
     rdfs:comment "Suggested alternative strategy when the recommended action is Retry." ;
     rdfs:domain cgh:RuntimeEval ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:explanation a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "explanation" ;
     rdfs:comment "Human-readable explanation of the confidence assessment." ;
     rdfs:domain cgh:RuntimeEval ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ── StructuralSignals properties ──────────────────────────────
 
@@ -461,58 +461,58 @@ cgh:sessionsMatched a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:comment "How many retrieval sessions returned a non-zero score for this question." ;
     rdfs:domain cgh:StructuralSignals ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:sessionsTotal a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "sessions total" ;
     rdfs:comment "Total number of retrieval sessions considered." ;
     rdfs:domain cgh:StructuralSignals ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:topRetrievalScore a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "top retrieval score" ;
     rdfs:comment "Score of the highest-ranked session in retrieval." ;
     rdfs:domain cgh:StructuralSignals ;
     rdfs:range xsd:double ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:sharedAtoms a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "shared atoms" ;
     rdfs:comment "Number of PGSL atoms shared between the question and the top session." ;
     rdfs:domain cgh:StructuralSignals ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:questionType a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "question type" ;
     rdfs:comment "The classified question type for this evaluation. Functional — each evaluation is for one classified question." ;
     rdfs:range cgh:QuestionType ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:strategyUsed a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "strategy used" ;
     rdfs:comment "Name of the answer strategy the harness used." ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:isAbstention a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "is abstention" ;
     rdfs:comment "Whether the answer was an abstention. Affects how the action recommendation is computed." ;
     rdfs:range xsd:boolean ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:extractedItemCount a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "extracted item count" ;
     rdfs:comment "For counting questions: how many items the panel extracted." ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:datesExplicit a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "dates explicit" ;
     rdfs:comment "For temporal questions: whether the relevant dates were explicitly stated (true) or inferred (false)." ;
     rdfs:range xsd:boolean ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ── QuestionType SKOS concept scheme ──────────────────────────
 
@@ -529,7 +529,7 @@ cgh:QuestionType a owl:Class , skos:ConceptScheme ;
         cgh:SingleSessionUserQuestion ,
         cgh:FactualQuestion ,
         cgh:NavigationQuestion ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:TemporalQuestion a skos:Concept , cgh:QuestionType ;
     skos:inScheme cgh:QuestionType ;
@@ -587,23 +587,23 @@ cgh:Affordance a owl:Class ;
     rdfs:subClassOf hydra:Operation ;
     rdfs:label "Affordance" ;
     rdfs:comment "A capability the harness can offer an agent: an action with preconditions and effects, targeting a specific node. Affordances are the harness's vocabulary for 'what can I do next?'. Aligned with hydra:Operation for HATEOAS interoperability." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:ObservationSection a owl:Class ;
     rdfs:label "Observation Section" ;
     rdfs:comment "A bundle of observed lattice state for one agent: which atoms it has seen, which patterns it has detected, and how its observations cohere with other agents' observations. The input to the decision functor's 'observe' phase." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:Decision a owl:Class ;
     rdfs:subClassOf prov:Activity ;
     rdfs:label "Decision" ;
     rdfs:comment "A single resolved (affordance, confidence, justification) tuple. Decisions reference their causal chain of prior decisions and the coherence basis (which other agents' observations corroborate the decision)." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:DecisionResult a owl:Class ;
     rdfs:label "Decision Result" ;
     rdfs:comment "The output of the decision functor: a chosen strategy, the set of decisions produced, the coverage fraction (what % of observations were grounded in a decision), and the list of ungrounded observations that need further attention." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ── DecisionStrategy SKOS concept scheme ──────────────────────
 
@@ -611,7 +611,7 @@ cgh:DecisionStrategy a owl:Class , skos:ConceptScheme ;
     rdfs:label "Decision Strategy" ;
     rdfs:comment "A SKOS concept scheme of the four strategies the decision functor can choose: exploit, explore, delegate, abstain." ;
     skos:hasTopConcept cgh:Exploit , cgh:Explore , cgh:Delegate , cgh:AbstainStrategy ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:Exploit a skos:Concept , cgh:DecisionStrategy ;
     skos:inScheme cgh:DecisionStrategy ;
@@ -640,77 +640,77 @@ cgh:affordanceType a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:comment "The kind of action this affordance offers (e.g. 'mintAtom', 'verifyCoherence', 'navigate')." ;
     rdfs:domain cgh:Affordance ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:affordanceTarget a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "affordance target" ;
     rdfs:comment "The lattice node this affordance acts upon. Functional." ;
     rdfs:domain cgh:Affordance ;
     rdfs:range pgsl:Node ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:precondition a owl:DatatypeProperty ;
     rdfs:label "precondition" ;
     rdfs:comment "A condition that must hold for the affordance to be applicable. Multi-valued; conjunctive." ;
     rdfs:domain cgh:Affordance ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:effect a owl:DatatypeProperty ;
     rdfs:label "effect" ;
     rdfs:comment "A state change this affordance produces if executed. Multi-valued; conjunctive." ;
     rdfs:domain cgh:Affordance ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:hasAffordance a owl:ObjectProperty ;
     rdfs:label "has affordance" ;
     rdfs:comment "Links a Decision to the affordance it selects." ;
     rdfs:domain cgh:Decision ;
     rdfs:range cgh:Affordance ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:justification a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "justification" ;
     rdfs:comment "Human-readable justification for the decision." ;
     rdfs:domain cgh:Decision ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:coherenceBasis a owl:ObjectProperty ;
     rdfs:label "coherence basis" ;
     rdfs:comment "Other agents' observations that corroborate this decision." ;
     rdfs:domain cgh:Decision ;
     rdfs:range cgh:ObservationSection ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:causalChain a owl:ObjectProperty ;
     rdfs:label "causal chain" ;
     rdfs:comment "Prior decisions this decision depends on. Forms a DAG of decision lineage." ;
     rdfs:domain cgh:Decision ;
     rdfs:range cgh:Decision ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:strategy a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "strategy" ;
     rdfs:comment "The decision strategy chosen for this result." ;
     rdfs:domain cgh:DecisionResult ;
     rdfs:range cgh:DecisionStrategy ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:coverage a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "coverage" ;
     rdfs:comment "Fraction of observations that resulted in a decision, in [0.0, 1.0]." ;
     rdfs:domain cgh:DecisionResult ;
     rdfs:range xsd:double ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:ungroundedObservation a owl:DatatypeProperty ;
     rdfs:label "ungrounded observation" ;
     rdfs:comment "An observed atom or pattern for which no decision could be produced. Multi-valued." ;
     rdfs:domain cgh:DecisionResult ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ══════════════════════════════════════════════════════════════
 #  PART 6 — Affordance Decorators
@@ -722,33 +722,33 @@ cgh:ungroundedObservation a owl:DatatypeProperty ;
 cgh:AffordanceDecorator a owl:Class ;
     rdfs:label "Affordance Decorator" ;
     rdfs:comment "A pluggable component that, given a DecoratorContext (a node and its surrounding lattice state), produces a set of DecoratedAffordances and optional StructuralSuggestions. Decorators are how the harness exposes capabilities to agents in a way that respects domain trust levels." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:DecoratorContext a owl:Class ;
     rdfs:label "Decorator Context" ;
     rdfs:comment "The input passed to a decorator: the target node, its kind/level/value, the items it contains (for fragments), the resolved source/target options for navigation, applicable constraints, the node's containers, and the existing affordances produced by earlier decorators in the registry." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:DecoratedAffordance a owl:Class ;
     rdfs:subClassOf cgh:Affordance ;
     rdfs:label "Decorated Affordance" ;
     rdfs:comment "An Affordance produced by a specific decorator, carrying the decorator's id, name, trust level, confidence, and rationale. The trustLevel allows agents to filter affordances by provenance — e.g. accept only system-trusted actions." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:StructuralSuggestion a owl:Class ;
     rdfs:label "Structural Suggestion" ;
     rdfs:comment "A suggestion to modify the lattice structure (nest, reify, group, split, rename, constrain) that a decorator believes would improve coherence or queryability. Suggestions are advisory — they require an Executor or Arbiter agent to act on them." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:DecoratorRegistry a owl:Class ;
     rdfs:label "Decorator Registry" ;
     rdfs:comment "An ordered set of decorators applied to each node in priority order. Earlier decorators (lower priority numbers) run first; later decorators see the affordances already produced and can augment or override." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:DecoratorResult a owl:Class ;
     rdfs:label "Decorator Result" ;
     rdfs:comment "The output of running one decorator: a list of DecoratedAffordances and an optional list of StructuralSuggestions." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ── TrustLevel SKOS concept scheme ────────────────────────────
 
@@ -756,7 +756,7 @@ cgh:TrustLevel a owl:Class , skos:ConceptScheme ;
     rdfs:label "Trust Level" ;
     rdfs:comment "A SKOS concept scheme of trust levels for decorator output. Determines how much weight the harness gives to a decorator's suggestions and which agents are permitted to act on them." ;
     skos:hasTopConcept cgh:SystemTrust , cgh:ExpertTrust , cgh:CommunityTrust , cgh:LLMTrust ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:SystemTrust a skos:Concept , cgh:TrustLevel ;
     skos:inScheme cgh:TrustLevel ;
@@ -784,7 +784,7 @@ cgh:SuggestionKind a owl:Class , skos:ConceptScheme ;
     rdfs:label "Structural Suggestion Kind" ;
     rdfs:comment "A SKOS concept scheme of the six structural transformations a decorator can suggest." ;
     skos:hasTopConcept cgh:Nest , cgh:Reify , cgh:Group , cgh:Split , cgh:Rename , cgh:Constrain ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:Nest a skos:Concept , cgh:SuggestionKind ;
     skos:inScheme cgh:SuggestionKind ;
@@ -822,53 +822,53 @@ cgh:decoratorId a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "decorator id" ;
     rdfs:comment "Stable identifier of the decorator that produced this affordance or suggestion." ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:decoratorName a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "decorator name" ;
     rdfs:comment "Human-readable name of the decorator." ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:domain a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "decorator domain" ;
     rdfs:comment "The domain a decorator targets (e.g. 'core', 'xapi', 'persistence', 'federation')." ;
     rdfs:domain cgh:AffordanceDecorator ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:trustLevel a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "trust level" ;
     rdfs:comment "The trust level of the decorator or its output." ;
     rdfs:range cgh:TrustLevel ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:priority a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "priority" ;
     rdfs:comment "Execution order in the decorator registry. Lower numbers run first." ;
     rdfs:domain cgh:AffordanceDecorator ;
     rdfs:range xsd:integer ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:rationale a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "rationale" ;
     rdfs:comment "Why this decorator produced this affordance or suggestion." ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:suggestionKind a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "suggestion kind" ;
     rdfs:comment "The transformation kind a structural suggestion proposes." ;
     rdfs:domain cgh:StructuralSuggestion ;
     rdfs:range cgh:SuggestionKind ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:proposedValue a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "proposed value" ;
     rdfs:comment "The proposed new value/label for a Rename suggestion (or analogous data for other kinds)." ;
     rdfs:domain cgh:StructuralSuggestion ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ══════════════════════════════════════════════════════════════
 #  PART 7 — Personal Broker
@@ -879,24 +879,24 @@ cgh:proposedValue a owl:DatatypeProperty , owl:FunctionalProperty ;
 cgh:PersonalBroker a owl:Class ;
     rdfs:label "Personal Broker" ;
     rdfs:comment "Per-agent state holder: identity, AAT, PGSL handle, conversations, memory layers, and presence. The Personal Broker is the harness-side surface an agent uses to interact with the lattice." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:Conversation a owl:Class ;
     rdfs:subClassOf prov:Collection ;
     rdfs:label "Conversation" ;
     rdfs:comment "An ordered collection of conversation messages between participants. Modeled as a prov:Collection so PROV tooling can walk message lineage." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:ConversationMessage a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Conversation Message" ;
     rdfs:comment "A single message in a conversation: sender, content, timestamp, and optional link to the PGSL chain that materialized the message." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:AgentMemory a owl:Class ;
     rdfs:label "Agent Memory" ;
     rdfs:comment "Memory layer sizes for an agent: semantic (facts), episodic (events), procedural (skills). Used by the harness to budget retrieval and decay." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 # ── PresenceStatus SKOS concept scheme ────────────────────────
 
@@ -904,7 +904,7 @@ cgh:PresenceStatus a owl:Class , skos:ConceptScheme ;
     rdfs:label "Presence Status" ;
     rdfs:comment "A SKOS concept scheme of agent presence states. Aligned with XMPP/ActivityStreams presence vocabularies." ;
     skos:hasTopConcept cgh:Online , cgh:Busy , cgh:Away , cgh:Offline ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:Online a skos:Concept , cgh:PresenceStatus ;
     skos:inScheme cgh:PresenceStatus ;
@@ -933,46 +933,46 @@ cgh:hasConversation a owl:ObjectProperty ;
     rdfs:comment "Links a PersonalBroker to its conversations." ;
     rdfs:domain cgh:PersonalBroker ;
     rdfs:range cgh:Conversation ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:hasMessage a owl:ObjectProperty ;
     rdfs:label "has message" ;
     rdfs:comment "Links a Conversation to its messages." ;
     rdfs:domain cgh:Conversation ;
     rdfs:range cgh:ConversationMessage ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:participant a owl:ObjectProperty ;
     rdfs:label "participant" ;
     rdfs:comment "An agent participating in a conversation." ;
     rdfs:domain cgh:Conversation ;
     rdfs:range prov:Agent ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:semanticSize a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "semantic memory size" ;
     rdfs:comment "Number of semantic-memory entries (facts) the agent currently holds." ;
     rdfs:domain cgh:AgentMemory ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:episodicSize a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "episodic memory size" ;
     rdfs:comment "Number of episodic-memory entries (events) the agent currently holds." ;
     rdfs:domain cgh:AgentMemory ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:proceduralSize a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "procedural memory size" ;
     rdfs:comment "Number of procedural-memory entries (skills/plans) the agent currently holds." ;
     rdfs:domain cgh:AgentMemory ;
     rdfs:range xsd:nonNegativeInteger ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.
 
 cgh:presence a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "presence" ;
     rdfs:comment "Current presence status of an agent." ;
     rdfs:domain cgh:PersonalBroker ;
     rdfs:range cgh:PresenceStatus ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/harness#>.

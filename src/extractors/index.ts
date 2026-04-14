@@ -1,6 +1,6 @@
 /**
  * @module extractors
- * @description Multi-format content extraction for Context Graphs.
+ * @description Multi-format content extraction for Interego.
  *
  * Extracts text content from various formats for PGSL ingestion:
  *   - PDF → text extraction via pdf-parse

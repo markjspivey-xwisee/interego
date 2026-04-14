@@ -1,6 +1,6 @@
 /**
  * @module sparql/patterns
- * @description SPARQL 1.2 query pattern builders for Context Graphs
+ * @description SPARQL 1.2 query pattern builders for Interego
  *
  * Generates parameterized SPARQL queries for the common access
  * patterns defined in §8 of the specification.

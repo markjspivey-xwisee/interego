@@ -1,4 +1,4 @@
-@prefix cg:   <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+@prefix cg:   <https://interego.dev/ns/cg#>.
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#>.
@@ -18,25 +18,25 @@
 @prefix skos: <http://www.w3.org/2004/02/skos/core#>.
 
 # ══════════════════════════════════════════════════════════════
-#  Context Graphs 1.0 Ontology
+#  Interego 1.0 Ontology
 # ══════════════════════════════════════════════════════════════
 
-<https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>
+<https://interego.dev/ns/cg#>
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
-    dct:title "Context Graphs 1.0 Ontology" ;
+    dct:title "Interego 1.0 Ontology" ;
     dct:description "A compositional framework for typed graph contexts over RDF 1.2 Named Graphs. Defines context descriptors with seven facet types (Temporal, Provenance, Agent, AccessControl, Semiotic, Trust, Federation), composition operators, and federation primitives for decentralized knowledge sharing between AI agents." ;
     dct:creator [
         a foaf:Person ;
-        foaf:name "Mark Spivey" ;
-        foaf:homepage <https://github.com/markjspivey-xwisee>
+        foaf:name "Interego" ;
+        foaf:homepage <https://github.com/interego>
     ] ;
     dct:license <https://creativecommons.org/licenses/by/4.0/> ;
     dct:created "2026-03-17"^^xsd:date ;
     dct:modified "2026-03-20"^^xsd:date ;
     vann:preferredNamespacePrefix "cg" ;
-    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#" ;
-    rdfs:seeAlso <https://markjspivey-xwisee.github.io/context-graphs/spec/context-graphs-1.0-wd.html>.
+    vann:preferredNamespaceUri "https://interego.dev/ns/cg#" ;
+    rdfs:seeAlso <https://interego.dev/spec/interego-1.0.html>.
 
 # ══════════════════════════════════════════════════════════════
 #  Classes
@@ -47,108 +47,108 @@
 cg:ContextDescriptor a owl:Class ;
     rdfs:label "Context Descriptor" ;
     rdfs:comment "A metadata envelope that annotates one or more RDF Named Graphs with typed context facets. Each descriptor declares provenance, temporal validity, semiotic frame, trust level, and federation metadata for the graphs it describes." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:ComposedDescriptor a owl:Class ;
     rdfs:subClassOf cg:ContextDescriptor ;
     rdfs:label "Composed Descriptor" ;
     rdfs:comment "A context descriptor produced by applying a composition operator (union, intersection, restriction, override) to two or more source descriptors. Preserves full provenance of operands." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Facets ────────────────────────────────────────────────────
 
 cg:ContextFacet a owl:Class ;
     rdfs:label "Context Facet" ;
     rdfs:comment "Abstract base class for all context facet types. Each facet captures a specific dimension of context metadata." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:TemporalFacet a owl:Class ;
     rdfs:subClassOf cg:ContextFacet ;
     rdfs:label "Temporal Facet" ;
     rdfs:comment "Temporal validity of a context. Aligned with OWL-Time and Dublin Core. Declares when the context is valid (validFrom/validUntil), temporal resolution, and relations to other temporal entities." ;
     rdfs:seeAlso time:TemporalEntity ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:ProvenanceFacet a owl:Class ;
     rdfs:subClassOf cg:ContextFacet ;
     rdfs:label "Provenance Facet" ;
     rdfs:comment "Provenance metadata aligned with W3C PROV-O. Records who/what generated the context, when, and from what prior sources. Supports full provenance chains." ;
     rdfs:seeAlso prov:Activity ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:AgentFacet a owl:Class ;
     rdfs:subClassOf cg:ContextFacet ;
     rdfs:label "Agent Facet" ;
     rdfs:comment "Identifies the asserting agent and their role. Supports delegation (onBehalfOf) for AI agents acting on behalf of humans/organizations. Aligned with PROV-O Agent and ActivityStreams." ;
     rdfs:seeAlso prov:Agent ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:AccessControlFacet a owl:Class ;
     rdfs:subClassOf cg:ContextFacet ;
     rdfs:label "Access Control Facet" ;
     rdfs:comment "Access control authorizations aligned with W3C WAC (Web Access Control). Declares who can Read, Write, Append, or Control the annotated graphs." ;
     rdfs:seeAlso acl:Authorization ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:SemioticFacet a owl:Class ;
     rdfs:subClassOf cg:ContextFacet ;
     rdfs:label "Semiotic Facet" ;
     rdfs:comment "Semiotic and epistemic metadata grounded in Peircean triadic semiotics. Captures the interpretive frame, modal status (Asserted, Hypothetical, Counterfactual, etc.), epistemic confidence [0.0-1.0], and whether the content represents ground truth." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:TrustFacet a owl:Class ;
     rdfs:subClassOf cg:ContextFacet ;
     rdfs:label "Trust Facet" ;
     rdfs:comment "Trust and verifiability metadata aligned with W3C Verifiable Credentials 2.0 and DID Core. Declares trust level, issuer identity, proof mechanism, and optional verifiable credential reference." ;
     rdfs:seeAlso vc:VerifiableCredential ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:FederationFacet a owl:Class ;
     rdfs:subClassOf cg:ContextFacet ;
     rdfs:label "Federation Facet" ;
     rdfs:comment "Federation and distribution metadata aligned with DCAT 3, LDP, and Solid Protocol. Declares where the context is stored, sync protocol, replication sources, and distribution endpoints." ;
     rdfs:seeAlso solid:StorageDescription, dcat:Distribution ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Manifest & Federation ─────────────────────────────────────
 
 cg:ManifestEntry a owl:Class ;
     rdfs:label "Manifest Entry" ;
     rdfs:comment "An entry in a pod's.well-known/context-graphs manifest. Lightweight summary of a published context descriptor for discovery." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:PodDirectory a owl:Class ;
     rdfs:label "Pod Directory" ;
     rdfs:comment "A decentralized directory graph listing known Solid pods participating in a federation. Itself published as an RDF resource on a pod." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:DataProduct a owl:Class ;
     rdfs:label "Data Product" ;
     rdfs:comment "Alignment with DPROD. A context-graphs manifest declares itself as a data product with input/output ports." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:Affordance a owl:Class ;
     rdfs:label "Affordance" ;
     rdfs:comment "A capability that a pod or manifest supports. Used for HATEOAS-style agent discovery of what operations are available." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:AuthorizedAgent a owl:Class ;
     rdfs:label "Authorized Agent" ;
     rdfs:comment "An AI agent or software tool authorized to act on behalf of a pod owner via delegation." ;
     rdfs:subClassOf prov:SoftwareAgent ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Composition & Context Types ───────────────────────────────
 
 cg:ContextType a owl:Class ;
     rdfs:label "Context Type" ;
     rdfs:comment "Enumeration class for the seven facet type identifiers." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:CompositionOperator a owl:Class ;
     rdfs:label "Composition Operator" ;
     rdfs:comment "Algebraic operators for composing context descriptors. The four operators (union, intersection, restriction, override) form a bounded lattice." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Properties
@@ -160,35 +160,35 @@ cg:describes a owl:ObjectProperty ;
     rdfs:label "describes" ;
     rdfs:comment "Links a ContextDescriptor to the Named Graph(s) it annotates." ;
     rdfs:domain cg:ContextDescriptor ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:hasFacet a owl:ObjectProperty ;
     rdfs:label "has facet" ;
     rdfs:comment "Links a ContextDescriptor to one of its context facets." ;
     rdfs:domain cg:ContextDescriptor ;
     rdfs:range cg:ContextFacet ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:hasFacetType a owl:ObjectProperty ;
     rdfs:label "has facet type" ;
     rdfs:comment "Declares which facet types are present in a manifest entry (lightweight discovery)." ;
     rdfs:domain cg:ManifestEntry ;
     rdfs:range cg:ContextType ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:version a owl:DatatypeProperty ;
     rdfs:label "version" ;
     rdfs:comment "Version number of the context descriptor." ;
     rdfs:domain cg:ContextDescriptor ;
     rdfs:range xsd:integer ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:supersedes a owl:ObjectProperty ;
     rdfs:label "supersedes" ;
     rdfs:comment "Links a descriptor to the previous version(s) it replaces." ;
     rdfs:domain cg:ContextDescriptor ;
     rdfs:range cg:ContextDescriptor ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Temporal properties ───────────────────────────────────────
 
@@ -196,30 +196,30 @@ cg:validFrom a owl:DatatypeProperty ;
     rdfs:label "valid from" ;
     rdfs:comment "Start of the temporal validity interval." ;
     rdfs:range xsd:dateTime ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:validUntil a owl:DatatypeProperty ;
     rdfs:label "valid until" ;
     rdfs:comment "End of the temporal validity interval." ;
     rdfs:range xsd:dateTime ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:temporalResolution a owl:DatatypeProperty ;
     rdfs:label "temporal resolution" ;
     rdfs:comment "Granularity of the temporal validity (e.g. xsd:duration)." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:temporalRelation a owl:ObjectProperty ;
     rdfs:label "temporal relation" ;
     rdfs:comment "OWL-Time relation to another temporal entity." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Provenance properties ─────────────────────────────────────
 
 cg:provenanceChain a owl:ObjectProperty ;
     rdfs:label "provenance chain" ;
     rdfs:comment "Ordered list of prior provenance activities." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Agent properties ──────────────────────────────────────────
 
@@ -228,129 +228,129 @@ cg:assertingAgent a owl:ObjectProperty ;
     rdfs:comment "The agent asserting this context." ;
     rdfs:domain cg:AgentFacet ;
     rdfs:range prov:Agent ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:onBehalfOf a owl:ObjectProperty ;
     rdfs:label "on behalf of" ;
     rdfs:comment "The principal (human/org) the agent acts on behalf of." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:agentRole a owl:ObjectProperty ;
     rdfs:label "agent role" ;
     rdfs:comment "Role of the asserting agent (Author, Curator, Validator, etc.)." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:agentIdentity a owl:ObjectProperty ;
     rdfs:label "agent identity" ;
     rdfs:comment "The identity IRI (DID, WebID) of an agent." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:authorizedAgent a owl:ObjectProperty ;
     rdfs:label "authorized agent" ;
     rdfs:comment "Links a pod owner profile to an authorized agent." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:delegatedBy a owl:ObjectProperty ;
     rdfs:label "delegated by" ;
     rdfs:comment "The principal who delegated authority to this agent." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:scope a owl:DatatypeProperty ;
     rdfs:label "scope" ;
     rdfs:comment "Delegation scope: ReadWrite, ReadOnly, PublishOnly, or DiscoverOnly." ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Semiotic properties ───────────────────────────────────────
 
 cg:interpretationFrame a owl:DatatypeProperty ;
     rdfs:label "interpretation frame" ;
     rdfs:comment "The interpretive frame under which the context should be understood." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:signSystem a owl:DatatypeProperty ;
     rdfs:label "sign system" ;
     rdfs:comment "The sign system or semiotic code used." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:groundTruth a owl:DatatypeProperty ;
     rdfs:label "ground truth" ;
     rdfs:comment "Whether this context represents verified ground truth." ;
     rdfs:range xsd:boolean ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:modalStatus a owl:ObjectProperty ;
     rdfs:label "modal status" ;
     rdfs:comment "The modal status of the assertion: Asserted, Hypothetical, Counterfactual, Quoted, or Retracted." ;
     rdfs:domain cg:SemioticFacet ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:epistemicConfidence a owl:DatatypeProperty ;
     rdfs:label "epistemic confidence" ;
     rdfs:comment "Confidence level in the assertion, from 0.0 (no confidence) to 1.0 (absolute certainty)." ;
     rdfs:range xsd:double ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:languageTag a owl:DatatypeProperty ;
     rdfs:label "language tag" ;
     rdfs:comment "BCP 47 language tag for the context content." ;
     rdfs:range xsd:string ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Trust properties ──────────────────────────────────────────
 
 cg:verifiableCredential a owl:ObjectProperty ;
     rdfs:label "verifiable credential" ;
     rdfs:comment "IRI of a W3C Verifiable Credential backing the trust assertion." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:issuer a owl:ObjectProperty ;
     rdfs:label "issuer" ;
     rdfs:comment "The issuer of the trust assertion (typically a DID)." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:proofMechanism a owl:DatatypeProperty ;
     rdfs:label "proof mechanism" ;
     rdfs:comment "The cryptographic proof mechanism used (e.g. Ed25519Signature2020)." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:trustLevel a owl:ObjectProperty ;
     rdfs:label "trust level" ;
     rdfs:comment "Level of trust: SelfAsserted, ThirdPartyAttested, or CryptographicallyVerified." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:revocationStatus a owl:DatatypeProperty ;
     rdfs:label "revocation status" ;
     rdfs:comment "Whether the trust assertion has been revoked." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Federation properties ─────────────────────────────────────
 
 cg:origin a owl:ObjectProperty ;
     rdfs:label "origin" ;
     rdfs:comment "The origin Solid pod URL where this context was first published." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:storageEndpoint a owl:ObjectProperty ;
     rdfs:label "storage endpoint" ;
     rdfs:comment "The LDP endpoint where the context graph is stored." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:syncProtocol a owl:ObjectProperty ;
     rdfs:label "sync protocol" ;
     rdfs:comment "The synchronization protocol used for federation (SolidNotifications, WebSub, LDN, Polling)." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:replicaOf a owl:ObjectProperty ;
     rdfs:label "replica of" ;
     rdfs:comment "IRI of the original resource this is a replica of." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:lastSynced a owl:DatatypeProperty ;
     rdfs:label "last synced" ;
     rdfs:comment "Timestamp of the last successful synchronization." ;
     rdfs:range xsd:dateTime ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Pod directory properties ──────────────────────────────────
 
@@ -358,29 +358,29 @@ cg:hasPod a owl:ObjectProperty ;
     rdfs:label "has pod" ;
     rdfs:comment "Links a PodDirectory to a pod entry." ;
     rdfs:domain cg:PodDirectory ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:podUrl a owl:ObjectProperty ;
     rdfs:label "pod URL" ;
     rdfs:comment "The URL of a Solid pod in a directory entry." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Affordance properties ─────────────────────────────────────
 
 cg:affordance a owl:ObjectProperty ;
     rdfs:label "affordance" ;
     rdfs:comment "Declares an affordance (capability) that this resource supports." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:outputPort a owl:ObjectProperty ;
     rdfs:label "output port" ;
     rdfs:comment "DPROD alignment: output distribution endpoint for a data product." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:inputPort a owl:ObjectProperty ;
     rdfs:label "input port" ;
     rdfs:comment "DPROD alignment: input endpoint for a data product." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ── Composition properties ────────────────────────────────────
 
@@ -389,19 +389,19 @@ cg:compositionOp a owl:ObjectProperty ;
     rdfs:comment "The composition operator used to produce a ComposedDescriptor." ;
     rdfs:domain cg:ComposedDescriptor ;
     rdfs:range cg:CompositionOperator ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:operand a owl:ObjectProperty ;
     rdfs:label "operand" ;
     rdfs:comment "Source descriptor used as input to a composition operation." ;
     rdfs:domain cg:ComposedDescriptor ;
     rdfs:range cg:ContextDescriptor ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 cg:restrictToType a owl:ObjectProperty ;
     rdfs:label "restrict to type" ;
     rdfs:comment "Facet type(s) to retain in a restriction composition." ;
-    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#>.
+    rdfs:isDefinedBy <https://interego.dev/ns/cg#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Named Individuals

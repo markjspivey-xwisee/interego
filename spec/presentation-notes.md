@@ -1,18 +1,18 @@
-# Context Graphs: Presentation Outline and Speaker Notes
+# Interego: Presentation Outline and Speaker Notes
 
 **Target duration:** 30 minutes (25 min presentation + 5 min Q&A)
 
 **Audience:** W3C Community Group members, standards engineers, multi-agent
 system practitioners.
 
-**Setup requirements:** Browser with Context Graphs UI loaded, terminal with
+**Setup requirements:** Browser with Interego UI loaded, terminal with
 PGSL store running, demo data pre-loaded (healthcare handoff scenario).
 
 ---
 
 ## Slide 1: Title
 
-**Context Graphs: Composable, Verifiable, Federated Context Infrastructure**
+**Interego: Composable, Verifiable, Federated Context Infrastructure**
 
 W3C Community Group Presentation
 
@@ -20,7 +20,7 @@ W3C Community Group Presentation
 
 ### Speaker Notes
 
-Open with the core positioning: Context Graphs is infrastructure, not an
+Open with the core positioning: Interego is infrastructure, not an
 application. It sits beneath agent frameworks the way HTTP sits beneath web
 applications. Mention the three properties in the subtitle -- composable,
 verifiable, federated -- as the throughline for the talk. Each subsequent
@@ -165,7 +165,7 @@ under the hood.
 This is the real-world deployment example. The Total Learning Architecture
 (TLA) pipeline starts with a learner in a flight simulator. The simulator
 emits xAPI statements: "pilot performed crosswind landing with score 92."
-Context Graphs maps this through the competency framework and issues a LERS
+Interego maps this through the competency framework and issues a LERS
 credential. The key insight is trust escalation: the raw xAPI statement is
 SelfAsserted. When an instructor reviews and confirms, it becomes
 ThirdPartyAttested. When it is signed as a verifiable credential, it becomes
@@ -231,7 +231,7 @@ coherence certificate with the obstruction type: term-mismatch on "diagnosis."
 ### Speaker Notes
 
 This is the formal decision-making layer. The OODA loop is a well-known
-military decision framework. Context Graphs formalizes it using category
+military decision framework. Interego formalizes it using category
 theory. The observation functor collects presheaf sections -- what the agent
 can see. The orientation phase is coherence verification -- understanding the
 reliability of what you see. The decision is a natural transformation --
@@ -276,7 +276,7 @@ available for review.
 
 - W3C Community Group specification finalization
 - Production deployments in education (TLA) and healthcare
-- Agent SDK integration (provide Context Graphs as infrastructure for any
+- Agent SDK integration (provide Interego as infrastructure for any
   agent framework)
 - Formal verification of lattice properties
 - Performance benchmarking at scale (target: 1M+ chains)
@@ -287,7 +287,7 @@ available for review.
 
 Close with the forward-looking roadmap. The specification is moving toward
 Community Group Report status. Production deployments in TLA are ongoing.
-The next major integration target is agent SDKs -- making Context Graphs
+The next major integration target is agent SDKs -- making Interego
 available as a composable layer that any agent framework can adopt. Mention
 that the formal properties (lattice, natural transformation, d-separation)
 are not just theoretical niceties; they enable formal verification of system
@@ -305,7 +305,7 @@ and the specification benefits from diverse implementation experience.
 
 **Q: How does this differ from RDF/OWL ontology alignment?**
 A: Ontology alignment requires upfront agreement on shared vocabulary.
-Context Graphs discovers agreement (or disagreement) from usage patterns.
+Interego discovers agreement (or disagreement) from usage patterns.
 It complements ontology approaches -- you can use both.
 
 **Q: What is the performance overhead of coherence verification?**

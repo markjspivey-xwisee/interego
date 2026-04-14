@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Context Graphs 1.0 — Multi-Agent Coherence Demo
+ * Interego 1.0 — Multi-Agent Coherence Demo
  *
  * Healthcare Handoff scenario: three agents independently document
  * aspects of a patient visit, then discover alignment (or lack of it)
@@ -41,9 +41,9 @@ import {
   validateAllPGSL,
   mintAtom,
   ingest,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
-import type { IRI, PGSLInstance } from '@interego/context-graphs';
+import type { IRI, PGSLInstance } from '@interego/core';
 
 // ── Colors & Logging ───────────────────────────────────────
 
@@ -464,7 +464,7 @@ function phase5_structuralAnalysis(
 async function main(): Promise<void> {
   console.log('');
   console.log('═══════════════════════════════════════════════════════════════');
-  console.log('  Context Graphs 1.0 — Multi-Agent Coherence Demo');
+  console.log('  Interego 1.0 — Multi-Agent Coherence Demo');
   console.log('  Healthcare Handoff: ER -> Radiology -> Pharmacy');
   console.log('  Meaning is usage, not existence.');
   console.log('═══════════════════════════════════════════════════════════════');

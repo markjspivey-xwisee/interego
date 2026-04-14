@@ -1,0 +1,207 @@
+@prefix ie:   <https://interego.dev/ns/interego#> .
+@prefix pgsl: <https://interego.dev/ns/pgsl#> .
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+
+# ══════════════════════════════════════════════════════════════
+#  Interego 1.0 — Interrogatives SHACL Shapes
+# ══════════════════════════════════════════════════════════════
+#
+#  Validates instances of the Interego core ontology:
+#
+#    - Every ie:Act has exactly one poser, at least one
+#      interrogative type, and a prov:startedAtTime.
+#    - Every ie:Response has exactly one responseTo act and
+#      a confidence in [0,1] when asserted.
+#    - Every ie:Interpretant has exactly one ie:forAgent.
+#    - Every ie:Signification emerges from at least one thing.
+# ══════════════════════════════════════════════════════════════
+
+<https://interego.dev/ns/interego-shapes#>
+    a owl:Ontology ;
+    owl:versionInfo "1.0" ;
+    dct:title "Interego 1.0 — Interrogatives SHACL Shapes" ;
+    dct:description "SHACL validation shapes for the Interego interrogatives ontology. Enforces Act/Response well-formedness, confidence bounds, and PROV provenance requirements." ;
+    dct:license <https://creativecommons.org/licenses/by/4.0/> ;
+    dct:created "2026-04-14"^^xsd:date ;
+    rdfs:seeAlso <https://interego.dev/ns/interego#> .
+
+# ══════════════════════════════════════════════════════════════
+#  Interrogative Act Shape
+# ══════════════════════════════════════════════════════════════
+
+ie:ActShape a sh:NodeShape ;
+    sh:targetClass ie:Act ;
+    rdfs:comment "An Act must have exactly one poser, at least one interrogative type, and a start time (inherited from prov:Activity)." ;
+
+    sh:property [
+        sh:path ie:posedBy ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:name "posedBy" ;
+        sh:message "An ie:Act must have exactly one ie:posedBy agent."
+    ] ;
+
+    sh:property [
+        sh:path ie:interrogativeType ;
+        sh:minCount 1 ;
+        sh:class ie:Interrogative ;
+        sh:name "interrogativeType" ;
+        sh:message "An ie:Act must declare at least one ie:interrogativeType."
+    ] ;
+
+    sh:property [
+        sh:path ie:posedTo ;
+        sh:nodeKind sh:IRI ;
+        sh:name "posedTo" ;
+        sh:description "Optional — absent for rhetorical or open questions."
+    ] ;
+
+    sh:property [
+        sh:path ie:about ;
+        sh:name "about" ;
+        sh:description "The focal entity the act is about. Optional."
+    ] ;
+
+    sh:property [
+        sh:path prov:startedAtTime ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:name "startedAtTime" ;
+        sh:message "An ie:Act must have exactly one prov:startedAtTime."
+    ] ;
+
+    sh:property [
+        sh:path prov:endedAtTime ;
+        sh:datatype xsd:dateTime ;
+        sh:maxCount 1 ;
+        sh:name "endedAtTime"
+    ] ;
+
+    sh:property [
+        sh:path ie:refines ;
+        sh:class ie:Act ;
+        sh:name "refines"
+    ] ;
+
+    sh:property [
+        sh:path ie:reframes ;
+        sh:class ie:Act ;
+        sh:name "reframes"
+    ] .
+
+# ══════════════════════════════════════════════════════════════
+#  Response Shape
+# ══════════════════════════════════════════════════════════════
+
+ie:ResponseShape a sh:NodeShape ;
+    sh:targetClass ie:Response ;
+    rdfs:comment "A Response must reference exactly one primary Act via ie:responseTo, carry provenance attribution, and keep confidence (if present) in [0,1]." ;
+
+    sh:property [
+        sh:path ie:responseTo ;
+        sh:class ie:Act ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:name "responseTo" ;
+        sh:message "An ie:Response must reference exactly one primary ie:Act via ie:responseTo."
+    ] ;
+
+    sh:property [
+        sh:path prov:wasAttributedTo ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:name "wasAttributedTo" ;
+        sh:message "An ie:Response must carry prov:wasAttributedTo (who is answering)."
+    ] ;
+
+    sh:property [
+        sh:path prov:generatedAtTime ;
+        sh:datatype xsd:dateTime ;
+        sh:maxCount 1 ;
+        sh:name "generatedAtTime"
+    ] ;
+
+    sh:property [
+        sh:path ie:confidence ;
+        sh:datatype xsd:double ;
+        sh:minInclusive "0.0"^^xsd:double ;
+        sh:maxInclusive "1.0"^^xsd:double ;
+        sh:maxCount 1 ;
+        sh:name "confidence" ;
+        sh:message "ie:confidence, if present, must be a single double in [0.0, 1.0]."
+    ] ;
+
+    sh:property [
+        sh:path ie:grounds ;
+        sh:class pgsl:Node ;
+        sh:name "grounds" ;
+        sh:description "Substrate data the response is grounded in. Optional but recommended."
+    ] .
+
+# ══════════════════════════════════════════════════════════════
+#  Sign / Object / Interpretant Shapes (Peircean triad)
+# ══════════════════════════════════════════════════════════════
+
+ie:SignShape a sh:NodeShape ;
+    sh:targetClass ie:Sign ;
+    rdfs:comment "A sign should reference at least one object it signifies." ;
+
+    sh:property [
+        sh:path ie:signifies ;
+        sh:class ie:Object ;
+        sh:minCount 1 ;
+        sh:name "signifies" ;
+        sh:message "A sign must reference at least one ie:Object it signifies."
+    ] .
+
+ie:InterpretantShape a sh:NodeShape ;
+    sh:targetClass ie:Interpretant ;
+    rdfs:comment "An interpretant must belong to exactly one agent (meaning is agent-relative) and derive from exactly one primary sign." ;
+
+    sh:property [
+        sh:path ie:forAgent ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:name "forAgent" ;
+        sh:message "An ie:Interpretant must have exactly one ie:forAgent — interpretants are agent-relative."
+    ] ;
+
+    sh:property [
+        sh:path ie:derivesFrom ;
+        sh:class ie:Sign ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:name "derivesFrom" ;
+        sh:message "An ie:Interpretant must derive from exactly one primary sign."
+    ] .
+
+# ══════════════════════════════════════════════════════════════
+#  Signification Shape
+# ══════════════════════════════════════════════════════════════
+
+ie:SignificationShape a sh:NodeShape ;
+    sh:targetClass ie:Signification ;
+    rdfs:comment "A signification must emerge from at least one prior act, response, or signification. A signification with no antecedents is not emergent; it would be a fresh assertion, which belongs in an Act instead." ;
+
+    sh:property [
+        sh:path ie:emergesFrom ;
+        sh:minCount 1 ;
+        sh:name "emergesFrom" ;
+        sh:message "An ie:Signification must emerge from at least one prior act, response, or signification."
+    ] ;
+
+    sh:property [
+        sh:path ie:improvisesOn ;
+        sh:class ie:Signification ;
+        sh:name "improvisesOn" ;
+        sh:description "Optional. Captures emergent, unplanned extensions of prior meaning units."
+    ] .

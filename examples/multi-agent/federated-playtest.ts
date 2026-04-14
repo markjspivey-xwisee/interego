@@ -28,7 +28,7 @@ import {
   verifyCoherence, computeCoverage, getCertificates,
   createWallet, signDescriptor, createDelegation,
   union, intersection,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 import {
   ObserverAAT, AnalystAAT, ExecutorAAT, FullAccessAAT,
@@ -56,7 +56,7 @@ import {
   decide as decideFromObservations,
 } from '../../src/pgsl/decision-functor.js';
 
-import type { IRI, PGSLInstance, FetchFn } from '@interego/context-graphs';
+import type { IRI, PGSLInstance, FetchFn } from '@interego/core';
 
 // ── Config ─────────────────────────────────────────────
 

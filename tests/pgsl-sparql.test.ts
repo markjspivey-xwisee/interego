@@ -39,7 +39,7 @@ describe('PGSL SPARQL Engine', () => {
       const atomTypes = matchPattern(
         store, undefined,
         'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
-        'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#Atom',
+        'https://interego.dev/ns/pgsl#Atom',
       );
       expect(atomTypes.length).toBe(3); // the, cat, sat
     });
@@ -49,7 +49,7 @@ describe('PGSL SPARQL Engine', () => {
       const fragTypes = matchPattern(
         store, undefined,
         'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
-        'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#Fragment',
+        'https://interego.dev/ns/pgsl#Fragment',
       );
       // Level 1 wrappers + level 2 pair + level 3 top
       expect(fragTypes.length).toBeGreaterThan(0);
@@ -59,7 +59,7 @@ describe('PGSL SPARQL Engine', () => {
       const store = materializeTriples(pgsl);
       const valueTriples = matchPattern(
         store, undefined,
-        'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#value',
+        'https://interego.dev/ns/pgsl#value',
         undefined,
       );
       const values = valueTriples.map(t => t.object.replace(/"/g, ''));
@@ -72,7 +72,7 @@ describe('PGSL SPARQL Engine', () => {
       const store = materializeTriples(pgsl);
       const itemTriples = matchPattern(
         store, undefined,
-        'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#item',
+        'https://interego.dev/ns/pgsl#item',
         undefined,
       );
       expect(itemTriples.length).toBeGreaterThan(0);
@@ -102,7 +102,7 @@ describe('PGSL SPARQL Engine', () => {
       const store = materializeTriples(pgsl);
       const matches = matchPattern(
         store, undefined,
-        'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#level',
+        'https://interego.dev/ns/pgsl#level',
         undefined,
       );
       // Every node has a level
@@ -114,7 +114,7 @@ describe('PGSL SPARQL Engine', () => {
       const firstAtom = [...pgsl.atoms.values()][0]!;
       const matches = matchPattern(
         store, firstAtom,
-        'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#value',
+        'https://interego.dev/ns/pgsl#value',
         undefined,
       );
       expect(matches.length).toBe(1);
@@ -131,7 +131,7 @@ describe('PGSL SPARQL Engine', () => {
     it('SELECT all atoms', () => {
       const store = materializeTriples(pgsl);
       const result = executeSparqlString(store,
-        `PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+        `PREFIX pgsl: <https://interego.dev/ns/pgsl#>
          SELECT ?atom ?value WHERE {
            ?atom a pgsl:Atom ;
                  pgsl:value ?value .
@@ -147,7 +147,7 @@ describe('PGSL SPARQL Engine', () => {
     it('ASK query returns true for existing patterns', () => {
       const store = materializeTriples(pgsl);
       const result = executeSparqlString(store,
-        `PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+        `PREFIX pgsl: <https://interego.dev/ns/pgsl#>
          ASK WHERE { ?x a pgsl:Atom }`
       );
       expect(result.boolean).toBe(true);
@@ -156,7 +156,7 @@ describe('PGSL SPARQL Engine', () => {
     it('ASK query returns false for non-existing patterns', () => {
       const store = materializeTriples(pgsl);
       const result = executeSparqlString(store,
-        `PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+        `PREFIX pgsl: <https://interego.dev/ns/pgsl#>
          ASK WHERE { ?x pgsl:value "nonexistent" }`
       );
       expect(result.boolean).toBe(false);
@@ -165,7 +165,7 @@ describe('PGSL SPARQL Engine', () => {
     it('SELECT with ORDER BY', () => {
       const store = materializeTriples(pgsl);
       const result = executeSparqlString(store,
-        `PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+        `PREFIX pgsl: <https://interego.dev/ns/pgsl#>
          SELECT ?fragment ?level WHERE {
            ?fragment a pgsl:Fragment ;
                      pgsl:level ?level .
@@ -183,7 +183,7 @@ describe('PGSL SPARQL Engine', () => {
     it('executes COUNT aggregate', () => {
       const store = materializeTriples(pgsl);
       const result = executeSparqlString(store,
-        `PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+        `PREFIX pgsl: <https://interego.dev/ns/pgsl#>
          SELECT (COUNT(DISTINCT ?atom) AS ?count) WHERE {
            ?atom a pgsl:Atom .
          }`

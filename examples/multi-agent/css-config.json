@@ -35,7 +35,7 @@
   ],
   "@graph": [
     {
-      "comment": "Open-access, in-memory Solid server with WebSocket notifications. For multi-agent Context Graphs demo only — not for production."
+      "comment": "Open-access, in-memory Solid server with WebSocket notifications. For multi-agent Interego demo only — not for production."
     }
   ]
 }

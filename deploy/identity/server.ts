@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Context Graphs Identity Server v2
+ * Interego Identity Server v2
  *
  * Serves identity documents + issues bearer tokens for pod access.
  * Supports dynamic registration — any human can onboard.
@@ -33,7 +33,7 @@ import { ethers } from 'ethers';
 const PORT = parseInt(process.env['PORT'] ?? '8090');
 const BASE_URL = process.env['BASE_URL'] ?? `http://localhost:${PORT}`;
 const CSS_URL = process.env['CSS_URL'] ?? 'https://context-graphs-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/';
-const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#';
+const ONTOLOGY_URL = 'https://interego.dev/ns/cg#';
 const TOKEN_TTL_SECONDS = 86400; // 24 hours
 
 function log(msg: string) { console.log(`[identity] ${msg}`); }
@@ -663,7 +663,7 @@ app.get('/connect', (_req, res) => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect Wallet — Context Graphs</title>
+<title>Connect Wallet — Interego</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:#0a0a0f; color:#e0e0e8; display:flex; justify-content:center; align-items:center; min-height:100vh; }
@@ -688,8 +688,8 @@ app.get('/connect', (_req, res) => {
 </head>
 <body>
 <div class="card">
-  <h1>Connect Wallet to Context Graphs</h1>
-  <p>Link your Ethereum wallet to your Context Graphs identity. This proves you own the wallet via a SIWE (Sign-In With Ethereum) signature.</p>
+  <h1>Connect Wallet to Interego</h1>
+  <p>Link your Ethereum wallet to your Interego identity. This proves you own the wallet via a SIWE (Sign-In With Ethereum) signature.</p>
 
   <div class="step">
     <label>Your User ID</label>
@@ -744,7 +744,7 @@ async function connectMetaMask() {
     const issuedAt = new Date().toISOString();
     const siweMessage = domain + ' wants you to sign in with your Ethereum account:\\n'
       + address + '\\n\\n'
-      + 'Link wallet to Context Graphs identity: ' + userId + '\\n\\n'
+      + 'Link wallet to Interego identity: ' + userId + '\\n\\n'
       + 'URI: ' + uri + '\\n'
       + 'Version: 1\\n'
       + 'Chain ID: 1\\n'
@@ -796,7 +796,7 @@ async function linkManual() {
   const domain = window.location.host;
   const siweMessage = domain + ' wants you to sign in with your Ethereum account:\\n'
     + address + '\\n\\n'
-    + 'Link wallet to Context Graphs identity: ' + userId + '\\n\\n'
+    + 'Link wallet to Interego identity: ' + userId + '\\n\\n'
     + 'URI: ' + window.location.origin + '\\n'
     + 'Version: 1\\n'
     + 'Chain ID: 1\\n'
@@ -828,7 +828,7 @@ async function linkManual() {
 // ── Start ───────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  log(`Context Graphs Identity Server v2 started on port ${PORT}`);
+  log(`Interego Identity Server v2 started on port ${PORT}`);
   log(`Base URL: ${BASE_URL}`);
   log(`CSS URL: ${CSS_URL}`);
   log(`Endpoints:`);

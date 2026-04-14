@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Multi-Agent Context Graphs — Real End-to-End Demo
+ * Multi-Agent Interego — Real End-to-End Demo
  *
  * Starts a real Community Solid Server (in-memory, open access),
  * then runs two agents that communicate context-annotated knowledge
@@ -33,7 +33,7 @@ import {
   publish,
   discover,
   subscribe,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 import type {
   IRI,
@@ -42,7 +42,7 @@ import type {
   ContextChangeEvent,
   FetchFn,
   WebSocketConstructor,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 // ── Configuration ───────────────────────────────────────────
 
@@ -442,7 +442,7 @@ async function alicePublishUpdate(): Promise<void> {
 async function main(): Promise<void> {
   console.log('');
   console.log('═══════════════════════════════════════════════════════════');
-  console.log('  Context Graphs 1.0 — Real Multi-Agent Federation Demo');
+  console.log('  Interego 1.0 — Real Multi-Agent Federation Demo');
   console.log('═══════════════════════════════════════════════════════════');
   console.log('');
 

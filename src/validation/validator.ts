@@ -1,6 +1,6 @@
 /**
  * @module validation/validator
- * @description Validation logic for Context Graphs 1.0
+ * @description Validation logic for Interego 1.0
  *
  * Implements the SHACL shape constraints from §6 as programmatic
  * validation (no external SHACL engine dependency). This provides

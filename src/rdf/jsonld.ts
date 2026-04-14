@@ -1,8 +1,8 @@
 /**
  * @module rdf/jsonld
- * @description JSON-LD 1.1 serialization for Context Graphs 1.0
+ * @description JSON-LD 1.1 serialization for Interego 1.0
  *
- * Produces compact JSON-LD using the Context Graphs @context document
+ * Produces compact JSON-LD using the Interego @context document
  * defined in §7 of the specification.
  *
  * Reuses: JSON-LD 1.1 [Rec]
@@ -27,12 +27,12 @@ import type {
 // ── JSON-LD Context Document (§7) ────────────────────────────
 
 export const CONTEXT_GRAPHS_JSONLD_CONTEXT_URL =
-  'https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs/v1' as const;
+  'https://interego.dev/ns/cg/v1' as const;
 
 export const CONTEXT_GRAPHS_JSONLD_CONTEXT = {
   '@context': {
     '@version': 1.1,
-    cg: 'https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#',
+    cg: 'https://interego.dev/ns/cg#',
     rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
     rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
     xsd: 'http://www.w3.org/2001/XMLSchema#',

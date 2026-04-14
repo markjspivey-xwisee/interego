@@ -1,6 +1,6 @@
 /**
  * @module model/delegation
- * @description Owner/agent delegation model for Context Graphs 1.0
+ * @description Owner/agent delegation model for Interego 1.0
  *
  * Implements the identity layer where:
  *   - Humans (or orgs) own pods and have a WebID
@@ -116,7 +116,7 @@ export function createDelegationCredential(
 export function ownerProfileToTurtle(profile: OwnerProfileData): string {
   const lines: string[] = [];
 
-  lines.push('@prefix cg: <https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs#> .');
+  lines.push('@prefix cg: <https://interego.dev/ns/cg#> .');
   lines.push('@prefix foaf: <http://xmlns.com/foaf/0.1/> .');
   lines.push('@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .');
   lines.push('@prefix prov: <http://www.w3.org/ns/prov#> .');
@@ -230,7 +230,7 @@ export function delegationCredentialToJsonLd(
   const doc: Record<string, unknown> = {
     '@context': [
       'https://www.w3.org/2018/credentials/v1',
-      'https://markjspivey-xwisee.github.io/context-graphs/ns/context-graphs/delegation/v1',
+      'https://interego.dev/ns/cg/delegation/v1',
     ],
     id: credential.id,
     type: [...credential.type],

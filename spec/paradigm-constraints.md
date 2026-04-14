@@ -1,19 +1,19 @@
-# Context Graphs 1.0: Paradigm Constraints, Emergent Semantics, and Coherence Verification
+# Interego 1.0: Paradigm Constraints, Emergent Semantics, and Coherence Verification
 
 **W3C Community Group Draft Specification Addendum**
 
 **Latest version:** This document
 
-**Editors:** Context Graphs Community Group
+**Editors:** Interego Community Group
 
 **Abstract:** This document specifies the paradigm constraint system, emergent
 semantics model, coherence verification protocol, decision functor, and causal
-model integration for Context Graphs 1.0. These mechanisms extend the core PGSL
+model integration for Interego 1.0. These mechanisms extend the core PGSL
 lattice and Context Descriptor infrastructure with usage-based semantic analysis,
 compositional constraint operations, and formally grounded decision-making.
 
 **Status:** Draft. This specification addendum is intended for discussion within
-the W3C Context Graphs Community Group.
+the W3C Interego Community Group.
 
 ---
 
@@ -23,7 +23,7 @@ the W3C Context Graphs Community Group.
 
 In structural linguistics, a **syntagm** is a sequential chain of signs, and a
 **paradigm** is the set of signs substitutable at a given position within that
-chain. Context Graphs adopts this framing directly: chains in PGSL are syntagms;
+chain. Interego adopts this framing directly: chains in PGSL are syntagms;
 the set of atoms that may appear at each position constitutes a paradigm set.
 
 Paradigm constraints restrict which atoms may occupy specific positions within
@@ -139,7 +139,7 @@ PGSL content. The registry supports:
 
 ### 2.1 Theoretical Foundation
 
-Context Graphs adopts a **usage-based** theory of meaning, grounded in:
+Interego adopts a **usage-based** theory of meaning, grounded in:
 
 - **Wittgenstein:** "The meaning of a word is its use in the language."
 - **Firth:** "You shall know a word by the company it keeps."
@@ -463,7 +463,7 @@ Implementations MAY additionally support:
 
 ## References
 
-- **[CG-CORE]** Context Graphs 1.0 Core Specification.
+- **[CG-CORE]** Interego 1.0 Core Specification.
 - **[PGSL]** PGSL: Content-Addressed Lattice for Structured Knowledge.
 - **[SHACL]** W3C Shapes Constraint Language (SHACL). W3C Recommendation.
 - **[SPARQL]** W3C SPARQL 1.1 Query Language. W3C Recommendation.

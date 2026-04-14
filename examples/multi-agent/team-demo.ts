@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Context Graphs 1.0 — Team of Agents Collaboration Demo
+ * Interego 1.0 — Team of Agents Collaboration Demo
  *
  * Three AI agents collaborate on a security audit across decentralized pods.
  * Each agent has different trust levels, access scopes, and expertise.
@@ -42,13 +42,13 @@ import {
   sparqlQueryPGSL,
   sparqlFragmentsContaining,
   validateAllPGSL,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 import type {
   IRI,
   ContextDescriptorData,
   FetchFn,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 // ── Configuration ───────────────────────────────────────────
 
@@ -568,7 +568,7 @@ async function agentLead(
 async function main(): Promise<void> {
   console.log('');
   console.log('═══════════════════════════════════════════════════════════');
-  console.log('  Context Graphs 1.0 — Team Security Audit Demo');
+  console.log('  Interego 1.0 — Team Security Audit Demo');
   console.log('  3 agents, 3 pods, typed context, real federation');
   console.log('═══════════════════════════════════════════════════════════');
   console.log('');

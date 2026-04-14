@@ -11,8 +11,8 @@
  *   SPARQL: Query patterns for lattice navigation
  *   Turtle: Full serialization of PGSL instances
  *
- * The PGSL namespace extends the Context Graphs namespace:
- *   pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+ * The PGSL namespace extends the Interego namespace:
+ *   pgsl: <https://interego.dev/ns/pgsl#>
  */
 
 import type {
@@ -25,7 +25,7 @@ import { pullbackSquare } from './category.js';
 
 // ── PGSL Namespace ──────────────────────────────────────────
 
-export const PGSL_NS = 'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#' as const;
+export const PGSL_NS = 'https://interego.dev/ns/pgsl#' as const;
 
 export const PGSLClass = {
   Node:                  `${PGSL_NS}Node`,

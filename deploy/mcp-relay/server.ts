@@ -38,7 +38,7 @@ import {
   pinToIpfs,
   cryptoComputeCid,
   toTurtle,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 import type {
   IRI,
@@ -51,7 +51,7 @@ import type {
   Subscription,
   ContextChangeEvent,
   ManifestEntry,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 // ── Config ──────────────────────────────────────────────────
 

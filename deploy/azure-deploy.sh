@@ -10,7 +10,7 @@ CSS_APP="context-graphs-css"
 DASHBOARD_APP="context-graphs-dashboard"
 RELAY_APP="context-graphs-relay"
 
-echo "=== Context Graphs Azure Deployment ==="
+echo "=== Interego Azure Deployment ==="
 echo "Resource Group: $RESOURCE_GROUP"
 echo "Location: $LOCATION"
 echo "ACR: $ACR_NAME"

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * @interego/context-graphs-mcp v0.4.1
+ * @interego/mcp v0.4.1
  *
  * MCP server for federated context-annotated knowledge graphs.
  *
@@ -89,7 +89,7 @@ import {
   daysBetween,
   countUnique,
   shouldAbstain,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 import type {
   IRI,
@@ -104,7 +104,7 @@ import type {
   ManifestEntry,
   PGSLInstance,
   NodeProvenance,
-} from '@interego/context-graphs';
+} from '@interego/core';
 
 import { PodRegistry, type KnownPod } from './pod-registry.js';
 
@@ -1096,7 +1096,7 @@ async function toolLinkWallet(args: {
       `${domain} wants you to sign in with your Ethereum account:`,
       address,
       '',
-      `Link wallet to Context Graphs identity: ${userId}`,
+      `Link wallet to Interego identity: ${userId}`,
       '',
       `URI: ${IDENTITY_SERVER_URL}`,
       `Version: 1`,
@@ -1127,7 +1127,7 @@ async function toolLinkWallet(args: {
     `${domain} wants you to sign in with your Ethereum account:`,
     address,
     '',
-    `Link wallet to Context Graphs identity: ${userId}`,
+    `Link wallet to Interego identity: ${userId}`,
     '',
     `URI: ${IDENTITY_SERVER_URL}`,
     `Version: 1`,
@@ -1164,7 +1164,7 @@ async function toolLinkWallet(args: {
 }
 
 async function toolCheckBalance(args: { address?: string }): Promise<string> {
-  const { checkBalance, getChainConfig } = await import('@interego/context-graphs');
+  const { checkBalance, getChainConfig } = await import('@interego/core');
   const chain = getChainConfig();
 
   if (chain.mode === 'local') {
@@ -1373,7 +1373,7 @@ async function toolPgslToTurtle(_args: Record<string, never>): Promise<string> {
 // ── MCP Server ──────────────────────────────────────────────
 
 const mcpServer = new Server(
-  { name: '@interego/context-graphs-mcp', version: '0.4.0' },
+  { name: '@interego/mcp', version: '0.4.0' },
   { capabilities: { tools: {}, resources: {} } },
 );
 
@@ -1836,7 +1836,7 @@ mcpServer.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 // ── Start ───────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  log('Starting Context Graphs MCP server v0.4.1...');
+  log('Starting Interego MCP server v0.4.1...');
   log(`Owner: ${MY_OWNER_WEBID}${MY_OWNER_NAME ? ` (${MY_OWNER_NAME})` : ''}`);
   log(`Agent: ${MY_AGENT_ID}`);
   log(`Home pod: ${HOME_POD}`);
