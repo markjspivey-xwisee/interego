@@ -1,6 +1,6 @@
 # @interego/mcp
 
-**MCP server for [Interego](https://github.com/interego/interego)** — exposes 28 tools for publishing, discovering, composing, and reasoning over typed knowledge graphs through Solid pods. Compatible with Claude Code, Claude Desktop, Cursor, Windsurf, Cline, and any other MCP client.
+**MCP server for [Interego](https://github.com/markjspivey-xwisee/context-graphs)** — exposes 28 tools for publishing, discovering, composing, and reasoning over typed knowledge graphs through Solid pods. Compatible with Claude Code, Claude Desktop, Cursor, Windsurf, Cline, and any other MCP client.
 
 ## Install
 
@@ -132,7 +132,7 @@ npx -y @interego/mcp
 ## Build from source
 
 ```bash
-git clone https://github.com/interego/interego.git
+git clone https://github.com/markjspivey-xwisee/context-graphs.git
 cd context-graphs
 
 # Build the library first
@@ -154,4 +154,4 @@ CC-BY-4.0 — see [LICENSE](../LICENSE) in the parent repository.
 
 ## Issues and contributions
 
-[github.com/interego/interego/issues](https://github.com/interego/interego/issues)
+[github.com/markjspivey-xwisee/context-graphs/issues](https://github.com/markjspivey-xwisee/context-graphs/issues)

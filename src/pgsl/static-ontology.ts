@@ -143,7 +143,7 @@ export interface OntologyManifestEntry {
 export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   {
     name: 'interego',
-    namespace: 'https://interego.dev/ns/interego#',
+    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/interego#',
     prefix: 'ie',
     kind: 'ontology',
     description:
@@ -151,7 +151,7 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   },
   {
     name: 'interego-shapes',
-    namespace: 'https://interego.dev/ns/interego#',
+    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/interego#',
     prefix: 'ie',
     kind: 'shapes',
     description:
@@ -159,7 +159,7 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   },
   {
     name: 'pgsl',
-    namespace: 'https://interego.dev/ns/pgsl#',
+    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#',
     prefix: 'pgsl',
     kind: 'ontology',
     description:
@@ -167,7 +167,7 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   },
   {
     name: 'pgsl-shapes',
-    namespace: 'https://interego.dev/ns/pgsl#',
+    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#',
     prefix: 'pgsl',
     kind: 'shapes',
     description:
@@ -175,7 +175,7 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   },
   {
     name: 'cg',
-    namespace: 'https://interego.dev/ns/cg#',
+    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/cg#',
     prefix: 'cg',
     kind: 'ontology',
     description:
@@ -183,7 +183,7 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   },
   {
     name: 'harness',
-    namespace: 'https://interego.dev/ns/harness#',
+    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/harness#',
     prefix: 'cgh',
     kind: 'ontology',
     description:
@@ -191,7 +191,7 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   },
   {
     name: 'harness-shapes',
-    namespace: 'https://interego.dev/ns/harness#',
+    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/harness#',
     prefix: 'cgh',
     kind: 'shapes',
     description:
@@ -199,7 +199,7 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
   },
   {
     name: 'alignment',
-    namespace: 'https://interego.dev/ns/alignment#',
+    namespace: 'https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#',
     prefix: 'align',
     kind: 'ontology',
     description:

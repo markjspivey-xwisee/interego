@@ -61,7 +61,7 @@ export interface ToolContext {
 const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'sparql_query',
-    description: 'Execute a SPARQL query against the PGSL lattice triple store. Returns JSON bindings. Use PREFIX pgsl: <https://interego.dev/ns/pgsl#> for PGSL classes/properties. Available classes: pgsl:Atom, pgsl:Fragment. Properties: pgsl:value, pgsl:level, pgsl:height, pgsl:item, pgsl:leftConstituent, pgsl:rightConstituent, pgsl:overlap.',
+    description: 'Execute a SPARQL query against the PGSL lattice triple store. Returns JSON bindings. Use PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#> for PGSL classes/properties. Available classes: pgsl:Atom, pgsl:Fragment. Properties: pgsl:value, pgsl:level, pgsl:height, pgsl:item, pgsl:leftConstituent, pgsl:rightConstituent, pgsl:overlap.',
     parameters: {
       query: { type: 'string', description: 'SPARQL query string', required: true },
     },

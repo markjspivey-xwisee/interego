@@ -10,7 +10,7 @@
 ### Installation
 
 ```bash
-git clone https://github.com/interego/interego.git
+git clone https://github.com/markjspivey-xwisee/context-graphs.git
 cd context-graphs
 npm install
 npm run build

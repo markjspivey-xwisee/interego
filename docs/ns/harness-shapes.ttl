@@ -1,5 +1,5 @@
-@prefix cgh:  <https://interego.dev/ns/harness#> .
-@prefix pgsl: <https://interego.dev/ns/pgsl#> .
+@prefix cgh:  <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#> .
 @prefix sh:   <http://www.w3.org/ns/shacl#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -22,14 +22,14 @@
 #    - Personal brokers reference an AAT
 # ══════════════════════════════════════════════════════════════
 
-<https://interego.dev/ns/harness-shapes#>
+<https://markjspivey-xwisee.github.io/context-graphs/ns/harness-shapes#>
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
     dct:title "Interego Harness 1.0 SHACL Shapes" ;
     dct:description "SHACL validation shapes for the harness ontology." ;
     dct:license <https://creativecommons.org/licenses/by/4.0/> ;
     dct:created "2026-04-13"^^xsd:date ;
-    rdfs:seeAlso <https://interego.dev/ns/harness#> .
+    rdfs:seeAlso <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#> .
 
 # ══════════════════════════════════════════════════════════════
 #  AAT Shape

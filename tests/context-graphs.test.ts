@@ -469,7 +469,7 @@ describe('JSON-LD Serialization', () => {
 describe('Namespaces', () => {
   it('expand resolves prefixed names', () => {
     expect(expand('cg:ContextDescriptor'))
-.toBe('https://interego.dev/ns/cg#ContextDescriptor');
+.toBe('https://markjspivey-xwisee.github.io/context-graphs/ns/cg#ContextDescriptor');
     expect(expand('prov:Entity'))
 .toBe('http://www.w3.org/ns/prov#Entity');
   });

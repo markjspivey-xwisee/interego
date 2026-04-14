@@ -33,7 +33,7 @@ import { ethers } from 'ethers';
 const PORT = parseInt(process.env['PORT'] ?? '8090');
 const BASE_URL = process.env['BASE_URL'] ?? `http://localhost:${PORT}`;
 const CSS_URL = process.env['CSS_URL'] ?? 'https://context-graphs-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/';
-const ONTOLOGY_URL = 'https://interego.dev/ns/cg#';
+const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/context-graphs/ns/cg#';
 const TOKEN_TTL_SECONDS = 86400; // 24 hours
 
 function log(msg: string) { console.log(`[identity] ${msg}`); }

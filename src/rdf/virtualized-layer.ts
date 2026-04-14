@@ -26,7 +26,7 @@ import { PGSL_NS } from '../pgsl/rdf.js';
 
 // ── Namespaces ────────────────────────────────────────────────
 
-const CG_NS = 'https://interego.dev/ns/cg#' as const;
+const CG_NS = 'https://markjspivey-xwisee.github.io/context-graphs/ns/cg#' as const;
 const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
 const XSD_NS = 'http://www.w3.org/2001/XMLSchema#';
 const DCT_NS = 'http://purl.org/dc/terms/';

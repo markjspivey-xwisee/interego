@@ -1126,8 +1126,8 @@ Full identity provider supporting:
 
 | Prefix | Namespace | Scope |
 |--------|-----------|-------|
-| `cg:` | `https://interego.dev/ns/cg#` | Interego system |
-| `pgsl:` | `https://interego.dev/ns/pgsl#` | PGSL lattice |
+| `cg:` | `https://markjspivey-xwisee.github.io/context-graphs/ns/cg#` | Interego system |
+| `pgsl:` | `https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#` | PGSL lattice |
 
 ### 10.2 W3C Standard Namespaces
 
@@ -1319,7 +1319,7 @@ Complete table of all TypeScript modules in `src/`, sorted by directory.
 ### 13.1 W3C Interego 1.0 Working Draft
 
 The reference implementation conforms to the
-[Interego 1.0 Working Draft](https://interego.dev/spec/interego-1.0.html):
+[Interego 1.0 Working Draft](https://markjspivey-xwisee.github.io/context-graphs/spec/interego-1.0.html):
 
 - **Section 3.1:** Context Descriptor structure --- `ContextDescriptorData` type
 - **Section 3.2:** Context facets --- 9 facet types (Temporal, Provenance, Agent, AccessControl, Semiotic, Trust, Federation, Causal, Projection)
