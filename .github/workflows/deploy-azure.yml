@@ -1,0 +1,116 @@
+name: Deploy to Azure Container Apps
+
+# Triggers on every push to master that changes something a container
+# image cares about. Workflow_dispatch lets you also kick it off manually
+# from the Actions tab for ad-hoc redeploys.
+#
+# Only three container apps bake src/ into their images:
+#   - context-graphs-dashboard
+#   - context-graphs-pgsl-browser
+#   - context-graphs-relay
+#
+# The other three (css, identity, browser) are untouched by this workflow.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'deploy/Dockerfile.dashboard'
+      - 'deploy/Dockerfile.pgsl-browser'
+      - 'deploy/Dockerfile.relay'
+      - 'deploy/mcp-relay/**'
+      - 'examples/dashboard/**'
+      - 'examples/pgsl-browser/**'
+      - 'docs/ns/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - '.github/workflows/deploy-azure.yml'
+  workflow_dispatch:
+    inputs:
+      images:
+        description: 'Comma-separated image names (default: all three)'
+        required: false
+        default: 'dashboard,pgsl-browser,relay'
+
+# OIDC federated identity — no long-lived secrets. The id-token: write
+# permission is required for actions/federated-credentials to work.
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-azure-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AZURE_RESOURCE_GROUP: context-graphs-rg
+  AZURE_ACR_NAME: contextgraphsacr
+
+jobs:
+  build-and-deploy:
+    name: Build & deploy ${{ matrix.image }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Don't let one image's failure abort the others. Each container
+      # app is independent and we'd rather deploy 2/3 than 0/3.
+      fail-fast: false
+      matrix:
+        include:
+          - image: context-graphs-dashboard
+            dockerfile: deploy/Dockerfile.dashboard
+          - image: context-graphs-pgsl-browser
+            dockerfile: deploy/Dockerfile.pgsl-browser
+          - image: context-graphs-relay
+            dockerfile: deploy/Dockerfile.relay
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # SHA-tag every build so `az containerapp update --image` always
+      # creates a fresh revision. The `:latest` tag is pushed too for
+      # humans and for the existing ACR Task workflow, but the container
+      # app is pinned to the SHA tag for reliable rollback.
+      - name: Build image in ACR from current checkout
+        run: |
+          az acr build \
+            --registry "${{ env.AZURE_ACR_NAME }}" \
+            --image "${{ matrix.image }}:${{ github.sha }}" \
+            --image "${{ matrix.image }}:latest" \
+            --file "${{ matrix.dockerfile }}" \
+            --no-logs \
+            .
+
+      - name: Update container app to new revision
+        run: |
+          az containerapp update \
+            --name "${{ matrix.image }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --image "${{ env.AZURE_ACR_NAME }}.azurecr.io/${{ matrix.image }}:${{ github.sha }}" \
+            --query "properties.latestRevisionName" \
+            --output tsv
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### ${{ matrix.image }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image tag:** \`${{ matrix.image }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry:** \`${{ env.AZURE_ACR_NAME }}.azurecr.io\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Resource group:** \`${{ env.AZURE_RESOURCE_GROUP }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dockerfile:** \`${{ matrix.dockerfile }}\`" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "- **Status:** ✅ deployed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Status:** ❌ failed" >> $GITHUB_STEP_SUMMARY
+          fi
