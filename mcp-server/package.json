@@ -50,12 +50,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/interego/interego.git",
+    "url": "git+https://github.com/markjspivey-xwisee/context-graphs.git",
     "directory": "mcp-server"
   },
-  "homepage": "https://github.com/interego/interego/tree/master/mcp-server",
+  "homepage": "https://github.com/markjspivey-xwisee/context-graphs/tree/master/mcp-server",
   "bugs": {
-    "url": "https://github.com/interego/interego/issues"
+    "url": "https://github.com/markjspivey-xwisee/context-graphs/issues"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -10,7 +10,7 @@
 
 // ── Namespace IRIs ───────────────────────────────────────────
 
-export const CG   = 'https://interego.dev/ns/cg#' as const;
+export const CG   = 'https://markjspivey-xwisee.github.io/context-graphs/ns/cg#' as const;
 export const RDF  = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#' as const;
 export const RDFS = 'http://www.w3.org/2000/01/rdf-schema#' as const;
 export const XSD  = 'http://www.w3.org/2001/XMLSchema#' as const;
@@ -272,7 +272,7 @@ export const CGSyncProtocol = {
 
 /**
  * Expand a prefixed name to a full IRI.
- * @example expand('cg:ContextDescriptor') → 'https://interego.dev/ns/cg#ContextDescriptor'
+ * @example expand('cg:ContextDescriptor') → 'https://markjspivey-xwisee.github.io/context-graphs/ns/cg#ContextDescriptor'
  */
 export function expand(prefixed: string): string {
   const colon = prefixed.indexOf(':');

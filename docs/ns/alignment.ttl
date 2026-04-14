@@ -1,8 +1,8 @@
-@prefix ie:    <https://interego.dev/ns/interego#>.
-@prefix cg:    <https://interego.dev/ns/cg#>.
-@prefix pgsl:  <https://interego.dev/ns/pgsl#>.
-@prefix cgh:   <https://interego.dev/ns/harness#>.
-@prefix align: <https://interego.dev/ns/alignment#>.
+@prefix ie:    <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#>.
+@prefix cg:    <https://markjspivey-xwisee.github.io/context-graphs/ns/cg#>.
+@prefix pgsl:  <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.
+@prefix cgh:   <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#>.
+@prefix align: <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 @prefix rdf:   <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
 @prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#>.
 @prefix xsd:   <http://www.w3.org/2001/XMLSchema#>.
@@ -58,27 +58,27 @@
 #  an rdfs:comment explaining the design rationale.
 # ══════════════════════════════════════════════════════════════
 
-<https://interego.dev/ns/alignment#>
+<https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
     dct:title "Interego 1.0 Cross-Layer Alignment Ontology" ;
     dct:description "Cross-layer alignment ontology that ties together the three Interego ontologies (cg:, pgsl:, cgh:) and their external W3C alignments (PROV-O, Hydra, ODRL, ACL, VC, DCAT, OWL-Time). Importing this ontology gives you the full picture: typed context descriptors ABOUT lattice content WRAPPED BY agent harness machinery, all grounded in standard W3C vocabularies. The alignment is declarative — every cross-layer relationship is an OWL axiom annotated with the design rationale." ;
     dct:creator [
-        a foaf:Person ;
+        a foaf:Organization ;
         foaf:name "Interego" ;
-        foaf:homepage <https://github.com/interego>
+        foaf:homepage <https://markjspivey-xwisee.github.io/context-graphs/>
     ] ;
     dct:license <https://creativecommons.org/licenses/by/4.0/> ;
     dct:created "2026-04-13"^^xsd:date ;
     dct:modified "2026-04-13"^^xsd:date ;
     vann:preferredNamespacePrefix "align" ;
-    vann:preferredNamespaceUri "https://interego.dev/ns/alignment#" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#" ;
     owl:imports <http://www.w3.org/ns/prov-o> ,
-                <https://interego.dev/ns/interego#> ,
-                <https://interego.dev/ns/cg#> ,
-                <https://interego.dev/ns/pgsl#> ,
-                <https://interego.dev/ns/harness#> ;
-    rdfs:seeAlso <https://interego.dev/spec/interego-1.0.html>.
+                <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> ,
+                <https://markjspivey-xwisee.github.io/context-graphs/ns/cg#> ,
+                <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#> ,
+                <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#> ;
+    rdfs:seeAlso <https://markjspivey-xwisee.github.io/context-graphs/spec/interego-1.0.html>.
 
 # ══════════════════════════════════════════════════════════════
 #  PART 1 — cg ↔ pgsl (context descriptors ABOUT lattice content)
@@ -96,7 +96,7 @@ align:describesFragment a owl:ObjectProperty ;
     rdfs:comment "Specialization of cg:describes for the case where the described graph's content is a PGSL fragment. Declared as a subPropertyOf so any cg:describes query automatically includes fragment-level descriptions." ;
     rdfs:domain cg:ContextDescriptor ;
     rdfs:range pgsl:Fragment ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 align:describesAtom a owl:ObjectProperty ;
     rdfs:subPropertyOf cg:describes ;
@@ -104,7 +104,7 @@ align:describesAtom a owl:ObjectProperty ;
     rdfs:comment "Specialization of cg:describes for individual PGSL atoms. Useful for attaching fine-grained trust / temporal / semiotic facets to specific atoms without wrapping them in a fragment." ;
     rdfs:domain cg:ContextDescriptor ;
     rdfs:range pgsl:Atom ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 align:describesLattice a owl:ObjectProperty ;
     rdfs:subPropertyOf cg:describes ;
@@ -112,7 +112,7 @@ align:describesLattice a owl:ObjectProperty ;
     rdfs:comment "Specialization of cg:describes for an entire pgsl:Lattice instance. Used when a context descriptor applies to ALL content in the lattice (e.g. a pod-wide provenance statement)." ;
     rdfs:domain cg:ContextDescriptor ;
     rdfs:range pgsl:Lattice ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 # ── Fragments and Atoms inherit PROV entity-hood from both layers ──
 #
@@ -134,7 +134,7 @@ align:observedAtom a owl:ObjectProperty ;
     rdfs:comment "An ObservationSection references the specific PGSL atoms it observed. Declared as subPropertyOf prov:used so standard PROV tooling can walk from a decision back to the atoms that grounded it." ;
     rdfs:domain cgh:ObservationSection ;
     rdfs:range pgsl:Atom ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 align:affordanceOn a owl:ObjectProperty ;
     owl:equivalentProperty cgh:affordanceTarget ;
@@ -142,7 +142,7 @@ align:affordanceOn a owl:ObjectProperty ;
     rdfs:comment "Alias for cgh:affordanceTarget, emphasizing that affordances are directed at a specific PGSL node. Use this when the emphasis is on navigation ('what can I do from HERE?'), cgh:affordanceTarget when the emphasis is on the affordance itself." ;
     rdfs:domain cgh:Affordance ;
     rdfs:range pgsl:Node ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 align:evaluatedNode a owl:ObjectProperty ;
     rdfs:subPropertyOf prov:used ;
@@ -150,7 +150,7 @@ align:evaluatedNode a owl:ObjectProperty ;
     rdfs:comment "A runtime evaluation references the PGSL node whose retrieval/answer was scored. Subproperty of prov:used so the evaluation's PROV inputs are discoverable." ;
     rdfs:domain cgh:RuntimeEval ;
     rdfs:range pgsl:Node ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 # ── Decorator context carries lattice state ─────────────────────
 
@@ -160,7 +160,7 @@ align:contextNode a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:comment "The PGSL node at the center of a DecoratorContext. Functional — each context is for exactly one node." ;
     rdfs:domain cgh:DecoratorContext ;
     rdfs:range pgsl:Node ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 align:contextLattice a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:subPropertyOf prov:used ;
@@ -168,7 +168,7 @@ align:contextLattice a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:comment "The PGSL Lattice a DecoratorContext is part of. Functional — a context is always from one lattice." ;
     rdfs:domain cgh:DecoratorContext ;
     rdfs:range pgsl:Lattice ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 # ══════════════════════════════════════════════════════════════
 #  PART 3 — cgh ↔ cg (harness outputs TYPED CONTEXT)
@@ -186,28 +186,28 @@ align:produces a owl:ObjectProperty ;
     rdfs:comment "A harness activity (e.g. RuntimeEval, Decision, PolicyDecision) can produce a ContextDescriptor as its output. The produced descriptor then describes the subject entity with whatever facets the harness computed." ;
     rdfs:domain prov:Activity ;
     rdfs:range cg:ContextDescriptor ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 align:confidenceToTrust a owl:ObjectProperty ;
     rdfs:label "confidence → trust" ;
     rdfs:comment "Links a runtime evaluation to the cg:TrustFacet it materializes. The harness's numeric confidence (cgh:confidence) projects onto cg:epistemicConfidence, and the cgh:ConfidenceLevel projects onto a cg:TrustLevel via this relation." ;
     rdfs:domain cgh:RuntimeEval ;
     rdfs:range cg:TrustFacet ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 align:policyDecisionToAccessControl a owl:ObjectProperty ;
     rdfs:label "policy decision → access control" ;
     rdfs:comment "Links a cgh:PolicyDecision to the cg:AccessControlFacet it authorizes. A granted policy decision materializes as an authorization triple in the AccessControlFacet." ;
     rdfs:domain cgh:PolicyDecision ;
     rdfs:range cg:AccessControlFacet ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 align:traceToProvenance a owl:ObjectProperty ;
     rdfs:label "trace → provenance" ;
     rdfs:comment "Links a cgh:ProvTrace to the cg:ProvenanceFacet that records it in a context descriptor. Since ProvTrace is already a prov:Activity, this is a re-materialization of the trace as a first-class provenance facet on the affected entity." ;
     rdfs:domain cgh:ProvTrace ;
     rdfs:range cg:ProvenanceFacet ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 # ══════════════════════════════════════════════════════════════
 #  PART 4 — SKOS concept scheme alignments
@@ -300,7 +300,7 @@ align:policyToAclAuthorization a owl:ObjectProperty ;
     rdfs:comment "Projection from a harness PolicyRule to a W3C Web Access Control Authorization. Not an equivalence — ACL is flat (agent × mode × resource), while ODRL/cgh policy rules can carry conditions and obligations." ;
     rdfs:domain cgh:PolicyRule ;
     rdfs:range acl:Authorization ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 # ── Verifiable Credentials alignments ─────────────────────────
 
@@ -310,7 +310,7 @@ align:trustFromCredential a owl:ObjectProperty ;
     rdfs:subPropertyOf cg:verifiableCredential ;
     rdfs:label "trust from credential" ;
     rdfs:comment "A cg:TrustFacet can be backed by a W3C Verifiable Credential. This alignment just restates cg:verifiableCredential with a clearer name for cross-layer use." ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 # ── DCAT alignments (federation / distribution) ──────────────
 
@@ -326,7 +326,7 @@ align:temporalIntervalOf a owl:ObjectProperty ;
     rdfs:comment "Links a cg:TemporalFacet to the underlying OWL-Time ProperInterval. Use this when you need to reason temporally with standard OWL-Time axioms (before, after, during, etc.)." ;
     rdfs:domain cg:TemporalFacet ;
     rdfs:range time:ProperInterval ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 # ══════════════════════════════════════════════════════════════
 #  PART 6 — Integration patterns
@@ -346,7 +346,7 @@ align:IntegrationPattern a owl:Class , skos:ConceptScheme ;
         align:ArbitratedCompositionPattern ,
         align:AuditedPublicationPattern ,
         align:FederatedObservationPattern ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 align:TracedAnswerPattern a skos:Concept , align:IntegrationPattern ;
     skos:inScheme align:IntegrationPattern ;
@@ -415,7 +415,7 @@ align:answersInterrogative a owl:ObjectProperty ;
     rdfs:comment "Declares that instances of the subject class can serve as grounding data for responses to the object interrogative type. Used to map lower-layer technical classes to the user-facing ie: interrogative grammar. Multi-valued in both directions: a class can answer multiple interrogatives, and an interrogative can be answered from multiple classes." ;
     rdfs:domain rdfs:Class ;
     rdfs:range ie:Interrogative ;
-    rdfs:isDefinedBy <https://interego.dev/ns/alignment#>.
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#>.
 
 # ── cg: layer → interrogatives ───────────────────────────────
 

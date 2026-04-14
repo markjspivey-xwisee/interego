@@ -1,7 +1,7 @@
-@prefix ie:   <https://interego.dev/ns/interego#> .
-@prefix cg:   <https://interego.dev/ns/cg#> .
-@prefix pgsl: <https://interego.dev/ns/pgsl#> .
-@prefix cgh:  <https://interego.dev/ns/harness#> .
+@prefix ie:   <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
+@prefix cg:   <https://markjspivey-xwisee.github.io/context-graphs/ns/cg#> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#> .
+@prefix cgh:  <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
@@ -59,7 +59,7 @@
 #    storage of any one agent.
 # ══════════════════════════════════════════════════════════════
 
-<https://interego.dev/ns/interego#>
+<https://markjspivey-xwisee.github.io/context-graphs/ns/interego#>
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
     dct:title "Interego 1.0 — Interrogatives Core Ontology" ;
@@ -69,12 +69,12 @@
     dct:created "2026-04-14"^^xsd:date ;
     dct:modified "2026-04-14"^^xsd:date ;
     vann:preferredNamespacePrefix "ie" ;
-    vann:preferredNamespaceUri "https://interego.dev/ns/interego#" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/context-graphs/ns/interego#" ;
     owl:imports <http://www.w3.org/ns/prov-o> ,
-                <https://interego.dev/ns/pgsl#> ,
-                <https://interego.dev/ns/cg#> ,
-                <https://interego.dev/ns/harness#> ;
-    rdfs:seeAlso <https://interego.dev/ns/alignment#> .
+                <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#> ,
+                <https://markjspivey-xwisee.github.io/context-graphs/ns/cg#> ,
+                <https://markjspivey-xwisee.github.io/context-graphs/ns/harness#> ;
+    rdfs:seeAlso <https://markjspivey-xwisee.github.io/context-graphs/ns/alignment#> .
 
 # ══════════════════════════════════════════════════════════════
 #  PART 1 — Interrogative Types (SKOS concept scheme)
@@ -104,7 +104,7 @@ ie:Interrogative a owl:Class , skos:ConceptScheme ;
         ie:HowMuch ,
         ie:Whose ,
         ie:Whether ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 # ── The eleven canonical types ────────────────────────────────
 
@@ -197,13 +197,13 @@ ie:Act a owl:Class ;
     rdfs:subClassOf prov:Activity ;
     rdfs:label "Interrogative Act" ;
     rdfs:comment "A speech act of posing an interrogative. Records who asked (posedBy), optionally who they asked (posedTo), what kind of interrogative (interrogativeType), and what the question is about (about). Modeled as a prov:Activity so PROV tooling can walk dialog lineage and so policy decisions, traces, and evaluations can all be attached uniformly." ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:Response a owl:Class ;
     rdfs:subClassOf prov:Entity ;
     rdfs:label "Response" ;
     rdfs:comment "Content offered in response to an Interrogative Act. Grounded in substrate data (ie:grounds), attributed to a responding agent (prov:wasAttributedTo), and optionally evaluated for confidence (ie:confidence). A Response is never final — it can itself provoke further Acts that refine or reframe the original question." ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 # ── Act properties ────────────────────────────────────────────
 
@@ -213,41 +213,41 @@ ie:posedBy a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:comment "The agent who posed this interrogative act. Functional — each act has exactly one asker. Subproperty of prov:wasAssociatedWith so PROV tooling can find the asker via standard queries." ;
     rdfs:domain ie:Act ;
     rdfs:range prov:Agent ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:posedTo a owl:ObjectProperty ;
     rdfs:label "posed to" ;
     rdfs:comment "The agent or group the interrogative is directed at. Optional — absent when the question is posed to no one in particular (e.g. a monologue or a rhetorical question). Multi-valued — a question can be posed to multiple recipients." ;
     rdfs:domain ie:Act ;
     rdfs:range prov:Agent ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:interrogativeType a owl:ObjectProperty ;
     rdfs:label "interrogative type" ;
     rdfs:comment "The kind(s) of interrogative this act poses. Multi-valued because a single natural-language question often combines multiple interrogatives (e.g. 'when did Alice tell me about it?' combines Who, What, and When)." ;
     rdfs:domain ie:Act ;
     rdfs:range ie:Interrogative ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:about a owl:ObjectProperty ;
     rdfs:label "about" ;
     rdfs:comment "The focal entity or entities the interrogative is about. Typically a pgsl:Node (substrate data) or cg:ContextDescriptor (typed context). Gives the act a concrete target; distinct from the interrogative TYPE which is abstract." ;
     rdfs:domain ie:Act ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:refines a owl:ObjectProperty ;
     rdfs:label "refines" ;
     rdfs:comment "This act narrows or specifies a prior act. The refining act is always more specific than the one it refines — the interrogative type may stay the same but the scope contracts (e.g. 'what did Alice say?' refines 'who said what?'). Forms a directed acyclic graph of dialog evolution." ;
     rdfs:domain ie:Act ;
     rdfs:range ie:Act ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:reframes a owl:ObjectProperty ;
     rdfs:label "reframes" ;
     rdfs:comment "This act changes the interpretive frame of a prior act — swaps paradigms, replaces presuppositions, or shifts the semantic register. A reframe is a more aggressive move than a refinement: the relationship between the old and new question is not one of containment but of perspective change. In Saussurean terms, a reframe changes the paradigmatic axis." ;
     rdfs:domain ie:Act ;
     rdfs:range ie:Act ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:answeredBy a owl:ObjectProperty ;
     rdfs:label "answered by" ;
@@ -255,7 +255,7 @@ ie:answeredBy a owl:ObjectProperty ;
     rdfs:domain ie:Act ;
     rdfs:range ie:Response ;
     owl:inverseOf ie:responseTo ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 # ── Response properties ──────────────────────────────────────
 
@@ -265,7 +265,7 @@ ie:responseTo a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:domain ie:Response ;
     rdfs:range ie:Act ;
     owl:inverseOf ie:answeredBy ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:grounds a owl:ObjectProperty ;
     rdfs:subPropertyOf prov:used ;
@@ -273,14 +273,14 @@ ie:grounds a owl:ObjectProperty ;
     rdfs:comment "The substrate data this response draws upon. Typically pgsl:Node instances (atoms or fragments). Subproperty of prov:used so the response's inputs are discoverable via standard PROV walks. A response with no ie:grounds is a pure claim; a response with grounds is traceable back to primary data." ;
     rdfs:domain ie:Response ;
     rdfs:range pgsl:Node ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:confidence a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:label "confidence" ;
     rdfs:comment "Confidence in [0.0, 1.0] associated with a response. Typically computed by cgh:RuntimeEval and carried over to the response. Functional — each response has one confidence value." ;
     rdfs:domain ie:Response ;
     rdfs:range xsd:double ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 # ══════════════════════════════════════════════════════════════
 #  PART 3 — Peircean Semiotic Triad
@@ -297,17 +297,17 @@ ie:confidence a owl:DatatypeProperty , owl:FunctionalProperty ;
 ie:Sign a owl:Class ;
     rdfs:label "Sign" ;
     rdfs:comment "An interpretable token — whatever an agent takes to stand for something else. Peircean signs are NOT linguistic only; they include gestures, data patterns, sensor readings, and (recursively) other signs. In Interego, pgsl: atoms and fragments are frequently treated as signs when an agent interprets them." ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:Object a owl:Class ;
     rdfs:label "Semiotic Object" ;
     rdfs:comment "The thing a sign is about — what Peirce called the 'dynamic object'. Distinct from the sign itself, and distinct from any particular agent's interpretation. In practice, objects are often pgsl:Node instances (substrate data) or cg:ContextDescriptor references." ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:Interpretant a owl:Class ;
     rdfs:label "Interpretant" ;
     rdfs:comment "The meaning a particular agent derives from a particular sign. CRITICAL: interpretants are agent-relative. Two agents reading the same sign may produce different interpretants — this is not an error but the fundamental structure of intersubjective meaning. Interego records interpretants as first-class resources so disagreements can be compared, reconciled, or preserved as productive ambiguity." ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 # ── Triadic properties ───────────────────────────────────────
 
@@ -316,28 +316,28 @@ ie:signifies a owl:ObjectProperty ;
     rdfs:comment "The primary sign-to-object relation. Reads: 'this sign signifies that object.' The relation is mediated by interpretants (see ie:interpretedBy) but for convenience the direct sign→object link is also recorded." ;
     rdfs:domain ie:Sign ;
     rdfs:range ie:Object ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:interpretedBy a owl:ObjectProperty ;
     rdfs:label "interpreted by" ;
     rdfs:comment "The interpretants a sign gives rise to. Multi-valued — a single sign can have many interpretants, one per agent (or per agent-context pair). This is where intersubjective disagreement lives." ;
     rdfs:domain ie:Sign ;
     rdfs:range ie:Interpretant ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:forAgent a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "for agent" ;
     rdfs:comment "The agent whose interpretant this is. Functional — each interpretant belongs to exactly one agent, because meaning is agent-relative. To represent a shared interpretation across agents, use multiple interpretant resources that reference the same content." ;
     rdfs:domain ie:Interpretant ;
     rdfs:range prov:Agent ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:derivesFrom a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:label "derives from" ;
     rdfs:comment "Links an interpretant back to the sign it interprets. Functional — each interpretant interprets exactly one primary sign (though chains of interpretants can interpret each other, forming 'semiotic chains' in Peirce's sense)." ;
     rdfs:domain ie:Interpretant ;
     rdfs:range ie:Sign ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 # ══════════════════════════════════════════════════════════════
 #  PART 4 — Signification (emergent meaning)
@@ -358,17 +358,17 @@ ie:derivesFrom a owl:ObjectProperty , owl:FunctionalProperty ;
 ie:Signification a owl:Class ;
     rdfs:label "Signification" ;
     rdfs:comment "A unit of co-constructed meaning emerging from an interrogative exchange. Signification is NOT a pre-planned assertion — it is what participants retroactively recognize as having been jointly constructed. A signification emerges from one or more ie:Act / ie:Response exchanges (ie:emergesFrom), may improvise on prior significations (ie:improvisesOn), and is grounded in substrate data through its constituent responses. Significations are the atoms of meaning in Interego's improvisational signification platform." ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:emergesFrom a owl:ObjectProperty ;
     rdfs:label "emerges from" ;
     rdfs:comment "The acts and/or responses this signification retroactively binds together into a coherent meaning unit. Multi-valued — a signification typically emerges from multiple prior exchanges." ;
     rdfs:domain ie:Signification ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
 
 ie:improvisesOn a owl:ObjectProperty ;
     rdfs:label "improvises on" ;
     rdfs:comment "A signification may IMPROVISE on a prior signification — extending it in a direction not originally planned, much as a jazz musician improvises on a theme. The relationship is looser than rdfs:subClassOf or ie:refines — it captures the emergent, responsive, unscripted nature of real-time meaning construction. This property is what makes Interego an 'improvisational' platform rather than merely a dialog logger." ;
     rdfs:domain ie:Signification ;
     rdfs:range ie:Signification ;
-    rdfs:isDefinedBy <https://interego.dev/ns/interego#> .
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .

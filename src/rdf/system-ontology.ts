@@ -15,7 +15,7 @@ import {
 
 // ── Namespace Constants ─────────────────────────────────────
 
-export const CG_NS    = 'https://interego.dev/ns/cg#' as const;
+export const CG_NS    = 'https://markjspivey-xwisee.github.io/context-graphs/ns/cg#' as const;
 export const WAC_NS   = ACL;
 export const HYDRA_NS = HYDRA;
 export const DCAT_NS  = DCAT;

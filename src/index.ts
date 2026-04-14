@@ -4,7 +4,7 @@
  * Reference implementation of Interego 1.0 — a compositional
  * framework for typed graph contexts over RDF 1.2 Named Graphs.
  *
- * Spec: https://interego.dev/spec/interego-1.0.html
+ * Spec: https://markjspivey-xwisee.github.io/context-graphs/spec/interego-1.0.html
  * Author: Interego
  * License: CC-BY-4.0
  *
