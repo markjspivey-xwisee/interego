@@ -31,27 +31,10 @@ RUN sed 's|"file:../../"|"file:/tmp/interego-core.tgz"|g' package.json.template 
  && rm package.json.template \
  && npm install
 
+COPY examples/dashboard/tsconfig.json ./
 COPY examples/dashboard/server.ts ./
 COPY examples/dashboard/index.html ./
 COPY examples/multi-agent/css-config.json ./css-config.json
-RUN cat > tsconfig.json <<'EOF'
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "outDir": "./dist",
-    "rootDir": ".",
-    "strict": false,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true
-  },
-  "include": ["server.ts"],
-  "exclude": ["node_modules", "dist"]
-}
-EOF
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────

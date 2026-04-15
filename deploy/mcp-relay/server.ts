@@ -37,7 +37,6 @@ import {
   resolveWebFinger,
   pinToIpfs,
   cryptoComputeCid,
-  toTurtle,
 } from '@interego/core';
 
 import type {
