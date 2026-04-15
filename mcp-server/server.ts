@@ -126,7 +126,7 @@ const MY_DID = (process.env['CG_DID'] ?? `did:web:${POD_NAME}.local`) as IRI;
 const KNOWN_PODS_RAW = process.env['CG_KNOWN_PODS'] ?? '';
 const DIRECTORY_URL = process.env['CG_DIRECTORY_URL'] ?? undefined;
 const IDENTITY_SERVER_URL = process.env['CG_IDENTITY_URL']
-  ?? 'https://context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 
 // IPFS config
 const IPFS_PROVIDER = (process.env['CG_IPFS_PROVIDER'] ?? 'local') as 'pinata' | 'web3storage' | 'local';
@@ -1562,7 +1562,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: 'object' as const,
         properties: {
-          resource: { type: 'string', description: 'WebFinger resource (e.g. "acct:markj@context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io" or a WebID URL)' },
+          resource: { type: 'string', description: 'WebFinger resource (e.g. "acct:markj@interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io" or a WebID URL)' },
         },
         required: ['resource'],
       },

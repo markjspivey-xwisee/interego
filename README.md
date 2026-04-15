@@ -159,7 +159,7 @@ const harnessTtl = loadOntology('harness');  // 982 lines, 810 triples
 Hit the deployed HTTP relay (any HTTP client works — no MCP, no SDK):
 
 ```bash
-curl -X POST https://context-graphs-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/tools/discover_context \
+curl -X POST https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/tools/discover_context \
   -H "Content-Type: application/json" \
   -d '{"namespace": "cg"}'
 ```
@@ -170,9 +170,9 @@ Every MCP tool is exposed as a `POST /tools/{tool_name}` endpoint with a JSON bo
 
 Open one of the deployed web UIs in your browser — no install required:
 
-- **PGSL Browser:** https://context-graphs-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io
-- **Dashboard:** https://context-graphs-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io
-- **Identity setup:** https://context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io
+- **PGSL Browser:** https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io
+- **Dashboard:** https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io
+- **Identity setup:** https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io
 
 ### 🛠 I want to clone and hack on the system itself
 

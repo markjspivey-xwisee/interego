@@ -6,9 +6,9 @@ RESOURCE_GROUP="${CG_RESOURCE_GROUP:-context-graphs-rg}"
 LOCATION="${CG_LOCATION:-eastus}"
 ACR_NAME="${CG_ACR_NAME:-contextgraphsacr}"
 ENV_NAME="${CG_ENV_NAME:-context-graphs-env}"
-CSS_APP="context-graphs-css"
-DASHBOARD_APP="context-graphs-dashboard"
-RELAY_APP="context-graphs-relay"
+CSS_APP="interego-css"
+DASHBOARD_APP="interego-dashboard"
+RELAY_APP="interego-relay"
 
 echo "=== Interego Azure Deployment ==="
 echo "Resource Group: $RESOURCE_GROUP"
@@ -42,7 +42,7 @@ az acr login --name "$ACR_NAME"
 echo ">>> Building CSS image..."
 az acr build \
   --registry "$ACR_NAME" \
-  --image context-graphs-css:latest \
+  --image interego-css:latest \
   --file deploy/Dockerfile.css \
   . \
   --no-logs
@@ -50,7 +50,7 @@ az acr build \
 echo ">>> Building Dashboard image..."
 az acr build \
   --registry "$ACR_NAME" \
-  --image context-graphs-dashboard:latest \
+  --image interego-dashboard:latest \
   --file deploy/Dockerfile.dashboard \
   . \
   --no-logs
@@ -58,7 +58,7 @@ az acr build \
 echo ">>> Building MCP Relay image..."
 az acr build \
   --registry "$ACR_NAME" \
-  --image context-graphs-relay:latest \
+  --image interego-relay:latest \
   --file deploy/Dockerfile.relay \
   . \
   --no-logs
@@ -81,7 +81,7 @@ az containerapp create \
   --name "$CSS_APP" \
   --resource-group "$RESOURCE_GROUP" \
   --environment "$ENV_NAME" \
-  --image "$ACR_LOGIN_SERVER/context-graphs-css:latest" \
+  --image "$ACR_LOGIN_SERVER/interego-css:latest" \
   --registry-server "$ACR_LOGIN_SERVER" \
   --registry-username "$ACR_USERNAME" \
   --registry-password "$ACR_PASSWORD" \
@@ -111,7 +111,7 @@ az containerapp create \
   --name "$DASHBOARD_APP" \
   --resource-group "$RESOURCE_GROUP" \
   --environment "$ENV_NAME" \
-  --image "$ACR_LOGIN_SERVER/context-graphs-dashboard:latest" \
+  --image "$ACR_LOGIN_SERVER/interego-dashboard:latest" \
   --registry-server "$ACR_LOGIN_SERVER" \
   --registry-username "$ACR_USERNAME" \
   --registry-password "$ACR_PASSWORD" \
@@ -133,7 +133,7 @@ az containerapp create \
   --name "$RELAY_APP" \
   --resource-group "$RESOURCE_GROUP" \
   --environment "$ENV_NAME" \
-  --image "$ACR_LOGIN_SERVER/context-graphs-relay:latest" \
+  --image "$ACR_LOGIN_SERVER/interego-relay:latest" \
   --registry-server "$ACR_LOGIN_SERVER" \
   --registry-username "$ACR_USERNAME" \
   --registry-password "$ACR_PASSWORD" \
@@ -150,11 +150,11 @@ RELAY_FQDN=$(az containerapp show --name "$RELAY_APP" --resource-group "$RESOURC
 echo "    MCP Relay: https://$RELAY_FQDN"
 
 # ── 8. Deploy PGSL Browser + Observatory ──────────────────────
-BROWSER_APP="context-graphs-browser"
+BROWSER_APP="interego-browser"
 echo ">>> Building PGSL Browser image..."
 az acr build \
   --registry "$ACR_NAME" \
-  --image context-graphs-browser:latest \
+  --image interego-browser:latest \
   --file deploy/Dockerfile.pgsl-browser \
   . \
   --no-logs
@@ -164,7 +164,7 @@ az containerapp create \
   --name "$BROWSER_APP" \
   --resource-group "$RESOURCE_GROUP" \
   --environment "$ENV_NAME" \
-  --image "$ACR_LOGIN_SERVER/context-graphs-browser:latest" \
+  --image "$ACR_LOGIN_SERVER/interego-browser:latest" \
   --registry-server "$ACR_LOGIN_SERVER" \
   --registry-username "$ACR_USERNAME" \
   --registry-password "$ACR_PASSWORD" \

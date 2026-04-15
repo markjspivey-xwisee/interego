@@ -16,7 +16,7 @@
  *.describes('urn:graph:observations-2026-Q1')
  *.temporal({ validFrom: '2026-01-01T00:00:00Z', validUntil: '2026-03-31T23:59:59Z' })
  *.asserted(0.95)
- *.selfAsserted('did:web:context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io')
+ *.selfAsserted('did:web:interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io')
  *.build();
  *
  * const result = validate(desc);

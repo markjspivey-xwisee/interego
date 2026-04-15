@@ -5,9 +5,9 @@ name: Deploy to Azure Container Apps
 # from the Actions tab for ad-hoc redeploys.
 #
 # Only three container apps bake src/ into their images:
-#   - context-graphs-dashboard
-#   - context-graphs-pgsl-browser
-#   - context-graphs-relay
+#   - interego-dashboard
+#   - interego-pgsl-browser
+#   - interego-relay
 #
 # The other three (css, identity, browser) are untouched by this workflow.
 
@@ -59,11 +59,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: context-graphs-dashboard
+          - image: interego-dashboard
             dockerfile: deploy/Dockerfile.dashboard
-          - image: context-graphs-pgsl-browser
+          - image: interego-pgsl-browser
             dockerfile: deploy/Dockerfile.pgsl-browser
-          - image: context-graphs-relay
+          - image: interego-relay
             dockerfile: deploy/Dockerfile.relay
 
     steps:

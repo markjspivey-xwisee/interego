@@ -78,7 +78,7 @@ describe('ContextDescriptor Builder', () => {
         temporalResolution: 'P1D',
       })
 .asserted(0.95)
-.selfAsserted('did:web:context-graphs-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io' as IRI)
+.selfAsserted('did:web:interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io' as IRI)
 .generatedBy('urn:agent:etl' as IRI, {
         derivedFrom: ['urn:data:raw.csv' as IRI],
       })
