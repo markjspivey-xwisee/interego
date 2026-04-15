@@ -1,4 +1,7 @@
-FROM node:20-slim
+# ────────────────────────────────────────────────────────────
+#  Build stage: compile server.ts with tsc
+# ────────────────────────────────────────────────────────────
+FROM node:20-slim AS build
 
 WORKDIR /app
 
@@ -6,10 +9,45 @@ COPY deploy/identity/package.json ./
 RUN npm install
 
 COPY deploy/identity/server.ts ./
+RUN cat > tsconfig.json <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "./dist",
+    "rootDir": ".",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true
+  },
+  "include": ["server.ts"],
+  "exclude": ["node_modules", "dist"]
+}
+EOF
+RUN npx tsc
+
+# ────────────────────────────────────────────────────────────
+#  Runtime stage: distroless image running compiled JS
+#
+#  Distroless drops the Debian userland (no shell, no package
+#  manager, ~60MB vs ~200MB for node:20-slim) and dramatically
+#  reduces the CVE surface. `node` is the entrypoint, so CMD
+#  is just the script path.
+# ────────────────────────────────────────────────────────────
+FROM gcr.io/distroless/nodejs20-debian12
+
+WORKDIR /app
+
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./
 
 EXPOSE 8090
 
 ENV PORT=8090
 ENV CSS_URL=http://css:3456/
 
-CMD ["npx", "tsx", "server.ts"]
+CMD ["dist/server.js"]

@@ -1,30 +1,71 @@
-FROM node:20-slim
+# ────────────────────────────────────────────────────────────
+#  Build stage: compile the @interego/core library + relay
+# ────────────────────────────────────────────────────────────
+FROM node:20-slim AS build
 
-# Skip CUDA binary download for onnxruntime-node (transitive dep via
-# @huggingface/transformers). The containerapp has no GPU, the CPU
-# backend still works, and the CUDA binary comes from a GitHub release
-# that is intermittently 504'ing.
+# Skip onnxruntime-node CUDA binary (no GPU in containerapp, CPU
+# backend is sufficient, GitHub release binary has flaky 504s).
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 
 WORKDIR /lib
 
-# Build the context-graphs library first
-COPY package.json tsconfig.json ./
+# Build the @interego/core library (compile src/ → dist/)
+COPY package.json package-lock.json tsconfig.json ./
 COPY src/ ./src/
-RUN npm install && npx tsc
+COPY docs/ns/ ./docs/ns/
+RUN npm ci && npx tsc
+
+# Pack the library into a tarball for the app install
+RUN npm pack && mv interego-core-*.tgz /tmp/interego-core.tgz
+
+# ────────────────────────────────────────────────────────────
+#  Build stage: install relay deps + compile server.ts
+# ────────────────────────────────────────────────────────────
+WORKDIR /app
+
+COPY deploy/mcp-relay/package.json ./package.json.template
+# Replace file:../../ library dep with the packed tarball path
+# so we get a real @interego/core install (not a symlink to the
+# raw repo layout).
+RUN sed 's|"file:../../"|"file:/tmp/interego-core.tgz"|g' package.json.template > package.json \
+ && rm package.json.template \
+ && npm install
+
+COPY deploy/mcp-relay/server.ts ./
+RUN cat > tsconfig.json <<'EOF'
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "./dist",
+    "rootDir": ".",
+    "strict": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true
+  },
+  "include": ["server.ts"],
+  "exclude": ["node_modules", "dist"]
+}
+EOF
+RUN npx tsc
+
+# ────────────────────────────────────────────────────────────
+#  Runtime stage: distroless image running compiled JS
+# ────────────────────────────────────────────────────────────
+FROM gcr.io/distroless/nodejs20-debian12
 
 WORKDIR /app
 
-# Copy relay package.json but replace file: dep with local path
-COPY deploy/mcp-relay/package.json ./package.json.template
-RUN sed 's|"file:../../"|"file:///lib"|g' package.json.template > package.json && rm package.json.template
-RUN npm install
-
-COPY deploy/mcp-relay/server.ts ./
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./
 
 EXPOSE 8080
 
-ENV CSS_URL=http://css:3456/
 ENV PORT=8080
+ENV CSS_URL=http://css:3456/
 
-CMD ["npx", "tsx", "server.ts"]
+CMD ["dist/server.js"]

@@ -4,12 +4,13 @@ name: Deploy to Azure Container Apps
 # image cares about. Workflow_dispatch lets you also kick it off manually
 # from the Actions tab for ad-hoc redeploys.
 #
-# Only three container apps bake src/ into their images:
+# Four container apps are CI-managed:
 #   - interego-dashboard
 #   - interego-pgsl-browser
 #   - interego-relay
+#   - interego-identity
 #
-# The other three (css, identity, browser) are untouched by this workflow.
+# The other two (css, browser) are untouched by this workflow.
 
 on:
   push:
@@ -19,7 +20,9 @@ on:
       - 'deploy/Dockerfile.dashboard'
       - 'deploy/Dockerfile.pgsl-browser'
       - 'deploy/Dockerfile.relay'
+      - 'deploy/Dockerfile.identity'
       - 'deploy/mcp-relay/**'
+      - 'deploy/identity/**'
       - 'examples/dashboard/**'
       - 'examples/pgsl-browser/**'
       - 'docs/ns/**'
@@ -30,9 +33,9 @@ on:
   workflow_dispatch:
     inputs:
       images:
-        description: 'Comma-separated image names (default: all three)'
+        description: 'Comma-separated image names (default: all four)'
         required: false
-        default: 'dashboard,pgsl-browser,relay'
+        default: 'dashboard,pgsl-browser,relay,identity'
 
 # OIDC federated identity — no long-lived secrets. The id-token: write
 # permission is required for actions/federated-credentials to work.
@@ -55,7 +58,7 @@ jobs:
 
     strategy:
       # Don't let one image's failure abort the others. Each container
-      # app is independent and we'd rather deploy 2/3 than 0/3.
+      # app is independent and we'd rather deploy 3/4 than 0/4.
       fail-fast: false
       matrix:
         include:
@@ -65,6 +68,8 @@ jobs:
             dockerfile: deploy/Dockerfile.pgsl-browser
           - image: interego-relay
             dockerfile: deploy/Dockerfile.relay
+          - image: interego-identity
+            dockerfile: deploy/Dockerfile.identity
 
     steps:
       - name: Checkout

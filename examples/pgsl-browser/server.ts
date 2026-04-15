@@ -80,19 +80,13 @@ import {
   createPolicyEngine, addRule, defaultPolicies, evaluate as evaluatePolicy,
   createTraceStore, recordTrace, getTraces, traceToTurtle,
   createPersonalBroker, startConversation, addMessage, getMemoryStats,
-} from '../../src/pgsl/agent-framework.js';
-
-import {
   createEnclaveRegistry, createEnclave, forkEnclave, getEnclave, listEnclaves,
   freezeEnclave, mergeEnclave, abandonEnclave, enclaveStats,
   createCheckpointStore, createCheckpoint, restoreCheckpoint, listCheckpoints, diffCheckpoints,
-} from '../../src/pgsl/infrastructure.js';
-
-import {
   createMarketplace, registerListing, removeListing, discoverByCapability,
   discoverByType, marketplaceToHydra, marketplaceStats,
   generateMetagraph, ingestMetagraph, validateMetagraph, queryMetagraph,
-} from '../../src/pgsl/discovery.js';
+} from '@interego/core/pgsl';
 
 // Get the xAPI profile for direct transform calls
 const xapiProfile = getProfile('xapi')!;

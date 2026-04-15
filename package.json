@@ -34,6 +34,10 @@
     "./solid": {
       "import": "./dist/solid/index.js",
       "types": "./dist/solid/index.d.ts"
+    },
+    "./pgsl": {
+      "import": "./dist/pgsl/index.js",
+      "types": "./dist/pgsl/index.d.ts"
     }
   },
   "files": [
