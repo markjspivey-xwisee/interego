@@ -31,25 +31,8 @@ RUN sed 's|"file:../../"|"file:/tmp/interego-core.tgz"|g' package.json.template 
  && rm package.json.template \
  && npm install
 
+COPY deploy/mcp-relay/tsconfig.json ./
 COPY deploy/mcp-relay/server.ts ./
-RUN cat > tsconfig.json <<'EOF'
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "outDir": "./dist",
-    "rootDir": ".",
-    "strict": false,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true
-  },
-  "include": ["server.ts"],
-  "exclude": ["node_modules", "dist"]
-}
-EOF
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────
