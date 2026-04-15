@@ -72,11 +72,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/markjspivey-xwisee/context-graphs.git"
+    "url": "git+https://github.com/markjspivey-xwisee/interego.git"
   },
-  "homepage": "https://markjspivey-xwisee.github.io/context-graphs/spec/interego-1.0.html",
+  "homepage": "https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html",
   "bugs": {
-    "url": "https://github.com/markjspivey-xwisee/context-graphs/issues"
+    "url": "https://github.com/markjspivey-xwisee/interego/issues"
   },
   "engines": {
     "node": ">=20.0.0"

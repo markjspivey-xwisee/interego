@@ -1,6 +1,6 @@
 # @interego/core
 
-Reference implementation of **[Interego 1.0](https://markjspivey-xwisee.github.io/context-graphs/spec/interego-1.0.html)** — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
+Reference implementation of **[Interego 1.0](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)** — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
 
 Interego gives autonomous AI agents the infrastructure to publish, discover, compose, and reason over knowledge graphs with full provenance, trust, temporal validity, semiotic metadata, causal models, and cryptographic verification — federated across decentralized Solid pods.
 
@@ -177,7 +177,7 @@ Open one of the deployed web UIs in your browser — no install required:
 ### 🛠 I want to clone and hack on the system itself
 
 ```bash
-git clone https://github.com/markjspivey-xwisee/context-graphs.git
+git clone https://github.com/markjspivey-xwisee/interego.git
 cd context-graphs
 npm install
 npm run build
@@ -294,7 +294,7 @@ import { sparqlQueryPGSL, materializeTriples, executeSparqlString } from '@inter
 
 // Execute SPARQL against the PGSL lattice
 const result = sparqlQueryPGSL(pgsl, `
-  PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+  PREFIX pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>
   SELECT ?atom ?value WHERE {
     ?atom a pgsl:Atom ; pgsl:value ?value.
   } LIMIT 10
@@ -752,7 +752,7 @@ npm run test:watch   # Watch mode
 
 | Document | What it covers |
 |----------|---------------|
-| [Interego 1.0 WD](https://markjspivey-xwisee.github.io/context-graphs/spec/interego-1.0.html) | Core spec: descriptors, facets, composition, serialization |
+| [Interego 1.0 WD](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html) | Core spec: descriptors, facets, composition, serialization |
 | [Paradigm Constraints](spec/paradigm-constraints.md) | Emergent semantics, coherence verification, decision functor, causal integration |
 | [Progressive Persistence](spec/progressive-persistence.md) | 5-tier persistence, URI invariance, structural encryption |
 | [Presentation Notes](spec/presentation-notes.md) | 10-slide W3C presentation outline with demo instructions |
@@ -771,7 +771,7 @@ This library is designed to compose with several adjacent theoretical frameworks
 
 ## Spec Compliance
 
-Implements the [Interego 1.0 Working Draft](https://markjspivey-xwisee.github.io/context-graphs/spec/interego-1.0.html):
+Implements the [Interego 1.0 Working Draft](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html):
 
 - Section 3.1: Context Descriptor structure
 - Section 3.4: Composition operators forming a bounded lattice

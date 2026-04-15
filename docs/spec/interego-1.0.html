@@ -108,13 +108,13 @@
   <p class="subtitle">Specification Draft — 17 March 2026</p>
   <dl>
     <dt>This version:</dt>
-    <dd><a href="https://markjspivey-xwisee.github.io/context-graphs/spec/interego-1.0.html/">https://markjspivey-xwisee.github.io/context-graphs/spec/interego-1.0.html/</a></dd><br>
+    <dd><a href="https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html/">https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html/</a></dd><br>
     <dt>Latest published version:</dt>
-    <dd><a href="https://markjspivey-xwisee.github.io/context-graphs/spec/">https://markjspivey-xwisee.github.io/context-graphs/spec/</a></dd><br>
+    <dd><a href="https://markjspivey-xwisee.github.io/interego/spec/">https://markjspivey-xwisee.github.io/interego/spec/</a></dd><br>
     <dt>Author:</dt>
     <dd>Interego &lt;<a href="mailto:noreply@interego.dev">noreply@interego.dev</a>&gt;</dd><br>
     <dt>Repository:</dt>
-    <dd><a href="https://github.com/markjspivey-xwisee/context-graphs">github.com/markjspivey-xwisee/context-graphs</a></dd>
+    <dd><a href="https://github.com/markjspivey-xwisee/interego">github.com/markjspivey-xwisee/interego</a></dd>
   </dl>
 </div>
 
@@ -158,7 +158,7 @@
   </p>
   <p>
     Comments on this specification are welcome. Please file issues on the
-    <a href="https://github.com/markjspivey-xwisee/context-graphs/issues">GitHub repository</a>.
+    <a href="https://github.com/markjspivey-xwisee/interego/issues">GitHub repository</a>.
   </p>
 </div>
 
@@ -620,7 +620,7 @@
   The Interego vocabulary is identified by the namespace IRI:
 </p>
 
-<pre><code>https://markjspivey-xwisee.github.io/context-graphs/ns/cg#</code></pre>
+<pre><code>https://markjspivey-xwisee.github.io/interego/ns/cg#</code></pre>
 
 <p>
   The conventional prefix is <code>cg:</code>.
@@ -633,7 +633,7 @@
 <table class="prefix-table">
   <thead><tr><th>Prefix</th><th>Namespace IRI</th><th>Specification</th></tr></thead>
   <tbody>
-    <tr><td><code>cg:</code></td><td>https://markjspivey-xwisee.github.io/context-graphs/ns/cg#</td><td>This specification</td></tr>
+    <tr><td><code>cg:</code></td><td>https://markjspivey-xwisee.github.io/interego/ns/cg#</td><td>This specification</td></tr>
     <tr><td><code>rdf:</code></td><td>http://www.w3.org/1999/02/22-rdf-syntax-ns#</td><td>RDF 1.2</td></tr>
     <tr><td><code>rdfs:</code></td><td>http://www.w3.org/2000/01/rdf-schema#</td><td>RDF Schema 1.2</td></tr>
     <tr><td><code>xsd:</code></td><td>http://www.w3.org/2001/XMLSchema#</td><td>XML Schema Datatypes</td></tr>
@@ -1066,7 +1066,7 @@ cg:override      a cg:CompositionOperator ; rdfs:label "Override"@en.</code></pr
   <span class="rfc2119">MUST</span> implement these shapes.
 </p>
 
-<pre><code>@prefix cg:    &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/cg#&gt;.
+<pre><code>@prefix cg:    &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;.
 @prefix sh:    &lt;http://www.w3.org/ns/shacl#&gt;.
 @prefix xsd:   &lt;http://www.w3.org/2001/XMLSchema#&gt;.
 @prefix prov:  &lt;http://www.w3.org/ns/prov#&gt;.
@@ -1209,7 +1209,7 @@ cg:TrustFacetShape a sh:NodeShape ;
 <pre><code>{
   "@context": {
     "@version": 1.1,
-    "cg": "https://markjspivey-xwisee.github.io/context-graphs/ns/cg#",
+    "cg": "https://markjspivey-xwisee.github.io/interego/ns/cg#",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
     "xsd": "http://www.w3.org/2001/XMLSchema#",
@@ -1290,7 +1290,7 @@ cg:TrustFacetShape a sh:NodeShape ;
 
 <h3>Query Pattern: Retrieving Context for a Named Graph</h3>
 
-<pre><code>PREFIX cg:   &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/cg#&gt;
+<pre><code>PREFIX cg:   &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;
 PREFIX prov: &lt;http://www.w3.org/ns/prov#&gt;
 
 SELECT ?descriptor ?facetType ?validFrom ?validUntil ?agent
@@ -1311,7 +1311,7 @@ WHERE {
 
 <h3>Query Pattern: Filtering Graphs by Temporal Context</h3>
 
-<pre><code>PREFIX cg: &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/cg#&gt;
+<pre><code>PREFIX cg: &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;
 
 SELECT ?graph ?content
 WHERE {
@@ -1331,7 +1331,7 @@ WHERE {
 
 <h3>Query Pattern: Filtering by Modal Status (Semiotic Facet)</h3>
 
-<pre><code>PREFIX cg: &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/cg#&gt;
+<pre><code>PREFIX cg: &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;
 
 # Find all graphs whose content is asserted (not hypothetical or quoted)
 SELECT ?graph
@@ -1490,7 +1490,7 @@ WHERE {
 
 <h3>Example 1: Sensor Data with Full Context</h3>
 
-<pre><code>@prefix cg:    &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/cg#&gt;.
+<pre><code>@prefix cg:    &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;.
 @prefix prov:  &lt;http://www.w3.org/ns/prov#&gt;.
 @prefix time:  &lt;http://www.w3.org/2006/time#&gt;.
 @prefix xsd:   &lt;http://www.w3.org/2001/XMLSchema#&gt;.
@@ -1573,7 +1573,7 @@ GRAPH ex:graph-sensor-2026Q1 {
 
 <h3>Example 2: Federated Context Composition</h3>
 
-<pre><code>@prefix cg: &lt;https://markjspivey-xwisee.github.io/context-graphs/ns/cg#&gt;.
+<pre><code>@prefix cg: &lt;https://markjspivey-xwisee.github.io/interego/ns/cg#&gt;.
 @prefix ex: &lt;https://example.org/&gt;.
 
 # Alice's context descriptor (from her Solid Pod)
@@ -1620,7 +1620,7 @@ ex:ctx-composed a cg:ComposedDescriptor ;
 <h3>Example 3: JSON-LD Compact Serialization</h3>
 
 <pre><code>{
-  "@context": "https://markjspivey-xwisee.github.io/context-graphs/ns/cg/v1",
+  "@context": "https://markjspivey-xwisee.github.io/interego/ns/cg/v1",
   "@id": "urn:cg:desc:quickstart-1",
   "@type": "ContextDescriptor",
   "version": 0,

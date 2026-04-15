@@ -83,7 +83,7 @@ describe('PGSL LLM Tools', () => {
       const call: ToolCall = {
         name: 'sparql_query',
         arguments: {
-          query: 'PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#> SELECT ?atom WHERE { ?atom a pgsl:Atom }',
+          query: 'PREFIX pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> SELECT ?atom WHERE { ?atom a pgsl:Atom }',
         },
       };
       const result = executeToolCall(ctx, call);

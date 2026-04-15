@@ -12,7 +12,7 @@
  *   Turtle: Full serialization of PGSL instances
  *
  * The PGSL namespace extends the Interego namespace:
- *   pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+ *   pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>
  */
 
 import type {
@@ -25,7 +25,7 @@ import { pullbackSquare } from './category.js';
 
 // ── PGSL Namespace ──────────────────────────────────────────
 
-export const PGSL_NS = 'https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#' as const;
+export const PGSL_NS = 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#' as const;
 
 export const PGSLClass = {
   Node:                  `${PGSL_NS}Node`,

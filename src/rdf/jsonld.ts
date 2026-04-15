@@ -27,12 +27,12 @@ import type {
 // ── JSON-LD Context Document (§7) ────────────────────────────
 
 export const CONTEXT_GRAPHS_JSONLD_CONTEXT_URL =
-  'https://markjspivey-xwisee.github.io/context-graphs/ns/cg/v1' as const;
+  'https://markjspivey-xwisee.github.io/interego/ns/cg/v1' as const;
 
 export const CONTEXT_GRAPHS_JSONLD_CONTEXT = {
   '@context': {
     '@version': 1.1,
-    cg: 'https://markjspivey-xwisee.github.io/context-graphs/ns/cg#',
+    cg: 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
     rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
     rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
     xsd: 'http://www.w3.org/2001/XMLSchema#',

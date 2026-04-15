@@ -1,5 +1,5 @@
-@prefix ie:   <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
-@prefix pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#> .
+@prefix ie:   <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
 @prefix sh:   <http://www.w3.org/ns/shacl#> .
 @prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
@@ -22,14 +22,14 @@
 #    - Every ie:Signification emerges from at least one thing.
 # ══════════════════════════════════════════════════════════════
 
-<https://markjspivey-xwisee.github.io/context-graphs/ns/interego-shapes#>
+<https://markjspivey-xwisee.github.io/interego/ns/interego-shapes#>
     a owl:Ontology ;
     owl:versionInfo "1.0" ;
     dct:title "Interego 1.0 — Interrogatives SHACL Shapes" ;
     dct:description "SHACL validation shapes for the Interego interrogatives ontology. Enforces Act/Response well-formedness, confidence bounds, and PROV provenance requirements." ;
     dct:license <https://creativecommons.org/licenses/by/4.0/> ;
     dct:created "2026-04-14"^^xsd:date ;
-    rdfs:seeAlso <https://markjspivey-xwisee.github.io/context-graphs/ns/interego#> .
+    rdfs:seeAlso <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
 
 # ══════════════════════════════════════════════════════════════
 #  Interrogative Act Shape

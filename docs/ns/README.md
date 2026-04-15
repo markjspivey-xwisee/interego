@@ -2,7 +2,7 @@
 
 This directory contains the **canonical, versioned, hand-authored OWL/RDFS/SHACL ontologies** that define the Interego 1.0 system. These files are the single source of truth for every class, property, and SKOS concept scheme in the three co-designed layers of the system.
 
-**Namespace root:** `https://markjspivey-xwisee.github.io/context-graphs/ns/`
+**Namespace root:** `https://markjspivey-xwisee.github.io/interego/ns/`
 
 ## The four layers
 
@@ -100,12 +100,12 @@ for (const entry of ONTOLOGY_MANIFEST) {
 
 The canonical URLs resolve to this directory via GitHub Pages:
 
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/cg.ttl`
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl.ttl`
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl-shapes.ttl`
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/harness.ttl`
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/harness-shapes.ttl`
-- `https://markjspivey-xwisee.github.io/context-graphs/ns/alignment.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/cg.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/pgsl.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/pgsl-shapes.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/harness.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/harness-shapes.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/alignment.ttl`
 
 Each ontology's `vann:preferredNamespaceUri` matches the hashed namespace URI in its `owl:Ontology` declaration.
 

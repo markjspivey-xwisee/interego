@@ -472,7 +472,7 @@ app.post('/api/constraints/shacl', (req, res) => {
       // Find URIs for the allowed values
       const allowedUris = prop.in.map(v => pgsl.atoms.get(v)).filter(Boolean);
       if (allowedUris.length > 0) {
-        const sparql = `PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+        const sparql = `PREFIX pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>
 SELECT ?candidate WHERE { ?candidate a pgsl:Atom ; pgsl:value ?v. FILTER(${prop.in.map(v => `?v = "${v}"`).join(' || ')}) }`;
         const c: ParadigmConstraint = {
           id: `shacl:${Date.now()}:${created.length}`,
@@ -504,7 +504,7 @@ app.get('/api/constraints/shacl', (_req, res) => {
   };
 
   let turtle = '@prefix sh: <http://www.w3.org/ns/shacl#>.\n';
-  turtle += '@prefix pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>.\n\n';
+  turtle += '@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.\n\n';
 
   for (const c of constraintRegistry) {
     const shapeName = c.id.replace(/[^a-zA-Z0-9]/g, '_');
@@ -2238,7 +2238,7 @@ app.post('/api/demo/run', async (_req, res) => {
 
       // SPARQL: query which learners completed which activities
       const store = materializeTriples(pgsl);
-      const sparqlQuery = `PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+      const sparqlQuery = `PREFIX pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>
 SELECT ?atom ?value WHERE { ?atom a pgsl:Atom ; pgsl:value ?value. } LIMIT 30`;
       const sparqlResult = executeSparqlString(store, sparqlQuery);
       logActivity('Competency', 'sparql', `SPARQL: Found ${sparqlResult.bindings.length} atoms in lattice`);
@@ -2458,7 +2458,7 @@ SELECT ?atom ?value WHERE { ?atom a pgsl:Atom ; pgsl:value ?value. } LIMIT 30`;
 
       // SPARQL: cohort overlap
       const store = materializeTriples(pgsl);
-      const overlapQuery = `PREFIX pgsl: <https://markjspivey-xwisee.github.io/context-graphs/ns/pgsl#>
+      const overlapQuery = `PREFIX pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>
 SELECT (COUNT(DISTINCT ?atom) AS ?sharedAtoms) WHERE { ?atom a pgsl:Atom. }`;
       const overlapResult = executeSparqlString(store, overlapQuery);
       const atomCount = overlapResult.bindings[0]?.get('?sharedAtoms')?.replace(/"/g, '') ?? '0';
