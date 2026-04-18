@@ -27,7 +27,14 @@
 import express from 'express';
 import * as crypto from 'node:crypto';
 import { ethers } from 'ethers';
-import bcrypt from 'bcryptjs';
+import {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  generateAuthenticationOptions,
+  verifyAuthenticationResponse,
+  type VerifiedRegistrationResponse,
+  type VerifiedAuthenticationResponse,
+} from '@simplewebauthn/server';
 
 // ── Config ──────────────────────────────────────────────────
 
@@ -64,11 +71,25 @@ interface Identity {
   owner?: string;        // for agents: the user who owns them
   scope?: string;
   createdAt: string;
-  // Password hash (bcrypt) for user identities that opt into password auth.
-  // Agents never have passwords — they authenticate via their owner's
-  // delegation and the token issued at agent registration.
-  passwordHash?: string;
-  walletAddress?: string;
+  // Decentralized auth methods registered to this user. All auth is proof-
+  // of-possession over the public keys below; the server never holds secrets.
+  // Multiple methods can be active concurrently (wallet + passkey, etc.).
+  walletAddress?: string;        // SIWE — Ethereum wallet
+  webAuthnCredentials?: Array<{
+    id: string;                  // credential ID (base64url)
+    publicKey: string;           // COSE public key (base64url)
+    counter: number;
+    transports?: string[];
+    label?: string;
+    createdAt: string;
+  }>;
+  didKeys?: Array<{              // generic DID auth (did:key, external did:web, etc.)
+    did: string;
+    publicKeyMultibase: string;
+    keyType: 'Ed25519VerificationKey2020';
+    label?: string;
+    createdAt: string;
+  }>;
   erc8004Key?: string;
 }
 
@@ -86,31 +107,76 @@ const identities: Map<string, Identity> = new Map();
 const keys: Map<string, KeyPair> = new Map();
 const tokens: Map<string, TokenRecord> = new Map();
 
-// Seed with markj + agents
-function seedIdentity(id: string, type: 'user' | 'agent', name: string, owner?: string, scope?: string, passwordHash?: string) {
+// Seed with markj + agents. No passwords, no secrets — identities only
+// exist to reserve names and mint DID documents. Auth is wired up after
+// seeding via the user's own wallet / passkey / DID key registration.
+function seedIdentity(id: string, type: 'user' | 'agent', name: string, owner?: string, scope?: string) {
   const rec: Identity = { id, type, name, createdAt: new Date().toISOString() };
   if (owner !== undefined) rec.owner = owner;
   if (scope !== undefined) rec.scope = scope;
-  if (passwordHash !== undefined) rec.passwordHash = passwordHash;
   identities.set(id, rec);
   keys.set(id, generateEd25519());
-  log(`Seeded ${type} identity: ${id} (${name})${passwordHash ? ' [password set]' : ''}`);
+  log(`Seeded ${type} identity: ${id} (${name})`);
 }
 
-// Seed the primary user with an optional password from env so markj can log
-// in via the OAuth /login flow without a separate bootstrap step. For other
-// seeded users, set SEED_<ID>_PASSWORD or register them via POST /register.
-const seedMarkjPassword = process.env['SEED_MARKJ_PASSWORD'];
-seedIdentity(
-  'markj',
-  'user',
-  'Mark J',
-  undefined,
-  undefined,
-  seedMarkjPassword ? bcrypt.hashSync(seedMarkjPassword, 10) : undefined,
-);
+seedIdentity('markj', 'user', 'Mark J');
 seedIdentity('claude-code-vscode', 'agent', 'Claude Code (VS Code)', 'markj', 'ReadWrite');
 seedIdentity('claude-code-desktop', 'agent', 'Claude Code (Desktop)', 'markj', 'ReadWrite');
+
+// ── Challenges (nonces for proof-of-possession auth) ────────
+//
+// Every sign-in starts with POST /challenges -> nonce. The client then
+// signs the nonce with their private key (wallet / passkey / DID key)
+// and POSTs it to /verify. The server checks the nonce was issued,
+// hasn't been used, hasn't expired, and that the signature matches the
+// public key already on file (or being registered for first time).
+
+interface Challenge {
+  nonce: string;
+  expiresAt: number;
+  // Optional binding: if set, this challenge may only be used for a
+  // specific auth method / WebAuthn operation. Prevents cross-use of
+  // a WebAuthn-originated challenge against SIWE, etc.
+  purpose?: 'siwe' | 'webauthn-register' | 'webauthn-authenticate' | 'did-sig';
+  // For WebAuthn flows: the user this challenge is scoped to (so the
+  // relying party knows which credentials to match against).
+  userId?: string;
+}
+
+const challenges = new Map<string, Challenge>();
+const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+
+function issueChallenge(purpose?: Challenge['purpose'], userId?: string): Challenge {
+  // Prune expired entries periodically on new issues
+  const now = Date.now();
+  for (const [k, v] of challenges) if (v.expiresAt < now) challenges.delete(k);
+  const nonce = crypto.randomBytes(32).toString('base64url');
+  const ch: Challenge = { nonce, expiresAt: now + CHALLENGE_TTL_MS };
+  if (purpose) ch.purpose = purpose;
+  if (userId) ch.userId = userId;
+  challenges.set(nonce, ch);
+  return ch;
+}
+
+function consumeChallenge(nonce: string, purpose?: Challenge['purpose']): Challenge | null {
+  const ch = challenges.get(nonce);
+  if (!ch) return null;
+  if (ch.expiresAt < Date.now()) { challenges.delete(nonce); return null; }
+  if (purpose && ch.purpose && ch.purpose !== purpose) return null;
+  challenges.delete(nonce); // single-use
+  return ch;
+}
+
+// ── WebAuthn RP Config ──────────────────────────────────────
+//
+// Relying party: the full origin under which the user's browser will
+// execute the WebAuthn ceremony. For cross-service setups (user runs
+// passkey dance at relay, relay verifies at identity) set WEBAUTHN_RP_*
+// consistently on both sides so the RP ID is stable.
+
+const RP_ID = process.env['WEBAUTHN_RP_ID'] ?? new URL(BASE_URL).hostname;
+const RP_NAME = process.env['WEBAUTHN_RP_NAME'] ?? 'Interego';
+const RP_ORIGIN = process.env['WEBAUTHN_RP_ORIGIN'] ?? BASE_URL;
 
 // ── Token Management ────────────────────────────────────────
 
@@ -253,177 +319,441 @@ app.get('/health', (_req, res) => {
 
 // ── Registration ─────────────────────────────────────────────
 
+// ── Registration (reserve a username; auth added separately) ────────
+//
+// POST /register — reserves a userId + creates a first agent. Auth
+// methods (wallet / passkey / did key) are registered via the proof
+// flows below; this endpoint does NOT require or accept passwords.
+// Callers should follow up with one of the registration flows to make
+// the account usable from a client that can sign challenges.
+
 /**
- * POST /register — Register a new human + their first agent
- * Body: { name, userId, agentId, agentName?, scope?, password? }
- * Returns: { token, userId, agentId, webId, did, podUrl }
+ * POST /register — Reserve a new human identity + first agent.
+ * Body: { name, userId, agentId, agentName?, scope? }
+ * Returns: { userId, agentId, webId, did, podUrl, ... }
  *
- * If password is provided, the user can later authenticate via POST /login.
- * Without a password the user is still valid (agent token works) but cannot
- * be re-authenticated without another mechanism (wallet SIWE, fresh token).
+ * No initial bearer token is issued — tokens come from /verify after
+ * a successful signature proof. Register-then-authenticate is the
+ * pattern because tokens imply authentication, and we have none yet.
  */
-app.post('/register', async (req, res) => {
-  const { name, userId, agentId, agentName, scope, password } = req.body;
+app.post('/register', (req, res) => {
+  const { name, userId, agentId, agentName, scope } = req.body;
   if (!name || !userId || !agentId) {
     res.status(400).json({ error: 'name, userId, and agentId are required' });
     return;
   }
-  if (password && typeof password !== 'string') {
-    res.status(400).json({ error: 'password must be a string' });
-    return;
-  }
-  if (password && password.length < 8) {
-    res.status(400).json({ error: 'password must be at least 8 characters' });
-    return;
-  }
-
   if (identities.has(userId)) {
     res.status(409).json({ error: `User '${userId}' already exists` });
     return;
   }
 
-  // Create user identity (with optional password hash)
-  const passwordHash = password ? await bcrypt.hash(password, 10) : undefined;
-  seedIdentity(userId, 'user', name, undefined, undefined, passwordHash);
-
-  // Create agent identity
+  seedIdentity(userId, 'user', name);
   const agentLabel = agentName ?? `Agent (${agentId})`;
   seedIdentity(agentId, 'agent', agentLabel, userId, scope ?? 'ReadWrite');
-
-  // Issue token for the agent
-  const tokenRecord = issueToken(userId, agentId, scope ?? 'ReadWrite');
 
   const host = new URL(BASE_URL).host;
   res.status(201).json({
     registered: true,
     userId,
     agentId,
-    token: tokenRecord.token,
-    expiresAt: tokenRecord.expiresAt,
     webId: `${BASE_URL}/users/${userId}/profile#me`,
     did: `did:web:${host}:users:${userId}`,
     agentDid: `did:web:${host}:agents:${agentId}`,
     podUrl: `${CSS_URL}${userId}/`,
     identityServer: BASE_URL,
-    passwordSet: !!passwordHash,
+    nextStep: 'Register an auth method: POST /auth/siwe, /auth/webauthn/register, or /auth/did',
   });
-  log(`Registered new user: ${userId} (${name}) with agent ${agentId}${passwordHash ? ' [password set]' : ''}`);
+  log(`Registered new user: ${userId} (${name}) with agent ${agentId}`);
 });
 
+// ── Challenge issuance ──────────────────────────────────────
+
 /**
- * POST /login — Authenticate an existing user by userId + password.
- *
- * Body: { userId, password, agentId? }
- *
- * If agentId is omitted, the user's first agent is used. Issues a fresh
- * bearer token for that agent and returns full identity info so downstream
- * services (like the MCP relay's OAuth provider) can populate session
- * context (webId, pod URL, DID) without another round trip.
- *
- * Returns 401 if the user has no password set, or if password is wrong.
+ * POST /challenges — issue a nonce the client signs to prove key control.
+ * Body: { purpose?, userId? }
+ *   purpose:  'siwe' | 'webauthn-register' | 'webauthn-authenticate' | 'did-sig'
+ *   userId:   for WebAuthn authenticate, scopes the challenge to a user
+ *             (server returns allowed credential IDs the client may use)
+ * Returns: { nonce, expiresAt, allowCredentials? }
  */
-app.post('/login', async (req, res) => {
-  const { userId, password, agentId: requestedAgentId } = req.body;
-  if (!userId || !password) {
-    res.status(400).json({ error: 'userId and password are required' });
+app.post('/challenges', (req, res) => {
+  const { purpose, userId } = req.body as { purpose?: Challenge['purpose']; userId?: string };
+  const ch = issueChallenge(purpose, userId);
+  const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
+  if (purpose === 'webauthn-authenticate' && userId) {
+    const user = identities.get(userId);
+    const creds = (user?.webAuthnCredentials ?? []).map(c => ({ id: c.id, type: 'public-key', transports: c.transports }));
+    resp.allowCredentials = creds;
+  }
+  res.json(resp);
+});
+
+// ── SIWE auth (Ethereum wallet) ─────────────────────────────
+
+/**
+ * POST /auth/siwe — verify a SIWE message + signature, issue a bearer
+ * token scoped to the user whose wallet is either already registered
+ * or is being registered now (first-time flow).
+ *
+ * Body: {
+ *   message: string,         // SIWE message containing the nonce
+ *   signature: string,       // 0x... ECDSA signature over `message`
+ *   nonce: string,           // must be the nonce inside `message` too
+ *   userId?: string,         // required for first-time wallet link
+ *   name?: string,           // display name if first-time
+ *   agentId?: string,        // agent to mint alongside (first-time)
+ * }
+ */
+app.post('/auth/siwe', async (req, res) => {
+  const { message, signature, nonce, userId: hintedUserId, name, agentId: hintedAgentId } = req.body;
+  if (!message || !signature || !nonce) {
+    res.status(400).json({ error: 'message, signature, and nonce are required' });
+    return;
+  }
+  const ch = consumeChallenge(nonce, 'siwe');
+  if (!ch) {
+    res.status(401).json({ error: 'Invalid or expired challenge' });
+    return;
+  }
+  if (!String(message).includes(nonce)) {
+    res.status(400).json({ error: 'SIWE message does not contain the issued nonce' });
     return;
   }
 
-  const user = identities.get(userId);
-  if (!user || user.type !== 'user') {
-    res.status(401).json({ error: 'Invalid credentials' });
-    return;
-  }
-  if (!user.passwordHash) {
-    res.status(401).json({ error: 'User has no password set. Use /set-password to enable password login.' });
-    return;
-  }
-  const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) {
-    res.status(401).json({ error: 'Invalid credentials' });
+  let recoveredAddress: string;
+  try {
+    recoveredAddress = (await ethers.verifyMessage(message, signature)).toLowerCase();
+  } catch (err) {
+    res.status(401).json({ error: `SIWE signature verification failed: ${(err as Error).message}` });
     return;
   }
 
-  // Pick the agent to issue a token for
-  let agentId = requestedAgentId;
-  if (agentId) {
-    const agent = identities.get(agentId);
-    if (!agent || agent.type !== 'agent' || agent.owner !== userId) {
-      res.status(403).json({ error: `Agent '${agentId}' is not authorized for user '${userId}'` });
+  // Extract wallet address from the SIWE message (second line per ERC-4361)
+  const addressMatch = String(message).match(/0x[a-fA-F0-9]{40}/);
+  const claimedAddress = addressMatch?.[0]?.toLowerCase();
+  if (claimedAddress && claimedAddress !== recoveredAddress) {
+    res.status(401).json({ error: `Signature mismatch: message claims ${claimedAddress}, recovered ${recoveredAddress}` });
+    return;
+  }
+
+  // Find user by wallet address (returning user) or create (first-time)
+  let user = [...identities.values()].find(i => i.type === 'user' && i.walletAddress === recoveredAddress);
+  if (!user) {
+    if (!hintedUserId || !name) {
+      res.status(404).json({
+        error: 'Wallet not linked to any user. Supply userId + name to register.',
+        walletAddress: recoveredAddress,
+      });
       return;
     }
-  } else {
-    // Pick any agent owned by the user
-    const firstAgent = [...identities.values()].find(i => i.type === 'agent' && i.owner === userId);
-    if (!firstAgent) {
-      res.status(400).json({ error: 'User has no agents. Use POST /register-agent to create one.' });
+    if (identities.has(hintedUserId)) {
+      res.status(409).json({ error: `userId '${hintedUserId}' already taken` });
       return;
     }
-    agentId = firstAgent.id;
+    seedIdentity(hintedUserId, 'user', name);
+    user = identities.get(hintedUserId)!;
+    user.walletAddress = recoveredAddress;
+    const agentId = hintedAgentId ?? `claude-mobile-${hintedUserId}`;
+    seedIdentity(agentId, 'agent', `Claude Mobile (${name})`, hintedUserId, 'ReadWrite');
+    log(`First-time SIWE registration: ${hintedUserId} wallet=${recoveredAddress}`);
   }
 
-  const agent = identities.get(agentId)!;
-  const tokenRecord = issueToken(userId, agentId, agent.scope ?? 'ReadWrite');
+  res.json(issueTokenResponse(user));
+});
 
-  const host = new URL(BASE_URL).host;
-  res.json({
+// ── WebAuthn / Passkeys ─────────────────────────────────────
+
+/**
+ * POST /auth/webauthn/register-options — start passkey registration.
+ * Body: { userId, name }
+ * Returns: PublicKeyCredentialCreationOptionsJSON (pass to navigator.credentials.create)
+ */
+app.post('/auth/webauthn/register-options', async (req, res) => {
+  const { userId, name } = req.body;
+  if (!userId || !name) {
+    res.status(400).json({ error: 'userId and name are required' });
+    return;
+  }
+  // Ensure user exists (or create shell)
+  if (!identities.has(userId)) {
+    seedIdentity(userId, 'user', name);
+    // Also seed a default agent so the user has something to issue tokens for
+    const agentId = `claude-mobile-${userId}`;
+    seedIdentity(agentId, 'agent', `Claude Mobile (${name})`, userId, 'ReadWrite');
+  }
+  const user = identities.get(userId)!;
+
+  const options = await generateRegistrationOptions({
+    rpName: RP_NAME,
+    rpID: RP_ID,
+    userName: userId,
+    userDisplayName: name,
+    attestationType: 'none',
+    excludeCredentials: (user.webAuthnCredentials ?? []).map(c => ({
+      id: c.id,
+      transports: (c.transports ?? []) as unknown as import('@simplewebauthn/server').AuthenticatorTransportFuture[],
+    })),
+    authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
+  });
+
+  // Bind this challenge to webauthn-register for this user
+  challenges.set(options.challenge, {
+    nonce: options.challenge,
+    expiresAt: Date.now() + CHALLENGE_TTL_MS,
+    purpose: 'webauthn-register',
     userId,
-    agentId,
-    token: tokenRecord.token,
-    expiresAt: tokenRecord.expiresAt,
-    scope: tokenRecord.scope,
-    webId: `${BASE_URL}/users/${userId}/profile#me`,
-    did: `did:web:${host}:users:${userId}`,
-    agentDid: `did:web:${host}:agents:${agentId}`,
-    podUrl: `${CSS_URL}${userId}/`,
-    identityServer: BASE_URL,
   });
-  log(`Login OK: ${userId} via agent ${agentId}`);
+  res.json(options);
 });
 
 /**
- * POST /set-password — Set or change a user's password.
- *
- * Body: { userId, newPassword } with valid Bearer token for that user.
- * Primary use cases: seeded users (like 'markj') claiming their account,
- * or existing users rotating their password.
+ * POST /auth/webauthn/register — finish passkey registration. Verifies
+ * the attestation, stores the new credential, issues a bearer token.
+ * Body: { userId, response: RegistrationResponseJSON }
  */
-app.post('/set-password', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Bearer token required' });
+app.post('/auth/webauthn/register', async (req, res) => {
+  const { userId, response } = req.body;
+  if (!userId || !response) {
+    res.status(400).json({ error: 'userId and response are required' });
     return;
   }
-  const tokenResult = verifyToken(authHeader.slice(7));
-  if (!tokenResult.valid) {
-    res.status(401).json({ error: tokenResult.reason });
-    return;
-  }
-
-  const { userId, newPassword } = req.body;
-  if (!userId || !newPassword) {
-    res.status(400).json({ error: 'userId and newPassword are required' });
-    return;
-  }
-  if (tokenResult.record!.userId !== userId) {
-    res.status(403).json({ error: 'Token does not belong to this user' });
-    return;
-  }
-  if (typeof newPassword !== 'string' || newPassword.length < 8) {
-    res.status(400).json({ error: 'newPassword must be a string of at least 8 characters' });
-    return;
-  }
-
   const user = identities.get(userId);
   if (!user || user.type !== 'user') {
     res.status(404).json({ error: `User '${userId}' not found` });
     return;
   }
 
-  user.passwordHash = await bcrypt.hash(newPassword, 10);
-  log(`Password set for ${userId}`);
-  res.json({ updated: true, userId });
+  const expectedChallenge = response?.response?.clientDataJSON
+    ? JSON.parse(Buffer.from(response.response.clientDataJSON, 'base64url').toString()).challenge
+    : null;
+  if (!expectedChallenge) {
+    res.status(400).json({ error: 'Could not extract challenge from clientDataJSON' });
+    return;
+  }
+  const ch = consumeChallenge(expectedChallenge, 'webauthn-register');
+  if (!ch || ch.userId !== userId) {
+    res.status(401).json({ error: 'Invalid or expired registration challenge' });
+    return;
+  }
+
+  let verification: VerifiedRegistrationResponse;
+  try {
+    verification = await verifyRegistrationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: RP_ORIGIN,
+      expectedRPID: RP_ID,
+    });
+  } catch (err) {
+    res.status(401).json({ error: `WebAuthn registration verification failed: ${(err as Error).message}` });
+    return;
+  }
+
+  if (!verification.verified || !verification.registrationInfo) {
+    res.status(401).json({ error: 'WebAuthn registration not verified' });
+    return;
+  }
+
+  const { credential } = verification.registrationInfo;
+  user.webAuthnCredentials ??= [];
+  user.webAuthnCredentials.push({
+    id: credential.id,
+    publicKey: Buffer.from(credential.publicKey).toString('base64url'),
+    counter: credential.counter,
+    transports: (response.response?.transports as string[] | undefined) ?? [],
+    createdAt: new Date().toISOString(),
+  });
+  log(`WebAuthn credential registered for ${userId}`);
+
+  res.json(issueTokenResponse(user));
 });
+
+/**
+ * POST /auth/webauthn/authenticate — finish passkey login. Verifies
+ * the assertion against the user's stored credential.
+ * Body: { userId, response: AuthenticationResponseJSON }
+ */
+app.post('/auth/webauthn/authenticate', async (req, res) => {
+  const { userId, response } = req.body;
+  if (!userId || !response) {
+    res.status(400).json({ error: 'userId and response are required' });
+    return;
+  }
+  const user = identities.get(userId);
+  if (!user || user.type !== 'user') {
+    res.status(404).json({ error: `User '${userId}' not found` });
+    return;
+  }
+  const cred = (user.webAuthnCredentials ?? []).find(c => c.id === response.id);
+  if (!cred) {
+    res.status(401).json({ error: 'No WebAuthn credential matches this response' });
+    return;
+  }
+
+  const expectedChallenge = response?.response?.clientDataJSON
+    ? JSON.parse(Buffer.from(response.response.clientDataJSON, 'base64url').toString()).challenge
+    : null;
+  if (!expectedChallenge) {
+    res.status(400).json({ error: 'Could not extract challenge from clientDataJSON' });
+    return;
+  }
+  const ch = consumeChallenge(expectedChallenge, 'webauthn-authenticate');
+  if (!ch || (ch.userId && ch.userId !== userId)) {
+    res.status(401).json({ error: 'Invalid or expired authentication challenge' });
+    return;
+  }
+
+  let verification: VerifiedAuthenticationResponse;
+  try {
+    verification = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: RP_ORIGIN,
+      expectedRPID: RP_ID,
+      credential: {
+        id: cred.id,
+        publicKey: Buffer.from(cred.publicKey, 'base64url'),
+        counter: cred.counter,
+        transports: (cred.transports ?? []) as unknown as import('@simplewebauthn/server').AuthenticatorTransportFuture[],
+      },
+    });
+  } catch (err) {
+    res.status(401).json({ error: `WebAuthn verification failed: ${(err as Error).message}` });
+    return;
+  }
+  if (!verification.verified) {
+    res.status(401).json({ error: 'WebAuthn assertion not verified' });
+    return;
+  }
+
+  cred.counter = verification.authenticationInfo.newCounter;
+  res.json(issueTokenResponse(user));
+});
+
+// ── Generic DID-signature auth (did:key / did:web) ──────────
+
+/**
+ * POST /auth/did — verify an Ed25519 signature against a pre-registered
+ * DID key. Supports did:key (self-sovereign, public-key-encoded-as-DID)
+ * and did:web (DID document hosted at an https URL we can fetch).
+ *
+ * Body: {
+ *   did: string,              // did:key:z... or did:web:...
+ *   nonce: string,            // from /challenges
+ *   signature: string,        // base64url Ed25519 signature of nonce
+ *   userId?: string,          // first-time: register this DID to this user
+ *   name?: string,            // first-time display name
+ *   publicKeyMultibase?: string,  // for did:key, or first-time registration
+ * }
+ */
+app.post('/auth/did', async (req, res) => {
+  const { did, nonce, signature, userId: hintedUserId, name, publicKeyMultibase } = req.body;
+  if (!did || !nonce || !signature) {
+    res.status(400).json({ error: 'did, nonce, and signature are required' });
+    return;
+  }
+  const ch = consumeChallenge(nonce, 'did-sig');
+  if (!ch) {
+    res.status(401).json({ error: 'Invalid or expired challenge' });
+    return;
+  }
+
+  // Resolve public key
+  let publicKeyRaw: Buffer;
+  if (did.startsWith('did:key:z') && did.length > 10) {
+    // did:key multibase is the public key itself (z... base58btc)
+    // For Ed25519 did:key: prefix bytes 0xed 0x01 + 32-byte key
+    const rawMultibase = did.slice('did:key:'.length);
+    if (!rawMultibase.startsWith('z')) {
+      res.status(400).json({ error: 'Only base58btc (z-prefixed) did:key supported' });
+      return;
+    }
+    // Decode using our multibase format (publicKeyMultibase is 'z' + base64url 32-byte raw key)
+    // For interop with the simple format used elsewhere in this server
+    try {
+      publicKeyRaw = Buffer.from(rawMultibase.slice(1), 'base64url');
+      if (publicKeyRaw.length < 32) throw new Error('key too short');
+      publicKeyRaw = publicKeyRaw.subarray(publicKeyRaw.length - 32);
+    } catch (err) {
+      res.status(400).json({ error: `Could not decode did:key public key: ${(err as Error).message}` });
+      return;
+    }
+  } else if (publicKeyMultibase?.startsWith('z')) {
+    publicKeyRaw = Buffer.from(publicKeyMultibase.slice(1), 'base64url');
+  } else {
+    res.status(400).json({ error: 'Supply publicKeyMultibase alongside non-did:key DIDs' });
+    return;
+  }
+
+  // Verify Ed25519 signature over the nonce
+  try {
+    const sig = Buffer.from(signature, 'base64url');
+    const spki = Buffer.concat([
+      Buffer.from('302a300506032b6570032100', 'hex'), // Ed25519 SPKI prefix
+      publicKeyRaw,
+    ]);
+    const verifyKey = crypto.createPublicKey({ key: spki, format: 'der', type: 'spki' });
+    const ok = crypto.verify(null, Buffer.from(nonce, 'utf8'), verifyKey, sig);
+    if (!ok) {
+      res.status(401).json({ error: 'Ed25519 signature verification failed' });
+      return;
+    }
+  } catch (err) {
+    res.status(401).json({ error: `DID signature verification error: ${(err as Error).message}` });
+    return;
+  }
+
+  // Find user by registered DID (returning) or create (first-time)
+  let user = [...identities.values()].find(i => i.type === 'user' && (i.didKeys ?? []).some(k => k.did === did));
+  if (!user) {
+    if (!hintedUserId || !name) {
+      res.status(404).json({ error: 'DID not linked. Supply userId + name to register.', did });
+      return;
+    }
+    if (identities.has(hintedUserId)) {
+      res.status(409).json({ error: `userId '${hintedUserId}' already taken` });
+      return;
+    }
+    seedIdentity(hintedUserId, 'user', name);
+    user = identities.get(hintedUserId)!;
+    user.didKeys = [{
+      did,
+      publicKeyMultibase: publicKeyMultibase ?? ('z' + publicKeyRaw.toString('base64url')),
+      keyType: 'Ed25519VerificationKey2020',
+      createdAt: new Date().toISOString(),
+    }];
+    const agentId = `claude-mobile-${hintedUserId}`;
+    seedIdentity(agentId, 'agent', `Claude Mobile (${name})`, hintedUserId, 'ReadWrite');
+    log(`First-time DID registration: ${hintedUserId} did=${did}`);
+  }
+
+  res.json(issueTokenResponse(user));
+});
+
+// ── Token response helper (shared across auth methods) ──────
+function issueTokenResponse(user: Identity): Record<string, unknown> {
+  const firstAgent = [...identities.values()].find(i => i.type === 'agent' && i.owner === user.id);
+  if (!firstAgent) throw new Error(`User '${user.id}' has no agents`);
+  const tokenRecord = issueToken(user.id, firstAgent.id, firstAgent.scope ?? 'ReadWrite');
+  const host = new URL(BASE_URL).host;
+  return {
+    userId: user.id,
+    agentId: firstAgent.id,
+    token: tokenRecord.token,
+    expiresAt: tokenRecord.expiresAt,
+    scope: tokenRecord.scope,
+    webId: `${BASE_URL}/users/${user.id}/profile#me`,
+    did: `did:web:${host}:users:${user.id}`,
+    agentDid: `did:web:${host}:agents:${firstAgent.id}`,
+    podUrl: `${CSS_URL}${user.id}/`,
+    identityServer: BASE_URL,
+    authMethods: {
+      wallet: !!user.walletAddress,
+      webauthn: (user.webAuthnCredentials ?? []).length,
+      did: (user.didKeys ?? []).length,
+    },
+  };
+}
 
 /**
  * POST /register-agent — Register additional agent for existing user

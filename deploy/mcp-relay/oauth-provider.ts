@@ -119,7 +119,7 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
-    // Stash the request so the login POST can resume it by ID
+    // Stash the request so the signature-proof submission can resume it
     const pendingId = randomBytes(16).toString('hex');
     this.pendingAuthorizations.set(pendingId, {
       client,
@@ -130,6 +130,8 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     const clientName = escapeHtml(client.client_name || '(unnamed client)');
     const scopeList = escapeHtml((params.scopes || ['mcp']).join(', '));
     const redirectHost = escapeHtml(new URL(params.redirectUri).host);
+    const identityOrigin = new URL(this.cfg.identityUrl).origin;
+    const identityHost = escapeHtml(new URL(this.cfg.identityUrl).host);
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(`<!doctype html>
@@ -140,102 +142,244 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
 <title>Sign in \u2014 Interego</title>
 <style>
   :root { color-scheme: light dark; }
-  body { font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 440px; margin: 3em auto; padding: 0 1em; }
-  h1 { font-size: 1.25em; margin: 0 0 .4em; }
-  .sub { color: #666; font-size: .9em; margin-bottom: 1.2em; }
-  .client { padding: 1em; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 1.2em; }
+  * { box-sizing: border-box; }
+  body { font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 480px; margin: 2.5em auto; padding: 0 1em; }
+  h1 { font-size: 1.3em; margin: 0 0 .4em; }
+  h2 { font-size: .95em; margin: 1.4em 0 .6em; color: #555; text-transform: uppercase; letter-spacing: .04em; }
+  .sub { color: #666; font-size: .9em; margin-bottom: 1.4em; }
+  .client { padding: .9em 1em; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 1.4em; }
   .client .name { font-weight: 600; }
-  .client .meta { color: #666; font-size: .85em; margin-top: .3em; }
-  label { display: block; margin: .8em 0 .3em; font-size: .9em; color: #333; }
-  input[type=text], input[type=password] { width: 100%; padding: .6em; font-size: 1em; border: 1px solid #bbb; border-radius: 6px; box-sizing: border-box; }
-  button { width: 100%; padding: .8em; font-size: 1em; background: #111; color: #fff; border: 0; border-radius: 6px; cursor: pointer; margin-top: 1.2em; }
-  button:hover { background: #333; }
-  .alt { margin-top: 1.6em; text-align: center; font-size: .9em; color: #666; }
-  .alt a { color: inherit; }
+  .client .meta { color: #666; font-size: .85em; margin-top: .25em; }
+  .method { padding: 1em; border: 1px solid #ddd; border-radius: 8px; margin-bottom: .8em; background: #fafafa; }
+  .method h3 { margin: 0 0 .2em; font-size: 1em; }
+  .method p { margin: 0 0 .6em; color: #666; font-size: .85em; }
+  label { display: block; margin: .6em 0 .2em; font-size: .85em; color: #333; }
+  input[type=text] { width: 100%; padding: .55em; font-size: .95em; border: 1px solid #bbb; border-radius: 6px; }
+  button { width: 100%; padding: .7em; font-size: .95em; background: #111; color: #fff; border: 0; border-radius: 6px; cursor: pointer; margin-top: .6em; }
+  button:hover:not(:disabled) { background: #333; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.secondary { background: #fff; color: #111; border: 1px solid #bbb; }
+  button.secondary:hover { background: #f0f0f0; }
+  .status { margin-top: .7em; padding: .5em .7em; border-radius: 6px; font-size: .85em; display: none; }
+  .status.ok { display: block; background: #d7f5dc; border: 1px solid #2b6c35; color: #193f1d; }
+  .status.err { display: block; background: #fadede; border: 1px solid #a43939; color: #4d1818; }
+  .status.info { display: block; background: #e3edff; border: 1px solid #355db3; color: #1c2d57; }
   .foot { margin-top: 1.5em; font-size: .8em; color: #888; text-align: center; }
   @media (prefers-color-scheme: dark) {
     body { background: #111; color: #eee; }
-    .sub, .foot, .alt { color: #aaa; }
-    .client { border-color: #333; }
-    .client .meta { color: #aaa; }
+    .sub, .foot, h2 { color: #aaa; }
+    .client, .method { border-color: #333; background: #181818; }
+    .client .meta, .method p { color: #aaa; }
     label { color: #ddd; }
-    input[type=text], input[type=password] { background: #1a1a1a; color: #fff; border-color: #444; }
+    input[type=text] { background: #1a1a1a; color: #fff; border-color: #444; }
     button { background: #fff; color: #111; }
+    button.secondary { background: #1a1a1a; color: #fff; border-color: #444; }
+    button.secondary:hover { background: #262626; }
+    .status.ok { background: #122d16; border-color: #2b6c35; color: #9de2a8; }
+    .status.err { background: #2a1010; border-color: #a43939; color: #f2b0b0; }
+    .status.info { background: #12223e; border-color: #355db3; color: #aac1ed; }
   }
 </style>
 </head>
 <body>
   <h1>Sign in to Interego</h1>
-  <div class="sub">The MCP client below is asking to act on your behalf against your pod.</div>
+  <div class="sub">Authorize this MCP client to act on your behalf against your pod.</div>
+
   <div class="client">
     <div class="name">${clientName}</div>
     <div class="meta">redirect: ${redirectHost} \u00b7 scopes: ${scopeList}</div>
   </div>
-  <form method="POST" action="/oauth/login">
-    <input type="hidden" name="pending_id" value="${escapeHtml(pendingId)}">
-    <label for="uid">User ID</label>
-    <input id="uid" type="text" name="user_id" autofocus autocomplete="username" required>
-    <label for="pw">Password</label>
-    <input id="pw" type="password" name="password" autocomplete="current-password" required>
-    <button type="submit">Sign in &amp; authorize</button>
-  </form>
-  <div class="alt">Don't have an account? <a href="/oauth/signup?pending_id=${escapeHtml(pendingId)}">Register</a></div>
-  <div class="foot">Interego MCP Relay \u00b7 identity: ${escapeHtml(new URL(this.cfg.identityUrl).host)}</div>
+
+  <h2>Choose a sign-in method</h2>
+
+  <div class="method">
+    <h3>Passkey</h3>
+    <p>Use Face ID / Touch ID / your device's built-in key. Works on iOS, Android, and modern browsers. No extensions needed.</p>
+    <input id="pk-user" type="text" placeholder="Your user ID (e.g. markj)" autocomplete="username">
+    <div style="display:flex;gap:.5em">
+      <button onclick="passkeyLogin()" class="secondary" style="flex:1">Sign in</button>
+      <button onclick="passkeyRegister()" style="flex:1">Register new</button>
+    </div>
+    <div id="pk-status" class="status"></div>
+  </div>
+
+  <div class="method">
+    <h3>Ethereum wallet (SIWE)</h3>
+    <p>Sign in with MetaMask, Coinbase Wallet, or any EIP-1193 provider. For CLI users without a wallet extension, use the DID method below.</p>
+    <button onclick="siweLogin()" class="secondary">Connect wallet &amp; sign</button>
+    <div id="siwe-status" class="status"></div>
+  </div>
+
+  <div class="method">
+    <h3>DID (Ed25519)</h3>
+    <p>Already have a <code>did:key</code>? Get a challenge, sign it with your key, paste back. Primarily for CLI/automation.</p>
+    <input id="did-did" type="text" placeholder="did:key:z..." autocomplete="off">
+    <button onclick="didChallenge()" class="secondary">Request challenge</button>
+    <div id="did-nonce-wrap" style="display:none;margin-top:.6em">
+      <label for="did-sig">Signature (base64url, Ed25519 over nonce)</label>
+      <input id="did-sig" type="text" autocomplete="off">
+      <button onclick="didSubmit()">Submit signature</button>
+    </div>
+    <div id="did-status" class="status"></div>
+  </div>
+
+  <div class="foot">identity: ${identityHost} \u00b7 pending: ${escapeHtml(pendingId).slice(0, 8)}\u2026</div>
+
+<script>
+const PENDING_ID = ${JSON.stringify(pendingId)};
+const IDENTITY = ${JSON.stringify(identityOrigin)};
+
+function setStatus(id, msg, cls) {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = 'status ' + (cls || 'info');
+}
+function b64urlToBytes(s) {
+  const p = s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4);
+  const bin = atob(p);
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+function bytesToB64url(bytes) {
+  let s = '';
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (const b of arr) s += String.fromCharCode(b);
+  return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+}
+
+async function submitProof(method, body) {
+  const r = await fetch('/oauth/verify', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pending_id: PENDING_ID, method, ...body }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (r.ok && data.redirect) {
+    window.location.href = data.redirect;
+  } else {
+    throw new Error(data.error || ('HTTP ' + r.status));
+  }
+}
+
+// ── Passkey flows ──────────────────────────────────────────
+async function passkeyRegister() {
+  const userId = document.getElementById('pk-user').value.trim();
+  if (!userId) { setStatus('pk-status', 'Enter a user ID first.', 'err'); return; }
+  try {
+    setStatus('pk-status', 'Creating passkey...', 'info');
+    const optRes = await fetch(IDENTITY + '/auth/webauthn/register-options', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, name: userId }),
+    });
+    if (!optRes.ok) throw new Error('register-options: ' + await optRes.text());
+    const options = await optRes.json();
+    options.challenge = b64urlToBytes(options.challenge);
+    options.user.id = b64urlToBytes(options.user.id);
+    if (options.excludeCredentials) options.excludeCredentials.forEach(c => c.id = b64urlToBytes(c.id));
+
+    const cred = await navigator.credentials.create({ publicKey: options });
+    const resp = {
+      id: cred.id,
+      rawId: bytesToB64url(new Uint8Array(cred.rawId)),
+      type: cred.type,
+      response: {
+        attestationObject: bytesToB64url(new Uint8Array(cred.response.attestationObject)),
+        clientDataJSON: bytesToB64url(new Uint8Array(cred.response.clientDataJSON)),
+        transports: (cred.response.getTransports && cred.response.getTransports()) || [],
+      },
+      clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+    };
+    await submitProof('webauthn-register', { userId, response: resp });
+  } catch (e) { setStatus('pk-status', e.message, 'err'); }
+}
+
+async function passkeyLogin() {
+  const userId = document.getElementById('pk-user').value.trim();
+  if (!userId) { setStatus('pk-status', 'Enter a user ID first.', 'err'); return; }
+  try {
+    setStatus('pk-status', 'Requesting challenge...', 'info');
+    const chRes = await fetch(IDENTITY + '/challenges', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purpose: 'webauthn-authenticate', userId }),
+    });
+    const ch = await chRes.json();
+    if (!ch.nonce) throw new Error(ch.error || 'no challenge');
+
+    const options = {
+      challenge: b64urlToBytes(ch.nonce),
+      allowCredentials: (ch.allowCredentials || []).map(c => ({ ...c, id: b64urlToBytes(c.id) })),
+      userVerification: 'preferred',
+    };
+    const cred = await navigator.credentials.get({ publicKey: options });
+    const resp = {
+      id: cred.id,
+      rawId: bytesToB64url(new Uint8Array(cred.rawId)),
+      type: cred.type,
+      response: {
+        authenticatorData: bytesToB64url(new Uint8Array(cred.response.authenticatorData)),
+        clientDataJSON: bytesToB64url(new Uint8Array(cred.response.clientDataJSON)),
+        signature: bytesToB64url(new Uint8Array(cred.response.signature)),
+        userHandle: cred.response.userHandle ? bytesToB64url(new Uint8Array(cred.response.userHandle)) : null,
+      },
+      clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+    };
+    await submitProof('webauthn-authenticate', { userId, response: resp });
+  } catch (e) { setStatus('pk-status', e.message, 'err'); }
+}
+
+// ── SIWE ───────────────────────────────────────────────────
+async function siweLogin() {
+  if (!window.ethereum) { setStatus('siwe-status', 'No wallet detected. Install a wallet extension, or use the DID method.', 'err'); return; }
+  try {
+    setStatus('siwe-status', 'Requesting wallet connection...', 'info');
+    const [address] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    const chRes = await fetch(IDENTITY + '/challenges', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purpose: 'siwe' }),
+    });
+    const { nonce } = await chRes.json();
+    const domain = window.location.host;
+    const issuedAt = new Date().toISOString();
+    const message =
+      domain + ' wants you to sign in with your Ethereum account:\\n' +
+      address + '\\n\\n' +
+      'Sign in to Interego\\n\\n' +
+      'URI: ' + window.location.origin + '\\n' +
+      'Version: 1\\n' +
+      'Chain ID: 1\\n' +
+      'Nonce: ' + nonce + '\\n' +
+      'Issued At: ' + issuedAt;
+    setStatus('siwe-status', 'Please sign the message in your wallet...', 'info');
+    const signature = await window.ethereum.request({ method: 'personal_sign', params: [message, address] });
+    await submitProof('siwe', { message, signature, nonce });
+  } catch (e) { setStatus('siwe-status', e.message, 'err'); }
+}
+
+// ── DID key signing ────────────────────────────────────────
+let didNonceCache = '';
+async function didChallenge() {
+  const did = document.getElementById('did-did').value.trim();
+  if (!did.startsWith('did:')) { setStatus('did-status', 'Enter a DID (did:key:... or did:web:...).', 'err'); return; }
+  try {
+    const chRes = await fetch(IDENTITY + '/challenges', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purpose: 'did-sig' }),
+    });
+    const { nonce } = await chRes.json();
+    didNonceCache = nonce;
+    document.getElementById('did-nonce-wrap').style.display = 'block';
+    setStatus('did-status', 'Nonce: ' + nonce + '\\n\\nSign this (raw UTF-8 bytes) with your Ed25519 key, then paste the base64url signature above.', 'info');
+  } catch (e) { setStatus('did-status', e.message, 'err'); }
+}
+async function didSubmit() {
+  const did = document.getElementById('did-did').value.trim();
+  const signature = document.getElementById('did-sig').value.trim();
+  if (!did || !signature || !didNonceCache) { setStatus('did-status', 'Fill in DID and signature.', 'err'); return; }
+  try {
+    await submitProof('did', { did, signature, nonce: didNonceCache });
+  } catch (e) { setStatus('did-status', e.message, 'err'); }
+}
+</script>
 </body>
 </html>`);
-  }
-
-  /**
-   * Render the signup page HTML. Called from server.ts's /oauth/signup route
-   * so new users can self-register during the OAuth authorize flow. The
-   * pending_id round-trips through the signup form to preserve the client's
-   * authorization request across the registration step.
-   */
-  renderSignupPage(pendingId: string): string {
-    return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Register \u2014 Interego</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; max-width: 440px; margin: 3em auto; padding: 0 1em; }
-  h1 { font-size: 1.25em; margin: 0 0 .4em; }
-  .sub { color: #666; font-size: .9em; margin-bottom: 1.2em; }
-  label { display: block; margin: .8em 0 .3em; font-size: .9em; color: #333; }
-  input[type=text], input[type=password] { width: 100%; padding: .6em; font-size: 1em; border: 1px solid #bbb; border-radius: 6px; box-sizing: border-box; }
-  .hint { font-size: .8em; color: #888; margin-top: .2em; }
-  button { width: 100%; padding: .8em; font-size: 1em; background: #111; color: #fff; border: 0; border-radius: 6px; cursor: pointer; margin-top: 1.2em; }
-  button:hover { background: #333; }
-  .foot { margin-top: 1.5em; font-size: .8em; color: #888; text-align: center; }
-  @media (prefers-color-scheme: dark) {
-    body { background: #111; color: #eee; }
-    .sub, .foot, .hint { color: #aaa; }
-    label { color: #ddd; }
-    input[type=text], input[type=password] { background: #1a1a1a; color: #fff; border-color: #444; }
-    button { background: #fff; color: #111; }
-  }
-</style>
-</head>
-<body>
-  <h1>Create an Interego account</h1>
-  <div class="sub">New accounts get their own Solid pod and agent identity. No email required.</div>
-  <form method="POST" action="/oauth/signup">
-    <input type="hidden" name="pending_id" value="${escapeHtml(pendingId)}">
-    <label for="uid">User ID</label>
-    <input id="uid" type="text" name="user_id" autofocus required pattern="[a-z0-9][a-z0-9-]{1,30}">
-    <div class="hint">Lowercase, digits and hyphens. Becomes your pod path: ${escapeHtml(new URL(this.cfg.identityUrl).host)}/users/&lt;id&gt;</div>
-    <label for="name">Display name</label>
-    <input id="name" type="text" name="name" required>
-    <label for="pw">Password</label>
-    <input id="pw" type="password" name="password" autocomplete="new-password" minlength="8" required>
-    <div class="hint">At least 8 characters.</div>
-    <button type="submit">Register &amp; sign in</button>
-  </form>
-  <div class="foot">Interego MCP Relay \u00b7 identity: ${escapeHtml(new URL(this.cfg.identityUrl).host)}</div>
-</body>
-</html>`;
   }
 
   getPendingAuthorization(pendingId: string) {

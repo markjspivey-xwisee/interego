@@ -811,155 +811,81 @@ app.use(mcpAuthRouter({
   resourceName: 'Interego MCP',
 }));
 
-// Render a simple HTML error page — used inline by the OAuth login/signup
-// routes so error states share the same visual style as the forms.
-function renderError(title: string, detail: string, status = 400): string {
-  return `<!doctype html>
-<html><head><meta charset="utf-8"><title>${title}</title>
-<style>body{font:16px/1.4 system-ui,sans-serif;max-width:440px;margin:3em auto;padding:0 1em;color:#222}
-h1{font-size:1.2em}p{color:#555}a{color:inherit}
-@media (prefers-color-scheme:dark){body{background:#111;color:#eee}p{color:#aaa}}</style>
-</head><body><h1>${title}</h1><p>${detail}</p>
-<p><a href="javascript:history.back()">Back</a></p></body></html>`;
-  // (status is set by caller via res.status)
-  void status;
-}
-
 /**
- * POST /oauth/login — form submit endpoint for the authorize-page sign-in.
- * Forwards userId+password to the identity server's /login endpoint; on
- * success, calls completePendingAuthorization with the resolved identity
- * and redirects back to the OAuth client's redirect_uri with ?code=&state=.
+ * POST /oauth/verify — single endpoint the authorize-page JS posts to.
+ *
+ * Accepts a `method` discriminator ('siwe' | 'webauthn-register' |
+ * 'webauthn-authenticate' | 'did') plus the method-specific proof body,
+ * forwards to the matching /auth/* endpoint on the identity server, and
+ * on success returns { redirect } pointing at the OAuth client's
+ * redirect_uri with the authorization code + state.
+ *
+ * No shared secrets — every successful call is backed by a cryptographic
+ * signature verified by identity against the user's public key.
  */
-app.post('/oauth/login', async (req, res) => {
-  const { pending_id, user_id, password } = req.body as { pending_id?: string; user_id?: string; password?: string };
-  if (!pending_id || !user_id || !password) {
-    res.status(400).send(renderError('Missing fields', 'pending_id, user_id, and password are required.'));
+app.post('/oauth/verify', async (req, res) => {
+  const { pending_id, method, ...proofBody } = req.body as {
+    pending_id?: string;
+    method?: 'siwe' | 'webauthn-register' | 'webauthn-authenticate' | 'did';
+    [k: string]: unknown;
+  };
+  if (!pending_id || !method) {
+    res.status(400).json({ error: 'pending_id and method are required' });
     return;
   }
 
-  let loginResp: {
-    userId: string;
-    agentId: string;
-    token: string;
-    webId: string;
-    podUrl: string;
+  const endpointByMethod: Record<typeof method, string> = {
+    'siwe': '/auth/siwe',
+    'webauthn-register': '/auth/webauthn/register',
+    'webauthn-authenticate': '/auth/webauthn/authenticate',
+    'did': '/auth/did',
+  };
+  const endpoint = endpointByMethod[method];
+  if (!endpoint) {
+    res.status(400).json({ error: `Unknown method: ${method}` });
+    return;
+  }
+
+  let authResp: {
+    userId?: string;
+    agentId?: string;
+    token?: string;
+    webId?: string;
+    podUrl?: string;
     error?: string;
   };
   try {
-    const r = await fetch(`${IDENTITY_URL}/login`, {
+    const r = await fetch(`${IDENTITY_URL}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: user_id, password }),
+      body: JSON.stringify(proofBody),
     });
-    loginResp = await r.json() as typeof loginResp;
-    if (!r.ok) {
-      res.status(r.status).send(renderError('Sign in failed', loginResp.error ?? `Identity server returned ${r.status}`));
+    authResp = await r.json() as typeof authResp;
+    if (!r.ok || !authResp.userId || !authResp.token) {
+      res.status(r.status || 401).json({ error: authResp.error ?? `Identity /auth returned ${r.status}` });
       return;
     }
   } catch (err) {
-    res.status(503).send(renderError('Identity server unreachable', (err as Error).message));
+    res.status(503).json({ error: `Identity server unreachable: ${(err as Error).message}` });
     return;
   }
 
   const result = oauthProvider.completePendingAuthorization(pending_id, {
-    userId: loginResp.userId,
-    agentId: loginResp.agentId,
-    ownerWebId: loginResp.webId,
-    podUrl: loginResp.podUrl,
-    identityToken: loginResp.token,
+    userId: authResp.userId,
+    agentId: authResp.agentId!,
+    ownerWebId: authResp.webId!,
+    podUrl: authResp.podUrl!,
+    identityToken: authResp.token,
   });
   if (!result) {
-    res.status(400).send(renderError('Authorization request expired', 'Please retry from your MCP client.'));
+    res.status(400).json({ error: 'Authorization request expired or unknown. Retry from your MCP client.' });
     return;
   }
 
   const redirect = new URL(result.redirectUri);
   redirect.searchParams.set('code', result.code);
   if (result.state) redirect.searchParams.set('state', result.state);
-  res.redirect(302, redirect.toString());
-});
-
-/**
- * GET /oauth/signup — signup page linked from the authorize login form so
- * new users can self-register during an OAuth flow without leaving the
- * browser tab. The pending_id round-trips through so after registration we
- * can immediately issue the auth code.
- */
-app.get('/oauth/signup', (req, res) => {
-  const pendingId = (req.query['pending_id'] as string | undefined) ?? '';
-  if (!pendingId) {
-    res.status(400).send(renderError('Missing pending_id', 'Open /oauth/signup from the Interego sign-in page.'));
-    return;
-  }
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(oauthProvider.renderSignupPage(pendingId));
-});
-
-/**
- * POST /oauth/signup — creates a new user + their first agent on the
- * identity server, then completes the pending OAuth authorization.
- * Agent ID is auto-derived from userId so the user doesn't have to think
- * about the distinction on first signup.
- */
-app.post('/oauth/signup', async (req, res) => {
-  const { pending_id, user_id, name, password } = req.body as { pending_id?: string; user_id?: string; name?: string; password?: string };
-  if (!pending_id || !user_id || !name || !password) {
-    res.status(400).send(renderError('Missing fields', 'pending_id, user_id, name, and password are required.'));
-    return;
-  }
-  if (!/^[a-z0-9][a-z0-9-]{1,30}$/.test(user_id)) {
-    res.status(400).send(renderError('Invalid user ID', 'User ID must be lowercase alphanumeric + hyphens, 2-31 chars.'));
-    return;
-  }
-  if (password.length < 8) {
-    res.status(400).send(renderError('Password too short', 'Password must be at least 8 characters.'));
-    return;
-  }
-
-  const agentId = `claude-mobile-${user_id}`;
-  const agentName = `Claude Mobile (${name})`;
-
-  let registerResp: {
-    userId: string;
-    agentId: string;
-    token: string;
-    webId: string;
-    podUrl: string;
-    error?: string;
-  };
-  try {
-    const r = await fetch(`${IDENTITY_URL}/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: user_id, name, agentId, agentName, password, scope: 'ReadWrite' }),
-    });
-    registerResp = await r.json() as typeof registerResp;
-    if (!r.ok) {
-      res.status(r.status).send(renderError('Registration failed', registerResp.error ?? `Identity server returned ${r.status}`));
-      return;
-    }
-  } catch (err) {
-    res.status(503).send(renderError('Identity server unreachable', (err as Error).message));
-    return;
-  }
-
-  const result = oauthProvider.completePendingAuthorization(pending_id, {
-    userId: registerResp.userId,
-    agentId: registerResp.agentId,
-    ownerWebId: registerResp.webId,
-    podUrl: registerResp.podUrl,
-    identityToken: registerResp.token,
-  });
-  if (!result) {
-    res.status(400).send(renderError('Authorization request expired', 'Please retry from your MCP client.'));
-    return;
-  }
-
-  const redirect = new URL(result.redirectUri);
-  redirect.searchParams.set('code', result.code);
-  if (result.state) redirect.searchParams.set('state', result.state);
-  res.redirect(302, redirect.toString());
+  res.json({ redirect: redirect.toString() });
 });
 
 // Health check
