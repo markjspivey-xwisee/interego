@@ -33,6 +33,7 @@ RUN sed 's|"file:../../"|"file:/tmp/interego-core.tgz"|g' package.json.template 
 
 COPY deploy/mcp-relay/tsconfig.json ./
 COPY deploy/mcp-relay/server.ts ./
+COPY deploy/mcp-relay/oauth-provider.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────
