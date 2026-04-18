@@ -154,7 +154,20 @@ function isToolEnabled(toolName: string): boolean {
 }
 
 const CSS_CONFIG = resolve(__dirname, '..', 'examples', 'multi-agent', 'css-config.json');
-const CSS_BIN = resolve(__dirname, 'node_modules', '.bin', 'community-solid-server');
+// __dirname resolves to either mcp-server/ (when run via tsx on source) or
+// mcp-server/dist/ (when run as compiled JS). Probe both locations and pick
+// whichever actually has the binary. Env override wins if set.
+const CSS_BIN = (() => {
+  if (process.env.CG_CSS_BIN) return process.env.CG_CSS_BIN;
+  const candidates = [
+    resolve(__dirname, 'node_modules', '.bin', 'community-solid-server'),
+    resolve(__dirname, '..', 'node_modules', '.bin', 'community-solid-server'),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p) || existsSync(p + '.cmd')) return p;
+  }
+  return candidates[1]; // default to sibling-of-dist path; detected later
+})();
 
 // ── State ───────────────────────────────────────────────────
 
