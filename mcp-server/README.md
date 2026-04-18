@@ -1,6 +1,6 @@
 # @interego/mcp
 
-**MCP server for [Interego](https://github.com/markjspivey-xwisee/interego)** — exposes 28 tools for publishing, discovering, composing, and reasoning over typed knowledge graphs through Solid pods. Compatible with Claude Code, Claude Desktop, Cursor, Windsurf, Cline, and any other MCP client.
+**MCP server for [Interego](https://github.com/markjspivey-xwisee/interego)** — exposes 25 tools for publishing, discovering, composing, and reasoning over typed knowledge graphs through Solid pods. Compatible with Claude Code, Claude Desktop, Cursor, Windsurf, Cline, and any other MCP client.
 
 ## Install
 
@@ -82,7 +82,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ## What you get
 
-Once configured, your AI agent has these 28 tools available:
+Once configured, your AI agent has these 25 tools available:
 
 | Category | Tools |
 |---|---|

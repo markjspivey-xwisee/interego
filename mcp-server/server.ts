@@ -1373,7 +1373,7 @@ async function toolPgslToTurtle(_args: Record<string, never>): Promise<string> {
 // ── MCP Server ──────────────────────────────────────────────
 
 const mcpServer = new Server(
-  { name: '@interego/mcp', version: '0.4.0' },
+  { name: '@interego/mcp', version: '0.4.1' },
   { capabilities: { tools: {}, resources: {} } },
 );
 

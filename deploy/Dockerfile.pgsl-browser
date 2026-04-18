@@ -54,6 +54,10 @@ COPY examples/pgsl-browser/index.html ./
 COPY examples/pgsl-browser/observatory.html ./
 # esbuild is in devDependencies and got installed above
 RUN npm run build
+# server.ts uses path.resolve(__dirname, 'index.html') to serve
+# static HTML. After compilation, __dirname inside dist/server.js
+# is /app/dist, so the HTML files need to live there too.
+RUN cp index.html observatory.html dist/
 
 # ────────────────────────────────────────────────────────────
 #  Runtime stage: distroless image running compiled JS
