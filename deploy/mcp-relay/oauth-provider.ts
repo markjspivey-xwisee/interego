@@ -77,6 +77,15 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     expiresAt: number;
   }>();
   private accessTokens = new Map<string, InteregoAuthInfo>();
+  // Refresh tokens: long-lived (14 days) secrets that can be traded for a
+  // fresh access token without reprompting the user. Keyed by the token
+  // string. One refresh token per access token issuance.
+  private refreshTokens = new Map<string, {
+    clientId: string;
+    scopes: string[];
+    identity: ResolvedIdentity;
+    expiresAt: number;
+  }>();
   private pendingAuthorizations = new Map<string, {
     client: OAuthClientInformationFull;
     params: AuthorizationParams;
@@ -403,7 +412,9 @@ async function didSubmit() {
     if (c.expiresAt < Date.now()) throw new Error('Authorization code expired');
 
     const token = randomBytes(32).toString('hex');
+    const refresh = randomBytes(32).toString('hex');
     const expiresIn = this.cfg.tokenTtlSec ?? 3600;
+    const refreshTtlSec = 14 * 24 * 3600; // 14 days
     this.accessTokens.set(token, {
       token,
       clientId: client.client_id,
@@ -416,16 +427,74 @@ async function didSubmit() {
         identityToken: c.identity.identityToken,
       },
     });
+    this.refreshTokens.set(refresh, {
+      clientId: client.client_id,
+      scopes: c.scopes,
+      identity: c.identity,
+      expiresAt: Date.now() + refreshTtlSec * 1000,
+    });
     return {
       access_token: token,
       token_type: 'Bearer',
       expires_in: expiresIn,
+      refresh_token: refresh,
       scope: c.scopes.join(' '),
     };
   }
 
-  async exchangeRefreshToken(): Promise<OAuthTokens> {
-    throw new Error('Refresh tokens not supported');
+  async exchangeRefreshToken(
+    client: OAuthClientInformationFull,
+    refreshToken: string,
+    scopes?: string[],
+  ): Promise<OAuthTokens> {
+    const rec = this.refreshTokens.get(refreshToken);
+    if (!rec) throw new Error('Invalid refresh token');
+    if (rec.expiresAt < Date.now()) {
+      this.refreshTokens.delete(refreshToken);
+      throw new Error('Refresh token expired');
+    }
+    if (rec.clientId !== client.client_id) throw new Error('Client ID mismatch');
+
+    // Scope narrowing: MUST be a subset of the original scopes (RFC 6749 §6).
+    const finalScopes = scopes && scopes.length > 0
+      ? scopes.filter(s => rec.scopes.includes(s))
+      : rec.scopes;
+    if (scopes && finalScopes.length !== scopes.length) {
+      throw new Error('Requested scopes exceed original grant');
+    }
+
+    // Rotate the refresh token: invalidate the old one, issue a new one.
+    // Defense against replayed refresh tokens (standard OAuth best practice).
+    this.refreshTokens.delete(refreshToken);
+
+    const token = randomBytes(32).toString('hex');
+    const newRefresh = randomBytes(32).toString('hex');
+    const expiresIn = this.cfg.tokenTtlSec ?? 3600;
+    this.accessTokens.set(token, {
+      token,
+      clientId: client.client_id,
+      scopes: finalScopes,
+      expiresAt: Math.floor(Date.now() / 1000) + expiresIn,
+      extra: {
+        agentId: rec.identity.agentId,
+        ownerWebId: rec.identity.ownerWebId,
+        userId: rec.identity.userId,
+        identityToken: rec.identity.identityToken,
+      },
+    });
+    this.refreshTokens.set(newRefresh, {
+      clientId: client.client_id,
+      scopes: finalScopes,
+      identity: rec.identity,
+      expiresAt: rec.expiresAt, // preserve original refresh TTL window
+    });
+    return {
+      access_token: token,
+      token_type: 'Bearer',
+      expires_in: expiresIn,
+      refresh_token: newRefresh,
+      scope: finalScopes.join(' '),
+    };
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
