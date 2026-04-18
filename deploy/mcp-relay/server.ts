@@ -774,6 +774,13 @@ void randomBytes;
 // ── Express App ─────────────────────────────────────────────
 
 const app = express();
+// Azure Container Apps sits behind Envoy, which sets X-Forwarded-For.
+// The SDK's mcpAuthRouter applies express-rate-limit, which throws
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR unless Express trusts the proxy.
+// Trust a single hop of proxy (Envoy) so the real client IP is preserved
+// without opening up header-spoofing from arbitrary callers.
+app.set('trust proxy', 1);
+
 app.use(express.json());
 // Login form POSTs x-www-form-urlencoded; OAuth token endpoint does too.
 app.use(express.urlencoded({ extended: false }));
