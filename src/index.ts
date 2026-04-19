@@ -270,6 +270,8 @@ export {
   readAnchors,
   // E2EE envelope fetch
   fetchGraphContent,
+  // Hypermedia: descriptor -> graph payload link
+  parseDistributionFromDescriptorTurtle,
   // Cross-pod sharing
   resolveHandleToPodUrl,
   resolveRecipient,
@@ -307,6 +309,7 @@ export type {
   ShareHandle,
   ResolvedRecipientPod,
   ResolveRecipientsOptions,
+  DistributionLink,
 } from './solid/index.js';
 
 // ── PGSL (Poly-Granular Sequence Lattice) ───────────────────

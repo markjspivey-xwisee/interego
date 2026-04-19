@@ -53,6 +53,7 @@ import {
   fetchGraphContent,
   type EncryptionKeyPair,
   resolveRecipients,
+  parseDistributionFromDescriptorTurtle,
 } from '@interego/core';
 
 import type {
@@ -428,24 +429,22 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
   }
   const turtle = await resp.text();
 
-  // Convenience: when the descriptor URL is requested, also fetch + decrypt
-  // the companion graph envelope and include both in the response. Avoids
-  // making callers hunt for the graph URL separately and remember that the
-  // payload is in a different file. Silently skips when no companion or when
-  // the relay isn't a recipient — descriptor alone is still returned.
-  let graph: { url: string; encrypted: boolean; content: string | null } | undefined;
-  if (url.endsWith('.ttl')) {
-    const envelopeUrl = url.replace(/\.ttl$/, '-graph.envelope.jose.json');
+  // Hypermedia follow-your-nose: the descriptor Turtle includes
+  // cg:hasDistribution [ dcat:accessURL <...> ; dcat:mediaType "..." ;
+  // cg:encrypted <bool> ; ... ]. We parse that instead of reconstructing
+  // the URL by naming convention, so clients and this handler alike
+  // stay decoupled from the relay's internal filename scheme. Matches
+  // the REST / HATEOAS / DCAT / Hydra principles the project builds on.
+  let graph: { url: string; mediaType: string; encrypted: boolean; content: string | null } | undefined;
+  const link = parseDistributionFromDescriptorTurtle(turtle);
+  if (link) {
     try {
-      const probe = await solidFetch(envelopeUrl, { method: 'GET' });
-      if (probe.ok) {
-        const { content, encrypted } = await fetchGraphContent(envelopeUrl, {
-          fetch: solidFetch,
-          recipientKeyPair: relayAgentKey,
-        });
-        graph = { url: envelopeUrl, encrypted, content };
-      }
-    } catch { /* companion missing or unreadable — return descriptor only */ }
+      const { content, encrypted } = await fetchGraphContent(link.accessURL, {
+        fetch: solidFetch,
+        recipientKeyPair: relayAgentKey,
+      });
+      graph = { url: link.accessURL, mediaType: link.mediaType, encrypted, content };
+    } catch { /* link present but fetch/decrypt failed; return descriptor only */ }
   }
 
   return JSON.stringify({ url, turtle, ...(graph ? { graph } : {}) });

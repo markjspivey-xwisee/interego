@@ -1,9 +1,11 @@
 export {
   publish, discover, subscribe, parseManifest,
   fetchGraphContent,
+  parseDistributionFromDescriptorTurtle,
   writeAgentRegistry, readAgentRegistry,
   writeDelegationCredential, verifyAgentDelegation,
 } from './client.js';
+export type { DistributionLink } from './client.js';
 export type {
   FetchFn,
   FetchResponse,

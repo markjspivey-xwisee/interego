@@ -96,6 +96,7 @@ import {
   openEncryptedEnvelope,
   type EncryptionKeyPair,
   fetchGraphContent,
+  parseDistributionFromDescriptorTurtle,
   // Cross-pod sharing
   resolveRecipients,
 } from '@interego/core';
@@ -673,26 +674,24 @@ async function toolGetDescriptor(args: { url: string }): Promise<string> {
   }
   const turtle = await resp.text();
 
-  // Convenience: if the caller passed a descriptor .ttl URL, also try to
-  // fetch + decrypt the companion graph envelope so a single call returns
-  // both the descriptor metadata and the decrypted payload.
+  // HATEOAS: follow cg:hasDistribution link from the descriptor to its
+  // graph payload instead of assuming a naming convention. Descriptor
+  // self-describes where the payload lives, what media type it serves,
+  // and whether it's encrypted — matches DCAT + Hydra semantics.
   let graphBlock = '';
-  if (args.url.endsWith('.ttl')) {
-    const envelopeUrl = args.url.replace(/\.ttl$/, '-graph.envelope.jose.json');
+  const link = parseDistributionFromDescriptorTurtle(turtle);
+  if (link) {
     try {
-      const probe = await fetch(envelopeUrl, { method: 'HEAD' });
-      if (probe.ok) {
-        const { content, encrypted } = await fetchGraphContent(envelopeUrl, {
-          fetch: solidFetch,
-          recipientKeyPair: agentKeyPair,
-        });
-        if (content !== null) {
-          graphBlock = `\n\n── Graph payload (${encrypted ? 'decrypted envelope' : 'plaintext'}, ${content.length} bytes) ──\n${envelopeUrl}\n\n${content}`;
-        } else if (encrypted) {
-          graphBlock = `\n\n── Graph payload at ${envelopeUrl}: encrypted, this agent is not a recipient ──`;
-        }
+      const { content, encrypted } = await fetchGraphContent(link.accessURL, {
+        fetch: solidFetch,
+        recipientKeyPair: agentKeyPair,
+      });
+      if (content !== null) {
+        graphBlock = `\n\n── Graph payload (${encrypted ? 'decrypted envelope' : 'plaintext'}, ${content.length} bytes, ${link.mediaType}) ──\n${link.accessURL}\n\n${content}`;
+      } else if (encrypted) {
+        graphBlock = `\n\n── Graph payload at ${link.accessURL}: encrypted, this agent is not a recipient ──`;
       }
-    } catch { /* companion missing — return descriptor alone */ }
+    } catch { /* link present but fetch failed — return descriptor alone */ }
   }
 
   return `Descriptor at ${args.url} (${turtle.length} bytes):\n\n${turtle}${graphBlock}`;

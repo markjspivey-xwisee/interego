@@ -395,12 +395,26 @@ export async function publish(
     );
   }
 
-  // 2. PUT the descriptor as standalone Turtle
+  // 2. PUT the descriptor as standalone Turtle — augmented with a
+  //    hypermedia Distribution block linking to the graph payload.
+  //    This is HATEOAS: the descriptor self-describes where its graph
+  //    content lives, what media type it serves, whether it's encrypted,
+  //    and what HTTP operations a client can invoke to retrieve and
+  //    decrypt it. Clients follow the link instead of constructing URLs
+  //    by naming convention.
   const descriptorUrl = `${container}${slug}.ttl`;
+  const distributionBlock = buildDistributionBlock({
+    graphUrl,
+    graphContentType,
+    encrypted: encryptedFlag,
+    encryptionAlgorithm: encryptedFlag ? 'X25519-XSalsa20-Poly1305' : undefined,
+    recipientCount: options.encrypt?.recipients.length,
+  });
+  const descriptorWithDistribution = descriptorTurtle.trimEnd() + '\n\n' + distributionBlock + '\n';
   const descResponse = await fetchFn(descriptorUrl, {
     method: 'PUT',
     headers: { 'Content-Type': TURTLE_CONTENT_TYPE },
-    body: descriptorTurtle,
+    body: descriptorWithDistribution,
   });
   if (!descResponse.ok) {
     throw new Error(
@@ -459,6 +473,79 @@ export async function publish(
   if (encryptedFlag) (result as { encrypted?: boolean }).encrypted = true;
   if (pgslUri !== undefined) (result as { pgslUri?: string }).pgslUri = pgslUri;
   if (pgslLevel !== undefined) (result as { pgslLevel?: number }).pgslLevel = pgslLevel;
+  return result;
+}
+
+// ═════════════════════════════════════════════════════════════
+//  Hypermedia: Distribution link serialization + parsing
+// ═════════════════════════════════════════════════════════════
+
+/**
+ * Build the Turtle block that links a descriptor to its graph payload.
+ * Uses standard DCAT for distribution description + Hydra for affordances
+ * + cg: for encryption semantics. Clients follow dcat:accessURL to reach
+ * the graph; dcat:mediaType + cg:encrypted tell them how to interpret it;
+ * hydra:operation declares what they can do with it.
+ */
+function buildDistributionBlock(d: {
+  graphUrl: string;
+  graphContentType: string;
+  encrypted: boolean;
+  encryptionAlgorithm?: string;
+  recipientCount?: number;
+}): string {
+  const lines: string[] = [
+    '# ── Distribution (HATEOAS link to graph payload) ──────',
+    `<> cg:hasDistribution [`,
+    `    a dcat:Distribution ;`,
+    `    dcat:accessURL <${d.graphUrl}> ;`,
+    `    dcat:mediaType "${d.graphContentType}" ;`,
+    `    cg:encrypted ${d.encrypted ? 'true' : 'false'}`,
+  ];
+  if (d.encrypted && d.encryptionAlgorithm) {
+    lines.push(`    ; cg:encryptionAlgorithm "${d.encryptionAlgorithm}"`);
+  }
+  if (d.encrypted && typeof d.recipientCount === 'number') {
+    lines.push(`    ; cg:recipientCount ${d.recipientCount}`);
+  }
+  lines.push(`    ; hydra:operation [`);
+  lines.push(`        a hydra:Operation ;`);
+  lines.push(`        hydra:method "GET" ;`);
+  lines.push(`        hydra:title "${d.encrypted ? 'Fetch encrypted graph envelope' : 'Fetch graph payload'}" ;`);
+  lines.push(`        hydra:returns ${d.encrypted ? 'cg:EncryptedGraphEnvelope' : 'cg:GraphPayload'}`);
+  lines.push(`    ]`);
+  lines.push(`] .`);
+  return lines.join('\n');
+}
+
+export interface DistributionLink {
+  readonly accessURL: string;
+  readonly mediaType: string;
+  readonly encrypted: boolean;
+  readonly encryptionAlgorithm?: string;
+}
+
+/**
+ * Parse `cg:hasDistribution [...]` blocks out of a descriptor's Turtle
+ * and return the graph payload's accessURL + media type + encryption
+ * status. Returns null when no distribution is declared (e.g. descriptors
+ * published before the hypermedia-linking change).
+ */
+export function parseDistributionFromDescriptorTurtle(turtle: string): DistributionLink | null {
+  const match = turtle.match(/cg:hasDistribution\s*\[([\s\S]*?)\]/);
+  if (!match) return null;
+  const block = match[1]!;
+  const accessUrlMatch = block.match(/dcat:accessURL\s+<([^>]+)>/);
+  const mediaTypeMatch = block.match(/dcat:mediaType\s+"([^"]+)"/);
+  const encryptedMatch = block.match(/cg:encrypted\s+(true|false)/);
+  const algoMatch = block.match(/cg:encryptionAlgorithm\s+"([^"]+)"/);
+  if (!accessUrlMatch || !mediaTypeMatch) return null;
+  const result: DistributionLink = {
+    accessURL: accessUrlMatch[1]!,
+    mediaType: mediaTypeMatch[1]!,
+    encrypted: encryptedMatch?.[1] === 'true',
+  };
+  if (algoMatch) (result as { encryptionAlgorithm?: string }).encryptionAlgorithm = algoMatch[1];
   return result;
 }
 
