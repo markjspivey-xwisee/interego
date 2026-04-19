@@ -243,3 +243,26 @@ pgsl:maxLevel a owl:DatatypeProperty , owl:FunctionalProperty ;
 #  PGSL's own provenance properties stay minimal precisely to
 #  encourage reuse of the W3C PROV-O vocabulary.
 # ══════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════
+#  Shape classes (SHACL) referenced by validation code
+# ══════════════════════════════════════════════════════════════
+
+pgsl:AtomShape a sh:NodeShape ; rdfs:label "Atom SHACL shape" ; sh:targetClass pgsl:Atom ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:FragmentShape a sh:NodeShape ; rdfs:label "Fragment SHACL shape" ; sh:targetClass pgsl:Fragment ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:PullbackSquareShape a sh:NodeShape ; rdfs:label "PullbackSquare SHACL shape" ; sh:targetClass pgsl:PullbackSquare ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:ConstituentIntegrityShape a sh:NodeShape ; rdfs:label "Constituent Integrity SHACL shape" ; rdfs:comment "Validates that fragment constituents are consistent (left/right pullback recoverable)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:LevelConsistencyShape a sh:NodeShape ; rdfs:label "Level Consistency SHACL shape" ; rdfs:comment "Validates that fragment level = max(left.level, right.level) + 1." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:OverlapValidityShape a sh:NodeShape ; rdfs:label "Overlap Validity SHACL shape" ; rdfs:comment "Validates pullback overlap is non-empty + canonically minimal." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:AcyclicityShape a sh:NodeShape ; rdfs:label "Acyclicity SHACL shape" ; rdfs:comment "Validates the lattice is a DAG (no fragment is its own ancestor)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:CanonicalityShape a sh:NodeShape ; rdfs:label "Canonicality SHACL shape" ; rdfs:comment "Validates URIs are content-addressed (same plaintext -> same URI within a pod's recipient set)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Properties referenced by serializer / persistence
+# ══════════════════════════════════════════════════════════════
+
+pgsl:attributedTo a owl:ObjectProperty ; rdfs:label "attributed to" ; rdfs:comment "The entity (agent / user / organization) a node is attributed to. Analogue of prov:wasAttributedTo scoped to the pgsl: namespace." ; rdfs:seeAlso prov:wasAttributedTo ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:generatedAt a owl:DatatypeProperty ; rdfs:label "generated at" ; rdfs:range xsd:dateTime ; rdfs:comment "ISO 8601 timestamp recording when a pgsl: node was minted." ; rdfs:seeAlso prov:generatedAtTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:resolved a owl:DatatypeProperty ; rdfs:label "resolved" ; rdfs:range xsd:string ; rdfs:comment "The resolved text representation of a fragment (full reconstructed string across all constituents)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:sign a owl:ObjectProperty ; rdfs:label "sign" ; rdfs:comment "Peircean sign associated with this node — the representamen aspect of the triadic sign/object/interpretant structure." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+pgsl:metagraph a owl:ObjectProperty ; rdfs:label "metagraph" ; rdfs:comment "Reference to a named graph holding meta-level annotations about this pgsl: node." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.

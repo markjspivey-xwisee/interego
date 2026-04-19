@@ -1,0 +1,165 @@
+@prefix hyprcat: <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
+@prefix cg:      <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix cgh:     <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix ie:      <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix dct:     <http://purl.org/dc/terms/> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix vann:    <http://purl.org/vocab/vann/> .
+@prefix prov:    <http://www.w3.org/ns/prov#> .
+@prefix hydra:   <http://www.w3.org/ns/hydra/core#> .
+@prefix dcat:    <http://www.w3.org/ns/dcat#> .
+@prefix dprod:   <https://dprod.org/ns/dprod#> .
+@prefix solid:   <http://www.w3.org/ns/solid/terms#> .
+
+# ══════════════════════════════════════════════════════════════
+#  HyprCat — Federated Data-Product Catalog with Distributed Affordances
+# ══════════════════════════════════════════════════════════════
+#
+#  HyprCat decorates W3C DCAT + DPROD with three properties that
+#  make catalogs genuinely federation-native rather than merely
+#  publishable:
+#
+#    1. Distributed identity. Every catalog entry carries a resolvable
+#       WebID / DID / WebFinger handle, not just an accessURL. A
+#       consumer can trace an entry back to its issuing agent and
+#       delegating owner without naming-convention guesswork.
+#
+#    2. Affordance-bearing distributions. Where DCAT's
+#       dcat:Distribution just declares "this bytes lives at this URL
+#       in this media type," a hyprcat:FederatedDistribution carries
+#       Hydra operations + cg:Affordance instances so a client knows
+#       what actions are valid (GET / SUBSCRIBE / PUBLISH / DECRYPT),
+#       not just where the bytes live. HATEOAS by construction.
+#
+#    3. Three-world federation boundary. Each entry declares which
+#       world it belongs to (User / Agent / Service — see
+#       hyprcat:ThreeWorld below) so cross-world access policies and
+#       trust boundaries are explicit in the metadata rather than
+#       inferred from URL structure.
+#
+#  HyprCat catalogs compose: a federated catalog may itself list
+#  other federated catalogs as sub-entries, forming a hyprcat:Mesh.
+#  No central registry; participants discover each other via
+#  WebFinger (RFC 7033), DID resolution, or direct Solid pod crawl.
+#
+#  Relation to this project's ontologies:
+#    - cg:FederationFacet    is the per-descriptor federation record
+#      that a HyprCat catalog aggregates into.
+#    - cgh:Affordance        is the per-node affordance that a
+#      HyprCat distribution announces to clients.
+#    - ie:Where             is the interrogative HyprCat answers
+#      ("where is this, who hosts it, who can access it?").
+#
+#  Relation to external standards:
+#    - Decorates DCAT Catalog + DPROD DataProduct + Hydra Operation.
+#    - Re-uses Solid / LDP storage semantics where applicable.
+#    - All HyprCat classes are subClassOf an existing DCAT/DPROD
+#      class; HyprCat never replaces upstream vocabulary, it extends.
+
+<https://markjspivey-xwisee.github.io/interego/ns/hyprcat>
+    a owl:Ontology ;
+    dct:title "HyprCat — Federated Data-Product Catalog with Distributed Affordances" ;
+    dct:description "Decoration layer over DCAT + DPROD + Hydra that gives catalog entries distributed identity, affordance-bearing distributions, and three-world federation boundaries. Composable without a central registry. The federation-native counterpart of dcat:Catalog." ;
+    vann:preferredNamespacePrefix "hyprcat" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/hyprcat#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/harness> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/interego> .
+
+# ── Core classes ──────────────────────────────────────────────
+
+hyprcat:FederatedCatalog a owl:Class ;
+    rdfs:subClassOf dcat:Catalog , dprod:DataProductPlatform ;
+    rdfs:label "Federated Catalog" ;
+    rdfs:comment "A dcat:Catalog that is reachable as a first-class network participant — its own WebID / DID resolve, it declares hypermedia affordances (subscribe, register, publish, query), and it can hold pointers to other hyprcat:FederatedCatalog instances to form a mesh. Each FederatedCatalog is a participant in the three-world federation (see hyprcat:ThreeWorld)." .
+
+hyprcat:FederatedDataProduct a owl:Class ;
+    rdfs:subClassOf dprod:DataProduct , cg:DataProduct ;
+    rdfs:label "Federated Data Product" ;
+    rdfs:comment "A DPROD data product that carries distributed identity (hyprcat:issuedBy -> WebID / DID) and federation boundary (hyprcat:world). Input and output ports are typed hyprcat:PortAffordance instances — they declare not just WHERE data can be retrieved but WHICH affordances (hydra:Operation + cg:Affordance) clients can invoke." .
+
+hyprcat:FederatedDistribution a owl:Class ;
+    rdfs:subClassOf dcat:Distribution , cg:Affordance , cgh:Affordance , hydra:Operation ;
+    rdfs:label "Federated Distribution" ;
+    rdfs:comment "A dcat:Distribution that is simultaneously a hydra:Operation, a cg:Affordance, and a cgh:Affordance — single RDF node wearing four compatible hats. Any client speaking any of those vocabularies can dispatch against it without negotiating a common dialect. This is the decoration HyprCat adds to plain DCAT: the distribution IS an affordance, not just a location." .
+
+hyprcat:PortAffordance a owl:Class ;
+    rdfs:subClassOf hyprcat:FederatedDistribution ;
+    rdfs:label "Port Affordance" ;
+    rdfs:comment "An input or output port of a hyprcat:FederatedDataProduct, expressed as a federated distribution. Input ports declare 'clients may POST values here with these preconditions'; output ports declare 'clients may GET / SUBSCRIBE here with these returns'. Both forms are hydra:Operation-compatible." .
+
+hyprcat:Mesh a owl:Class ;
+    rdfs:subClassOf hyprcat:FederatedCatalog ;
+    rdfs:label "Catalog Mesh" ;
+    rdfs:comment "A hyprcat:FederatedCatalog whose entries are themselves hyprcat:FederatedCatalogs. The recursive structure is what makes federation compose — a user's home catalog, their team's catalog, and a public catalog can all link each other without a central authority, each exposing only the subset it chooses." .
+
+# ── Three-world federation boundary ───────────────────────────
+
+hyprcat:World a owl:Class ;
+    rdfs:label "World" ;
+    rdfs:comment "A federation boundary that grounds trust and access decisions. HyprCat defines three canonical worlds — User, Agent, Service — to distinguish human-first contexts from autonomous-agent contexts from shared-service contexts. Individual resources declare their world via hyprcat:world; cross-world access triggers explicit policy." ;
+    skos:note "Inspired by Popper's three worlds (physical, mental, objective knowledge) but grounded in concrete participation: who ultimately is responsible for this resource?" .
+
+hyprcat:UserWorld a hyprcat:World ;
+    rdfs:label "User World" ;
+    rdfs:comment "Resources owned and controlled by an identified human user. Default privacy posture: other worlds cannot read without explicit cross-world delegation (see cg:AuthorizedAgent, cg:sharedWith)." .
+
+hyprcat:AgentWorld a hyprcat:World ;
+    rdfs:label "Agent World" ;
+    rdfs:comment "Resources produced by autonomous agents on behalf of some user or service. Provenance trail (prov:wasAttributedTo on a user) must be present; without that the resource is unassigned." .
+
+hyprcat:ServiceWorld a hyprcat:World ;
+    rdfs:label "Service World" ;
+    rdfs:comment "Resources that are infrastructural — offered by a service to any authorized participant. Shared protocol endpoints (identity server, relay, CSS) and published standards live here." .
+
+hyprcat:world a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "world" ;
+    rdfs:comment "Federation boundary this resource belongs to. Value is one of hyprcat:UserWorld, hyprcat:AgentWorld, hyprcat:ServiceWorld. Required for cross-world access checks." ;
+    rdfs:range hyprcat:World .
+
+# ── Properties ────────────────────────────────────────────────
+
+hyprcat:issuedBy a owl:ObjectProperty , owl:FunctionalProperty ;
+    rdfs:label "issued by" ;
+    rdfs:comment "The issuing agent of a catalog entry or distribution. Value is a WebID / DID / acct: identifier — the resolver walks this to a cg:AuthorizedAgent in the issuer's pod to verify authority." ;
+    rdfs:range rdfs:Resource .
+
+hyprcat:inputPort a owl:ObjectProperty ;
+    rdfs:label "input port" ;
+    rdfs:comment "A port on a federated data product that accepts incoming publication or modification. Values are hyprcat:PortAffordance. Multi-valued." ;
+    rdfs:domain hyprcat:FederatedDataProduct ;
+    rdfs:range hyprcat:PortAffordance ;
+    rdfs:seeAlso dprod:inputPort .
+
+hyprcat:outputPort a owl:ObjectProperty ;
+    rdfs:label "output port" ;
+    rdfs:comment "A port on a federated data product that serves outgoing content. Values are hyprcat:PortAffordance. Multi-valued." ;
+    rdfs:domain hyprcat:FederatedDataProduct ;
+    rdfs:range hyprcat:PortAffordance ;
+    rdfs:seeAlso dprod:outputPort .
+
+hyprcat:federatedWith a owl:ObjectProperty ;
+    rdfs:label "federated with" ;
+    rdfs:comment "Declares a peer hyprcat:FederatedCatalog this catalog exchanges entries with. Directional (A federatedWith B does not imply B federatedWith A); bidirectional federation requires both declarations. Enables mesh discovery." ;
+    rdfs:domain hyprcat:FederatedCatalog ;
+    rdfs:range hyprcat:FederatedCatalog .
+
+hyprcat:dispatchPolicy a owl:ObjectProperty ;
+    rdfs:label "dispatch policy" ;
+    rdfs:comment "Pointer to an ODRL policy (or cg:TrustFacet, cgh:PolicyDecision) governing whether and how a client may invoke the affordance on this distribution. Enables cross-world access control without conflating policy with distribution bytes." ;
+    rdfs:domain hyprcat:FederatedDistribution .
+
+# ── Interoperability markers ──────────────────────────────────
+
+# Every HyprCat distribution IS a cg:Affordance
+hyprcat:FederatedDistribution rdfs:subClassOf cg:Affordance .
+
+# Cross-ontology equivalences
+hyprcat:FederatedCatalog skos:closeMatch cg:PodCatalog ;
+    skos:note "cg:PodCatalog is the Interego-specific realization of a HyprCat FederatedCatalog scoped to a single Solid pod. A HyprCat FederatedCatalog can aggregate multiple cg:PodCatalog instances across pods." .
+
+hyprcat:FederatedDataProduct skos:closeMatch cg:DataProduct .
