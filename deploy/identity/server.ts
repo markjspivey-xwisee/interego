@@ -629,7 +629,7 @@ app.post('/challenges', async (req, res) => {
  * }
  */
 app.post('/auth/siwe', async (req, res) => {
-  const { message, signature, nonce, userId: hintedUserId, name, agentId: hintedAgentId } = req.body;
+  const { message, signature, nonce, userId: hintedUserId, name, agentId: hintedAgentId, surfaceAgent } = req.body;
   if (!message || !signature || !nonce) {
     res.status(400).json({ error: 'message, signature, and nonce are required' });
     return;
@@ -693,7 +693,7 @@ app.post('/auth/siwe', async (req, res) => {
     log(`First-time SIWE registration: ${hintedUserId} wallet=${recoveredAddress}`);
   }
 
-  res.json(issueTokenResponse(user));
+  res.json(issueTokenResponse(user, surfaceAgent));
 });
 
 // ── WebAuthn / Passkeys ─────────────────────────────────────
@@ -747,7 +747,7 @@ app.post('/auth/webauthn/register-options', async (req, res) => {
  * Body: { userId, response: RegistrationResponseJSON }
  */
 app.post('/auth/webauthn/register', async (req, res) => {
-  const { userId, response } = req.body;
+  const { userId, response, surfaceAgent } = req.body;
   if (!userId || !response) {
     res.status(400).json({ error: 'userId and response are required' });
     return;
@@ -816,7 +816,7 @@ app.post('/auth/webauthn/register', async (req, res) => {
   }
   log(`WebAuthn credential registered for ${userId}`);
 
-  res.json(issueTokenResponse(user));
+  res.json(issueTokenResponse(user, surfaceAgent));
 });
 
 /**
@@ -825,7 +825,7 @@ app.post('/auth/webauthn/register', async (req, res) => {
  * Body: { userId, response: AuthenticationResponseJSON }
  */
 app.post('/auth/webauthn/authenticate', async (req, res) => {
-  const { userId, response } = req.body;
+  const { userId, response, surfaceAgent } = req.body;
   if (!userId || !response) {
     res.status(400).json({ error: 'userId and response are required' });
     return;
@@ -888,7 +888,7 @@ app.post('/auth/webauthn/authenticate', async (req, res) => {
     // Not fatal — the user successfully authenticated this round; worst case
     // the next attempt re-accepts an older counter value (still valid per spec).
   }
-  res.json(issueTokenResponse(user));
+  res.json(issueTokenResponse(user, surfaceAgent));
 });
 
 // ── Generic DID-signature auth (did:key / did:web) ──────────
@@ -908,7 +908,7 @@ app.post('/auth/webauthn/authenticate', async (req, res) => {
  * }
  */
 app.post('/auth/did', async (req, res) => {
-  const { did, nonce, signature, userId: hintedUserId, name, publicKeyMultibase } = req.body;
+  const { did, nonce, signature, userId: hintedUserId, name, publicKeyMultibase, surfaceAgent } = req.body;
   if (!did || !nonce || !signature) {
     res.status(400).json({ error: 'did, nonce, and signature are required' });
     return;
@@ -997,27 +997,62 @@ app.post('/auth/did', async (req, res) => {
     log(`First-time DID registration: ${hintedUserId} did=${did}`);
   }
 
-  res.json(issueTokenResponse(user));
+  res.json(issueTokenResponse(user, surfaceAgent));
 });
 
 // ── Token response helper (shared across auth methods) ──────
-function issueTokenResponse(user: Identity): Record<string, unknown> {
+/**
+ * Ensure a per-surface agent exists for this user.
+ *
+ * `surfaceAgent` is a short prefix like 'claude-mobile' or 'claude-desktop'
+ * coming from the relay's /oauth/verify route. We want each surface
+ * (mobile app, desktop app, web client, VS Code, Slack bot, etc.) to
+ * have its OWN agent entry — distinct DID, distinct X25519 key, distinct
+ * revocation surface — so pod attribution and recipient lists reflect
+ * which surface actually wrote each descriptor.
+ *
+ * If no hint is given, fall back to the first-registered agent (legacy
+ * behaviour). If the hinted surface agent doesn't exist yet under this
+ * user, mint it inline — safe because the proof step already validated
+ * the user's key-possession.
+ */
+function ensureSurfaceAgent(user: Identity, surfaceAgent: string | undefined): Identity {
+  if (surfaceAgent) {
+    const surfaceAgentId = `${surfaceAgent}-${user.id}`;
+    const existing = identities.get(surfaceAgentId);
+    if (existing && existing.type === 'agent' && existing.owner === user.id) {
+      return existing;
+    }
+    if (!existing) {
+      const label = surfaceAgent
+        .split('-')
+        .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+        .join(' ');
+      seedIdentity(surfaceAgentId, 'agent', `${label} (${user.name})`, user.id, 'ReadWrite');
+      return identities.get(surfaceAgentId)!;
+    }
+  }
   const firstAgent = [...identities.values()].find(i => i.type === 'agent' && i.owner === user.id);
   if (!firstAgent) throw new Error(`User '${user.id}' has no agents`);
-  const tokenRecord = issueToken(user.id, firstAgent.id, firstAgent.scope ?? 'ReadWrite');
+  return firstAgent;
+}
+
+function issueTokenResponse(user: Identity, surfaceAgent?: string): Record<string, unknown> {
+  const agent = ensureSurfaceAgent(user, surfaceAgent);
+  const tokenRecord = issueToken(user.id, agent.id, agent.scope ?? 'ReadWrite');
   const host = new URL(BASE_URL).host;
   // Summarise registered auth methods from cache (stale ok — this is just
   // a UI hint, not security-critical).
   const cached = authMethodsCache.get(user.id)?.value;
   return {
     userId: user.id,
-    agentId: firstAgent.id,
+    agentId: agent.id,
     token: tokenRecord.token,
     expiresAt: tokenRecord.expiresAt,
     scope: tokenRecord.scope,
     webId: `${BASE_URL}/users/${user.id}/profile#me`,
     did: `did:web:${host}:users:${user.id}`,
-    agentDid: `did:web:${host}:agents:${firstAgent.id}`,
+    agentDid: `did:web:${host}:agents:${agent.id}`,
     podUrl: `${CSS_URL}${user.id}/`,
     authMethodsUrl: podAuthMethodsUrl(user.id),
     identityServer: BASE_URL,

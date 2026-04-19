@@ -85,6 +85,14 @@ const RELAY_MCP_API_KEY = process.env['RELAY_MCP_API_KEY'] ?? '';
 // externally-reachable URL. Falls back to constructing from request host.
 const PUBLIC_BASE_URL = process.env['PUBLIC_BASE_URL'] ?? '';
 
+// Surface-agent prefix this relay uses when minting per-user agents on
+// identity. Every user who authenticates through this relay gets a
+// distinct `<RELAY_SURFACE_AGENT>-<userId>` agent on their pod (own DID,
+// own X25519 key, own revocation point). Deployments that want separate
+// agents for e.g. a dedicated mobile relay vs a web relay can set this
+// per-instance via env.
+const RELAY_SURFACE_AGENT = process.env['RELAY_SURFACE_AGENT'] ?? 'claude-mobile';
+
 // Singleton OAuth provider. Auth is delegated to the identity server — the
 // provider's login form collects userId+password, server.ts /oauth/login
 // forwards to ${IDENTITY_URL}/login, and the returned identity is baked into
@@ -990,10 +998,15 @@ app.post('/oauth/verify', async (req, res) => {
     error?: string;
   };
   try {
+    // Tell identity which surface this auth came from so it mints / reuses
+    // a per-surface agent (e.g. claude-mobile-<userId>) instead of
+    // collapsing onto whatever seeded agent happens to be first for this
+    // user. Matches the "every surface is its own agent" principle.
+    const bodyWithSurface = { ...proofBody, surfaceAgent: RELAY_SURFACE_AGENT };
     const r = await fetch(`${IDENTITY_URL}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(proofBody),
+      body: JSON.stringify(bodyWithSurface),
     });
     authResp = await r.json() as typeof authResp;
     if (!r.ok || !authResp.userId || !authResp.token) {
