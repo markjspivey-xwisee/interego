@@ -90,6 +90,40 @@ BOOTSTRAP_INVITES="markj:<long-random-token>,alice:<another-token>"
 - An invite is consumed exactly once: on the first successful enrollment for that userId. After consumption — or once the seeded pod has any credential on file — the invite flow refuses, so even a restarted container cannot replay the bootstrap.
 - Not setting `BOOTSTRAP_INVITES` simply means no seeded legacy users can be first-enrolled. New users go straight to `u-pk-…` / `u-eth-…` / `u-did-…` derived identities.
 
+### Self-audit endpoint
+
+```
+GET /auth-methods/me
+Authorization: Bearer <identity-token>
+```
+
+Returns the full `auth-methods.jsonld` doc for the token's user — wallet addresses, WebAuthn credential IDs + `createdAt` + transports, DID keys + `createdAt`. Public-key bytes and WebAuthn counters are intentionally omitted (they're in the pod already and not useful for audit). Use this to verify no foreign credentials have accreted to your account (historical risk under the pre-fix userId-claim hijack).
+
+### Per-surface agent detection (relay side)
+
+The MCP relay mints per-user agents of the form `<surface>-<userId>` on the user's pod. The `<surface>` slug is derived automatically at OAuth completion time from the DCR-registered `client_name`:
+
+| OAuth `client_name` pattern | Surface slug |
+|---|---|
+| `Claude Code (VS Code)` / `VSCode` | `claude-code-vscode` |
+| `Claude Code` | `claude-code` |
+| `Claude Desktop` / Mac / Windows | `claude-desktop` |
+| `Claude Mobile` / iOS / Android | `claude-mobile` |
+| `Claude` (anything else) | `claude` |
+| `ChatGPT` | `chatgpt` |
+| `OpenAI Codex` | `openai-codex` |
+| bare `Codex` | `codex` |
+| `Cursor`, `Windsurf`, `Cline`, `Zed`, `Continue` | their own slug |
+| otherwise slugifiable (matches `^[a-z][a-z0-9-]{1,31}$`) | that slug |
+| missing / unslugifiable | `RELAY_DEFAULT_SURFACE_AGENT` (default `mcp-client`) |
+
+Two relay env vars control the fallback:
+
+- `RELAY_DEFAULT_SURFACE_AGENT` (default `mcp-client`) — used when the OAuth `client_name` is missing or unrecognised. **Deliberately NOT `claude-*`** so an unknown client doesn't silently masquerade as Claude.
+- `RELAY_SURFACE_AGENT` — legacy alias, kept so old deployments keep working.
+
+A deployment that always serves a single surface (e.g. a dedicated mobile-only relay) can set `RELAY_DEFAULT_SURFACE_AGENT=claude-mobile` to pin the label.
+
 ## Known-good tradeoffs, documented
 
 **WebAuthn credentials are RP-bound** to the origin they were registered at (spec-mandated; passkeys are cryptographically scoped to an RP ID). If Interego ever moves to a new public URL, users re-enroll their passkey for the new origin. This is *not* a sovereignty loss — the user's DID, wallet, and did-key methods all remain portable across origins, and WebAuthn is explicitly positioned as one of several methods, not the canonical one. Users concerned about origin lock-in should enroll a DID or wallet method in addition to their passkey.

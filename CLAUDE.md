@@ -77,8 +77,9 @@ tools/
 ### First-principles guardrails
 
 - **No passwords anywhere.** Auth is SIWE / WebAuthn / did:key signatures over server-issued nonces.
-- **DIDs are canonical identifiers.** WebIDs + pod URLs are dereferenceable views. `markj` (the pod-path slug) is a display alias, not the identity.
-- **Pods are the source of truth.** Identity server is stateless — user auth state (walletAddresses, webAuthnCredentials, didKeys) lives in `<pod>/auth-methods.jsonld`.
+- **DIDs are canonical identifiers; userId is derived, not claimed.** The server never accepts a user-supplied userId. New userIds are deterministic functions of the user's first credential (`u-pk-<sha256(credId)[:12]>` for passkeys, `u-eth-<addr[:12]>` for wallets, `u-did-<sha256(did)[:12]>` for DIDs). `markj` and other seeded legacy userIds are gated behind single-use `BOOTSTRAP_INVITES` env tokens — they function as display aliases + pod-path slugs, not as identifiers anyone can claim. `/register` returns 410 Gone.
+- **Per-surface agents are relay-detected.** The relay maps the OAuth client's DCR `client_name` to a surface slug (`chatgpt`, `claude-code-vscode`, `openai-codex`, `cursor`, etc.) and mints `<slug>-<userId>` on identity. Unknown clients fall back to the generic `mcp-client`, never `claude-*`. See `deploy/mcp-relay/server.ts:surfaceAgentFromClient`.
+- **Pods are the source of truth.** Identity server is stateless — user auth state (walletAddresses, webAuthnCredentials, didKeys) lives in `<pod>/auth-methods.jsonld`. Users can self-audit via `GET /auth-methods/me` (bearer-gated) to spot any foreign credentials.
 - **Storage is zero-trust.** Storage provider sees only ciphertext for private content.
 - **Federation is cryptographic.** Recipients via envelope wrapped-keys; no membership service; no central authority.
 

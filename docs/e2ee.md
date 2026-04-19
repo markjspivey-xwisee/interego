@@ -80,7 +80,7 @@ On every publish, the recipient set is the union of:
 2. **The publishing agent's own key** (always included so the author can re-read their own publishes later).
 3. **External agents from `share_with`** handles — each handle resolved via WebFinger / DID / direct pod URL to the target user's pod, their authorized agents' keys pulled and added. One graph, selective disclosure without pod-level ACL changes.
 
-Registration is automatic: `publish_context` auto-registers the calling agent on the target pod's registry (including its X25519 public key) if it isn't already present. Per-surface agents (`claude-code:vscode`, `claude-mobile:markj`, etc.) therefore each become first-class recipients on their first write — no piggybacking on a shared agent.
+Registration is automatic: `publish_context` auto-registers the calling agent on the target pod's registry (including its X25519 public key) if it isn't already present. Per-surface agents (e.g. `claude-code-vscode-<userId>`, `chatgpt-<userId>`, `cursor-<userId>`) therefore each become first-class recipients on their first write — no piggybacking on a shared agent. The relay derives the surface slug automatically from the OAuth client's DCR-registered `client_name`; unknown clients fall back to `mcp-client` rather than `claude-*`, so nothing silently masquerades. The `<userId>` portion is itself derived from the user's first credential (`u-pk-…` for passkeys, `u-eth-…` for wallets, `u-did-…` for DIDs) — never a user-claimed string.
 
 ## Key lifecycle
 
@@ -95,7 +95,7 @@ Registration is automatic: `publish_context` auto-registers the calling agent on
 ## What this buys
 
 - **Zero-trust storage**: CSS, Azure Files, Pinata see only ciphertext. Proven via canary test — `FIRST_PRINCIPLES_CANARY_*` strings written as graph content are never present in the raw bytes served by CSS, only in `get_descriptor` output after envelope decryption.
-- **Per-agent provenance**: every descriptor's `prov:wasAssociatedWith` is a `did:web` IRI tied to a specific surface. Claude Mobile's writes attribute to `did:web:…:agents:claude-mobile-markj`, VS Code's writes to `did:web:…:agents:claude-code-vscode`. No piggybacking, no collapsed identity.
+- **Per-agent provenance**: every descriptor's `prov:wasAssociatedWith` is a `did:web` IRI tied to a specific surface. ChatGPT writes attribute to `did:web:…:agents:chatgpt-u-pk-<hash>`, Claude Code writes to `did:web:…:agents:claude-code-vscode-u-pk-<hash>`, etc. No piggybacking, no collapsed identity, no string collisions across users because the `<userId>` tail is derived from credential material.
 - **Federation without ACL contortion**: `share_with` adds recipients cryptographically. Bob's agent can decrypt the shared graph; everything else on your pod stays inaccessible because his keys aren't in those envelopes.
 - **HATEOAS navigation**: a cold SPARQL client hitting a descriptor URL learns, from the RDF alone, where the payload is, what format, whether encrypted, which algorithm, what HTTP verb to use. No baked-in filename conventions.
 

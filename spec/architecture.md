@@ -1073,9 +1073,21 @@ as its own first-class `cg:AuthorizedAgent` on the user's pod, with:
 - Its own `cg:encryptionPublicKey` in the pod's agent registry
 
 The identity server's OAuth `/auth/*` endpoints accept a `surfaceAgent`
-hint (e.g. `claude-mobile`) from the relay; identity mints or reuses
-`<hint>-<userId>` as the per-surface agent. Every descriptor this
-surface writes attributes to its surface DID via `prov:wasAssociatedWith`.
+hint from the relay; identity mints or reuses `<hint>-<userId>` as the
+per-surface agent. The relay auto-detects the surface slug from the
+OAuth client's DCR-registered `client_name` (`Claude Code (VS Code)` →
+`claude-code-vscode`; `ChatGPT` → `chatgpt`; `Cursor` → `cursor`;
+`OpenAI Codex` → `openai-codex`; unknown-but-slugifiable names become
+their own slug; genuinely absent or garbage names fall back to the
+generic `mcp-client` — deliberately NOT `claude-*` so no unknown
+client silently masquerades as Claude). Every descriptor this surface
+writes attributes to its surface DID via `prov:wasAssociatedWith`.
+
+The userId portion of the agent IRI is itself derived from the user's
+first credential (`u-pk-<sha256(credId)[:12]>`, `u-eth-<addr[:12]>`,
+or `u-did-<sha256(did)[:12]>`) — never a user-supplied string. Legacy
+seeded userIds are gated behind a single-use `BOOTSTRAP_INVITES` env
+token; see `deploy/identity/AUTH-ARCHITECTURE.md`.
 
 Pod attribution, envelope recipient sets, and revocation are all
 per-surface — no agent piggybacks on another surface's delegation,

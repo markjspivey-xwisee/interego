@@ -99,7 +99,7 @@ Once configured, your AI agent has these 25 tools available:
 Not just a Solid PUT. Each call:
 
 1. **Encrypts the graph payload** as an X25519 envelope (`nacl.box` + XSalsa20-Poly1305). Every non-revoked `cg:AuthorizedAgent` on the target pod with a registered `cg:encryptionPublicKey` becomes a recipient — same content readable from every one of your surfaces (VS Code, Desktop, Mobile, claude.ai), unreadable by anyone else including the storage provider.
-2. **Auto-registers this agent** on the target pod if it isn't already, with its X25519 public key + a delegation credential. Per-surface identity (`claude-code:vscode` vs `claude-mobile:markj`) — each surface is a first-class recipient with its own DID.
+2. **Auto-registers this agent** on the target pod if it isn't already, with its X25519 public key + a delegation credential. Per-surface identity (e.g. `claude-code-vscode-<userId>` vs `chatgpt-<userId>` vs `cursor-<userId>`) — each surface is a first-class recipient with its own DID. The relay auto-detects the surface slug from the OAuth client's DCR-registered `client_name` (unknown clients fall back to `mcp-client`, never silently `claude-*`). The `<userId>` portion is derived from your first credential (`u-pk-<hash>` for passkeys, `u-eth-<addr>` for wallets, `u-did-<hash>` for DIDs) — never a string you typed.
 3. **Appends a hypermedia block** (`cg:affordance`) to the descriptor that is simultaneously `cg:Affordance` + `cgh:Affordance` + `hydra:Operation` + `dcat:Distribution`. Clients follow `hydra:target` / `dcat:accessURL` — no filename conventions, no Interego-specific contract. DCAT-aware catalogs can ingest the descriptor natively.
 4. **Pins the descriptor to IPFS** (Pinata) and writes an anchor receipt at `/anchors/<timestamp>.json` for content-addressed verification.
 
@@ -170,8 +170,17 @@ node dist/server.js
 The stdio server in this package is for desktop clients that can spawn a subprocess. For **claude.ai mobile / web custom connectors** (which speak MCP over HTTPS and require OAuth), use the cloud-hosted `interego-relay` instead.
 
 - **Connector URL:** your deployment's relay, e.g. `https://interego-relay.<your-env>.azurecontainerapps.io/mcp`
-- **Authentication:** OAuth 2.1 + PKCE + Dynamic Client Registration. The relay's `/authorize` page offers three passwordless sign-in methods: **passkey** (WebAuthn), **Ethereum wallet** (SIWE), and **did:key** (Ed25519 signature). No shared secrets anywhere.
-- **Per-surface agent:** each OAuth-connected surface auto-registers on the user's pod as its own `cg:AuthorizedAgent` with its own X25519 key — mobile doesn't piggyback on desktop's delegation.
+- **Authentication:** OAuth 2.1 + PKCE + Dynamic Client Registration. The relay's `/authorize` page offers three passwordless sign-in methods: **passkey** (WebAuthn), **Ethereum wallet** (SIWE), and **did:key** (Ed25519 signature). No shared secrets anywhere, no user-claimable identifiers — the userId is derived from your first credential (`u-pk-<hash>` / `u-eth-<addr>` / `u-did-<hash>`), so an attacker can't bind their passkey to your display alias.
+- **Per-surface agent, auto-detected:** each OAuth-connected surface auto-registers on the user's pod as its own `cg:AuthorizedAgent` with its own X25519 key. The relay maps the client's DCR `client_name` to a slug automatically — `ChatGPT` → `chatgpt-<userId>`, `OpenAI Codex` → `openai-codex-<userId>`, `Claude Code (VS Code)` → `claude-code-vscode-<userId>`, `Cursor` / `Windsurf` / `Cline` / `Zed` / `Continue` each get their own slug. Unknown clients fall back to the generic `mcp-client`, never silently `claude-*`.
+- **Self-audit:** `GET <identity-url>/auth-methods/me` with your bearer token lists the wallets, passkey credential IDs, and DIDs currently registered to your account — use this to spot any foreign credentials (a risk under the pre-fix userId-claim hijack, now closed).
+
+### Relay deployment env
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RELAY_DEFAULT_SURFACE_AGENT` | `mcp-client` | Surface slug used when the OAuth `client_name` is absent or unrecognised. Deliberately not `claude-*`. |
+| `RELAY_SURFACE_AGENT` | _(unset)_ | Legacy alias for `RELAY_DEFAULT_SURFACE_AGENT`. Pin to e.g. `claude-mobile` if the relay serves exactly one surface. |
+| `BOOTSTRAP_INVITES` | _(empty)_ | Identity-side env. `userA:tokenA,userB:tokenB` — single-use tokens that let a legacy seeded userId (e.g. `markj`) claim its first credential. See `deploy/identity/AUTH-ARCHITECTURE.md`. |
 
 See [`deploy/mcp-relay/`](../deploy/mcp-relay/) in the parent repo for deployment; [`deploy/identity/AUTH-ARCHITECTURE.md`](../deploy/identity/AUTH-ARCHITECTURE.md) for the full auth flow.
 
