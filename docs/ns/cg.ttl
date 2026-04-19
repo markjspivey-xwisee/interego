@@ -703,3 +703,232 @@ cg:SessionLog a owl:Class ;
     rdfs:label "Session Log" ;
     rdfs:comment "A descriptor type for cross-session agent memory — decisions, changes, open threads from a single working session so future sessions (this agent or others on the same pod) can recover context. Structure kept intentionally coarse (cg:decision, cg:change, cg:openThread predicates) — implementations free to extend per use case." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Operations, Requests, Responses (API surface types)
+# ══════════════════════════════════════════════════════════════
+
+cg:Operation a owl:Class ;
+    rdfs:subClassOf hydra:Operation ;
+    rdfs:label "Operation" ;
+    rdfs:comment "Abstract parent for concrete cg: operation types. Interoperable with hydra:Operation so Hydra clients can dispatch without understanding cg: semantics." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:IngestOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Ingest Operation" ; rdfs:comment "An operation that ingests content into the PGSL lattice." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:IngestUrisOperation a owl:Class ; rdfs:subClassOf cg:IngestOperation ; rdfs:label "Ingest URIs Operation" ; rdfs:comment "Bulk-ingest operation that takes a list of URIs and fetches each before ingesting." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ComposeOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Compose Operation" ; rdfs:comment "Composition operator (union, intersection, restriction, override) applied over two or more descriptors." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:QueryOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Query Operation" ; rdfs:comment "SPARQL-style query over descriptors / the lattice." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:DecisionOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Decision Operation" ; rdfs:comment "Harness-driven decision operation (exploit / explore / abstain)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:CoherenceCheckOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Coherence Check Operation" ; rdfs:comment "Inter-agent coherence verification operation." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ChainBuildOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Chain Build Operation" ; rdfs:comment "Constructs a reasoning chain over descriptors / fragments." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ConstrainOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Constrain Operation" ; rdfs:comment "Applies a paradigm constraint to narrow a paradigm set." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PodAddOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Pod Add Operation" ; rdfs:comment "Adds a pod to the federation registry." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PodDiscoverOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Pod Discover Operation" ; rdfs:comment "Discovers pods from a PodDirectory graph." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:Request a owl:Class ; rdfs:label "Request" ; rdfs:comment "Abstract parent of request record types." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Response a owl:Class ; rdfs:label "Response" ; rdfs:comment "Abstract parent of response record types." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:IngestRequest a owl:Class ; rdfs:subClassOf cg:Request ; rdfs:label "Ingest Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:IngestResponse a owl:Class ; rdfs:subClassOf cg:Response ; rdfs:label "Ingest Response" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ComposeRequest a owl:Class ; rdfs:subClassOf cg:Request ; rdfs:label "Compose Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ComposeResponse a owl:Class ; rdfs:subClassOf cg:Response ; rdfs:label "Compose Response" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:QueryRequest a owl:Class ; rdfs:subClassOf cg:Request ; rdfs:label "Query Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:QueryResponse a owl:Class ; rdfs:subClassOf cg:Response ; rdfs:label "Query Response" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:CoherenceRequest a owl:Class ; rdfs:subClassOf cg:Request ; rdfs:label "Coherence Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ConstraintRequest a owl:Class ; rdfs:subClassOf cg:Request ; rdfs:label "Constraint Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PodAddRequest a owl:Class ; rdfs:subClassOf cg:Request ; rdfs:label "Pod Add Request" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Anchor receipts (content-addressed provenance)
+# ══════════════════════════════════════════════════════════════
+
+cg:Anchor a owl:Class ;
+    rdfs:label "Anchor" ;
+    rdfs:comment "A zero-copy receipt proving some property (pinning, signing, encryption, lattice ingestion, activity) about a resource without copying its content. Stored at <pod>/anchors/." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:IpfsAnchor a owl:Class ; rdfs:subClassOf cg:Anchor ; rdfs:label "IPFS Anchor" ; rdfs:comment "Proof of IPFS pinning (CID + provider + pinnedAt)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:SignatureAnchor a owl:Class ; rdfs:subClassOf cg:Anchor ; rdfs:label "Signature Anchor" ; rdfs:comment "Proof of digital signing." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:EncryptionAnchor a owl:Class ; rdfs:subClassOf cg:Anchor ; rdfs:label "Encryption Anchor" ; rdfs:comment "Proof that a resource was encrypted for a recipient set." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PgslAnchor a owl:Class ; rdfs:subClassOf cg:Anchor ; rdfs:label "PGSL Anchor" ; rdfs:comment "Proof of PGSL ingestion (topFragment + atomCount + fragmentCount)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ActivityAnchor a owl:Class ; rdfs:subClassOf cg:Anchor ; rdfs:label "Activity Anchor" ; rdfs:comment "Proof of an agent activity (tool, decision, operation completion)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ══════════════════════════════════════════════════════════════
+#  SHACL Shape classes referenced from validation code
+# ══════════════════════════════════════════════════════════════
+
+cg:ContextDescriptorShape a sh:NodeShape ; rdfs:label "ContextDescriptor SHACL shape" ; sh:targetClass cg:ContextDescriptor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:TemporalFacetShape a sh:NodeShape ; rdfs:label "TemporalFacet SHACL shape" ; sh:targetClass cg:TemporalFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ProvenanceFacetShape a sh:NodeShape ; rdfs:label "ProvenanceFacet SHACL shape" ; sh:targetClass cg:ProvenanceFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:AgentFacetShape a sh:NodeShape ; rdfs:label "AgentFacet SHACL shape" ; sh:targetClass cg:AgentFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:AccessControlFacetShape a sh:NodeShape ; rdfs:label "AccessControlFacet SHACL shape" ; sh:targetClass cg:AccessControlFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:SemioticFacetShape a sh:NodeShape ; rdfs:label "SemioticFacet SHACL shape" ; sh:targetClass cg:SemioticFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:TrustFacetShape a sh:NodeShape ; rdfs:label "TrustFacet SHACL shape" ; sh:targetClass cg:TrustFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:FederationFacetShape a sh:NodeShape ; rdfs:label "FederationFacet SHACL shape" ; sh:targetClass cg:FederationFacet ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ComposedDescriptorShape a sh:NodeShape ; rdfs:label "ComposedDescriptor SHACL shape" ; sh:targetClass cg:ComposedDescriptor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ParadigmConstraintShape a sh:NodeShape ; rdfs:label "ParadigmConstraint SHACL shape" ; sh:targetClass cg:ParadigmConstraint ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PersistenceRecordShape a sh:NodeShape ; rdfs:label "PersistenceRecord SHACL shape" ; sh:targetClass cg:PersistenceRecord ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:CoherenceCertificateShape a sh:NodeShape ; rdfs:label "CoherenceCertificate SHACL shape" ; sh:targetClass cg:CoherenceCertificate ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Coherence (inter-agent verification)
+# ══════════════════════════════════════════════════════════════
+
+cg:CoherenceCertificate a owl:Class ; rdfs:label "Coherence Certificate" ; rdfs:comment "Record asserting two agents' fragments are coherent at a given time." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:CoherenceObstruction a owl:Class ; rdfs:label "Coherence Obstruction" ; rdfs:comment "Specific atom/position where two agents' fragments disagree." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:CoherenceStatus a owl:Class ; rdfs:label "Coherence Status" ; rdfs:comment "Enum: Equal, Divergent, Subset, Intersect, Union, Exclude." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:AtomCoherence a owl:Class ; rdfs:label "Atom Coherence" ; rdfs:comment "Per-atom coherence snapshot used when rolling up to fragment-level status." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:Equal a cg:CoherenceStatus ; rdfs:label "Equal" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Divergent a cg:CoherenceStatus ; rdfs:label "Divergent" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Subset a cg:CoherenceStatus ; rdfs:label "Subset" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Intersect a cg:CoherenceStatus ; rdfs:label "Intersect" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Union a cg:CoherenceStatus ; rdfs:label "Union" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Exclude a cg:CoherenceStatus ; rdfs:label "Exclude" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Verified a owl:NamedIndividual ; rdfs:label "Verified" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Unexamined a owl:NamedIndividual ; rdfs:label "Unexamined" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Decision & Strategies
+# ══════════════════════════════════════════════════════════════
+
+cg:Decision a owl:Class ; rdfs:label "Decision" ; rdfs:comment "A recorded decision (selected affordance + strategy + justification)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:DecisionStrategy a owl:Class ; rdfs:label "Decision Strategy" ; rdfs:comment "Enum class for Exploit / Explore / Abstain." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Exploit a cg:DecisionStrategy ; rdfs:label "Exploit" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Explore a cg:DecisionStrategy ; rdfs:label "Explore" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Abstain a cg:DecisionStrategy ; rdfs:label "Abstain" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Composition
+# ══════════════════════════════════════════════════════════════
+
+cg:ComposedDescriptor a owl:Class ; rdfs:subClassOf cg:ContextDescriptor ; rdfs:label "Composed Descriptor" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:CompositionOperator a owl:Class ; rdfs:label "Composition Operator" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:CompositionOperatorEnum a owl:Class ; rdfs:subClassOf cg:CompositionOperator ; rdfs:label "Composition Operator Enum" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ExternalBinding a owl:Class ; rdfs:label "External Binding" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:NodeRepresentation a owl:Class ; rdfs:label "Node Representation" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Paradigm, Persistence, Causal, Pod/Federation, Memory
+# ══════════════════════════════════════════════════════════════
+
+cg:ParadigmSet a owl:Class ; rdfs:label "Paradigm Set" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ParadigmConstraint a owl:Class ; rdfs:label "Paradigm Constraint" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ParadigmOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Paradigm Operation" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:SyntagmaticPattern a owl:Class ; rdfs:label "Syntagmatic Pattern" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:PersistenceRecord a owl:Class ; rdfs:label "Persistence Record" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PersistenceTier a owl:Class ; rdfs:label "Persistence Tier" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Local a cg:PersistenceTier ; rdfs:label "Local" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:IPFS a cg:PersistenceTier ; rdfs:label "IPFS" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:CausalFacet a owl:Class ; rdfs:subClassOf cg:ContextFacet ; rdfs:label "Causal Facet" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:CausalVariable a owl:Class ; rdfs:label "Causal Variable" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:CausalEdge a owl:Class ; rdfs:label "Causal Edge" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:StructuralCausalModel a owl:Class ; rdfs:label "Structural Causal Model" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Intervention a owl:Class ; rdfs:label "Intervention" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:Pod a owl:Class ; rdfs:label "Pod" ; rdfs:comment "A Solid pod (LDP root) owned by a user." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PodCatalog a owl:Class ; rdfs:subClassOf cg:DataProduct ; rdfs:label "Pod Catalog" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PodDirectory a owl:Class ; rdfs:label "Pod Directory" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Chain a owl:Class ; rdfs:label "Chain" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ChainEndpoint a owl:Class ; rdfs:label "Chain Endpoint" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:NodeEndpoint a owl:Class ; rdfs:label "Node Endpoint" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PodService a owl:Class ; rdfs:label "Pod Service" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ApiDocumentation a owl:Class ; rdfs:subClassOf hydra:ApiDocumentation ; rdfs:label "API Documentation" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:VocabularyMapping a owl:Class ; rdfs:label "Vocabulary Mapping" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:Memory a owl:Class ; rdfs:subClassOf cg:ContextDescriptor ; rdfs:label "Memory" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ObservationSection a owl:Class ; rdfs:label "Observation Section" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ProjectionFacet a owl:Class ; rdfs:subClassOf cg:ContextFacet ; rdfs:label "Projection Facet" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Delegate a owl:Class ; rdfs:subClassOf cg:AuthorizedAgent ; rdfs:label "Delegate" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ModalStatusEnum a owl:Class ; rdfs:label "Modal Status Enum" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:TrustLevelEnum a owl:Class ; rdfs:label "Trust Level Enum" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Properties (long tail)
+# ══════════════════════════════════════════════════════════════
+
+cg:activityAnchor a owl:ObjectProperty ; rdfs:label "activityAnchor" ; rdfs:range cg:ActivityAnchor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:encryptionAnchor a owl:ObjectProperty ; rdfs:label "encryptionAnchor" ; rdfs:range cg:EncryptionAnchor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ipfsAnchor a owl:ObjectProperty ; rdfs:label "ipfsAnchor" ; rdfs:range cg:IpfsAnchor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:pgslAnchor a owl:ObjectProperty ; rdfs:label "pgslAnchor" ; rdfs:range cg:PgslAnchor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:signatureAnchor a owl:ObjectProperty ; rdfs:label "signatureAnchor" ; rdfs:range cg:SignatureAnchor ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:hasObstruction a owl:ObjectProperty ; rdfs:label "has obstruction" ; rdfs:range cg:CoherenceObstruction ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:obstructionAtom a owl:ObjectProperty ; rdfs:label "obstruction atom" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:coherenceStatus a owl:ObjectProperty ; rdfs:label "coherence status" ; rdfs:range cg:CoherenceStatus ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:hasItem a owl:ObjectProperty ; rdfs:label "has item" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:paradigmOp a owl:ObjectProperty ; rdfs:label "paradigm op" ; rdfs:range cg:ParadigmOperation ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:patternA a owl:ObjectProperty ; rdfs:label "pattern A" ; rdfs:range cg:SyntagmaticPattern ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:patternB a owl:ObjectProperty ; rdfs:label "pattern B" ; rdfs:range cg:SyntagmaticPattern ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:positionA a owl:DatatypeProperty ; rdfs:label "position A" ; rdfs:range xsd:integer ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:positionB a owl:DatatypeProperty ; rdfs:label "position B" ; rdfs:range xsd:integer ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:persistenceTier a owl:ObjectProperty ; rdfs:label "persistence tier" ; rdfs:range cg:PersistenceTier ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:persistenceUri a owl:ObjectProperty ; rdfs:label "persistence URI" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:vocabularyMapping a owl:ObjectProperty ; rdfs:label "vocabulary mapping" ; rdfs:range cg:VocabularyMapping ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:mappingRelationship a owl:ObjectProperty ; rdfs:label "mapping relationship" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:mappingType a owl:ObjectProperty ; rdfs:label "mapping type" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:targetVocabulary a owl:ObjectProperty ; rdfs:label "target vocabulary" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:boundaryShapes a owl:ObjectProperty ; rdfs:label "boundary shapes" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:observation a owl:ObjectProperty ; rdfs:label "observation" ; rdfs:range cg:ObservationSection ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:decisionStrategy a owl:ObjectProperty ; rdfs:label "decision strategy" ; rdfs:range cg:DecisionStrategy ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:selectedAffordance a owl:ObjectProperty ; rdfs:label "selected affordance" ; rdfs:range cg:Affordance ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:capability a owl:ObjectProperty ; rdfs:label "capability" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:endpoint a owl:ObjectProperty ; rdfs:label "endpoint" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:latticeRoot a owl:ObjectProperty ; rdfs:label "lattice root" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:topFragment a owl:ObjectProperty ; rdfs:label "top fragment" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:atomCount a owl:DatatypeProperty ; rdfs:label "atom count" ; rdfs:range xsd:nonNegativeInteger ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:fragmentCount a owl:DatatypeProperty ; rdfs:label "fragment count" ; rdfs:range xsd:nonNegativeInteger ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:chainId a owl:DatatypeProperty ; rdfs:label "chain id" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:description a owl:DatatypeProperty ; rdfs:label "description" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:timestamp a owl:DatatypeProperty ; rdfs:label "timestamp" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:tool a owl:DatatypeProperty ; rdfs:label "tool" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:success a owl:DatatypeProperty ; rdfs:label "success" ; rdfs:range xsd:boolean ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:errorMessage a owl:DatatypeProperty ; rdfs:label "error message" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:affordanceRel a owl:ObjectProperty ; rdfs:label "affordance relation" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:agentA a owl:ObjectProperty ; rdfs:label "agent A" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:agentB a owl:ObjectProperty ; rdfs:label "agent B" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:agentAAT a owl:ObjectProperty ; rdfs:label "agent AAT" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:authorization a owl:ObjectProperty ; rdfs:label "authorization" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:binding a owl:ObjectProperty ; rdfs:label "binding" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:bindingStrength a owl:DatatypeProperty ; rdfs:label "binding strength" ; rdfs:range xsd:double ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:composedFrom a owl:ObjectProperty ; rdfs:label "composed from" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:consentBasis a owl:ObjectProperty ; rdfs:label "consent basis" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:hasDistribution a owl:ObjectProperty ; rdfs:label "has distribution" ; rdfs:comment "Legacy shim for descriptors written before canonical cg:affordance form. Prefer cg:affordance [ a dcat:Distribution ... ]." ; rdfs:range dcat:Distribution ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:algorithm a owl:DatatypeProperty ; rdfs:label "algorithm" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:cid a owl:DatatypeProperty ; rdfs:label "CID" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:contentHash a owl:DatatypeProperty ; rdfs:label "content hash" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:gatewayUrl a owl:DatatypeProperty ; rdfs:label "gateway URL" ; rdfs:range xsd:anyURI ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:pinnedAt a owl:DatatypeProperty ; rdfs:label "pinned at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:pinnedBy a owl:ObjectProperty ; rdfs:label "pinned by" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:provider a owl:DatatypeProperty ; rdfs:label "provider" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:signature a owl:DatatypeProperty ; rdfs:label "signature" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:signedAt a owl:DatatypeProperty ; rdfs:label "signed at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:signerAddress a owl:DatatypeProperty ; rdfs:label "signer address" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:encryptedAt a owl:DatatypeProperty ; rdfs:label "encrypted at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:recipientFingerprint a owl:DatatypeProperty ; rdfs:label "recipient fingerprint" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:owner a owl:ObjectProperty ; rdfs:label "owner" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ingestedAt a owl:DatatypeProperty ; rdfs:label "ingested at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:promotedAt a owl:DatatypeProperty ; rdfs:label "promoted at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:registeredAt a owl:DatatypeProperty ; rdfs:label "registered at" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:lastSeen a owl:DatatypeProperty ; rdfs:label "last seen" ; rdfs:range xsd:dateTime ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:wasAttributedTo a owl:ObjectProperty ; rdfs:label "was attributed to" ; rdfs:comment "Legacy shim for prov:wasAttributedTo usage inside cg: emissions. Prefer prov:wasAttributedTo directly." ; rdfs:seeAlso prov:wasAttributedTo ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:causes a owl:ObjectProperty ; rdfs:label "causes" ; rdfs:domain cg:CausalEdge ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:effectOf a owl:ObjectProperty ; rdfs:label "effect of" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:effectSize a owl:DatatypeProperty ; rdfs:label "effect size" ; rdfs:range xsd:double ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:mechanism a owl:DatatypeProperty ; rdfs:label "mechanism" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:intervenes a owl:ObjectProperty ; rdfs:label "intervenes" ; rdfs:domain cg:Intervention ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:interventionValue a owl:DatatypeProperty ; rdfs:label "intervention value" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:exogenous a owl:DatatypeProperty ; rdfs:label "exogenous" ; rdfs:range xsd:boolean ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:exposedEntity a owl:ObjectProperty ; rdfs:label "exposed entity" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:hiddenEntity a owl:ObjectProperty ; rdfs:label "hidden entity" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:causalConfidence a owl:DatatypeProperty ; rdfs:label "causal confidence" ; rdfs:range xsd:double ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:causalRole a owl:DatatypeProperty ; rdfs:label "causal role" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:causalEdge a owl:ObjectProperty ; rdfs:label "causal edge" ; rdfs:range cg:CausalEdge ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:causalVariable a owl:ObjectProperty ; rdfs:label "causal variable" ; rdfs:range cg:CausalVariable ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:causalModel a owl:ObjectProperty ; rdfs:label "causal model" ; rdfs:range cg:StructuralCausalModel ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:counterfactualQuery a owl:DatatypeProperty ; rdfs:label "counterfactual query" ; rdfs:range xsd:string ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:counterfactualTarget a owl:ObjectProperty ; rdfs:label "counterfactual target" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:counterfactualEvidence a owl:ObjectProperty ; rdfs:label "counterfactual evidence" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:parentObservation a owl:ObjectProperty ; rdfs:label "parent observation" ; rdfs:range cg:ObservationSection ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:parentIntervention a owl:ObjectProperty ; rdfs:label "parent intervention" ; rdfs:range cg:Intervention ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:outcome a owl:ObjectProperty ; rdfs:label "outcome" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:selective a owl:DatatypeProperty ; rdfs:label "selective" ; rdfs:range xsd:boolean ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.

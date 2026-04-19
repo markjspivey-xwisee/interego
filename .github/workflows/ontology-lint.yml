@@ -1,0 +1,43 @@
+name: Ontology Lint
+
+# Guards against drift between TS code emitting cg:/cgh:/pgsl:/ie:/align:/
+# hyprcat:/hypragent: terms and the docs/ns/*.ttl ontology files that
+# define them. Every owned-namespace reference in TS must have a matching
+# term declaration in its corresponding .ttl file. Catches regressions like
+# inventing cg:hasDistribution inline without declaring it as an OWL
+# property — exactly the kind of first-principles drift the sweep fixed.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'deploy/identity/**'
+      - 'deploy/mcp-relay/**'
+      - 'mcp-server/**'
+      - 'docs/ns/**'
+      - 'tools/ontology-lint.mjs'
+      - '.github/workflows/ontology-lint.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'deploy/identity/**'
+      - 'deploy/mcp-relay/**'
+      - 'mcp-server/**'
+      - 'docs/ns/**'
+      - 'tools/ontology-lint.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: cg:/cgh:/pgsl:/ie:/align:/hyprcat:/hypragent: consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Run ontology lint
+        run: node tools/ontology-lint.mjs

@@ -1,0 +1,163 @@
+@prefix hypragent: <https://markjspivey-xwisee.github.io/interego/ns/hypragent#> .
+@prefix hyprcat:   <https://markjspivey-xwisee.github.io/interego/ns/hyprcat#> .
+@prefix cg:        <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix cgh:       <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix pgsl:      <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
+@prefix ie:        <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
+@prefix rdf:       <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:      <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:       <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:       <http://www.w3.org/2002/07/owl#> .
+@prefix dct:       <http://purl.org/dc/terms/> .
+@prefix skos:      <http://www.w3.org/2004/02/skos/core#> .
+@prefix vann:      <http://purl.org/vocab/vann/> .
+@prefix prov:      <http://www.w3.org/ns/prov#> .
+@prefix hydra:     <http://www.w3.org/ns/hydra/core#> .
+@prefix dcat:      <http://www.w3.org/ns/dcat#> .
+@prefix foaf:      <http://xmlns.com/foaf/0.1/> .
+@prefix vc:        <https://www.w3.org/2018/credentials#> .
+
+# ══════════════════════════════════════════════════════════════
+#  HyprAgent — Agent Machinery for HyprCat Federation
+# ══════════════════════════════════════════════════════════════
+#
+#  HyprAgent is the agent-side counterpart of hyprcat. Where
+#  hyprcat declares WHERE things are and WHAT affordances they
+#  expose, hypragent declares WHO is acting, HOW they are
+#  authorized, and WHICH affordances they are consuming or
+#  producing.
+#
+#  HyprAgent extends the harness affordance model (cgh:Affordance
+#  subClassOf hydra:Operation) with federation-native concerns:
+#
+#    - Cross-world delegation. An agent in one hyprcat:World
+#      (e.g. an AgentWorld bot) acting on behalf of a principal
+#      in another world (e.g. a UserWorld human) carries an
+#      explicit hypragent:DelegationChain traceable via W3C VC.
+#
+#    - Affordance consumption / production. An agent is typed by
+#      which HyprCat affordances it can consume (retrieve data,
+#      subscribe, decrypt) and which it can produce (publish,
+#      attest, sign). This lets catalog clients filter for agents
+#      that can actually do what they need.
+#
+#    - Dispatch policy. An agent's actions are governed by
+#      policies (ODRL / cg:TrustFacet / cgh:PolicyDecision) that
+#      evaluate at dispatch time against the target's
+#      hyprcat:dispatchPolicy. No implicit trust.
+#
+#  Alignment with existing ontologies:
+#    - cg:AuthorizedAgent   is the pod-registry form of a HyprAgent.
+#                           Every hypragent:Agent should have at
+#                           least one cg:AuthorizedAgent entry on
+#                           the pods where it can write.
+#    - cgh:Affordance       is the unit the agent consumes/produces.
+#    - pgsl:Node            is where an agent's attention lands
+#                           (observation -> orient -> decide -> act).
+#    - ie:Who               is the interrogative HyprAgent answers.
+
+<https://markjspivey-xwisee.github.io/interego/ns/hypragent>
+    a owl:Ontology ;
+    dct:title "HyprAgent — Agent Machinery for HyprCat Federation" ;
+    dct:description "Agent-side ontology matching HyprCat's data-catalog side. Models cross-world delegation, affordance consumption/production, and dispatch-time policy evaluation. Aligns with cgh:Affordance + cg:AuthorizedAgent + prov:SoftwareAgent; extends them with federation-native semantics so an agent that crosses hyprcat:Worlds carries its authorization visibly." ;
+    vann:preferredNamespacePrefix "hypragent" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/hypragent#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/hyprcat> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/harness> .
+
+# ── Core classes ──────────────────────────────────────────────
+
+hypragent:Agent a owl:Class ;
+    rdfs:subClassOf prov:SoftwareAgent , foaf:Agent , cg:AuthorizedAgent ;
+    rdfs:label "HyprAgent" ;
+    rdfs:comment "A software agent participating in HyprCat federation. Every HyprAgent has (a) a stable DID identity, (b) an X25519 encryption keypair registered on at least one pod, (c) a hyprcat:world membership, (d) an optional set of hypragent:consumable / hypragent:producible affordances it is registered to handle. HyprAgents are the actors that invoke HyprCat affordances." .
+
+hypragent:Principal a owl:Class ;
+    rdfs:subClassOf foaf:Agent ;
+    rdfs:label "Principal" ;
+    rdfs:comment "The human (or organizational) entity an agent ultimately acts on behalf of. A delegation chain roots in a Principal and flows through zero or more intermediate HyprAgents to the acting agent. For Interego, the Principal is typically the pod owner's WebID." .
+
+hypragent:DelegationChain a owl:Class ;
+    rdfs:subClassOf vc:VerifiableCredential ;
+    rdfs:label "Delegation Chain" ;
+    rdfs:comment "The sequence of W3C Verifiable Credentials that prove authority from a Principal through zero or more delegating HyprAgents down to the current actor. Consumed at dispatch time by a policy engine (cgh:PolicyDecision) to answer 'does this actor have authority to invoke this affordance?'. Every link in the chain is a cg:delegationCredential." .
+
+hypragent:Dispatch a owl:Class ;
+    rdfs:subClassOf prov:Activity , cgh:DecoratedAffordance ;
+    rdfs:label "Dispatch" ;
+    rdfs:comment "A single recorded invocation of a hyprcat:FederatedDistribution by a hypragent:Agent. Carries the delegation chain that was evaluated, the policy decision result, and a provenance trail tying input ports to output ports. Gives federation auditability end-to-end." .
+
+hypragent:WorldCrossing a owl:Class ;
+    rdfs:subClassOf hypragent:Dispatch ;
+    rdfs:label "World Crossing" ;
+    rdfs:comment "A hypragent:Dispatch where the actor's hyprcat:world differs from the target resource's hyprcat:world. These get extra scrutiny from policy engines because they represent trust-boundary traversals (e.g. an AgentWorld bot reading a UserWorld pod resource). Logged + policy-evaluated; often require explicit cross-world delegation credentials." .
+
+# ── Capability typing ─────────────────────────────────────────
+
+hypragent:Capability a owl:Class ;
+    rdfs:subClassOf cg:Affordance ;
+    rdfs:label "Agent Capability" ;
+    rdfs:comment "A capability an agent is registered to handle — consuming or producing a particular class of affordance. Enables hyprcat:FederatedCatalog queries like 'list agents that can cg:canDecrypt a cg:EncryptedGraphEnvelope'. A hypragent:Agent typed with hypragent:canDecryptEnvelope can be dispatched against encrypted distributions; agents without the capability are filtered out at routing time." .
+
+hypragent:canDecryptEnvelope a hypragent:Capability ;
+    rdfs:label "Can Decrypt Envelope" ;
+    rdfs:comment "Agent can decrypt cg:EncryptedGraphEnvelope payloads (has X25519 private key matching a wrapped recipient)." .
+
+hypragent:canPublishContext a hypragent:Capability ;
+    rdfs:label "Can Publish Context" ;
+    rdfs:comment "Agent is authorized to write new cg:ContextDescriptor resources to one or more pods." .
+
+hypragent:canVerifyDelegation a hypragent:Capability ;
+    rdfs:label "Can Verify Delegation" ;
+    rdfs:comment "Agent implements hypragent:DelegationChain verification — resolves VCs, checks signatures, evaluates validity windows. Only agents with this capability can act as policy-enforcement points for cross-world dispatch." .
+
+hypragent:canSubscribe a hypragent:Capability ;
+    rdfs:label "Can Subscribe" ;
+    rdfs:comment "Agent can open and maintain Solid Notifications subscriptions on pods to receive live change events." .
+
+# ── Properties ────────────────────────────────────────────────
+
+hypragent:actsOnBehalfOf a owl:ObjectProperty ;
+    rdfs:label "acts on behalf of" ;
+    rdfs:comment "The hypragent:Principal this agent ultimately represents. Chains through hypragent:DelegationChain. Equivalent to prov:actedOnBehalfOf but typed to HyprAgent semantics." ;
+    rdfs:subPropertyOf prov:actedOnBehalfOf ;
+    rdfs:domain hypragent:Agent ;
+    rdfs:range hypragent:Principal .
+
+hypragent:delegationChain a owl:ObjectProperty ;
+    rdfs:label "delegation chain" ;
+    rdfs:comment "Ordered list of Verifiable Credentials proving authority from Principal down to the current actor. Evaluated at dispatch time." ;
+    rdfs:domain hypragent:Agent ;
+    rdfs:range hypragent:DelegationChain .
+
+hypragent:consumable a owl:ObjectProperty ;
+    rdfs:label "consumable" ;
+    rdfs:comment "A class of affordance this agent is registered to consume (e.g. hypragent:canDecryptEnvelope). Catalog clients filter for agents with matching consumables when routing requests." ;
+    rdfs:domain hypragent:Agent ;
+    rdfs:range hypragent:Capability .
+
+hypragent:producible a owl:ObjectProperty ;
+    rdfs:label "producible" ;
+    rdfs:comment "A class of affordance this agent is registered to produce (e.g. hypragent:canPublishContext). Declares write-side capabilities for catalog routing." ;
+    rdfs:domain hypragent:Agent ;
+    rdfs:range hypragent:Capability .
+
+hypragent:dispatchedOn a owl:ObjectProperty ;
+    rdfs:label "dispatched on" ;
+    rdfs:comment "The hyprcat:FederatedDistribution this dispatch activity invoked. Domain/range ties dispatch records to the specific catalog entry they acted against." ;
+    rdfs:domain hypragent:Dispatch ;
+    rdfs:range hyprcat:FederatedDistribution .
+
+hypragent:policyDecision a owl:ObjectProperty ;
+    rdfs:label "policy decision" ;
+    rdfs:comment "The cgh:PolicyDecision that authorized (or blocked) this dispatch. Gives an audit trail from 'what was attempted' -> 'which policy evaluated' -> 'what rule matched'." ;
+    rdfs:domain hypragent:Dispatch ;
+    rdfs:range cgh:PolicyDecision .
+
+# ── Interoperability markers ──────────────────────────────────
+
+hypragent:Agent skos:closeMatch cgh:Agent ;
+    rdfs:comment "cgh:Agent is the harness-internal view of an agent; hypragent:Agent is the federation-facing view. Same logical entity, different vocabulary emphasis — cgh: focuses on OODA-cycle participation, hypragent: focuses on cross-world dispatch + capability filtering." .
+
+hypragent:DelegationChain skos:closeMatch cg:AgentDelegationCredential .
