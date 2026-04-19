@@ -1160,6 +1160,68 @@ app.get('/identity-token', async (req, res) => {
   }
 });
 
+/**
+ * POST /agents/:agentIri/revoke — remove a non-revoked agent from the
+ * calling user's pod agent registry. Bearer-gated via MCP access token;
+ * the agent IRI in the path must belong to the token's user's pod.
+ *
+ * `agentIri` is URL-encoded (typically a did:web IRI). Returns 404 if
+ * the agent doesn't appear in the current registry, 403 if the agent
+ * belongs to a different user's pod (owner IRI mismatch), 200 on
+ * success with `{ revoked: true, agentIri, remaining: <count> }`.
+ *
+ * After revocation, the agent no longer appears as a recipient on
+ * future envelope writes; already-encrypted envelopes keep their
+ * previous recipient sets (true of all E2EE systems).
+ */
+app.post('/agents/:agentIri/revoke', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Bearer token required' });
+    return;
+  }
+  let authInfo: { extra?: { userId?: string; ownerWebId?: string; identityToken?: string } };
+  try {
+    authInfo = await oauthProvider.verifyAccessToken(authHeader.slice(7)) as typeof authInfo;
+  } catch (err) {
+    res.status(401).json({ error: `Invalid access token: ${(err as Error).message}` });
+    return;
+  }
+  const tokenUserId = authInfo.extra?.userId;
+  const tokenOwnerWebId = authInfo.extra?.ownerWebId;
+  if (!tokenUserId || !tokenOwnerWebId) {
+    res.status(403).json({ error: 'Token has no identity binding' });
+    return;
+  }
+
+  const agentIri = decodeURIComponent(req.params['agentIri'] ?? '') as IRI;
+  if (!agentIri) { res.status(400).json({ error: 'agentIri path param required' }); return; }
+
+  const podUrl = `${CSS_URL}${tokenUserId}/`;
+  try {
+    const profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+    if (!profile) {
+      res.status(404).json({ error: 'No agent registry on this pod' });
+      return;
+    }
+    if (profile.webId !== tokenOwnerWebId) {
+      res.status(403).json({ error: `Agent registry owner ${profile.webId} does not match token user's WebID` });
+      return;
+    }
+    const found = profile.authorizedAgents.find(a => a.agentId === agentIri && !a.revoked);
+    if (!found) {
+      res.status(404).json({ error: `Agent ${agentIri} not present (or already revoked) in this pod's registry` });
+      return;
+    }
+    const updated = removeAuthorizedAgent(profile, agentIri);
+    await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
+    const remaining = updated.authorizedAgents.filter(a => !a.revoked).length;
+    res.json({ revoked: true, agentIri, remaining });
+  } catch (err) {
+    res.status(500).json({ error: `Revoke failed: ${(err as Error).message}` });
+  }
+});
+
 // ── X402 Payment Required ───────────────────────────────────
 // Descriptors can optionally require payment. The relay returns
 // HTTP 402 with X-Payment-Required headers per the X402 spec.

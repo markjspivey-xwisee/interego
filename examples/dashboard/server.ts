@@ -397,9 +397,11 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     return;
   }
 
-  // API: proxy relay tool calls
-  if (url.startsWith('/api/relay/') && method === 'POST' && RELAY_URL) {
-    const toolName = url.slice('/api/relay/'.length);
+  // API: legacy relay-tool proxy. Renamed from /api/relay/ to
+  // /api/relay-tool/ so /api/relay/* can be a generic passthrough to
+  // bearer-gated relay endpoints without collisions.
+  if (url.startsWith('/api/relay-tool/') && method === 'POST' && RELAY_URL) {
+    const toolName = url.slice('/api/relay-tool/'.length);
     try {
       let body = '';
       for await (const chunk of req) body += chunk;
@@ -513,10 +515,87 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
         expiresAt: idJson.expiresAt,
         userId: idJson.userId,
         mcpAccessToken: tokenJson.access_token,
+        mcpRefreshToken: (tokenJson as { refresh_token?: string }).refresh_token,
         mcpExpiresIn: tokenJson.expires_in,
       });
     } catch (err) {
       json(res, { error: `OAuth exchange failed: ${(err as Error).message}` }, 502);
+    }
+    return;
+  }
+
+  // API: silent refresh. The browser holds the relay's MCP refresh token
+  // (returned from /api/oauth/exchange). When the identity bearer 401s
+  // mid-session we swap the refresh token for a new MCP access token, then
+  // trade that for a fresh identity bearer via /identity-token. The
+  // frontend retries its original request with the new identity bearer.
+  if (url === '/api/oauth/refresh' && method === 'POST' && RELAY_URL) {
+    try {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      const { refresh_token, client_id } = JSON.parse(body || '{}') as {
+        refresh_token?: string; client_id?: string;
+      };
+      if (!refresh_token) { json(res, { error: 'refresh_token required' }, 400); return; }
+      const form = new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token,
+        client_id: client_id ?? DASHBOARD_OAUTH_CLIENT_ID ?? '',
+      });
+      const tokenResp = await fetch(`${RELAY_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      });
+      if (!tokenResp.ok) {
+        json(res, { error: `Refresh failed: ${await tokenResp.text()}` }, tokenResp.status);
+        return;
+      }
+      const tokenJson = await tokenResp.json() as { access_token?: string; refresh_token?: string; expires_in?: number };
+      if (!tokenJson.access_token) { json(res, { error: 'no access_token returned' }, 502); return; }
+      const idResp = await fetch(`${RELAY_URL}/identity-token`, {
+        headers: { Authorization: `Bearer ${tokenJson.access_token}` },
+      });
+      if (!idResp.ok) { json(res, { error: `identity-token failed: ${await idResp.text()}` }, idResp.status); return; }
+      const idJson = await idResp.json() as { identityToken?: string; expiresAt?: number; userId?: string };
+      json(res, {
+        identityToken: idJson.identityToken,
+        expiresAt: idJson.expiresAt,
+        userId: idJson.userId,
+        mcpAccessToken: tokenJson.access_token,
+        mcpRefreshToken: tokenJson.refresh_token,
+        mcpExpiresIn: tokenJson.expires_in,
+      });
+    } catch (err) {
+      json(res, { error: `Refresh exchange failed: ${(err as Error).message}` }, 502);
+    }
+    return;
+  }
+
+  // API: relay passthrough. Forwards the browser's request verbatim
+  // (headers + body) to the configured RELAY_URL. Used for calls that
+  // require an MCP access token rather than an identity bearer — e.g.
+  // the POST /agents/:iri/revoke endpoint which reads + writes the
+  // user's pod agent registry via @interego/core.
+  if (url.startsWith('/api/relay/') && RELAY_URL) {
+    const upstreamPath = url.slice('/api/relay'.length);
+    try {
+      let reqBody: Buffer | undefined;
+      if (method !== 'GET' && method !== 'HEAD') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        if (chunks.length) reqBody = Buffer.concat(chunks);
+      }
+      const headers: Record<string, string> = {};
+      if (req.headers['authorization']) headers['authorization'] = String(req.headers['authorization']);
+      if (req.headers['content-type']) headers['content-type'] = String(req.headers['content-type']);
+      const upstream = await fetch(`${RELAY_URL}${upstreamPath}`, { method, headers, body: reqBody });
+      const ct = upstream.headers.get('content-type') ?? 'application/json';
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.writeHead(upstream.status, { 'Content-Type': ct, 'Access-Control-Allow-Origin': '*' });
+      res.end(buf);
+    } catch (err) {
+      json(res, { error: `Relay proxy failed: ${(err as Error).message}` }, 502);
     }
     return;
   }

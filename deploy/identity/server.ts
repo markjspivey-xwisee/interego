@@ -1887,6 +1887,35 @@ app.delete('/auth-methods/me/did', async (req, res) => {
 });
 
 /**
+ * POST /tokens/me/sign-out-everywhere
+ *
+ * Revoke every currently-active identity-server bearer token for the
+ * calling user. The caller's own token is also invalidated, so the
+ * dashboard must treat the response as a forced sign-out. Useful after
+ * removing a compromised device or suspicious activity.
+ *
+ * Note: this only revokes identity-server tokens. OAuth MCP access
+ * tokens issued by the relay are held in relay memory and not touched
+ * here. The relay will, however, no longer be able to mint new identity
+ * tokens for those MCP tokens (their extra.identityToken becomes stale
+ * — any /identity-token call returns a stale string that identity then
+ * rejects).
+ */
+app.post('/tokens/me/sign-out-everywhere', async (req, res) => {
+  const user = await requireUserFromBearer(req, res);
+  if (!user) return;
+  let revoked = 0;
+  for (const [tokenStr, rec] of tokens) {
+    if (rec.userId === user.id) {
+      tokens.delete(tokenStr);
+      revoked++;
+    }
+  }
+  log(`Signed out ${revoked} tokens for ${user.id}`);
+  res.json({ revoked, userId: user.id });
+});
+
+/**
  * GET /agents/me
  *
  * Return the calling user's registered agents. Read from in-memory

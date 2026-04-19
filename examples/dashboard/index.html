@@ -601,6 +601,49 @@ function chips(types) { return types.map(t => `<span class="chip ${t}">${t}</spa
 let accountConfig = null;
 let identityToken = sessionStorage.getItem('cg_identity_token') || null;
 let identityUserId = sessionStorage.getItem('cg_identity_userid') || null;
+let mcpAccessToken = sessionStorage.getItem('cg_mcp_access') || null;
+let mcpRefreshToken = sessionStorage.getItem('cg_mcp_refresh') || null;
+
+// Stash the full token bundle after OAuth exchange / silent refresh.
+function setTokenBundle(b) {
+  if (b.identityToken) { identityToken = b.identityToken; sessionStorage.setItem('cg_identity_token', b.identityToken); }
+  if (b.userId) { identityUserId = b.userId; sessionStorage.setItem('cg_identity_userid', b.userId); }
+  if (b.mcpAccessToken) { mcpAccessToken = b.mcpAccessToken; sessionStorage.setItem('cg_mcp_access', b.mcpAccessToken); }
+  if (b.mcpRefreshToken) { mcpRefreshToken = b.mcpRefreshToken; sessionStorage.setItem('cg_mcp_refresh', b.mcpRefreshToken); }
+}
+
+// Silent-refresh helper: when an identity call 401s mid-session, swap the
+// relay's MCP refresh token for a fresh access token + identity bearer.
+// Returns true on success (caller should retry), false on failure (caller
+// should force sign-out).
+async function tryRefreshIdentityToken() {
+  if (!mcpRefreshToken || !accountConfig?.oauthClientId) return false;
+  try {
+    const r = await fetch('/api/oauth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: mcpRefreshToken, client_id: accountConfig.oauthClientId }),
+    });
+    if (!r.ok) return false;
+    const data = await r.json();
+    if (!data.identityToken) return false;
+    setTokenBundle(data);
+    return true;
+  } catch { return false; }
+}
+
+// Wrapper for identity calls that silent-refreshes on 401 and retries once.
+async function identityFetch(path, init = {}) {
+  const doFetch = () => fetch(`/api/identity${path}`, {
+    ...init,
+    headers: { 'Authorization': `Bearer ${identityToken}`, ...(init.headers || {}) },
+  });
+  let r = await doFetch();
+  if (r.status === 401 && await tryRefreshIdentityToken()) {
+    r = await doFetch();
+  }
+  return r;
+}
 
 async function loadAccountConfig() {
   if (accountConfig) return accountConfig;
@@ -638,10 +681,7 @@ async function renderAccount() {
         host.innerHTML = `<div class="acc-card"><h3 style="color:var(--err)">Sign-in failed</h3><p class="acc-err">${esc(data.error || 'Unknown error')}</p><button class="acc-btn-primary" onclick="accountSignOut()">Start over</button></div>`;
         return;
       }
-      identityToken = data.identityToken;
-      identityUserId = data.userId || null;
-      sessionStorage.setItem('cg_identity_token', identityToken);
-      if (identityUserId) sessionStorage.setItem('cg_identity_userid', identityUserId);
+      setTokenBundle(data);
       // Clean up the URL before rendering the account view.
       window.history.replaceState({}, '', window.location.pathname + '#/account');
     } catch (err) {
@@ -659,11 +699,12 @@ async function renderAccount() {
 
   try {
     const [amResp, agResp] = await Promise.all([
-      fetch('/api/identity/auth-methods/me', { headers: { Authorization: `Bearer ${identityToken}` } }),
-      fetch('/api/identity/agents/me', { headers: { Authorization: `Bearer ${identityToken}` } }),
+      identityFetch('/auth-methods/me'),
+      identityFetch('/agents/me'),
     ]);
     if (amResp.status === 401) {
-      // Token expired or invalid — reset.
+      // Refresh attempt already happened inside identityFetch; 401 now
+      // means the session is truly dead. Force re-sign-in.
       accountSignOut();
       return;
     }
@@ -706,7 +747,10 @@ function renderAccountLoaded(host, cfg, methods, agents) {
   html += `<div class="k">User ID</div><div class="v">${esc(userId)}</div>`;
   html += `<div class="k">WebFinger</div><div class="v">acct:${esc(userId)}@${esc(cfg.publicRelayUrl ? new URL(cfg.publicRelayUrl).host.replace('interego-relay', 'interego-identity') : 'identity-host')}</div>`;
   html += `</div>`;
-  html += `<div style="margin-top:12px;"><button class="acc-btn-secondary" onclick="accountSignOut()">Sign out</button></div>`;
+  html += `<div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">`;
+  html += `<button class="acc-btn-secondary" onclick="accountSignOut()">Sign out (this session)</button>`;
+  html += `<button class="acc-btn-secondary" style="border-color:var(--err); color:var(--err);" onclick="accountSignOutEverywhere()">Sign out everywhere</button>`;
+  html += `</div>`;
   html += `</div>`;
 
   // Wallets
@@ -748,17 +792,52 @@ function renderAccountLoaded(host, cfg, methods, agents) {
 
   // Agents
   html += `<div class="acc-card"><h3>Per-surface agents (${(agents.agents||[]).length})</h3>`;
-  html += `<p class="acc-hint" style="margin-bottom:10px">Each AI client you've connected (ChatGPT, Codex, Cursor, Claude, etc.) has its own agent on your pod with a distinct X25519 key and DID. Revocation from the pod agent registry is a follow-up feature; for now this is informational.</p>`;
+  html += `<p class="acc-hint" style="margin-bottom:10px">Each AI client you've connected (ChatGPT, Codex, Cursor, Claude, etc.) has its own agent on your pod with a distinct X25519 key and DID. Revoking here removes the agent from your pod's registry so future envelope writes won't encrypt to its key. (Envelopes already encrypted to it keep working — that's true of all E2EE systems.)</p>`;
   if (!agents.agents || agents.agents.length === 0) {
     html += `<p class="acc-hint">No agents registered under this user.</p>`;
   } else {
     for (const a of agents.agents) {
-      html += `<div class="acc-row"><div><div>${esc(a.name || a.id)}</div><div class="meta">${esc(a.id)} · ${esc(a.scope || 'ReadWrite')}</div></div></div>`;
+      const revokeTarget = a.did || a.id;
+      html += `<div class="acc-row"><div><div>${esc(a.name || a.id)}</div><div class="meta">${esc(a.id)} · ${esc(a.scope || 'ReadWrite')}${a.did ? ' · ' + esc(a.did) : ''}</div></div>`;
+      html += `<button onclick="accountRevokeAgent('${encodeURIComponent(revokeTarget)}')">Revoke</button></div>`;
     }
   }
   html += `</div>`;
 
+  // Your pod — scoped view (pulls from podState populated by SSE)
+  html += `<div class="acc-card"><h3>Your pod</h3>`;
+  html += `<p class="acc-hint" style="margin-bottom:10px">Descriptors currently visible on <code style="background:var(--surface);padding:2px 4px;border-radius:3px;">/${esc(userId)}/</code>. Click one to inspect in the other tabs.</p>`;
+  html += renderYourPodInline(userId);
+  html += `</div>`;
+
   host.innerHTML = html;
+}
+
+// Returns the inner HTML for the "Your pod" section using podState
+// (populated by the dashboard's SSE stream over the polling loop).
+function renderYourPodInline(userId) {
+  const entry = Object.entries(podState || {}).find(([u, p]) => (p?.name === userId) || u.endsWith('/' + userId + '/'));
+  if (!entry) {
+    return `<p class="acc-hint">Your pod hasn't been observed yet — publish something from an MCP client and it'll appear here within a few seconds.</p>`;
+  }
+  const [podUrl, pod] = entry;
+  const descs = pod.descriptors || [];
+  if (descs.length === 0) {
+    return `<p class="acc-hint">Pod is empty.</p>`;
+  }
+  let out = '';
+  for (const d of descs.slice(0, 20)) {
+    const gid = shortId((d.describes && d.describes[0]) || d.url);
+    const facets = (d.facetTypes || []).slice(0, 4).map(f => `<span class="chip ${f}" style="margin-left:4px">${esc(f)}</span>`).join('');
+    out += `<div class="acc-row" style="cursor:pointer" onclick="inspectDesc('${esc(d.url)}'); switchTab('inspector');">`;
+    out += `<div><div>${esc(gid)}</div><div class="meta">${esc(shortUrl(d.url))}${facets}</div></div>`;
+    out += `<div style="color:var(--dim); font-size:10px;">inspect →</div>`;
+    out += `</div>`;
+  }
+  if (descs.length > 20) {
+    out += `<p class="acc-hint">…and ${descs.length - 20} more.</p>`;
+  }
+  return out;
 }
 
 // ── OAuth helpers ────────────────────────────────────
@@ -814,18 +893,35 @@ function accountUsePastedToken() {
 function accountSignOut() {
   identityToken = null;
   identityUserId = null;
+  mcpAccessToken = null;
+  mcpRefreshToken = null;
   sessionStorage.removeItem('cg_identity_token');
   sessionStorage.removeItem('cg_identity_userid');
+  sessionStorage.removeItem('cg_mcp_access');
+  sessionStorage.removeItem('cg_mcp_refresh');
   sessionStorage.removeItem('cg_oauth_pending');
   renderAccount();
 }
 
+async function accountSignOutEverywhere() {
+  if (!confirm('Sign out every active session for this account? You will need to sign in again on every device, including this one.')) return;
+  try {
+    const r = await identityFetch('/tokens/me/sign-out-everywhere', { method: 'POST' });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      alert(`Sign-out-everywhere failed: ${data.error || r.statusText}`);
+      return;
+    }
+    // Our own token is now revoked too — force local sign-out.
+    accountSignOut();
+    alert(`Signed out ${data.revoked ?? '?'} sessions. You have been returned to the sign-in screen.`);
+  } catch (err) {
+    alert(`Sign-out-everywhere error: ${err.message}`);
+  }
+}
+
 async function accountDelete(path, init = {}) {
-  const r = await fetch(`/api/identity${path}`, {
-    method: 'DELETE',
-    ...init,
-    headers: { 'Authorization': `Bearer ${identityToken}`, ...(init.headers || {}) },
-  });
+  const r = await identityFetch(path, { method: 'DELETE', ...init });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
     alert(`Remove failed: ${data.error || r.statusText}`);
@@ -847,6 +943,39 @@ async function accountRemoveDid(did) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ did }),
   })) renderAccount();
+}
+
+async function accountRevokeAgent(agentIriEncoded) {
+  const agentIri = decodeURIComponent(agentIriEncoded);
+  if (!confirm(`Revoke agent ${agentIri}?\n\nFuture publishes from this surface will not encrypt to its key. Already-encrypted envelopes keep working for that surface until it re-registers.`)) return;
+  if (!mcpAccessToken) {
+    alert('MCP access token missing from session — sign out + back in to restore it.');
+    return;
+  }
+  try {
+    const r = await fetch(`/api/relay/agents/${agentIriEncoded}/revoke`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${mcpAccessToken}` },
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      // Attempt silent refresh once if MCP token expired
+      if (r.status === 401 && await tryRefreshIdentityToken()) {
+        const r2 = await fetch(`/api/relay/agents/${agentIriEncoded}/revoke`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${mcpAccessToken}` },
+        });
+        const d2 = await r2.json().catch(() => ({}));
+        if (!r2.ok) { alert(`Revoke failed: ${d2.error || r2.statusText}`); return; }
+      } else {
+        alert(`Revoke failed: ${data.error || r.statusText}`);
+        return;
+      }
+    }
+    renderAccount();
+  } catch (err) {
+    alert(`Revoke error: ${err.message}`);
+  }
 }
 
 // Render the Account tab whenever it becomes active
