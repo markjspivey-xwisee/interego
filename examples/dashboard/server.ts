@@ -24,9 +24,34 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DASH_PORT = parseInt(process.env['PORT'] ?? '4000');
 const CSS_URL = (process.env['CSS_URL'] ?? 'http://localhost:3456/').replace(/\/?$/, '/');
-const RELAY_URL = process.env['RELAY_URL'] ?? '';
+const RELAY_URL = (process.env['RELAY_URL'] ?? '').replace(/\/?$/, '');
+// PUBLIC_RELAY_URL: the browser-reachable relay origin used for OAuth
+// redirects (the /authorize page users sign in on). In Azure Container
+// Apps the backend RELAY_URL may be a `.internal` URL; the browser must
+// be sent to a public address instead. Defaults to RELAY_URL.
+const PUBLIC_RELAY_URL = (process.env['PUBLIC_RELAY_URL'] ?? RELAY_URL).replace(/\/?$/, '');
+// PUBLIC_BASE_URL: the browser-reachable dashboard origin, used as the
+// OAuth redirect_uri target. Defaults to constructing from the request
+// host when unset (fine for local dev).
+const PUBLIC_BASE_URL = (process.env['PUBLIC_BASE_URL'] ?? '').replace(/\/?$/, '');
+// Identity server the dashboard proxies sign-in + account-management
+// calls through. Running in Azure Container Apps the dashboard can
+// reach the internal `.internal` identity URL but the browser can't —
+// so the dashboard's `/api/identity/*` endpoint is a server-side proxy.
+const IDENTITY_URL = (process.env['IDENTITY_URL'] ?? '').replace(/\/?$/, '');
 const INDEX_HTML = resolve(__dirname, 'index.html');
 const POLL_INTERVAL = parseInt(process.env['POLL_INTERVAL'] ?? '3000');
+
+// DCR-registered OAuth client at the relay. Registered once on startup;
+// client_id is reused for every dashboard sign-in.
+let DASHBOARD_OAUTH_CLIENT_ID: string | null = null;
+
+function publicBaseUrl(req: IncomingMessage): string {
+  if (PUBLIC_BASE_URL) return PUBLIC_BASE_URL;
+  const proto = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'http';
+  const host = (req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host;
+  return `${proto}://${host}`;
+}
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -312,6 +337,16 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     return;
   }
 
+  // OAuth redirect target. The relay redirects back here with
+  // ?code=...&state=... after a successful sign-in ceremony. Serve the
+  // same index.html — the frontend JS detects the query string and
+  // drives the code-for-token exchange against /api/oauth/exchange.
+  if (url.startsWith('/oauth/callback') && method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(readFileSync(INDEX_HTML, 'utf-8'));
+    return;
+  }
+
   if (url === '/events' && method === 'GET') {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -404,6 +439,125 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
     return;
   }
 
+  // API: frontend config — tells the browser where to send identity calls
+  if (url === '/api/config' && method === 'GET') {
+    json(res, {
+      cssUrl: CSS_URL,
+      relayUrl: RELAY_URL || null,
+      publicRelayUrl: PUBLIC_RELAY_URL || null,
+      // Expose the proxy path, NOT the raw identity URL — because
+      // the raw URL may be `.internal` and unreachable from browsers.
+      identityProxy: IDENTITY_URL ? '/api/identity' : null,
+      oauthClientId: DASHBOARD_OAUTH_CLIENT_ID,
+      publicBaseUrl: publicBaseUrl(req),
+    });
+    return;
+  }
+
+  // API: OAuth callback token exchange + identity-token retrieval. The
+  // browser redirects back to /oauth/callback?code=...&state=... after
+  // signing in at the relay. The frontend calls /api/oauth/exchange with
+  // the code + its PKCE verifier; we swap code for an MCP token at the
+  // relay, then swap that for an identity bearer via /identity-token,
+  // and return the identity bearer to the browser for direct use against
+  // /api/identity/*.
+  if (url === '/api/oauth/exchange' && method === 'POST' && RELAY_URL) {
+    try {
+      let body = '';
+      for await (const chunk of req) body += chunk;
+      const { code, code_verifier, redirect_uri, client_id } = JSON.parse(body || '{}') as {
+        code?: string; code_verifier?: string; redirect_uri?: string; client_id?: string;
+      };
+      if (!code || !code_verifier || !redirect_uri) {
+        json(res, { error: 'code, code_verifier, redirect_uri required' }, 400);
+        return;
+      }
+      const form = new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        code_verifier,
+        redirect_uri,
+        client_id: client_id ?? DASHBOARD_OAUTH_CLIENT_ID ?? '',
+      });
+      const tokenResp = await fetch(`${RELAY_URL}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      });
+      if (!tokenResp.ok) {
+        const err = await tokenResp.text();
+        json(res, { error: `Token exchange failed: ${err}` }, tokenResp.status);
+        return;
+      }
+      const tokenJson = await tokenResp.json() as { access_token?: string; expires_in?: number };
+      if (!tokenJson.access_token) {
+        json(res, { error: 'No access_token in token response' }, 502);
+        return;
+      }
+      // Now fetch the identity bearer token backing this MCP token.
+      const idResp = await fetch(`${RELAY_URL}/identity-token`, {
+        headers: { Authorization: `Bearer ${tokenJson.access_token}` },
+      });
+      if (!idResp.ok) {
+        const err = await idResp.text();
+        json(res, { error: `identity-token fetch failed: ${err}` }, idResp.status);
+        return;
+      }
+      const idJson = await idResp.json() as { identityToken?: string; expiresAt?: number; userId?: string };
+      if (!idJson.identityToken) {
+        json(res, { error: 'identity-token response missing identityToken' }, 502);
+        return;
+      }
+      json(res, {
+        identityToken: idJson.identityToken,
+        expiresAt: idJson.expiresAt,
+        userId: idJson.userId,
+        mcpAccessToken: tokenJson.access_token,
+        mcpExpiresIn: tokenJson.expires_in,
+      });
+    } catch (err) {
+      json(res, { error: `OAuth exchange failed: ${(err as Error).message}` }, 502);
+    }
+    return;
+  }
+
+  // API: identity-server proxy. Forwards the browser's request verbatim
+  // to the configured IDENTITY_URL including Authorization / body, then
+  // echoes the response. The dashboard backend runs inside the same
+  // Azure environment as identity, so `.internal` hosts are reachable.
+  if (url.startsWith('/api/identity/') && IDENTITY_URL) {
+    const upstreamPath = url.slice('/api/identity'.length); // includes leading '/'
+    try {
+      let body: Buffer | undefined;
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'DELETE' && method !== 'OPTIONS') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        body = Buffer.concat(chunks);
+      } else if (method === 'DELETE') {
+        // DELETE may still carry a JSON body (e.g. did removal).
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        if (chunks.length) body = Buffer.concat(chunks);
+      }
+      const headers: Record<string, string> = {};
+      if (req.headers['authorization']) headers['authorization'] = String(req.headers['authorization']);
+      if (req.headers['content-type']) headers['content-type'] = String(req.headers['content-type']);
+      else if (body && body.length) headers['content-type'] = 'application/json';
+      const upstream = await fetch(`${IDENTITY_URL}${upstreamPath}`, {
+        method,
+        headers,
+        body,
+      });
+      const ct = upstream.headers.get('content-type') ?? 'application/json';
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.writeHead(upstream.status, { 'Content-Type': ct, 'Access-Control-Allow-Origin': '*' });
+      res.end(buf);
+    } catch (err) {
+      json(res, { error: `Identity proxy failed: ${(err as Error).message}` }, 502);
+    }
+    return;
+  }
+
   // API: relay info (tools, health)
   if (url === '/api/relay' && method === 'GET' && RELAY_URL) {
     try {
@@ -428,7 +582,44 @@ server.listen(DASH_PORT, async () => {
   log(`Dashboard: http://localhost:${DASH_PORT}/`);
   log(`CSS: ${CSS_URL}`);
   if (RELAY_URL) log(`Relay: ${RELAY_URL}`);
+  if (PUBLIC_RELAY_URL && PUBLIC_RELAY_URL !== RELAY_URL) log(`Public relay (for browser redirect): ${PUBLIC_RELAY_URL}`);
+  if (IDENTITY_URL) log(`Identity: ${IDENTITY_URL} (proxied via /api/identity)`);
   log(`Polling every ${POLL_INTERVAL}ms`);
+
+  // Dynamic-client-registration against the relay so the "Sign in"
+  // button can drive a full OAuth 2.1 + PKCE flow without the operator
+  // pre-provisioning credentials. Registration is idempotent from the
+  // dashboard's perspective — we keep one client_id per container
+  // lifetime; a fresh one is minted on restart which is harmless since
+  // dynamic clients are intended exactly for this.
+  if (RELAY_URL && PUBLIC_BASE_URL) {
+    try {
+      const redirectUri = `${PUBLIC_BASE_URL}/oauth/callback`;
+      const dcr = await fetch(`${RELAY_URL}/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: 'Interego Dashboard',
+          redirect_uris: [redirectUri],
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'none',
+          scope: 'mcp',
+        }),
+      });
+      if (dcr.ok) {
+        const { client_id } = await dcr.json() as { client_id: string };
+        DASHBOARD_OAUTH_CLIENT_ID = client_id;
+        log(`OAuth client registered with relay: ${client_id}`);
+      } else {
+        log(`WARN: DCR against relay failed (${dcr.status}) — sign-in will require manual token paste`);
+      }
+    } catch (err) {
+      log(`WARN: DCR threw ${(err as Error).message} — sign-in will require manual token paste`);
+    }
+  } else if (RELAY_URL && !PUBLIC_BASE_URL) {
+    log(`NOTE: set PUBLIC_BASE_URL to enable OAuth sign-in flow (e.g. https://interego-dashboard.<host>).`);
+  }
 
   // Initial poll
   await pollPods().catch(err => log(`Initial poll failed: ${(err as Error).message}`));

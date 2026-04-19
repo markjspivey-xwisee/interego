@@ -108,6 +108,30 @@ jobs:
             --query "properties.latestRevisionName" \
             --output tsv
 
+      # Dashboard-specific env wiring. The dashboard needs to know:
+      #   - IDENTITY_URL   — internal identity host (for /api/identity proxy)
+      #   - RELAY_URL      — internal relay host (for OAuth code exchange + /identity-token)
+      #   - PUBLIC_RELAY_URL — public relay FQDN (for the browser-side redirect to /authorize)
+      #   - PUBLIC_BASE_URL  — public dashboard FQDN (used as OAuth redirect_uri)
+      #   - CSS_URL        — already set at provision time; re-asserted for idempotence
+      # These are looked up from the existing container apps so we don't
+      # hardcode FQDNs; if you rename an app, this step keeps working.
+      - name: Wire dashboard env vars
+        if: matrix.image == 'interego-dashboard'
+        run: |
+          IDENTITY_FQDN=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          RELAY_FQDN=$(az containerapp show --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          DASHBOARD_FQDN=$(az containerapp show --name interego-dashboard --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          az containerapp update \
+            --name interego-dashboard \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --set-env-vars \
+              "IDENTITY_URL=https://$IDENTITY_FQDN" \
+              "RELAY_URL=https://$RELAY_FQDN" \
+              "PUBLIC_RELAY_URL=https://$RELAY_FQDN" \
+              "PUBLIC_BASE_URL=https://$DASHBOARD_FQDN" \
+            --output none
+
       - name: Summary
         if: always()
         run: |
