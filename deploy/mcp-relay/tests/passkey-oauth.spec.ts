@@ -67,7 +67,10 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
   // 2. Set up virtual WebAuthn authenticator, then navigate to /authorize
   const { verifier, challenge } = pkce();
   const state = randomBytes(8).toString('hex');
-  const userId = 'pw-passkey-' + randomBytes(4).toString('hex');
+  // Display name only — userId is DERIVED from the credential server-side
+  // (`u-pk-<sha256(credId)[:12]>`), not claimed by the caller. The randomness
+  // here is just to get a human-readable unique display string in logs.
+  const displayName = 'pw-passkey-' + randomBytes(4).toString('hex');
 
   await enableVirtualAuthenticator(page);
 
@@ -82,8 +85,10 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
 
   await page.goto(authUrl);
 
-  // 3. Fill the passkey user ID, click "Register new"
-  await page.fill('#pk-user', userId);
+  // 3. Fill the display name, click "Register new".
+  // The authorize page no longer exposes a `#pk-user` field because
+  // the server-side userId is derived from the credential, not claimed.
+  await page.fill('#pk-name', displayName);
   const redirectPromise = page.waitForURL(url => url.toString().startsWith('http://localhost:9999/cb?'), { timeout: 30_000 });
   await page.getByRole('button', { name: /register new/i }).click();
   await redirectPromise;
