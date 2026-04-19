@@ -1,0 +1,109 @@
+@prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
+# ══════════════════════════════════════════════════════════════
+#  AMTA — Agent-Mediated Trust Attestation
+# ══════════════════════════════════════════════════════════════
+#
+#  AMTA models the process by which one agent attests to the
+#  trustworthiness of another agent's claims — not as a single
+#  yes/no boolean, but as a multi-dimensional attestation with
+#  explicit axes:
+#
+#    - Competence    (can the agent produce correct claims?)
+#    - Honesty       (does the agent report their claims faithfully?)
+#    - Relevance     (is the agent's expertise germane to the claim?)
+#    - Recency       (is the attestation still current?)
+#
+#  Each axis is an ordinal rating; the combined attestation is a
+#  vector rather than a scalar. This lets trust policies reason
+#  compositionally — e.g. "require competence > 0.8 AND recency <
+#  30 days" as an ODRL constraint.
+#
+#  AMTA attestations are stored as cg:TrustFacet specializations
+#  on descriptors. An agent's reputation is the distribution of
+#  attestations it has received over time.
+#
+#  Stub ontology; expand as AMTA's spec formalizes.
+
+<https://markjspivey-xwisee.github.io/interego/ns/amta>
+    a owl:Ontology ;
+    dct:title "AMTA — Agent-Mediated Trust Attestation" ;
+    dct:description "Multi-dimensional trust attestations: competence, honesty, relevance, recency. Each axis is rated ordinally; combined attestation is a vector usable in policy decisions. Stored as cg:TrustFacet specializations." ;
+    vann:preferredNamespacePrefix "amta" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/amta#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+
+amta:Attestation a owl:Class ;
+    rdfs:subClassOf cg:TrustFacet ;
+    rdfs:label "AMTA Attestation" ;
+    rdfs:comment "A multi-dimensional trust attestation by one agent (the attestor) about another agent or claim (the subject). Subclass of cg:TrustFacet; inherits trust-level + issuer semantics and adds per-axis ratings." .
+
+amta:CompetenceRating a owl:Class ;
+    rdfs:label "Competence Rating" ;
+    rdfs:comment "Rating of the subject's ability to produce correct claims in the relevant domain. Ordinal 0.0 - 1.0." .
+
+amta:HonestyRating a owl:Class ;
+    rdfs:label "Honesty Rating" ;
+    rdfs:comment "Rating of the subject's faithful reporting — do their claims reflect their actual state, or are they incentivized to misrepresent?" .
+
+amta:RelevanceRating a owl:Class ;
+    rdfs:label "Relevance Rating" ;
+    rdfs:comment "Rating of whether the subject's expertise is germane to the specific claim being attested. An agent may be highly competent in one domain but not in the one being evaluated." .
+
+amta:RecencyRating a owl:Class ;
+    rdfs:label "Recency Rating" ;
+    rdfs:comment "Rating derived from time-since-attestation. Older attestations decay; clients can set a recency threshold in policy." .
+
+amta:Reputation a owl:Class ;
+    rdfs:label "Reputation" ;
+    rdfs:comment "The aggregate of attestations an agent has received — a distribution rather than a scalar. Enables policies like 'require median competence > 0.7 across last 20 attestations'." .
+
+amta:attestor a owl:ObjectProperty ;
+    rdfs:label "attestor" ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range cg:AuthorizedAgent .
+
+amta:subject a owl:ObjectProperty ;
+    rdfs:label "subject" ;
+    rdfs:domain amta:Attestation .
+
+amta:competence a owl:DatatypeProperty ;
+    rdfs:label "competence" ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range xsd:double .
+
+amta:honesty a owl:DatatypeProperty ;
+    rdfs:label "honesty" ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range xsd:double .
+
+amta:relevance a owl:DatatypeProperty ;
+    rdfs:label "relevance" ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range xsd:double .
+
+amta:recency a owl:DatatypeProperty ;
+    rdfs:label "recency" ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range xsd:double .
+
+amta:attestedAt a owl:DatatypeProperty ;
+    rdfs:label "attested at" ;
+    rdfs:domain amta:Attestation ;
+    rdfs:range xsd:dateTime .
+
+# ── Alignments ────────────────────────────────────────────────
+
+amta:Attestation rdfs:seeAlso cg:TrustFacet , cgh:PolicyDecision ;
+    rdfs:comment "AMTA attestations become inputs to cgh:PolicyDecision evaluations via ODRL constraints that reference per-axis ratings." .

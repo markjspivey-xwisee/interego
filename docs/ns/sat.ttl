@@ -1,0 +1,101 @@
+@prefix sat:  <https://markjspivey-xwisee.github.io/interego/ns/sat#> .
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
+@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix ie:   <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════
+#  SAT — Semiotic Agent Topos
+# ══════════════════════════════════════════════════════════════
+#
+#  SAT models agents as participants in a semiotic topos, where
+#  the Semiotic Field Functor (Σ) maps each situation to its
+#  space of meaning-making possibilities.
+#
+#      Σ : Situations → SemioticFields
+#
+#  Every agent action is a choice within Σ(s) for a situation s,
+#  and the coherence of collective action is the compatibility
+#  of those choices under composition.
+#
+#  The Semiotic Field Functor maps directly to Interego's
+#  cg:SemioticFacet — each descriptor's Semiotic facet is a
+#  projection of Σ onto the specific graph the descriptor
+#  describes.
+#
+#  SAT extends the basic Peircean triad (sign / object /
+#  interpretant) with:
+#    - Sheaf structure over situations (sheafification resolves
+#      multi-agent interpretant disagreement)
+#    - Endofunctor semiosis (the process of interpretation
+#      itself, iterated)
+#    - Emergent semiotics (meanings not reducible to individual
+#      interpretant acts)
+
+<https://markjspivey-xwisee.github.io/interego/ns/sat>
+    a owl:Ontology ;
+    dct:title "SAT — Semiotic Agent Topos" ;
+    dct:description "Topos-theoretic model of agents as participants in a semiotic field. The Semiotic Field Functor Σ maps situations to possibility-spaces of meaning; every cg:SemioticFacet is a projection of Σ onto a specific context graph. Complements Peircean triadic semiotics with sheaf structure and endofunctor semiosis." ;
+    vann:preferredNamespacePrefix "sat" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/sat#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/interego> .
+
+sat:Situation a owl:Class ;
+    rdfs:label "Situation" ;
+    rdfs:comment "A context in which meaning-making occurs. Inputs to Σ; each situation has a Semiotic Field of possible interpretations, actions, and meaning assignments." .
+
+sat:SemioticField a owl:Class ;
+    rdfs:label "Semiotic Field" ;
+    rdfs:comment "The output of Σ(situation) — the space of meaning-making possibilities available in a given context. Each action an agent takes is a choice from this space." .
+
+sat:SemioticFieldFunctor a owl:Class ;
+    rdfs:label "Semiotic Field Functor" ;
+    rdfs:comment "The functor Σ : Situations → SemioticFields that defines the semiotic topos. Projection of Σ onto a specific graph yields a cg:SemioticFacet." ;
+    skos:closeMatch cg:SemioticFacet .
+
+sat:Interpretant a owl:Class ;
+    rdfs:label "Interpretant" ;
+    rdfs:comment "Peircean interpretant — the agent's instantiated meaning-assignment in a given situation. Morphism from sign to object (via interpretant) forms the triadic sign relation." .
+
+sat:Sign a owl:Class ;
+    rdfs:label "Sign" ;
+    rdfs:comment "Peircean representamen — the signal that gets interpreted. Maps to pgsl:sign at the substrate layer." ;
+    rdfs:seeAlso pgsl:sign .
+
+sat:Object a owl:Class ;
+    rdfs:label "Semiotic Object" ;
+    rdfs:comment "The thing the sign is about. In a context graph this is typically the named-graph IRI (cg:describes target)." .
+
+sat:Semiosis a owl:Class ;
+    rdfs:label "Semiosis" ;
+    rdfs:comment "The process of interpretation itself — endofunctor iterating triadic sign relations until a stable interpretant emerges. At limits, yields stable meanings; away from limits, yields open / contested semiosis." .
+
+sat:EmergentMeaning a owl:Class ;
+    rdfs:label "Emergent Meaning" ;
+    rdfs:comment "Meaning arising from multi-agent semiosis that is not reducible to any single agent's interpretant. Computed as the sheafification of interpretant assignments across a sheaf over situations." .
+
+sat:appliesTo a owl:ObjectProperty ;
+    rdfs:label "applies to" ;
+    rdfs:domain sat:SemioticFieldFunctor ;
+    rdfs:range sat:Situation .
+
+sat:possibleInterpretants a owl:ObjectProperty ;
+    rdfs:label "possible interpretants" ;
+    rdfs:domain sat:SemioticField ;
+    rdfs:range sat:Interpretant .
+
+# ── Alignments ────────────────────────────────────────────────
+
+sat:SemioticFieldFunctor owl:equivalentClass cg:SemioticFacet ;
+    rdfs:comment "A per-descriptor SemioticFacet is precisely the value of Σ at the descriptor's described graph, so the two classes are equivalent under projection. SAT provides the categorical machinery; cg: provides the per-descriptor instantiation." .
+
+sat:Semiosis rdfs:seeAlso ie:Interrogative ;
+    rdfs:comment "The interrogatives (who/what/where/when/why/how/which/...) are the typed entry-points into semiosis — each interrogative prompts a distinct class of interpretant." .

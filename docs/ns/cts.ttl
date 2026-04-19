@@ -1,0 +1,110 @@
+@prefix cts:  <https://markjspivey-xwisee.github.io/interego/ns/cts#> .
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
+@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix ie:   <https://markjspivey-xwisee.github.io/interego/ns/interego#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════
+#  CTS — Compositional Tuple Store
+# ══════════════════════════════════════════════════════════════
+#
+#  CTS grounds Interego's semantic machinery in usage-based
+#  linguistics: meaning is usage, structure emerges from usage
+#  rather than being imposed a-priori. The tuple store records
+#  actual usage events; structure (paradigms, constraints,
+#  syntagmatic patterns) emerges as statistical regularity
+#  over those events.
+#
+#  Core principle (Langacker, Tomasello, Bybee): no word has
+#  meaning in isolation; meaning is the distribution of contexts
+#  in which the word has been used. CTS makes this concrete:
+#
+#    - Every utterance is a Tuple (positions × fillers × context)
+#    - Regularities across tuples are Patterns
+#    - Patterns constrain future tuple assembly
+#    - Interoperability between agents is Emergent rather than
+#      engineered — two agents using the same tuples converge on
+#      compatible patterns without a shared pre-specified schema
+#
+#  CTS underlies PGSL's atom/fragment lattice: every PGSL atom is
+#  a tuple filler; every PGSL fragment is a position × filler
+#  binding; the overlapping-pair construction at each level is a
+#  CTS pattern-inference step.
+
+<https://markjspivey-xwisee.github.io/interego/ns/cts>
+    a owl:Ontology ;
+    dct:title "CTS — Compositional Tuple Store" ;
+    dct:description "Usage-based linguistic substrate. Records utterances as tuples (positions × fillers × context); infers patterns as statistical regularities; lets interoperability emerge without a pre-specified schema. Underlies PGSL at the substrate layer and cg:ParadigmSet / cg:SyntagmaticPattern at the grammar layer." ;
+    vann:preferredNamespacePrefix "cts" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/cts#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/pgsl> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+
+cts:Tuple a owl:Class ;
+    rdfs:label "Tuple" ;
+    rdfs:comment "A single usage record: a sequence of positions, each filled by a specific filler, observed in a specific context. The atomic unit of the CTS. Every utterance / tool-call / fragment-construction is a Tuple." .
+
+cts:Position a owl:Class ;
+    rdfs:label "Position" ;
+    rdfs:comment "A slot in a tuple where a filler may appear. Positions are ordered (1st, 2nd, ...) and typed by the paradigm set of fillers admissible there." .
+
+cts:Filler a owl:Class ;
+    rdfs:label "Filler" ;
+    rdfs:comment "A value occupying a position in a tuple. Can be a pgsl:Atom, a cg:ContextDescriptor, a WebID, or any IRI-addressable entity." ;
+    rdfs:seeAlso pgsl:Atom .
+
+cts:Context a owl:Class ;
+    rdfs:label "Usage Context" ;
+    rdfs:comment "The surrounding environment of a tuple — time, place, agents present, prior tuples, task being performed. Two syntactically identical tuples in different contexts count as distinct usage events for pattern inference." ;
+    rdfs:seeAlso cg:ContextDescriptor .
+
+cts:Pattern a owl:Class ;
+    rdfs:label "Usage Pattern" ;
+    rdfs:comment "A statistical regularity across tuples — e.g. 'position 1 is almost always filled by a hela:Actor' or 'position 3 and position 5 correlate'. Patterns are learned, not declared; they change as usage evolves." ;
+    skos:closeMatch cg:SyntagmaticPattern .
+
+cts:ParadigmSet a owl:Class ;
+    rdfs:subClassOf cg:ParadigmSet ;
+    rdfs:label "CTS Paradigm Set" ;
+    rdfs:comment "The distribution of fillers observed at a given position across all tuples. Used to infer the class of fillers valid at that position (i.e. the paradigm) — cf. Saussure's paradigmatic axis." .
+
+cts:Emergence a owl:Class ;
+    rdfs:label "Emergence" ;
+    rdfs:comment "The phenomenon by which interoperability between agents arises without explicit schema agreement. Two agents using the same tuples converge on compatible patterns; the emergence is the quantitative observation that their patterns align over time." .
+
+# ── Properties ────────────────────────────────────────────────
+
+cts:hasPosition a owl:ObjectProperty ;
+    rdfs:label "has position" ;
+    rdfs:domain cts:Tuple ;
+    rdfs:range cts:Position .
+
+cts:hasFiller a owl:ObjectProperty ;
+    rdfs:label "has filler" ;
+    rdfs:domain cts:Position ;
+    rdfs:range cts:Filler .
+
+cts:usedIn a owl:ObjectProperty ;
+    rdfs:label "used in" ;
+    rdfs:domain cts:Filler ;
+    rdfs:range cts:Context .
+
+cts:inducesPattern a owl:ObjectProperty ;
+    rdfs:label "induces pattern" ;
+    rdfs:comment "Relates a set of tuples to the pattern they collectively evidence. Inverse of pattern membership." ;
+    rdfs:range cts:Pattern .
+
+# ── Alignments ────────────────────────────────────────────────
+
+cts:Tuple rdfs:seeAlso pgsl:Fragment ;
+    rdfs:comment "A pgsl:Fragment at level N is a tuple whose fillers are themselves fragments at level N-1 — the overlapping-pair construction is tuple composition. CTS and PGSL are two views of the same structure: CTS emphasises usage + emergence, PGSL emphasises content-addressed lattice algebra." .
+
+cts:Pattern owl:equivalentClass cg:SyntagmaticPattern ;
+    rdfs:comment "CTS patterns and cg:SyntagmaticPattern are the same concept at two different abstraction layers — CTS at the raw usage layer, cg: at the typed-context layer. Explicit equivalence lets tooling navigate freely between them." .

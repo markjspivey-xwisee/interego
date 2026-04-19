@@ -32,6 +32,11 @@ const OWNED_NAMESPACES = {
   align:      'docs/ns/alignment.ttl',
   hyprcat:    'docs/ns/hyprcat.ttl',
   hypragent:  'docs/ns/hypragent.ttl',
+  hela:       'docs/ns/hela.ttl',
+  sat:        'docs/ns/sat.ttl',
+  cts:        'docs/ns/cts.ttl',
+  olke:       'docs/ns/olke.ttl',
+  amta:       'docs/ns/amta.ttl',
 };
 
 // Known-external prefixes we don't own — references are always valid

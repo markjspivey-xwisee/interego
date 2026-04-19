@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   lint:
-    name: cg:/cgh:/pgsl:/ie:/align:/hyprcat:/hypragent: consistency
+    name: "Owned-namespace consistency (cg cgh pgsl ie align hyprcat hypragent hela sat cts olke amta)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

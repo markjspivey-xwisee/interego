@@ -1,0 +1,86 @@
+@prefix hela: <https://markjspivey-xwisee.github.io/interego/ns/hela#> .
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
+@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix time: <http://www.w3.org/2006/time#> .
+
+# ══════════════════════════════════════════════════════════════
+#  HELA — Topos-theoretic xAPI Stack
+# ══════════════════════════════════════════════════════════════
+#
+#  HELA (Human Experience Learning Activities) models xAPI
+#  statements as a presheaf category:
+#
+#      ℰ = Set^(𝒞_xAPI^op)
+#
+#  where 𝒞_xAPI is the category of xAPI statement shapes
+#  (actor × verb × object + extensions) and ℰ is the topos of
+#  set-valued presheaves on that category. This gives every
+#  xAPI-style learning record a canonical place in a category-
+#  theoretic structure where:
+#
+#    - Statements compose via morphisms (substitutability,
+#      refinement, aggregation)
+#    - Subobject classifiers model credential validity over time
+#    - Sheafification yields the "right" answer when multiple
+#      statements about the same learner disagree
+#
+#  HELA aligns with Interego's cg:ProvenanceFacet — every xAPI
+#  statement is a prov:Activity with attribution, and every
+#  learner's trace is a sub-presheaf. cg:TemporalFacet carries
+#  the validity window; cg:TrustFacet carries the attestor.
+
+<https://markjspivey-xwisee.github.io/interego/ns/hela>
+    a owl:Ontology ;
+    dct:title "HELA — Topos-theoretic xAPI stack" ;
+    dct:description "Models xAPI learning-record data as a presheaf category ℰ = Set^(𝒞_xAPI^op). Provides the categorical structure that lets learning records compose, refine, and sheafify. Aligns with cg:ProvenanceFacet + cg:TemporalFacet + cg:TrustFacet." ;
+    vann:preferredNamespacePrefix "hela" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/hela#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+
+hela:Statement a owl:Class ;
+    rdfs:subClassOf prov:Activity ;
+    rdfs:label "HELA Statement" ;
+    rdfs:comment "An xAPI-style (actor, verb, object) statement — the atomic unit of the presheaf category 𝒞_xAPI. Every statement is simultaneously a prov:Activity (with attribution + timing) and an object in ℰ (with morphisms to refinements / aggregations)." .
+
+hela:Actor a owl:Class ;
+    rdfs:subClassOf prov:Agent ;
+    rdfs:label "HELA Actor" ;
+    rdfs:comment "The learner / agent whose experience a statement records. Subclass of prov:Agent so standard provenance tooling navigates the xAPI graph." .
+
+hela:Verb a owl:Class ;
+    rdfs:label "HELA Verb" ;
+    rdfs:comment "The action type in an xAPI statement (experienced, completed, attempted, passed). Verbs form a partially ordered set used as morphisms between statements." .
+
+hela:LearningObject a owl:Class ;
+    rdfs:label "HELA Learning Object" ;
+    rdfs:comment "The object of an xAPI statement — what the actor experienced / did. Typed as a sub-presheaf so aggregation (e.g. 'all of course C') is categorical." .
+
+hela:Trace a owl:Class ;
+    rdfs:label "HELA Trace" ;
+    rdfs:comment "A learner's full sequence of statements over time. As a sub-presheaf, it supports categorical comparison (overlap, refinement) with other learners' traces." .
+
+hela:SubobjectClassifier a owl:Class ;
+    rdfs:label "Subobject Classifier" ;
+    rdfs:comment "The Ω of the topos ℰ — classifies which subsets of statements constitute 'valid' or 'complete' views for a given learner / certificate. Used when sheafifying divergent records." .
+
+hela:presheafOf a owl:ObjectProperty ;
+    rdfs:label "presheaf of" ;
+    rdfs:comment "Declares that a hela:Trace is the presheaf of a particular category (subcategory of 𝒞_xAPI, e.g. course C's statements)." ;
+    rdfs:domain hela:Trace .
+
+# ── Alignments ────────────────────────────────────────────────
+
+hela:Statement rdfs:seeAlso cg:ProvenanceFacet ;
+    rdfs:comment "Every HELA statement's attribution + timing is captured by cg:ProvenanceFacet when wrapped as a cg:ContextDescriptor." .
+
+hela:Actor skos:closeMatch cg:AuthorizedAgent ;
+    rdfs:comment "Both represent an actor with delegated or original authority — cg:AuthorizedAgent is the pod-registry form, hela:Actor is the learning-context form." .
