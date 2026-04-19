@@ -926,8 +926,10 @@ app.post('/oauth/verify', async (req, res) => {
   let authResp: {
     userId?: string;
     agentId?: string;
+    agentDid?: string;
     token?: string;
     webId?: string;
+    did?: string;
     podUrl?: string;
     error?: string;
   };
@@ -947,9 +949,15 @@ app.post('/oauth/verify', async (req, res) => {
     return;
   }
 
+  // Prefer the agent's did:web form as the agent IRI — bare strings like
+  // "claude-code-vscode" aren't valid IRIs for prov:wasAssociatedWith and
+  // would render as relative refs in the descriptor's Turtle. did:web IRIs
+  // are resolvable via DID resolution and align with the W3C DID core spec.
+  const agentIri = authResp.agentDid ?? authResp.agentId!;
+
   const result = oauthProvider.completePendingAuthorization(pending_id, {
     userId: authResp.userId,
-    agentId: authResp.agentId!,
+    agentId: agentIri,
     ownerWebId: authResp.webId!,
     podUrl: authResp.podUrl!,
     identityToken: authResp.token,
