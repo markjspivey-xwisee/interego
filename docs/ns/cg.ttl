@@ -400,6 +400,88 @@ cg:recipientCount a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:range xsd:nonNegativeInteger ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
+# ── Identity / Auth properties ────────────────────────────────
+
+cg:walletAddress a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "wallet address" ;
+    rdfs:comment "Lowercased 0x-prefixed Ethereum address registered as a verification method. Used to match SIWE signatures to an owner." ;
+    rdfs:domain cg:EthereumWallet ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:credentialId a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "credential id" ;
+    rdfs:comment "Base64url-encoded credential ID from a WebAuthn registration response. Stable across sign-ins for the same passkey." ;
+    rdfs:domain cg:WebAuthnCredential ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:publicKey a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "public key" ;
+    rdfs:comment "Base64url-encoded COSE public key for a WebAuthn credential." ;
+    rdfs:domain cg:WebAuthnCredential ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:counter a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "counter" ;
+    rdfs:comment "WebAuthn signature counter. Monotonically increases per sign-in; a non-increasing value on an authenticator that supports counters indicates possible cloning and rejects auth per spec." ;
+    rdfs:domain cg:WebAuthnCredential ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:transports a owl:DatatypeProperty ;
+    rdfs:label "transports" ;
+    rdfs:comment "WebAuthn transport hints ('internal', 'hybrid', 'usb', 'nfc', 'ble') collected at registration and replayed at authentication to let the client pick the right authenticator without prompting." ;
+    rdfs:domain cg:WebAuthnCredential ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:did a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "did" ;
+    rdfs:comment "The W3C DID (e.g. 'did:key:z...' or 'did:web:host:users:name') registered as a verification method." ;
+    rdfs:domain cg:DIDKey ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:keyType a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "key type" ;
+    rdfs:comment "Key type identifier per W3C Security Vocabulary. Currently 'Ed25519VerificationKey2020'." ;
+    rdfs:domain cg:DIDKey ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ── Encryption properties ─────────────────────────────────────
+
+cg:envelope a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "envelope" ;
+    rdfs:comment "Base64-encoded JSON of the underlying encryption envelope (nacl.box format in current emission). Kept as a literal so Turtle serialization stays grammar-simple; consumers base64-decode + JSON.parse to reconstruct the envelope object." ;
+    rdfs:domain cg:EncryptedValue ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:expectedDatatype a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "expected datatype" ;
+    rdfs:comment "Optional hint of the post-decryption literal's datatype (e.g. 'xsd:dateTime', 'xsd:double') so clients can rebuild typed RDF literals after decrypting." ;
+    rdfs:domain cg:EncryptedValue ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:encryptionPublicKey a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "encryption public key" ;
+    rdfs:comment "Base64 X25519 public key announcing this agent as a valid envelope recipient. Publishers collecting this property across all cg:AuthorizedAgent rows on a pod get the pod's current recipient set." ;
+    rdfs:domain cg:AuthorizedAgent ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ── Cross-pod sharing property ────────────────────────────────
+
+cg:sharedWith a owl:ObjectProperty ;
+    rdfs:label "shared with" ;
+    rdfs:comment "Declares that this descriptor's payload is encrypted for the listed external identities (DIDs / WebIDs). Discovery-level metadata — the actual envelope wrappedKeys are the authoritative recipient list, but cg:sharedWith lets listeners filter / attribute the cross-pod sharing intent without decrypting." ;
+    rdfs:domain cg:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
 cg:outputPort a owl:ObjectProperty ;
     rdfs:label "output port" ;
     rdfs:comment "DPROD alignment: output distribution endpoint for a data product." ;
@@ -572,3 +654,52 @@ cg:canFetchPayload a cg:Affordance ;
 cg:canDecrypt a cg:Affordance ;
     rdfs:label "Can Decrypt" ;
     rdfs:comment "The declared graph payload is encrypted; clients whose X25519 key is in the envelope's recipient list can decrypt locally. The cg:encryptionAlgorithm on the dcat:Distribution tells clients which KDF / AEAD pair to use. Only present when the Distribution is encrypted.".
+
+# ── Identity / Auth-methods classes (pod-resident) ────────────
+
+cg:AuthMethods a owl:Class ;
+    rdfs:label "Auth Methods" ;
+    rdfs:comment "The pod-resident JSON-LD document at <pod>/auth-methods.jsonld listing the verification methods (wallets, WebAuthn credentials, DID keys) a user has registered. Serves as the pod-layer agent-registry trust anchor: identity servers read it to resolve signature proofs, envelope publishers read it to determine recipient keys. User-owned because it lives in the user's pod." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:EthereumWallet a owl:Class ;
+    rdfs:label "Ethereum Wallet" ;
+    rdfs:comment "An ERC-4361 (SIWE) verifiable wallet registered under a user's cg:AuthMethods. Carries a lowercased 0x-prefixed address (cg:walletAddress). Signature proof is ECDSA over secp256k1 per SIWE." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:WebAuthnCredential a owl:Class ;
+    rdfs:label "WebAuthn Credential" ;
+    rdfs:comment "A registered passkey / platform authenticator per W3C WebAuthn Level 3. Carries credential id, COSE public key, counter, and transports. Proof is a WebAuthn assertion signed by the authenticator over a server-issued challenge." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:DIDKey a owl:Class ;
+    rdfs:label "DID Key" ;
+    rdfs:comment "A W3C DID Core key (did:key or did:web) registered as a verification method. Carries did, publicKeyMultibase, keyType (currently Ed25519VerificationKey2020). Proof is an Ed25519 signature over a server-issued nonce." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ── Encryption classes (envelope / field-level) ──────────────
+
+cg:EncryptedValue a owl:Class ;
+    rdfs:label "Encrypted Value" ;
+    rdfs:comment "An opt-in field-level encryption wrapper embedding an X25519 envelope (nacl.box over a symmetric content key) so a single facet-field value can be encrypted to a specific recipient set. Used when a descriptor's facet contains sensitive data that shouldn't be plaintext even though facet types stay discoverable. Carries cg:envelope (base64 JSON) and optional cg:expectedDatatype." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:EncryptedGraphEnvelope a owl:Class ;
+    rdfs:subClassOf dcat:Distribution ;
+    rdfs:label "Encrypted Graph Envelope" ;
+    rdfs:comment "An encrypted distribution of a named graph. Its bytes are a JSON document { content: { ciphertext, nonce, algorithm }, wrappedKeys: [{ recipientPublicKey, wrappedKey, ... }], algorithm, version }. Any recipient whose X25519 key is in wrappedKeys can decrypt the payload locally. Carried as dcat:mediaType 'application/jose+json'." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:GraphPayload a owl:Class ;
+    rdfs:subClassOf dcat:Distribution ;
+    rdfs:label "Graph Payload" ;
+    rdfs:comment "A plaintext distribution of a named graph (typically TriG). Used when encryption is disabled for a specific descriptor. Clients reading dcat:mediaType 'application/trig' can parse directly." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ── Session log type (emitted by /save-session slash command) ─
+
+cg:SessionLog a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Session Log" ;
+    rdfs:comment "A descriptor type for cross-session agent memory — decisions, changes, open threads from a single working session so future sessions (this agent or others on the same pod) can recover context. Structure kept intentionally coarse (cg:decision, cg:change, cg:openThread predicates) — implementations free to extend per use case." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
