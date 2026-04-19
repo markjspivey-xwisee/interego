@@ -2,11 +2,24 @@
 
 Reference implementation of **[Interego 1.0](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)** — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
 
-Interego gives autonomous AI agents the infrastructure to publish, discover, compose, and reason over knowledge graphs with full provenance, trust, temporal validity, semiotic metadata, causal models, and cryptographic verification — federated across decentralized Solid pods.
+Interego gives autonomous AI agents the infrastructure to publish, discover, compose, and reason over knowledge graphs with full provenance, trust, temporal validity, semiotic metadata, causal models, and cryptographic verification — federated across decentralized Solid pods with **per-agent end-to-end encryption** and **hypermedia-native data products**.
 
 **Author:** Interego
 **License:** CC-BY-4.0
 **W3C Community Group:** [Context Graph CG](https://www.w3.org/community/context-graph/) (launching March 2026)
+
+---
+
+## What's new
+
+- **End-to-end encrypted pod content.** Every named graph is wrapped in an `X25519 + XSalsa20-Poly1305` envelope with one wrapped key per authorized agent. CSS / Azure Files / IPFS pinning services see only ciphertext. Descriptor *metadata* (facets, manifest entries) stays plaintext so federation queries still work. Full architecture: [`docs/e2ee.md`](docs/e2ee.md).
+- **Hypermedia-native data products.** Every descriptor self-describes its graph payload via a single RDF block that is simultaneously `cg:Affordance`, `cgh:Affordance`, `hydra:Operation`, and `dcat:Distribution`. Clients follow `hydra:target` / `dcat:accessURL` — no filename conventions. Works with DCAT-aware catalogs, Hydra clients, and harness affordance pipelines without Interego-specific code.
+- **Per-surface agents.** Each client (Claude Code VS Code, Claude Desktop, Claude Mobile via OAuth, claude.ai web, etc.) registers as its own `cg:AuthorizedAgent` with its own `did:web` identity and X25519 keypair. Envelope recipient sets grow as you add surfaces; each surface decrypts with its own key; revocation is per-surface.
+- **Cross-pod selective sharing.** `publish_context(..., share_with: ["did:web:...", "acct:bob@example.com", ...])` resolves the handles via DID / WebFinger, pulls the target's authorized agents' keys, and adds them as recipients on *that one graph's* envelope. No pod-level ACL change; brother-with-shared-project scenario works without exposing your financial graphs.
+- **Decentralized auth — no passwords.** Sign-in via SIWE (ERC-4361), WebAuthn passkeys, or `did:key` Ed25519 signatures. Identity server becomes a stateless DID resolver + signature verifier; user auth state lives in `<pod>/auth-methods.jsonld` (JSON-LD). See [`deploy/identity/AUTH-ARCHITECTURE.md`](deploy/identity/AUTH-ARCHITECTURE.md).
+- **Twelve formal ontologies.** `cg:` / `cgh:` / `pgsl:` / `ie:` / `align:` (core) + `hyprcat:` / `hypragent:` (federation mesh) + `hela:` / `sat:` / `cts:` / `olke:` / `amta:` (adjacent frameworks). See [`docs/ns/README.md`](docs/ns/README.md). **607 defined terms, enforced by CI lint.**
+- **CI ontology-lint gate.** `tools/ontology-lint.mjs` + `.github/workflows/ontology-lint.yml` scan TS source for `<prefix>:<Term>` emissions and verify each against its corresponding `docs/ns/<prefix>.ttl`. New code cannot land `cg:NewType` without a matching OWL declaration.
+- **Persistent CSS.** Solid pod storage is file-backed (`css:config/storage/backend/file.json`) with an Azure Files volume mounted at `/data`. Pod state survives container restarts.
 
 ---
 

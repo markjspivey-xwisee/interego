@@ -8,7 +8,7 @@ Reference implementation of **Interego 1.0**, a specification by Interego that d
 
 ## Architecture
 
-This is a zero-dependency TypeScript library (ESM, Node 20+) with four modules:
+TypeScript library (ESM, Node 20+) with eight modules:
 
 ```
 src/
@@ -16,6 +16,33 @@ src/
   rdf/          Namespaces, Turtle serializer, JSON-LD serializer/parser
   validation/   Programmatic SHACL-equivalent validator, SHACL shapes as Turtle export
   sparql/       Parameterized SPARQL 1.2 query pattern builders
+  solid/        publish(), discover(), subscribe(), DID resolution, WebFinger,
+                cross-pod sharing (resolveRecipients), hypermedia distribution
+                link serialization (buildDistributionBlock + parseDistribution…)
+  pgsl/         Poly-Granular Sequence Lattice — atoms, fragments, pullbacks,
+                mintAtom / mintEncryptedAtom / resolveAtomValue
+  crypto/       Real cryptography — nacl/tweetnacl E2EE envelopes
+                (createEncryptedEnvelope, openEncryptedEnvelope), field-level
+                encryption (encryptFacetValue / decryptFacetValue), ethers.js
+                ECDSA / SIWE, ZK proofs (Merkle / range / temporal), IPFS CID,
+                Pinata pinning
+  affordance/   Affordance engine — cgh:Affordance generation at runtime
+```
+
+Plus surrounding infrastructure:
+
+```
+mcp-server/    Stdio MCP server — 25 tools including publish_context + share_with
+deploy/
+  identity/    Stateless DID resolver + signature verifier;
+               auth-methods live in each user's pod (auth-methods.jsonld)
+  mcp-relay/   HTTP/SSE OAuth-gated MCP proxy for claude.ai connectors;
+               per-surface agent minting; cross-pod sharing
+docs/ns/       Twelve OWL ontologies + three SHACL shape files (607 terms)
+tools/
+  ontology-lint.mjs  Scans TS for cg:/cgh:/pgsl:/ie:/hyprcat:/hypragent:/hela:/
+                     sat:/cts:/olke:/amta: usages vs ontology definitions.
+                     CI-gated: new drift fails the build.
 ```
 
 ### Key design decisions
@@ -25,12 +52,35 @@ src/
 - **Composition is algebraic.** The four operators (union, intersection, restriction, override) form a bounded lattice. Each facet type defines its own merge semantics per the spec.
 - **W3C vocabulary reuse.** Every namespace constant, class IRI, and property IRI is typed and exported. The `expand()`/`compact()` helpers handle prefix ↔ full IRI conversion.
 
-### Related concepts
+### Related concepts (all now formal ontologies in `docs/ns/`)
 
-This library is designed to compose with several adjacent frameworks:
-- **HELA** — topos-theoretic xAPI stack (presheaf category ℰ = Set^(𝒞_xAPI^op))
-- **SAT (Semiotic Agent Topos)** — the Semiotic Facet maps directly to SAT's Semiotic Field Functor (Σ)
-- **HyprCat × HyprAgent** — the Federation Facet aligns with the three-world federation model
+- **HELA** ([`hela.ttl`](docs/ns/hela.ttl)) — topos-theoretic xAPI stack (presheaf category ℰ = Set^(𝒞_xAPI^op))
+- **SAT** ([`sat.ttl`](docs/ns/sat.ttl)) — Semiotic Agent Topos; `sat:SemioticFieldFunctor owl:equivalentClass cg:SemioticFacet`
+- **CTS** ([`cts.ttl`](docs/ns/cts.ttl)) — Compositional Tuple Store; usage-based linguistics; `cts:Pattern owl:equivalentClass cg:SyntagmaticPattern`
+- **HyprCat** ([`hyprcat.ttl`](docs/ns/hyprcat.ttl)) — federated data-product catalog decorating DCAT + DPROD + Hydra with distributed identity + three-world federation boundary
+- **HyprAgent** ([`hypragent.ttl`](docs/ns/hypragent.ttl)) — agent machinery for HyprCat; cross-world delegation; capability typing
+- **OLKE** ([`olke.ttl`](docs/ns/olke.ttl)) — Organizational Learning & Knowledge Evolution (Tacit → Articulate → Collective → Institutional)
+- **AMTA** ([`amta.ttl`](docs/ns/amta.ttl)) — Agent-Mediated Trust Attestation (multi-axis ratings)
+
+### Ontology hygiene
+
+**Do not invent new `cg:`/`cgh:`/`pgsl:`/`ie:`/`hyprcat:`/`hypragent:`/`hela:`/`sat:`/`cts:`/`olke:`/`amta:` terms in TS code without adding a matching declaration to the corresponding `docs/ns/<prefix>.ttl` file.** CI will block the PR (see `.github/workflows/ontology-lint.yml`). Use existing W3C vocabularies (dcat:, hydra:, prov:, foaf:, etc.) whenever they fit.
+
+### E2EE + hypermedia conventions
+
+- Encrypted pod content: use `publish(descriptor, graph, podUrl, { encrypt: { recipients, senderKeyPair } })`. Serialized at `<slug>-graph.envelope.jose.json` with `Content-Type: application/jose+json`.
+- Descriptor link to payload: `buildDistributionBlock()` emits `<> cg:affordance [ a cg:Affordance, cgh:Affordance, hydra:Operation, dcat:Distribution ; cg:action cg:canDecrypt ; hydra:target <…> ; dcat:mediaType "…" ; cg:encrypted true ; ... ]` — clients follow the link; never reconstruct URLs by filename convention.
+- Field-level encryption: `encryptFacetValue(value, recipients, sender)` → embeddable `cg:EncryptedValue` blank node in Turtle.
+- PGSL atom encryption: `mintEncryptedAtom(pgsl, value, recipients, sender)` → URI content-addressed but stored value is `'__ENCRYPTED__'` placeholder; `resolveAtomValue(pgsl, uri, keypair)` decrypts.
+- Cross-pod sharing: `publish_context(..., share_with: ['did:web:…', 'acct:bob@…'])` — resolves to external pods' agent registries and adds their X25519 keys to envelope recipients. Per-graph; no pod-level ACL change.
+
+### First-principles guardrails
+
+- **No passwords anywhere.** Auth is SIWE / WebAuthn / did:key signatures over server-issued nonces.
+- **DIDs are canonical identifiers.** WebIDs + pod URLs are dereferenceable views. `markj` (the pod-path slug) is a display alias, not the identity.
+- **Pods are the source of truth.** Identity server is stateless — user auth state (walletAddresses, webAuthnCredentials, didKeys) lives in `<pod>/auth-methods.jsonld`.
+- **Storage is zero-trust.** Storage provider sees only ciphertext for private content.
+- **Federation is cryptographic.** Recipients via envelope wrapped-keys; no membership service; no central authority.
 
 ## Commands
 

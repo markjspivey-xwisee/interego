@@ -4,20 +4,52 @@ This directory contains the **canonical, versioned, hand-authored OWL/RDFS/SHACL
 
 **Namespace root:** `https://markjspivey-xwisee.github.io/interego/ns/`
 
-## The four layers
+## Twelve ontologies, twelve prefixes
 
-Interego is a three-layer system (substrate → typed context → agent harness) plus a cross-layer alignment ontology that ties them together.
+Interego is a five-core-layer system (substrate → typed context → interrogatives → agent harness → cross-layer alignment) plus seven adjacent-framework ontologies that model how Interego composes with systems the project was designed to interoperate with.
 
-| File | Prefix | Kind | Lines | Triples | What it defines |
-|---|---|---|---|---|---|
-| [`pgsl.ttl`](pgsl.ttl) | `pgsl:` | OWL Ontology | 249 | 161 | **Substrate layer.** The Poly-Granular Sequence Lattice — atoms (level 0), fragments (level ≥ 1), pullback squares, constituent morphisms, transitive containment. Aligned with PROV-O. |
-| [`context-graphs.ttl`](context-graphs.ttl) | `cg:` | OWL Ontology | 542 | 376 | **Typed-context layer.** Context descriptors with seven facet types (Temporal, Provenance, Agent, AccessControl, Semiotic, Trust, Federation), composition operators (union/intersection/restriction/override), and federation primitives. |
-| [`harness.ttl`](harness.ttl) | `cgh:` | OWL Ontology | 982 | 810 | **Agent harness layer.** Abstract Agent Types (AAT), ODRL-aligned policy engine, PROV traces, runtime evaluation with confidence scoring, decision functor, and affordance decorators. |
-| [`alignment.ttl`](alignment.ttl) | `align:` | OWL Ontology | 383 | 204 | **Cross-layer glue.** Axioms, SKOS matches, and W3C vocabulary alignments (Hydra, ODRL, ACL, VC, DCAT, OWL-Time) that tie `pgsl:`, `cg:`, and `cgh:` together. Plus five named integration patterns. |
-| [`pgsl-shapes.ttl`](pgsl-shapes.ttl) | `pgsl:` | SHACL Shapes | 247 | 151 | Validation shapes for PGSL serializations: atom/fragment invariants, pullback commutativity, required PROV-O triples. |
-| [`harness-shapes.ttl`](harness-shapes.ttl) | `cgh:` | SHACL Shapes | 546 | 358 | Validation shapes for the harness layer: AAT capability requirements, policy rule well-formedness, PROV trace completeness, runtime eval confidence bounds. |
+### Core layers (emitted by runtime code)
 
-**Totals:** 6 files, ~3,000 lines of Turtle, **2,060 triples**, 0 lint errors, 100% coverage by the test suite.
+| File | Prefix | Kind | Terms | What it defines |
+|---|---|---|---|---|
+| [`pgsl.ttl`](pgsl.ttl) | `pgsl:` | OWL | 35 | **Substrate.** Poly-Granular Sequence Lattice — atoms, fragments, pullback squares, transitive containment, SHACL shapes (Atom, Fragment, PullbackSquare, ConstituentIntegrity, LevelConsistency, OverlapValidity, Acyclicity, Canonicality). |
+| [`cg.ttl`](cg.ttl) | `cg:` | OWL | 284 | **Typed-context.** ContextDescriptor with seven facet types + Causal + Projection, composition operators, federation, data products (cg:DataProduct), affordances (cg:Affordance + individuals canPublish/canDiscover/canSubscribe/canFetchPayload/canDecrypt), encryption classes (EncryptedGraphEnvelope, EncryptedValue, GraphPayload), auth-methods (AuthMethods, WebAuthnCredential, DIDKey, EthereumWallet), coherence (CoherenceCertificate + enum Equal/Divergent/Subset/Intersect/Union/Exclude), paradigm / persistence / causal / pod-catalog / session-log types. |
+| [`interego.ttl`](interego.ttl) | `ie:` | OWL | 34 | **Interrogatives.** User-facing grammar of eleven canonical interrogatives (Who/What/Where/When/Why/How/Which/WhatKind/HowMuch/Whose/Whether) with typed cross-layer mapping. |
+| [`harness.ttl`](harness.ttl) | `cgh:` | OWL | 138 | **Agent harness.** Abstract Agent Types (AAT), ODRL policy engine, PROV traces, runtime evaluation with confidence scoring, decision functor, affordance decorators. `cgh:Affordance rdfs:subClassOf hydra:Operation`. |
+| [`alignment.ttl`](alignment.ttl) | `align:` | OWL | 22 | **Cross-layer glue.** Equivalences, SKOS matches, and W3C vocabulary alignments (Hydra, ODRL, ACL, VC 2.0, DCAT, DPROD, OWL-Time) across all twelve namespaces. |
+
+### Federation mesh ontologies
+
+| File | Prefix | Terms | What it defines |
+|---|---|---|---|
+| [`hyprcat.ttl`](hyprcat.ttl) | `hyprcat:` | 15 | **Federated data-product catalog.** Decorates DCAT + DPROD with distributed identity, affordance-bearing distributions, and the three-world federation boundary (UserWorld / AgentWorld / ServiceWorld). `hyprcat:FederatedDistribution` is simultaneously `dcat:Distribution`, `cg:Affordance`, `cgh:Affordance`, and `hydra:Operation`. |
+| [`hypragent.ttl`](hypragent.ttl) | `hypragent:` | 16 | **Agent machinery for HyprCat.** Cross-world delegation via W3C Verifiable Credentials chains, capability typing (canDecryptEnvelope, canPublishContext, canVerifyDelegation, canSubscribe), dispatch-time policy evaluation. `hypragent:Agent` is simultaneously `prov:SoftwareAgent`, `cg:AuthorizedAgent`, and `cgh:Agent`. |
+
+### Adjacent-framework ontologies
+
+| File | Prefix | Terms | What it defines |
+|---|---|---|---|
+| [`hela.ttl`](hela.ttl) | `hela:` | 7 | **Topos-theoretic xAPI.** Statements as a presheaf category ℰ = Set^(𝒞_xAPI^op). Statement / Actor / Verb / LearningObject / Trace / SubobjectClassifier. Aligned with `cg:ProvenanceFacet`. |
+| [`sat.ttl`](sat.ttl) | `sat:` | 10 | **Semiotic Agent Topos.** Semiotic Field Functor Σ : Situations → SemioticFields. `sat:SemioticFieldFunctor owl:equivalentClass cg:SemioticFacet`. |
+| [`cts.ttl`](cts.ttl) | `cts:` | 11 | **Compositional Tuple Store.** Usage-based linguistic substrate — meaning is usage, structure emerges from usage. `cts:Pattern owl:equivalentClass cg:SyntagmaticPattern`. |
+| [`olke.ttl`](olke.ttl) | `olke:` | 11 | **Organizational Learning & Knowledge Evolution.** Four-stage ladder Tacit → Articulate → Collective → Institutional; annotates `cg:ContextDescriptor` with current stage. |
+| [`amta.ttl`](amta.ttl) | `amta:` | 13 | **Agent-Mediated Trust Attestation.** Multi-axis trust (competence / honesty / relevance / recency). `amta:Attestation rdfs:subClassOf cg:TrustFacet`. |
+
+### SHACL shape files
+
+| File | Prefix | Kind |
+|---|---|---|
+| [`pgsl-shapes.ttl`](pgsl-shapes.ttl) | `pgsl:` | Shape file for PGSL invariants |
+| [`interego-shapes.ttl`](interego-shapes.ttl) | `ie:` | Shape file for interrogative bindings |
+| [`harness-shapes.ttl`](harness-shapes.ttl) | `cgh:` | Shape file for harness structures |
+
+**Totals:** 12 ontology files, 1 alignment file, 3 SHACL shape files — **607 defined terms** across all twelve namespaces.
+
+## Ontology-lint CI gate
+
+Every push touching TypeScript source is checked by `tools/ontology-lint.mjs`, which scans code for `<prefix>:<Term>` emissions and verifies each term exists in the corresponding `docs/ns/<prefix>.ttl` file. Known-external prefixes (rdf, rdfs, xsd, owl, sh, skos, vann, dct, dcat, dprod, prov, time, foaf, vc, hydra, acl, solid, ldp, odrl, did, schema, oa, as) are exempt. See [`tools/ontology-lint.mjs`](../../tools/ontology-lint.mjs) and [`.github/workflows/ontology-lint.yml`](../../.github/workflows/ontology-lint.yml).
+
+Any new code that emits `cg:NewType` without a matching declaration in `cg.ttl` **fails CI** — the forcing function that keeps the ontology in sync with runtime.
 
 ## Layering philosophy
 
@@ -105,7 +137,16 @@ The canonical URLs resolve to this directory via GitHub Pages:
 - `https://markjspivey-xwisee.github.io/interego/ns/pgsl-shapes.ttl`
 - `https://markjspivey-xwisee.github.io/interego/ns/harness.ttl`
 - `https://markjspivey-xwisee.github.io/interego/ns/harness-shapes.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/interego.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/interego-shapes.ttl`
 - `https://markjspivey-xwisee.github.io/interego/ns/alignment.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/hyprcat.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/hypragent.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/hela.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/sat.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/cts.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/olke.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/amta.ttl`
 
 Each ontology's `vann:preferredNamespaceUri` matches the hashed namespace URI in its `owl:Ontology` declaration.
 
