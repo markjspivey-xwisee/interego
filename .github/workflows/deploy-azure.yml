@@ -138,6 +138,23 @@ jobs:
               "PUBLIC_RELAY_URL=https://$RELAY_FQDN" \
               "PUBLIC_BASE_URL=https://$DASHBOARD_FQDN" \
             --output none
+          # Force traffic to the latest revision. If the container app is
+          # in Multiple-revision mode (the default after env-var updates),
+          # ingress can otherwise keep serving from the previous revision
+          # and new env vars silently don't take effect.
+          az containerapp ingress traffic set \
+            --name interego-dashboard \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --revision-weight latest=100 \
+            --output none
+          # Deactivate all but the newest revision so the app is
+          # effectively single-revision again (matches our provisioning).
+          LATEST=$(az containerapp show --name interego-dashboard --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.latestRevisionName" -o tsv)
+          az containerapp revision list --name interego-dashboard --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "[?name!='$LATEST' && properties.active].name" -o tsv | while read -r rev; do
+            [ -z "$rev" ] && continue
+            az containerapp revision deactivate --name interego-dashboard --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --revision "$rev" --output none || true
+          done
+          echo "Latest active revision: $LATEST"
 
       - name: Summary
         if: always()
