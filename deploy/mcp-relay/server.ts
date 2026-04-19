@@ -249,29 +249,57 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     return JSON.stringify({ error: validation.violations.map(v => v.message) });
   }
 
-  // Ensure the relay's agent key is registered on this pod + collect
-  // recipients from the pod's authorized-agent list. Matches the stdio
-  // server's behaviour so both publishers land encrypted envelopes in
-  // the same pods, readable by the same set of agents.
+  // Ensure the calling agent is registered on this pod with the relay's
+  // encryption public key. Three cases:
+  //   1. No registry yet        -> create profile + register this agent
+  //   2. Registry present, this agent missing   -> register it (auto-provision)
+  //   3. Agent present but encryption key stale -> patch the key
+  // Without (1) and (2), OAuth clients whose agent identity wasn't already on
+  // the pod would silently piggyback on whatever agent *was* registered,
+  // breaking per-agent attribution and recipient-set growth. After this
+  // block, every new OAuth-authenticated session adds its own did:web agent
+  // with its own X25519 key as a first-class authorized agent on the pod.
   try {
-    const profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
-    if (profile) {
-      const me = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked);
-      if (me && me.encryptionPublicKey !== relayAgentKey.publicKey) {
-        const updated = {
-          ...profile,
-          authorizedAgents: Object.freeze(
-            profile.authorizedAgents.map(a =>
-              a.agentId === agentId && !a.revoked
-                ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
-                : a,
-            ),
-          ),
-        };
-        await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
-      }
+    let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+    if (!profile) {
+      profile = createOwnerProfile(ownerWebId as IRI, args.owner_name as string | undefined);
     }
-  } catch { /* registry might not exist yet; publish plaintext */ }
+    const me = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked);
+    if (!me) {
+      // Auto-register: this agent authenticated against identity server (so
+      // the OAuth token proves key-possession). Safe to add to the pod's
+      // authorized-agent list automatically.
+      profile = addAuthorizedAgent(profile, {
+        agentId: agentId as IRI,
+        delegatedBy: ownerWebId as IRI,
+        label: (args.label as string) ?? `Agent ${agentId}`,
+        isSoftwareAgent: true,
+        scope: 'ReadWrite',
+        validFrom: new Date().toISOString(),
+        encryptionPublicKey: relayAgentKey.publicKey,
+      });
+      await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
+      try {
+        const newAgent = profile.authorizedAgents.find(a => a.agentId === agentId)!;
+        const credential = createDelegationCredential(profile, newAgent, podUrl as IRI);
+        await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
+      } catch { /* delegation credential is nice-to-have; registry is authoritative */ }
+    } else if (me.encryptionPublicKey !== relayAgentKey.publicKey) {
+      const updated = {
+        ...profile,
+        authorizedAgents: Object.freeze(
+          profile.authorizedAgents.map(a =>
+            a.agentId === agentId && !a.revoked
+              ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
+              : a,
+          ),
+        ),
+      };
+      await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
+    }
+  } catch (err) {
+    log(`WARN: could not ensure agent registration: ${(err as Error).message}`);
+  }
 
   const currentProfile = await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null);
   const recipients = (currentProfile?.authorizedAgents ?? [])
@@ -434,6 +462,11 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
       isSoftwareAgent: true,
       scope: (args.scope as 'ReadWrite') ?? 'ReadWrite',
       validFrom: new Date().toISOString(),
+      // The relay registers its own X25519 public key alongside the agent
+      // so content encrypted to "this agent" lands decryptable here. Clients
+      // that call register_agent explicitly get the same wiring they'd get
+      // from the auto-registration path in publish_context.
+      encryptionPublicKey: relayAgentKey.publicKey,
     });
   } catch (err) {
     return JSON.stringify({ error: (err as Error).message });
