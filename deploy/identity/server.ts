@@ -409,9 +409,13 @@ function seedIdentity(id: string, type: 'user' | 'agent', name: string, owner?: 
   log(`Seeded ${type} identity: ${id} (${name})`);
 }
 
-seedIdentity('markj', 'user', 'Mark J');
-seedIdentity('claude-code-vscode', 'agent', 'Claude Code (VS Code)', 'markj', 'ReadWrite');
-seedIdentity('claude-code-desktop', 'agent', 'Claude Code (Desktop)', 'markj', 'ReadWrite');
+// No in-code seeded users/agents. The server starts with an empty
+// identity set — everyone is a first-class new registrant whose userId
+// is derived from their first credential (u-pk-… / u-eth-… / u-did-…).
+// The previous hardcoded `markj` + default agents were removed for a
+// true clean-slate deployment; if a legacy seeded user needs to come
+// back, re-add the seed lines and configure BOOTSTRAP_INVITES so the
+// one-time binding path is available.
 
 // ── Challenges (nonces for proof-of-possession auth) ────────
 //
@@ -1474,9 +1478,14 @@ app.post('/tokens/verify', (req, res) => {
 
 // ── DID Documents ────────────────────────────────────────────
 
+// Identity server's own signing key. Generated once at process start
+// and used for serving /.well-known/did.json. Previously this read from
+// the seeded `markj` entry, which coupled the server's DID to an
+// application-level user. Now the server has its own key.
+const SERVER_KEY = generateEd25519();
+
 app.get('/.well-known/did.json', (_req, res) => {
   const serverDid = `did:web:${new URL(BASE_URL).host}`;
-  const kp = keys.get('markj')!;
   res.json({
     '@context': ['https://www.w3.org/ns/did/v1'],
     id: serverDid,
@@ -1484,7 +1493,7 @@ app.get('/.well-known/did.json', (_req, res) => {
       id: `${serverDid}#key-1`,
       type: 'Ed25519VerificationKey2020',
       controller: serverDid,
-      publicKeyMultibase: kp.publicKeyMultibase,
+      publicKeyMultibase: SERVER_KEY.publicKeyMultibase,
     }],
     authentication: [`${serverDid}#key-1`],
   });
