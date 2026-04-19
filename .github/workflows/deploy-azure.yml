@@ -53,9 +53,65 @@ env:
   AZURE_ACR_NAME: contextgraphsacr
 
 jobs:
+  # Path-based change detection: decides which images actually need to
+  # be rebuilt. Previously every push rebuilt all five — meaning a
+  # dashboard-only change still pushed new CSS / identity / relay
+  # images, and if any of those images' build or startup regressed we
+  # could take down a healthy running container for no reason (which
+  # is what happened when CSS went dark mid-session after an unrelated
+  # dashboard push). Per-image path filters contain blast radius.
+  changes:
+    name: Detect changed image inputs
+    runs-on: ubuntu-latest
+    outputs:
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+      pgsl-browser: ${{ steps.filter.outputs.pgsl-browser }}
+      relay: ${{ steps.filter.outputs.relay }}
+      identity: ${{ steps.filter.outputs.identity }}
+      css: ${{ steps.filter.outputs.css }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            dashboard:
+              - 'examples/dashboard/**'
+              - 'src/**'
+              - 'deploy/Dockerfile.dashboard'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.json'
+              - '.github/workflows/deploy-azure.yml'
+            pgsl-browser:
+              - 'examples/pgsl-browser/**'
+              - 'src/**'
+              - 'deploy/Dockerfile.pgsl-browser'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.json'
+              - '.github/workflows/deploy-azure.yml'
+            relay:
+              - 'deploy/mcp-relay/**'
+              - 'src/**'
+              - 'deploy/Dockerfile.relay'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.json'
+              - '.github/workflows/deploy-azure.yml'
+            identity:
+              - 'deploy/identity/**'
+              - 'deploy/Dockerfile.identity'
+              - '.github/workflows/deploy-azure.yml'
+            css:
+              - 'deploy/Dockerfile.css'
+              - 'examples/multi-agent/css-config.json'
+              - '.github/workflows/deploy-azure.yml'
+
   build-and-deploy:
     name: Build & deploy ${{ matrix.image }}
     runs-on: ubuntu-latest
+    needs: changes
 
     strategy:
       # Don't let one image's failure abort the others. Each container
@@ -65,20 +121,56 @@ jobs:
         include:
           - image: interego-dashboard
             dockerfile: deploy/Dockerfile.dashboard
+            filter: dashboard
           - image: interego-pgsl-browser
             dockerfile: deploy/Dockerfile.pgsl-browser
+            filter: pgsl-browser
           - image: interego-relay
             dockerfile: deploy/Dockerfile.relay
+            filter: relay
           - image: interego-identity
             dockerfile: deploy/Dockerfile.identity
+            filter: identity
           - image: interego-css
             dockerfile: deploy/Dockerfile.css
+            filter: css
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Determine whether THIS matrix entry should rebuild.
+      #
+      #  - push events: honor the per-image path filters from the
+      #    `changes` job. If none of this image's inputs changed, skip.
+      #  - workflow_dispatch: honor the `images` input. Default is
+      #    "dashboard,pgsl-browser,relay,identity,css" so manual runs
+      #    still rebuild everything unless narrowed.
+      - name: Decide whether to (re)build
+        id: decide
+        run: |
+          IMG="${{ matrix.filter }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SEL="${{ github.event.inputs.images }}"
+            if echo ",$SEL," | grep -q ",$IMG,"; then
+              echo "build=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "build=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            case "$IMG" in
+              dashboard)    CHG='${{ needs.changes.outputs.dashboard }}' ;;
+              pgsl-browser) CHG='${{ needs.changes.outputs.pgsl-browser }}' ;;
+              relay)        CHG='${{ needs.changes.outputs.relay }}' ;;
+              identity)     CHG='${{ needs.changes.outputs.identity }}' ;;
+              css)          CHG='${{ needs.changes.outputs.css }}' ;;
+            esac
+            echo "build=$CHG" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Image ${{ matrix.image }}: build=$(cat $GITHUB_OUTPUT | grep ^build= | cut -d= -f2)"
+
       - name: Azure login (OIDC)
+        if: steps.decide.outputs.build == 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -90,6 +182,7 @@ jobs:
       # humans and for the existing ACR Task workflow, but the container
       # app is pinned to the SHA tag for reliable rollback.
       - name: Build image in ACR from current checkout
+        if: steps.decide.outputs.build == 'true'
         run: |
           az acr build \
             --registry "${{ env.AZURE_ACR_NAME }}" \
@@ -100,6 +193,7 @@ jobs:
             .
 
       - name: Update container app to new revision
+        if: steps.decide.outputs.build == 'true'
         run: |
           az containerapp update \
             --name "${{ matrix.image }}" \
@@ -117,7 +211,7 @@ jobs:
       # These are looked up from the existing container apps so we don't
       # hardcode FQDNs; if you rename an app, this step keeps working.
       - name: Wire dashboard env vars
-        if: matrix.image == 'interego-dashboard'
+        if: steps.decide.outputs.build == 'true' && matrix.image == 'interego-dashboard'
         run: |
           IDENTITY_FQDN=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
           RELAY_FQDN=$(az containerapp show --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
@@ -165,12 +259,17 @@ jobs:
         run: |
           echo "### ${{ matrix.image }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Image tag:** \`${{ matrix.image }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Registry:** \`${{ env.AZURE_ACR_NAME }}.azurecr.io\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Resource group:** \`${{ env.AZURE_RESOURCE_GROUP }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Dockerfile:** \`${{ matrix.dockerfile }}\`" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ job.status }}" = "success" ]; then
-            echo "- **Status:** ✅ deployed" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.decide.outputs.build }}" != "true" ]; then
+            echo "- **Status:** ⏭ skipped (no input path changed)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Dockerfile:** \`${{ matrix.dockerfile }}\`" >> $GITHUB_STEP_SUMMARY
           else
-            echo "- **Status:** ❌ failed" >> $GITHUB_STEP_SUMMARY
+            echo "- **Image tag:** \`${{ matrix.image }}:${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Registry:** \`${{ env.AZURE_ACR_NAME }}.azurecr.io\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Resource group:** \`${{ env.AZURE_RESOURCE_GROUP }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Dockerfile:** \`${{ matrix.dockerfile }}\`" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "- **Status:** ✅ deployed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "- **Status:** ❌ failed" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
