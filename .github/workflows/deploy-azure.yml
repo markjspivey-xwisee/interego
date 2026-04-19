@@ -122,10 +122,17 @@ jobs:
           IDENTITY_FQDN=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
           RELAY_FQDN=$(az containerapp show --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
           DASHBOARD_FQDN=$(az containerapp show --name interego-dashboard --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          CSS_FQDN=$(az containerapp show --name interego-css --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          # CSS's ingress-configured FQDN is the reliable route for the
+          # dashboard's polling loop (read-only LDP listings + Turtle
+          # descriptors). Don't hardcode `.internal`; whatever ingress
+          # mode CSS is currently configured for, this pulls the right
+          # hostname at deploy time.
           az containerapp update \
             --name interego-dashboard \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --set-env-vars \
+              "CSS_URL=https://$CSS_FQDN/" \
               "IDENTITY_URL=https://$IDENTITY_FQDN" \
               "RELAY_URL=https://$RELAY_FQDN" \
               "PUBLIC_RELAY_URL=https://$RELAY_FQDN" \
