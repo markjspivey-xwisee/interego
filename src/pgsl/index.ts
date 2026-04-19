@@ -2,6 +2,8 @@ export * from './types.js';
 export {
   createPGSL,
   mintAtom,
+  mintEncryptedAtom,
+  resolveAtomValue,
   ingest,
   resolve,
   queryNeighbors,

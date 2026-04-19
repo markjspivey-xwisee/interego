@@ -96,6 +96,17 @@ export type {
   EncryptedEnvelope,
 } from './encryption.js';
 
+// Facet-field level encryption (opt-in, for sensitive descriptor metadata)
+export {
+  encryptFacetValue,
+  decryptFacetValue,
+  isEncryptedFacetValue,
+  encryptedFacetValueToTurtle,
+  parseEncryptedFacetValueFromTurtle,
+} from './facet-encryption.js';
+
+export type { EncryptedFacetValue } from './facet-encryption.js';
+
 // Zero-Knowledge Proofs
 export {
   commit,

@@ -89,7 +89,11 @@ export interface Atom {
   readonly kind: 'Atom';
   /** The canonical URI (content-addressed from the value). */
   readonly uri: IRI;
-  /** The primitive value this atom represents. */
+  /**
+   * The primitive value this atom represents. For encrypted atoms this
+   * holds a redaction placeholder (e.g. `'__ENCRYPTED__'`) — the real
+   * value lives in `encrypted` and can only be recovered by a recipient.
+   */
   readonly value: Value;
   /** Level is always 0 for atoms. */
   readonly level: 0;
@@ -97,6 +101,15 @@ export interface Atom {
   readonly provenance: NodeProvenance;
   /** IPFS CID (computed from content, optionally pinned). */
   readonly cid?: string;
+  /**
+   * Optional encrypted payload for this atom. When present, `value`
+   * is a redacted placeholder and the true content is recoverable by
+   * any recipient whose key is wrapped inside the envelope. Lattice
+   * structural operations (meet, join, level, pullback) operate on
+   * URIs and don't need the plaintext — so encrypted atoms still
+   * compose correctly in fragments. See crypto/facet-encryption.ts.
+   */
+  readonly encrypted?: import('../crypto/facet-encryption.js').EncryptedFacetValue;
 }
 
 /**

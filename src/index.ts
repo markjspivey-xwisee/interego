@@ -306,6 +306,8 @@ export type {
 export {
   createPGSL,
   mintAtom,
+  mintEncryptedAtom,
+  resolveAtomValue,
   ingest,
   resolve as pgslResolve,
   queryNeighbors,
@@ -567,6 +569,12 @@ export {
   reEncryptForRecipients,
   envelopeToJson,
   envelopeFromJson,
+  // Facet-field encryption
+  encryptFacetValue,
+  decryptFacetValue,
+  isEncryptedFacetValue,
+  encryptedFacetValueToTurtle,
+  parseEncryptedFacetValueFromTurtle,
   // Zero-Knowledge Proofs
   commit,
   verifyCommitment,
@@ -610,6 +618,7 @@ export type {
   EncryptedContent,
   WrappedKey,
   EncryptedEnvelope,
+  EncryptedFacetValue,
   Commitment,
   RangeProof,
   MerkleProof,

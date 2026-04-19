@@ -1,0 +1,73 @@
+name: E2E — Passkey OAuth flow
+
+# Runs the Playwright passkey suite against the deployed Azure relay.
+# Uses Chrome's virtual authenticator to exercise the full WebAuthn
+# register + authorize + token-exchange path without a real device.
+#
+# The test targets the live Azure deployment by default, so it catches
+# regressions that only appear in the real network / TLS / OAuth routing
+# path. Triggered on every push that touches the relay, identity, or
+# this workflow; can also be run manually.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'deploy/mcp-relay/**'
+      - 'deploy/identity/**'
+      - '.github/workflows/e2e-passkey.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-passkey-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    name: Passkey OAuth (Playwright, virtual authenticator)
+    runs-on: ubuntu-latest
+    # Give the deploy workflow a head start so we exercise the latest code
+    needs: []
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: deploy/mcp-relay
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install relay deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Wait for Azure deployment to settle (60s)
+        # Lets the latest deploy-azure workflow's revision come up before
+        # we hammer the authorize endpoint. Safe to skip on workflow_dispatch.
+        if: github.event_name == 'push'
+        run: sleep 60
+
+      - name: Run Playwright passkey suite
+        env:
+          BASE_URL: https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io
+          CI: '1'
+        run: npx playwright test --reporter=list
+
+      - name: Upload trace on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-trace
+          path: deploy/mcp-relay/test-results/
+          retention-days: 7

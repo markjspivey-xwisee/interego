@@ -33,6 +33,8 @@ import type {
 // ── URI Generation (Content-Addressing via SHA-256) ─────────
 
 import { createHash } from 'node:crypto';
+import { encryptFacetValue, decryptFacetValue } from '../crypto/facet-encryption.js';
+import type { EncryptionKeyPair } from '../crypto/encryption.js';
 
 /**
  * Compute a SHA-256 hash of a string, return as hex.
@@ -217,6 +219,65 @@ export function mintAtom(
   (pgsl.nodes as Map<IRI, Node>).set(uri, atom);
 
   return uri;
+}
+
+/**
+ * Mint an encrypted atom. URI is content-addressed from the plaintext
+ * (same plaintext deduplicates inside the same recipient set), but the
+ * stored `value` is a redacted placeholder. Real value is recoverable
+ * only by holders of keys wrapped in `encrypted`.
+ *
+ * Structural operations (meet, join, levels, pullback) operate on URIs,
+ * so encrypted atoms compose correctly in fragments. Cross-pod dedup
+ * across different recipient sets is not preserved by design — that's
+ * the proof-of-confidentiality tradeoff.
+ */
+export function mintEncryptedAtom(
+  pgsl: PGSLInstance,
+  value: Value,
+  recipients: readonly string[],
+  sender: EncryptionKeyPair,
+  provenance?: NodeProvenance,
+): IRI {
+  const key = String(value);
+  const existing = pgsl.atoms.get(key);
+  if (existing) return existing;
+
+  const uri = atomUri(value);
+  const prov = provenance ?? pgsl.defaultProvenance;
+
+  const atom: Atom = {
+    kind: 'Atom',
+    uri,
+    value: '__ENCRYPTED__' as Value,
+    level: 0,
+    provenance: prov,
+    encrypted: encryptFacetValue(String(value), recipients, sender),
+  };
+
+  (pgsl.atoms as Map<string, IRI>).set(key, uri);
+  (pgsl.nodes as Map<IRI, Node>).set(uri, atom);
+
+  return uri;
+}
+
+/**
+ * Retrieve the plaintext value of an atom, decrypting if necessary.
+ * Returns null when the atom doesn't exist OR when it's encrypted and
+ * the caller isn't a recipient. Plaintext atoms round-trip unchanged.
+ */
+export function resolveAtomValue(
+  pgsl: PGSLInstance,
+  uri: IRI,
+  recipientKeyPair?: EncryptionKeyPair,
+): string | null {
+  const node = pgsl.nodes.get(uri);
+  if (!node || node.kind !== 'Atom') return null;
+  if (node.encrypted) {
+    if (!recipientKeyPair) return null;
+    return decryptFacetValue(node.encrypted, recipientKeyPair);
+  }
+  return String(node.value);
 }
 
 // ── Fragment Construction (Pullback-based) ──────────────────
