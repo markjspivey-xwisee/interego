@@ -170,6 +170,7 @@
       <div class="tab" data-tab="identity">Identity</div>
       <div class="tab" data-tab="federation">Federation</div>
       <div class="tab" data-tab="rdf">RDF</div>
+      <div class="tab" data-tab="account" style="margin-left:auto;">My Account</div>
     </div>
     <div class="tab-content">
       <!-- Activity -->
@@ -210,9 +211,33 @@
         <div class="panel-empty" id="rdfEmpty">Select a descriptor or resource to view its raw RDF content.</div>
         <div id="rdfContent"></div>
       </div>
+
+      <!-- My Account (per-user management) -->
+      <div class="tab-panel" id="panelAccount">
+        <div id="accountContent" style="padding:14px 18px; max-width:720px;"></div>
+      </div>
     </div>
   </div>
 </div>
+
+<style>
+  .acc-card { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:14px; }
+  .acc-card h3 { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin:0 0 10px; }
+  .acc-row { display:flex; align-items:center; justify-content:space-between; padding:8px 10px; background:var(--surface); border:1px solid var(--border); border-radius:6px; margin-bottom:6px; font-size:12px; }
+  .acc-row .meta { color:var(--dim); font-family:var(--mono); font-size:10px; margin-top:2px; }
+  .acc-row button { background:var(--err); color:white; border:0; padding:5px 10px; border-radius:4px; font-size:10px; cursor:pointer; font-weight:600; }
+  .acc-row button:hover { filter:brightness(1.1); }
+  .acc-btn-primary { background:var(--accent); color:white; border:0; padding:9px 18px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; }
+  .acc-btn-primary:hover { filter:brightness(1.1); }
+  .acc-btn-secondary { background:var(--surface2); color:var(--text); border:1px solid var(--border); padding:8px 14px; border-radius:6px; font-size:11px; cursor:pointer; }
+  .acc-hint { color:var(--dim); font-size:11px; line-height:1.5; }
+  .acc-err { color:var(--err); font-size:11px; }
+  .acc-ok { color:var(--live); font-size:11px; }
+  .acc-kv { display:grid; grid-template-columns:120px 1fr; gap:4px 12px; font-size:12px; }
+  .acc-kv .k { color:var(--dim); font-weight:500; }
+  .acc-kv .v { font-family:var(--mono); word-break:break-all; }
+  .acc-pasta { width:100%; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--mono); font-size:11px; }
+</style>
 
 <script>
 // ── State ────────────────────────────────────────────
@@ -555,6 +580,284 @@ function shortUrl(u) { return (u||'').replace(/^https?:\/\/[^/]+\//, '/'); }
 function shortId(u) { if(!u)return''; const p=u.split(/[/:#]/); return p.slice(-2).join(':'); }
 function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function chips(types) { return types.map(t => `<span class="chip ${t}">${t}</span>`).join(''); }
+
+// ── My Account tab ───────────────────────────────────
+//
+// The dashboard lets a signed-in user audit + manage the credentials
+// currently registered on their pod (wallets, passkeys, DIDs) and
+// see the per-surface agents minted under their userId.
+//
+// Sign-in uses OAuth 2.1 + PKCE against the relay: dashboard is DCR-
+// registered at startup, user clicks Sign In, we redirect to the
+// relay's /authorize page, they complete passkey/SIWE/DID auth there,
+// the relay redirects back to /oauth/callback with ?code=..., and the
+// backend exchanges the code for an identity bearer token that the
+// frontend then uses directly against /api/identity/auth-methods/me
+// (via the server-side proxy, so `.internal` identity is reachable).
+//
+// Alternate path: user pastes an identity bearer token directly (for
+// CLI-generated tokens / debugging).
+
+let accountConfig = null;
+let identityToken = sessionStorage.getItem('cg_identity_token') || null;
+let identityUserId = sessionStorage.getItem('cg_identity_userid') || null;
+
+async function loadAccountConfig() {
+  if (accountConfig) return accountConfig;
+  const r = await fetch('/api/config');
+  accountConfig = await r.json();
+  return accountConfig;
+}
+
+// Called whenever the My Account tab becomes active (and on first OAuth callback).
+async function renderAccount() {
+  const host = document.getElementById('accountContent');
+  const cfg = await loadAccountConfig();
+
+  // Handle OAuth callback: ?code=... && ?state=... on our URL means we just
+  // came back from /authorize. Swap the code for an identity token, stash
+  // it, then rewrite the URL to clear the query string.
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('code') && params.get('state') && sessionStorage.getItem('cg_oauth_pending')) {
+    host.innerHTML = '<div class="acc-card"><h3>Completing sign-in</h3><p class="acc-hint">Exchanging authorization code for an identity token…</p></div>';
+    try {
+      const pending = JSON.parse(sessionStorage.getItem('cg_oauth_pending'));
+      sessionStorage.removeItem('cg_oauth_pending');
+      const exch = await fetch('/api/oauth/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: params.get('code'),
+          code_verifier: pending.verifier,
+          redirect_uri: pending.redirect_uri,
+          client_id: pending.client_id,
+        }),
+      });
+      const data = await exch.json();
+      if (!exch.ok || !data.identityToken) {
+        host.innerHTML = `<div class="acc-card"><h3 style="color:var(--err)">Sign-in failed</h3><p class="acc-err">${esc(data.error || 'Unknown error')}</p><button class="acc-btn-primary" onclick="accountSignOut()">Start over</button></div>`;
+        return;
+      }
+      identityToken = data.identityToken;
+      identityUserId = data.userId || null;
+      sessionStorage.setItem('cg_identity_token', identityToken);
+      if (identityUserId) sessionStorage.setItem('cg_identity_userid', identityUserId);
+      // Clean up the URL before rendering the account view.
+      window.history.replaceState({}, '', window.location.pathname + '#/account');
+    } catch (err) {
+      host.innerHTML = `<div class="acc-card"><h3 style="color:var(--err)">Sign-in failed</h3><p class="acc-err">${esc(err.message)}</p></div>`;
+      return;
+    }
+  }
+
+  if (!identityToken) {
+    renderAccountSignIn(host, cfg);
+    return;
+  }
+
+  host.innerHTML = '<div class="acc-card"><p class="acc-hint">Loading your account…</p></div>';
+
+  try {
+    const [amResp, agResp] = await Promise.all([
+      fetch('/api/identity/auth-methods/me', { headers: { Authorization: `Bearer ${identityToken}` } }),
+      fetch('/api/identity/agents/me', { headers: { Authorization: `Bearer ${identityToken}` } }),
+    ]);
+    if (amResp.status === 401) {
+      // Token expired or invalid — reset.
+      accountSignOut();
+      return;
+    }
+    const methods = await amResp.json();
+    const agents = agResp.ok ? await agResp.json() : { agents: [] };
+    renderAccountLoaded(host, cfg, methods, agents);
+  } catch (err) {
+    host.innerHTML = `<div class="acc-card"><h3 style="color:var(--err)">Load failed</h3><p class="acc-err">${esc(err.message)}</p><button class="acc-btn-secondary" onclick="accountSignOut()">Sign out + retry</button></div>`;
+  }
+}
+
+function renderAccountSignIn(host, cfg) {
+  const canOAuth = cfg.oauthClientId && cfg.publicRelayUrl;
+  let html = `<div class="acc-card"><h3>My Account</h3>`;
+  html += `<p class="acc-hint" style="margin-bottom:12px">Sign in to see the credentials and agents registered under your Interego identity. Nothing here is shared with other users.</p>`;
+  if (canOAuth) {
+    html += `<button class="acc-btn-primary" onclick="startOAuthSignIn()">Sign in via passkey / SIWE / DID</button>`;
+    html += `<p class="acc-hint" style="margin-top:10px">You'll be redirected to the identity server to complete a signature ceremony, then back here with a session.</p>`;
+  } else {
+    html += `<p class="acc-err">OAuth sign-in not configured on this dashboard deployment (missing PUBLIC_BASE_URL or RELAY_URL).</p>`;
+  }
+  html += `</div>`;
+  html += `<div class="acc-card"><h3>Advanced: paste identity bearer token</h3>`;
+  html += `<p class="acc-hint" style="margin-bottom:10px">If you already have an identity-server bearer token (e.g. from a CLI sign-in), paste it here.</p>`;
+  html += `<input id="accTokenPaste" class="acc-pasta" placeholder="eyJ... or hex string" />`;
+  html += `<div style="margin-top:8px; display:flex; gap:8px;"><button class="acc-btn-primary" onclick="accountUsePastedToken()">Use token</button></div>`;
+  html += `</div>`;
+  host.innerHTML = html;
+}
+
+function renderAccountLoaded(host, cfg, methods, agents) {
+  const userId = methods.userId || 'unknown';
+  const name = methods.name || userId;
+  let html = '';
+
+  // Summary
+  html += `<div class="acc-card"><h3>Identity</h3>`;
+  html += `<div class="acc-kv">`;
+  html += `<div class="k">Display name</div><div class="v">${esc(name)}</div>`;
+  html += `<div class="k">User ID</div><div class="v">${esc(userId)}</div>`;
+  html += `<div class="k">WebFinger</div><div class="v">acct:${esc(userId)}@${esc(cfg.publicRelayUrl ? new URL(cfg.publicRelayUrl).host.replace('interego-relay', 'interego-identity') : 'identity-host')}</div>`;
+  html += `</div>`;
+  html += `<div style="margin-top:12px;"><button class="acc-btn-secondary" onclick="accountSignOut()">Sign out</button></div>`;
+  html += `</div>`;
+
+  // Wallets
+  html += `<div class="acc-card"><h3>Ethereum wallets (${(methods.walletAddresses||[]).length})</h3>`;
+  if (!methods.walletAddresses || methods.walletAddresses.length === 0) {
+    html += `<p class="acc-hint">No wallets linked.</p>`;
+  } else {
+    for (const addr of methods.walletAddresses) {
+      html += `<div class="acc-row"><div><div>${esc(addr)}</div><div class="meta">SIWE wallet</div></div>`;
+      html += `<button onclick="accountRemoveWallet('${esc(addr)}')">Remove</button></div>`;
+    }
+  }
+  html += `</div>`;
+
+  // Passkeys
+  html += `<div class="acc-card"><h3>Passkeys (${(methods.webAuthnCredentials||[]).length})</h3>`;
+  if (!methods.webAuthnCredentials || methods.webAuthnCredentials.length === 0) {
+    html += `<p class="acc-hint">No passkeys registered.</p>`;
+  } else {
+    for (const c of methods.webAuthnCredentials) {
+      const transports = (c.transports || []).join(', ') || 'unknown';
+      html += `<div class="acc-row"><div><div>${esc(c.id).slice(0,32)}…</div><div class="meta">${esc(transports)} · registered ${esc(c.createdAt || '?')}</div></div>`;
+      html += `<button onclick="accountRemovePasskey('${encodeURIComponent(c.id)}')">Remove</button></div>`;
+    }
+  }
+  html += `</div>`;
+
+  // DIDs
+  html += `<div class="acc-card"><h3>DID keys (${(methods.didKeys||[]).length})</h3>`;
+  if (!methods.didKeys || methods.didKeys.length === 0) {
+    html += `<p class="acc-hint">No DID keys registered.</p>`;
+  } else {
+    for (const k of methods.didKeys) {
+      html += `<div class="acc-row"><div><div>${esc(k.did)}</div><div class="meta">${esc(k.keyType || 'Ed25519VerificationKey2020')} · registered ${esc(k.createdAt || '?')}</div></div>`;
+      html += `<button onclick="accountRemoveDid('${esc(k.did)}')">Remove</button></div>`;
+    }
+  }
+  html += `</div>`;
+
+  // Agents
+  html += `<div class="acc-card"><h3>Per-surface agents (${(agents.agents||[]).length})</h3>`;
+  html += `<p class="acc-hint" style="margin-bottom:10px">Each AI client you've connected (ChatGPT, Codex, Cursor, Claude, etc.) has its own agent on your pod with a distinct X25519 key and DID. Revocation from the pod agent registry is a follow-up feature; for now this is informational.</p>`;
+  if (!agents.agents || agents.agents.length === 0) {
+    html += `<p class="acc-hint">No agents registered under this user.</p>`;
+  } else {
+    for (const a of agents.agents) {
+      html += `<div class="acc-row"><div><div>${esc(a.name || a.id)}</div><div class="meta">${esc(a.id)} · ${esc(a.scope || 'ReadWrite')}</div></div></div>`;
+    }
+  }
+  html += `</div>`;
+
+  host.innerHTML = html;
+}
+
+// ── OAuth helpers ────────────────────────────────────
+function bytesToB64url(bytes) {
+  let s = '';
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (const b of arr) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function sha256b64url(str) {
+  const enc = new TextEncoder().encode(str);
+  const hash = await crypto.subtle.digest('SHA-256', enc);
+  return bytesToB64url(new Uint8Array(hash));
+}
+function randomB64url(n = 32) {
+  const b = new Uint8Array(n);
+  crypto.getRandomValues(b);
+  return bytesToB64url(b);
+}
+
+async function startOAuthSignIn() {
+  const cfg = accountConfig || (await loadAccountConfig());
+  if (!cfg.oauthClientId || !cfg.publicRelayUrl) {
+    alert('OAuth sign-in not available on this deployment.');
+    return;
+  }
+  const verifier = randomB64url(32);
+  const challenge = await sha256b64url(verifier);
+  const state = randomB64url(8);
+  const redirectUri = `${cfg.publicBaseUrl}/oauth/callback`;
+  sessionStorage.setItem('cg_oauth_pending', JSON.stringify({
+    verifier, state,
+    redirect_uri: redirectUri,
+    client_id: cfg.oauthClientId,
+  }));
+  const url = `${cfg.publicRelayUrl}/authorize?response_type=code`
+    + `&client_id=${encodeURIComponent(cfg.oauthClientId)}`
+    + `&redirect_uri=${encodeURIComponent(redirectUri)}`
+    + `&code_challenge=${encodeURIComponent(challenge)}`
+    + `&code_challenge_method=S256`
+    + `&scope=mcp&state=${encodeURIComponent(state)}`;
+  window.location.href = url;
+}
+
+function accountUsePastedToken() {
+  const v = document.getElementById('accTokenPaste').value.trim();
+  if (!v) return;
+  identityToken = v;
+  sessionStorage.setItem('cg_identity_token', v);
+  renderAccount();
+}
+
+function accountSignOut() {
+  identityToken = null;
+  identityUserId = null;
+  sessionStorage.removeItem('cg_identity_token');
+  sessionStorage.removeItem('cg_identity_userid');
+  sessionStorage.removeItem('cg_oauth_pending');
+  renderAccount();
+}
+
+async function accountDelete(path, init = {}) {
+  const r = await fetch(`/api/identity${path}`, {
+    method: 'DELETE',
+    ...init,
+    headers: { 'Authorization': `Bearer ${identityToken}`, ...(init.headers || {}) },
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    alert(`Remove failed: ${data.error || r.statusText}`);
+    return false;
+  }
+  return true;
+}
+async function accountRemoveWallet(addr) {
+  if (!confirm(`Remove wallet ${addr}? You'll lose the ability to sign in with it unless you have another method.`)) return;
+  if (await accountDelete(`/auth-methods/me/wallet/${encodeURIComponent(addr)}`)) renderAccount();
+}
+async function accountRemovePasskey(credIdEncoded) {
+  if (!confirm('Remove this passkey? Any device using it to sign in will need to re-register.')) return;
+  if (await accountDelete(`/auth-methods/me/webauthn/${credIdEncoded}`)) renderAccount();
+}
+async function accountRemoveDid(did) {
+  if (!confirm(`Remove DID ${did}?`)) return;
+  if (await accountDelete('/auth-methods/me/did', {
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ did }),
+  })) renderAccount();
+}
+
+// Render the Account tab whenever it becomes active
+document.querySelector('.tab[data-tab="account"]').addEventListener('click', () => {
+  setTimeout(renderAccount, 0);
+});
+// Also render on load if we're returning from an OAuth redirect
+if (new URLSearchParams(window.location.search).get('code')) {
+  switchTab('account');
+  setTimeout(renderAccount, 0);
+}
 
 // ── Init ─────────────────────────────────────────────
 setInterval(pollPgsl, 5000);

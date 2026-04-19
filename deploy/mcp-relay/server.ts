@@ -1125,6 +1125,41 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', css: CSS_URL, tools: Object.keys(TOOLS).length, auth: 'bearer-token', x402: true });
 });
 
+/**
+ * GET /identity-token — exchange a valid MCP access token for the
+ * underlying identity-server bearer token stored in the token's extra
+ * field. Used by the dashboard so it can call identity's /auth-methods/*
+ * endpoints directly on the user's behalf after OAuth sign-in.
+ *
+ * Auth: Bearer <MCP access token> (issued by this relay's OAuth).
+ * Returns: { identityToken, expiresAt }.
+ *
+ * The identity token itself is bearer-bound to the user, so once the
+ * dashboard has it, identity's own authorization checks apply.
+ */
+app.get('/identity-token', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Bearer token required' });
+    return;
+  }
+  try {
+    const info = await oauthProvider.verifyAccessToken(authHeader.slice(7));
+    const identityToken = (info as { extra?: { identityToken?: string } }).extra?.identityToken;
+    if (!identityToken) {
+      res.status(404).json({ error: 'No identity token associated with this access token' });
+      return;
+    }
+    res.json({
+      identityToken,
+      expiresAt: info.expiresAt,
+      userId: (info as { extra?: { userId?: string } }).extra?.userId,
+    });
+  } catch (err) {
+    res.status(401).json({ error: `Invalid access token: ${(err as Error).message}` });
+  }
+});
+
 // ── X402 Payment Required ───────────────────────────────────
 // Descriptors can optionally require payment. The relay returns
 // HTTP 402 with X-Payment-Required headers per the X402 spec.

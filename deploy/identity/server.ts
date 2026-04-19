@@ -1786,6 +1786,132 @@ app.get('/auth-methods/me', async (req, res) => {
   });
 });
 
+// Shared helper: resolve bearer token to the user, refuse if invalid.
+async function requireUserFromBearer(req: express.Request, res: express.Response): Promise<Identity | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Bearer token required' });
+    return null;
+  }
+  const tr = verifyToken(authHeader.slice(7));
+  if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return null; }
+  const user = identities.get(tr.record!.userId);
+  if (!user || user.type !== 'user') {
+    res.status(404).json({ error: `User for token not found` });
+    return null;
+  }
+  return user;
+}
+
+/**
+ * DELETE /auth-methods/me/webauthn/:credentialId
+ *
+ * Remove a passkey from the calling user's auth-methods.jsonld. Rejects
+ * if removing this credential would leave the user with zero auth
+ * methods — preventing accidental lockout. (User can rotate to a new
+ * method first, then delete the old one.)
+ */
+app.delete('/auth-methods/me/webauthn/:credentialId', async (req, res) => {
+  const user = await requireUserFromBearer(req, res);
+  if (!user) return;
+  const credentialId = decodeURIComponent(req.params['credentialId'] ?? '');
+  if (!credentialId) { res.status(400).json({ error: 'credentialId required' }); return; }
+  const methods = await readAuthMethods(user.id);
+  const before = methods.webAuthnCredentials.length;
+  const next = methods.webAuthnCredentials.filter(c => c.id !== credentialId);
+  if (next.length === before) { res.status(404).json({ error: 'Credential not found' }); return; }
+  // Lockout guard: refuse to remove the user's last auth method of any kind.
+  const remainingTotal = next.length + methods.walletAddresses.length + methods.didKeys.length;
+  if (remainingTotal === 0) {
+    res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
+    return;
+  }
+  methods.webAuthnCredentials = next;
+  try { await putPodAuthMethods(user.id, methods); }
+  catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
+  log(`Removed WebAuthn credential ${credentialId} for ${user.id}`);
+  res.json({ removed: true, credentialId, remaining: next.length });
+});
+
+/**
+ * DELETE /auth-methods/me/wallet/:address
+ *
+ * Unlink an Ethereum wallet. Same lockout guard as above.
+ */
+app.delete('/auth-methods/me/wallet/:address', async (req, res) => {
+  const user = await requireUserFromBearer(req, res);
+  if (!user) return;
+  const address = (req.params['address'] ?? '').toLowerCase();
+  if (!address) { res.status(400).json({ error: 'address required' }); return; }
+  const methods = await readAuthMethods(user.id);
+  const before = methods.walletAddresses.length;
+  const next = methods.walletAddresses.filter(a => a.toLowerCase() !== address);
+  if (next.length === before) { res.status(404).json({ error: 'Wallet not found' }); return; }
+  const remainingTotal = next.length + methods.webAuthnCredentials.length + methods.didKeys.length;
+  if (remainingTotal === 0) {
+    res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
+    return;
+  }
+  methods.walletAddresses = next;
+  try { await putPodAuthMethods(user.id, methods); }
+  catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
+  log(`Removed wallet ${address} for ${user.id}`);
+  res.json({ removed: true, walletAddress: address, remaining: next.length });
+});
+
+/**
+ * DELETE /auth-methods/me/did
+ *
+ * Body: { did: string }. DID strings contain colons which are messy in
+ * URL path params; accept via body instead.
+ */
+app.delete('/auth-methods/me/did', async (req, res) => {
+  const user = await requireUserFromBearer(req, res);
+  if (!user) return;
+  const did: string | undefined = req.body?.did;
+  if (!did) { res.status(400).json({ error: 'did required in body' }); return; }
+  const methods = await readAuthMethods(user.id);
+  const before = methods.didKeys.length;
+  const next = methods.didKeys.filter(k => k.did !== did);
+  if (next.length === before) { res.status(404).json({ error: 'DID not found' }); return; }
+  const remainingTotal = next.length + methods.webAuthnCredentials.length + methods.walletAddresses.length;
+  if (remainingTotal === 0) {
+    res.status(409).json({ error: 'Refusing to delete your last authentication method. Add another method first, then retry.' });
+    return;
+  }
+  methods.didKeys = next;
+  try { await putPodAuthMethods(user.id, methods); }
+  catch (err) { res.status(500).json({ error: `Failed to persist: ${(err as Error).message}` }); return; }
+  log(`Removed DID ${did} for ${user.id}`);
+  res.json({ removed: true, did, remaining: next.length });
+});
+
+/**
+ * GET /agents/me
+ *
+ * Return the calling user's registered agents. Read from in-memory
+ * identities map (hydrated from pod scans). The dashboard uses this to
+ * render per-agent management UIs.
+ */
+app.get('/agents/me', async (req, res) => {
+  const user = await requireUserFromBearer(req, res);
+  if (!user) return;
+  const userAgents = [...identities.values()]
+    .filter(i => i.type === 'agent' && i.owner === user.id)
+    .map(a => ({
+      id: a.id,
+      name: a.name,
+      scope: a.scope ?? 'ReadWrite',
+      createdAt: a.createdAt,
+      did: `did:web:${new URL(BASE_URL).host}:agents:${a.id}`,
+    }));
+  res.json({
+    userId: user.id,
+    name: user.name,
+    agents: userAgents,
+  });
+});
+
 /**
  * GET /wallet/status/:userId — Check if a user has any linked wallets.
  */
