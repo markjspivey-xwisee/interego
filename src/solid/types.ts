@@ -112,10 +112,18 @@ export interface DiscoverOptions {
 export interface DiscoverFilter {
   /** Only return descriptors containing this facet type. */
   readonly facetType?: ContextTypeName;
-  /** Only return descriptors valid at or after this time. */
+  /** Only return descriptors whose own validFrom is at or after this time. */
   readonly validFrom?: string;
-  /** Only return descriptors valid at or before this time. */
+  /** Only return descriptors whose own validUntil is at or before this time. */
   readonly validUntil?: string;
+  /**
+   * Only return descriptors effective AT the given instant:
+   *   validFrom <= effectiveAt AND (validUntil >= effectiveAt OR validUntil absent).
+   * This is the "currently-valid-at-time-T" semantic that was previously
+   * mistakenly expected of `validFrom`. Distinct from validFrom/validUntil
+   * which only filter on the endpoints.
+   */
+  readonly effectiveAt?: string;
   /** Only return descriptors at or above this trust level. */
   readonly trustLevel?: TrustLevel;
   /** Only return descriptors with this modal status. */

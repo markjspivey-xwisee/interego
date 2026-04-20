@@ -314,6 +314,16 @@ function matchesFilter(entry: ManifestEntry, filter: DiscoverFilter): boolean {
     }
   }
 
+  // effectiveAt — "currently valid at time T": interval-contains check.
+  // validFrom <= T AND (validUntil >= T OR validUntil absent).
+  // Descriptors without a validFrom are treated as always-started;
+  // descriptors without a validUntil are treated as open-ended.
+  if (filter.effectiveAt) {
+    const t = filter.effectiveAt;
+    if (entry.validFrom && entry.validFrom > t) return false;
+    if (entry.validUntil && entry.validUntil < t) return false;
+  }
+
   return true;
 }
 

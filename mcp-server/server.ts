@@ -99,6 +99,8 @@ import {
   parseDistributionFromDescriptorTurtle,
   // Cross-pod sharing
   resolveRecipients,
+  // Publish-input preprocessing
+  normalizePublishInputs,
 } from '@interego/core';
 
 import type {
@@ -431,50 +433,6 @@ function stopCSS(): void {
 
 // ── Tool implementations ────────────────────────────────────
 
-/**
- * Extract cg:revokedIf / cg:revokedBy RevocationCondition blocks from
- * caller-supplied Turtle graph content. Mirrors the descriptor-side
- * helper in deploy/mcp-relay/server.ts — same shape so output is
- * portable between the two paths. Candidate for consolidation into
- * @interego/core.
- */
-function extractRevocationConditionsFromContent(turtle: string): Array<{
-  successorQuery: string;
-  evaluationScope?: 'LocalPod' | 'KnownFederation' | 'WebFingerResolvable';
-  onRevocation?: 'MarkInvalid' | 'DowngradeToHypothetical' | 'RequireReconfirmation';
-  revocationIssuer?: IRI;
-}> {
-  const results: ReturnType<typeof extractRevocationConditionsFromContent> = [];
-  const blockRe = /cg:(?:revokedIf|revokedBy)\s*\[([^\]]*)\]/g;
-  let m: RegExpExecArray | null;
-  while ((m = blockRe.exec(turtle)) !== null) {
-    const body = m[1] ?? '';
-    const qMatch = body.match(/cg:successorQuery\s+"""([\s\S]*?)"""/)
-      ?? body.match(/cg:successorQuery\s+"([^"]*)"/);
-    if (!qMatch?.[1]) continue;
-    const scopeMatch = body.match(/cg:evaluationScope\s+cg:(\w+)/);
-    const actionMatch = body.match(/cg:onRevocation\s+cg:(\w+)/);
-    const issuerMatch = body.match(/cg:revocationIssuer\s+<([^>]+)>/);
-    const scope = scopeMatch?.[1];
-    const action = actionMatch?.[1];
-    const out: {
-      successorQuery: string;
-      evaluationScope?: 'LocalPod' | 'KnownFederation' | 'WebFingerResolvable';
-      onRevocation?: 'MarkInvalid' | 'DowngradeToHypothetical' | 'RequireReconfirmation';
-      revocationIssuer?: IRI;
-    } = { successorQuery: qMatch[1] };
-    if (scope === 'LocalPod' || scope === 'KnownFederation' || scope === 'WebFingerResolvable') {
-      out.evaluationScope = scope;
-    }
-    if (action === 'MarkInvalid' || action === 'DowngradeToHypothetical' || action === 'RequireReconfirmation') {
-      out.onRevocation = action;
-    }
-    if (issuerMatch) out.revocationIssuer = issuerMatch[1] as IRI;
-    results.push(out);
-  }
-  return results;
-}
-
 async function toolPublishContext(args: {
   graph_iri: string;
   graph_content: string;
@@ -495,13 +453,15 @@ async function toolPublishContext(args: {
   const descId = (args.descriptor_id ?? `urn:cg:${POD_NAME}:${Date.now()}`) as IRI;
   const now = new Date().toISOString();
 
-  // Revocation-condition mirror (L2 — see spec/revocation.md §1). If
-  // the caller's graph content carries cg:revokedIf / cg:revokedBy
-  // blocks, lift them into the cleartext descriptor's SemioticFacet so
-  // federation readers can evaluate without decrypting the payload.
-  // Same extractor shape as deploy/mcp-relay/server.ts — candidate for
-  // consolidation into @interego/core in a follow-up.
-  const revocationConditions = extractRevocationConditionsFromContent(args.graph_content ?? '');
+  // L1 protocol preprocessing — modal-truth consistency + cleartext
+  // mirror (spec/architecture.md §5.2.2 + spec/revocation.md §1).
+  // Consolidated into @interego/core so relay + MCP-server paths
+  // produce identical descriptors for identical inputs.
+  const preprocessed = normalizePublishInputs({
+    modalStatus: args.modal_status as 'Asserted' | 'Hypothetical' | 'Counterfactual' | undefined,
+    confidence: args.confidence,
+    graphContent: args.graph_content,
+  });
 
   const builder = ContextDescriptor.create(descId)
 .describes(args.graph_iri as IRI)
@@ -510,25 +470,7 @@ async function toolPublishContext(args: {
       validUntil: args.valid_until,
     })
 .delegatedBy(MY_OWNER_WEBID, MY_AGENT_ID, { endedAt: now })
-.semiotic((() => {
-      // Modal-truth consistency (spec/architecture.md §5.2.2 normative):
-      //   Asserted       → groundTruth MUST be true
-      //   Counterfactual → groundTruth MUST be false
-      //   Hypothetical   → groundTruth MUST NOT be set (three-valued)
-      // Don't squash Hypothetical into groundTruth=false — that's
-      // Counterfactual, a different modal state.
-      const ms = (args.modal_status as 'Asserted' | 'Hypothetical' | 'Counterfactual') ?? 'Asserted';
-      const base: Record<string, unknown> = {
-        modalStatus: ms,
-        epistemicConfidence: args.confidence ?? 0.85,
-      };
-      if (ms === 'Asserted') base.groundTruth = true;
-      else if (ms === 'Counterfactual') base.groundTruth = false;
-      // else Hypothetical: leave groundTruth undefined
-      if (revocationConditions.length > 0) base.revokedIf = revocationConditions;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return base as any;
-    })())
+.semiotic(preprocessed.semiotic)
 .trust({
       trustLevel: 'SelfAsserted',
       issuer: MY_OWNER_WEBID,
@@ -540,6 +482,7 @@ async function toolPublishContext(args: {
       syncProtocol: 'SolidNotifications',
     })
 .version(1);
+  if (preprocessed.supersedes.length > 0) builder.supersedes(...preprocessed.supersedes);
 
   const descriptor = builder.build();
   const validation = validate(descriptor);
@@ -668,6 +611,7 @@ async function toolDiscoverContext(args: {
   facet_type?: string;
   valid_from?: string;
   valid_until?: string;
+  effective_at?: string;
   verify_delegation?: boolean;
 }): Promise<string> {
   await ensureCSS();
@@ -676,6 +620,7 @@ async function toolDiscoverContext(args: {
   if (args.facet_type) filter.facetType = args.facet_type;
   if (args.valid_from) filter.validFrom = args.valid_from;
   if (args.valid_until) filter.validUntil = args.valid_until;
+  if (args.effective_at) filter.effectiveAt = args.effective_at;
 
   const entries = await discover(
     args.pod_url,
@@ -1653,8 +1598,9 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           pod_url: { type: 'string', description: 'Solid pod URL to discover from' },
           facet_type: { type: 'string', enum: ['Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation'], description: 'Filter by facet type' },
-          valid_from: { type: 'string', description: 'Filter: valid at or after this datetime' },
-          valid_until: { type: 'string', description: 'Filter: valid at or before this datetime' },
+          valid_from: { type: 'string', description: 'Filter by the descriptor\'s own validFrom (endpoint-only, not interval-contains)' },
+          valid_until: { type: 'string', description: 'Filter by the descriptor\'s own validUntil (endpoint-only)' },
+          effective_at: { type: 'string', description: 'ISO 8601 instant. "Currently-valid-at-time-T": only descriptors whose interval [validFrom, validUntil] contains the given instant are returned. Use this for the common "what\'s effective now?" query — valid_from alone does NOT implement this semantic.' },
           verify_delegation: { type: 'boolean', description: 'If true, also fetch the agent registry to verify delegation' },
         },
         required: ['pod_url'],

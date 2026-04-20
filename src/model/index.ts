@@ -49,3 +49,11 @@ export {
   verifySemioticFieldFunctoriality,
 } from './semiotic.js';
 export type { SignMorphism } from './semiotic.js';
+export {
+  normalizePublishInputs,
+  extractRevocationConditions,
+} from './publish-preprocess.js';
+export type {
+  PublishInputs,
+  PreprocessedPublish,
+} from './publish-preprocess.js';

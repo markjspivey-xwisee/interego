@@ -40,6 +40,19 @@ function literal(value: string | number | boolean, datatype?: string): string {
     return `"${value}"^^xsd:boolean`;
   }
   if (typeof value === 'number') {
+    // Explicit datatype overrides auto-inference. Needed because
+    // properties like cg:epistemicConfidence are normatively xsd:double
+    // (range declared in cg.ttl) — without the override, values like
+    // 0 or 1 would serialize as xsd:integer and fail a SHACL
+    // sh:datatype xsd:double constraint.
+    if (datatype) {
+      // Ensure the serialized form has a decimal for xsd:double so a
+      // strict parser (e.g. rdf-validate-shacl) won't reject "1"^^xsd:double.
+      const text = datatype === 'xsd:double' && Number.isInteger(value)
+        ? value.toFixed(1)
+        : String(value);
+      return `"${text}"^^${datatype}`;
+    }
     return Number.isInteger(value)
       ? `"${value}"^^xsd:integer`
       : `"${value}"^^xsd:double`;
@@ -156,7 +169,10 @@ function serializeSemioticFacet(f: SemioticFacetData): string {
   if (f.groundTruth !== undefined) props.push(`cg:groundTruth ${literal(f.groundTruth)}`);
   if (f.modalStatus) props.push(`cg:modalStatus cg:${f.modalStatus}`);
   if (f.epistemicConfidence !== undefined) {
-    props.push(`cg:epistemicConfidence ${literal(f.epistemicConfidence)}`);
+    // cg:epistemicConfidence is normatively xsd:double (range in cg.ttl) —
+    // force the datatype so integer-valued confidences (0, 1) don't
+    // serialize as xsd:integer and fail the core-1.0 SHACL datatype shape.
+    props.push(`cg:epistemicConfidence ${literal(f.epistemicConfidence, 'xsd:double')}`);
   }
   if (f.languageTag) props.push(`cg:languageTag "${f.languageTag}"^^xsd:language`);
   // Revocation Extension — Proposal B (spec/revocation.md). Each
