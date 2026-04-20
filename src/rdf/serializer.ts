@@ -159,6 +159,21 @@ function serializeSemioticFacet(f: SemioticFacetData): string {
     props.push(`cg:epistemicConfidence ${literal(f.epistemicConfidence)}`);
   }
   if (f.languageTag) props.push(`cg:languageTag "${f.languageTag}"^^xsd:language`);
+  // Revocation Extension — Proposal B (spec/revocation.md). Each
+  // condition emits as a nested blank node so federation readers can
+  // evaluate the successor query without decrypting the payload.
+  if (f.revokedIf && f.revokedIf.length > 0) {
+    for (const rc of f.revokedIf) {
+      const rcProps: string[] = ['a cg:RevocationCondition'];
+      // SPARQL query as a triple-quoted literal — keeps multiline + embedded quotes sane.
+      const q = rc.successorQuery.replace(/\\/g, '\\\\');
+      rcProps.push(`cg:successorQuery """${q}"""`);
+      if (rc.evaluationScope) rcProps.push(`cg:evaluationScope cg:${rc.evaluationScope}`);
+      if (rc.onRevocation) rcProps.push(`cg:onRevocation cg:${rc.onRevocation}`);
+      if (rc.revocationIssuer) rcProps.push(`cg:revocationIssuer ${iri(rc.revocationIssuer)}`);
+      props.push(`cg:revokedIf ${bnode(rcProps)}`);
+    }
+  }
 
   return bnode(props);
 }

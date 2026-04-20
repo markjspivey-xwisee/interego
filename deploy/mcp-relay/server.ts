@@ -283,6 +283,16 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     body: '',
   });
 
+  // Revocation-condition mirror (L2 architecture — see spec/revocation.md):
+  // If the caller's graph content declares cg:revokedIf or cg:revokedBy
+  // blocks, mirror the condition into the cleartext descriptor so federation
+  // readers can evaluate it without decrypting the payload. The content
+  // is passed as a Turtle string; do a minimal regex extraction rather
+  // than pulling in a full parser — fixture coverage in
+  // spec/conformance/fixtures/revocation/ guards the shape.
+  const graphContent = (args.graph_content as string) ?? '';
+  const revocationConditions = extractRevocationConditions(graphContent);
+
   const builder = ContextDescriptor.create(descId)
 .describes((args.graph_iri as string) as IRI)
 .temporal({ validFrom: (args.valid_from as string) ?? now, validUntil: args.valid_until as string })
@@ -295,13 +305,21 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       // Don't squash Hypothetical into "groundTruth=false" — that's
       // Counterfactual. Hypothetical is the three-valued case.
       const ms = ((args.modal_status as string) ?? 'Asserted') as 'Asserted' | 'Hypothetical' | 'Counterfactual';
-      const base = {
+      const base: Record<string, unknown> = {
         modalStatus: ms,
         epistemicConfidence: (args.confidence as number) ?? 0.85,
       };
-      if (ms === 'Asserted') return { ...base, groundTruth: true };
-      if (ms === 'Counterfactual') return { ...base, groundTruth: false };
-      return base; // Hypothetical
+      if (ms === 'Asserted') base.groundTruth = true;
+      else if (ms === 'Counterfactual') base.groundTruth = false;
+      // else Hypothetical — leave groundTruth undefined (three-valued)
+
+      // Mirror revocation conditions from the graph content into the
+      // descriptor's cleartext SemioticFacet (Proposal B of the
+      // Revocation Extension — spec/revocation.md).
+      if (revocationConditions.length > 0) {
+        base.revokedIf = revocationConditions;
+      }
+      return base as Parameters<typeof builder.semiotic>[0];
     })())
 .trust({
       trustLevel: 'SelfAsserted',
@@ -436,6 +454,64 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     manifestUrl: result.manifestUrl,
     ipfs,
   });
+}
+
+/**
+ * Extract `cg:revokedIf` / `cg:revokedBy` condition bodies from the
+ * caller's Turtle graph content. Implements the revocation-condition
+ * mirror described in spec/revocation.md §1.
+ *
+ * Regex-based rather than full-parser — the shape coverage is small,
+ * fixtures in spec/conformance/fixtures/revocation/ pin the expected
+ * format, and a full parser would be a large dependency for a minor
+ * feature. Returns an array suitable for passing to
+ * builder.semiotic({ revokedIf: [...] }).
+ *
+ * Matches either:
+ *   cg:revokedIf  [ a cg:RevocationCondition ; cg:successorQuery """..." ; ... ]
+ *   cg:revokedBy  [ a cg:RevocationCondition ; cg:successorQuery """..." ; ... ]
+ * (the shared model applies to both Proposal A and Proposal B bodies)
+ */
+function extractRevocationConditions(
+  turtle: string,
+): Array<{
+  successorQuery: string;
+  evaluationScope?: 'LocalPod' | 'KnownFederation' | 'WebFingerResolvable';
+  onRevocation?: 'MarkInvalid' | 'DowngradeToHypothetical' | 'RequireReconfirmation';
+  revocationIssuer?: IRI;
+}> {
+  const results: ReturnType<typeof extractRevocationConditions> = [];
+  // Match `cg:revokedIf` or `cg:revokedBy` followed by a bracketed block
+  // up to a balanced close-bracket. Simple non-nested parse — adequate
+  // for the canonical shape published by conforming writers.
+  const blockRe = /cg:(?:revokedIf|revokedBy)\s*\[([^\]]*)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = blockRe.exec(turtle)) !== null) {
+    const body = m[1] ?? '';
+    const qMatch = body.match(/cg:successorQuery\s+"""([\s\S]*?)"""/)
+      ?? body.match(/cg:successorQuery\s+"([^"]*)"/);
+    if (!qMatch || !qMatch[1]) continue;
+    const scopeMatch = body.match(/cg:evaluationScope\s+cg:(\w+)/);
+    const actionMatch = body.match(/cg:onRevocation\s+cg:(\w+)/);
+    const issuerMatch = body.match(/cg:revocationIssuer\s+<([^>]+)>/);
+    const scope = scopeMatch?.[1];
+    const action = actionMatch?.[1];
+    const out: {
+      successorQuery: string;
+      evaluationScope?: 'LocalPod' | 'KnownFederation' | 'WebFingerResolvable';
+      onRevocation?: 'MarkInvalid' | 'DowngradeToHypothetical' | 'RequireReconfirmation';
+      revocationIssuer?: IRI;
+    } = { successorQuery: qMatch[1] };
+    if (scope === 'LocalPod' || scope === 'KnownFederation' || scope === 'WebFingerResolvable') {
+      out.evaluationScope = scope;
+    }
+    if (action === 'MarkInvalid' || action === 'DowngradeToHypothetical' || action === 'RequireReconfirmation') {
+      out.onRevocation = action;
+    }
+    if (issuerMatch) out.revocationIssuer = issuerMatch[1] as IRI;
+    results.push(out);
+  }
+  return results;
 }
 
 /**

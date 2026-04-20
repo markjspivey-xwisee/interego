@@ -642,6 +642,11 @@ async function toolDiscoverContext(args: {
     lines.push(`  ${entry.descriptorUrl}`);
     lines.push(`    Describes: ${entry.describes.join(', ')}`);
     lines.push(`    Facets: ${entry.facetTypes.join(', ')}`);
+    // L2 fix (see post-run findings 2026-04-20): surface modalStatus +
+    // trustLevel in the discover summary so federation clients can
+    // filter on them without having to fetch each full descriptor.
+    if (entry.modalStatus) lines.push(`    Modal: ${entry.modalStatus}`);
+    if (entry.trustLevel) lines.push(`    Trust: ${entry.trustLevel}`);
     if (entry.validFrom) lines.push(`    Valid: ${entry.validFrom} — ${entry.validUntil ?? '...'}`);
     lines.push('');
   }
@@ -858,11 +863,22 @@ async function toolVerifyAgent(args: {
   );
 
   if (result.valid) {
+    // L2 clarification (see post-run findings 2026-04-20): registry
+    // membership ≠ envelope-recipient eligibility. An agent without a
+    // registered cg:encryptionPublicKey is authorized to act but
+    // CANNOT decrypt new envelopes (because publish excludes agents
+    // missing a public key from recipient-set composition). Surface
+    // this distinction explicitly so clients don't assume valid →
+    // readable.
+    const profile = await readAgentRegistry(args.pod_url, { fetch: solidFetch }).catch(() => null);
+    const entry = profile?.authorizedAgents.find(a => a.agentId === result.agent);
+    const canDecrypt = Boolean(entry?.encryptionPublicKey);
     return [
       `VALID — Agent ${result.agent} is authorized`,
       `  Owner: ${result.owner}`,
       `  Scope: ${result.scope}`,
       `  Pod: ${args.pod_url}`,
+      `  Can decrypt new envelopes: ${canDecrypt ? 'YES' : 'NO — no cg:encryptionPublicKey on file. Agent can act (per scope) but cannot read E2EE payloads addressed to recipients registered after its enrollment.'}`,
     ].join('\n');
   } else {
     return [

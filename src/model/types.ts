@@ -164,6 +164,26 @@ export interface AccessControlFacetData {
 }
 
 /**
+ * Revocation Condition (extension — see spec/revocation.md).
+ *
+ * Declarative condition under which a claim's effective groundTruth
+ * transitions per the RevocationAction. Shared between Proposal A
+ * (cg:RevocationFacet — 7th facet) and Proposal B (cg:revokedIf
+ * predicate on SemioticFacet). Neither proposal is adopted yet; the
+ * terms carry vs:term_status "testing" in the ontology.
+ */
+export interface RevocationConditionData {
+  /** SPARQL 1.1 ASK / SELECT / CONSTRUCT query (cg:successorQuery). */
+  readonly successorQuery: string;
+  /** Federation scope — cg:LocalPod / cg:KnownFederation / cg:WebFingerResolvable. */
+  readonly evaluationScope?: 'LocalPod' | 'KnownFederation' | 'WebFingerResolvable';
+  /** Action when the query matches — cg:MarkInvalid / cg:DowngradeToHypothetical / cg:RequireReconfirmation. */
+  readonly onRevocation?: 'MarkInvalid' | 'DowngradeToHypothetical' | 'RequireReconfirmation';
+  /** Optional issuer — may differ from the descriptor author (regulator, auditor). */
+  readonly revocationIssuer?: IRI;
+}
+
+/**
  * Semiotic Facet (§5.5)
  * Novel vocabulary — Peircean triadic semiotics
  */
@@ -175,6 +195,15 @@ export interface SemioticFacetData {
   readonly modalStatus?: ModalStatus;
   readonly epistemicConfidence?: number;  // [0.0, 1.0]
   readonly languageTag?: string;          // BCP 47
+  /**
+   * Proposal B of the Revocation Extension (spec/revocation.md): zero
+   * or more conditions attached directly to the SemioticFacet. When any
+   * condition's successorQuery matches in the declared scope, the
+   * enclosing descriptor's effective groundTruth transitions per the
+   * RevocationAction. Lives in the cleartext descriptor so federation
+   * readers can evaluate without decrypting the payload.
+   */
+  readonly revokedIf?: readonly RevocationConditionData[];
 }
 
 /**
