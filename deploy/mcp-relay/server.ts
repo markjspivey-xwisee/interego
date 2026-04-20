@@ -287,11 +287,22 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
 .describes((args.graph_iri as string) as IRI)
 .temporal({ validFrom: (args.valid_from as string) ?? now, validUntil: args.valid_until as string })
 .delegatedBy(ownerWebId as IRI, agentId as IRI, { endedAt: now })
-.semiotic({
-      modalStatus: ((args.modal_status as string) ?? 'Asserted') as 'Asserted' | 'Hypothetical',
-      epistemicConfidence: (args.confidence as number) ?? 0.85,
-      groundTruth: ((args.modal_status as string) ?? 'Asserted') === 'Asserted',
-    })
+.semiotic((() => {
+      // Modal-truth consistency (spec/architecture.md §5.2.2 normative):
+      //   Asserted       → groundTruth MUST be true
+      //   Counterfactual → groundTruth MUST be false
+      //   Hypothetical   → groundTruth MUST NOT be set
+      // Don't squash Hypothetical into "groundTruth=false" — that's
+      // Counterfactual. Hypothetical is the three-valued case.
+      const ms = ((args.modal_status as string) ?? 'Asserted') as 'Asserted' | 'Hypothetical' | 'Counterfactual';
+      const base = {
+        modalStatus: ms,
+        epistemicConfidence: (args.confidence as number) ?? 0.85,
+      };
+      if (ms === 'Asserted') return { ...base, groundTruth: true };
+      if (ms === 'Counterfactual') return { ...base, groundTruth: false };
+      return base; // Hypothetical
+    })())
 .trust({
       trustLevel: 'SelfAsserted',
       issuer: ownerWebId as IRI,

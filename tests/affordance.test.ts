@@ -56,7 +56,7 @@ function buildHypotheticalDescriptor(confidence = 0.5): ReturnType<typeof Contex
   return ContextDescriptor.create('urn:cg:test:hypothetical' as IRI)
     .describes('urn:graph:test:hypothesis' as IRI)
     .temporal({ validFrom: '2026-01-01T00:00:00Z' })
-    .semiotic({ modalStatus: 'Hypothetical', epistemicConfidence: confidence, groundTruth: false })
+    .semiotic({ modalStatus: 'Hypothetical', epistemicConfidence: confidence })
     .selfAsserted('did:web:bob.example' as IRI)
     .version(1)
     .build();

@@ -29,11 +29,12 @@ function parseTtl(ttl: string): number {
 }
 
 describe('static ontology manifest', () => {
-  it('lists all eight ontology files', () => {
+  it('lists all nine ontology files', () => {
     const names = ONTOLOGY_MANIFEST.map(e => e.name).sort();
     expect(names).toEqual([
       'alignment',
       'cg',
+      'cg-shapes',
       'harness',
       'harness-shapes',
       'interego',

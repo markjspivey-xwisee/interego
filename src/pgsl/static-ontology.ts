@@ -37,6 +37,7 @@ export type OntologyName =
   | 'pgsl'
   | 'pgsl-shapes'
   | 'cg'
+  | 'cg-shapes'
   | 'harness'
   | 'harness-shapes'
   | 'alignment';
@@ -112,12 +113,14 @@ export function loadFullShapes(): string {
   const parts: string[] = [
     '# ═══════════════════════════════════════════════════════════',
     '# Interego 1.0 — Full SHACL Shapes',
-    '# (interego + pgsl + harness)',
+    '# (interego + pgsl + cg + harness)',
     '# ═══════════════════════════════════════════════════════════',
     '',
     loadOntology('interego-shapes'),
     '',
     loadOntology('pgsl-shapes'),
+    '',
+    loadOntology('cg-shapes'),
     '',
     loadOntology('harness-shapes'),
   ];
@@ -180,6 +183,14 @@ export const ONTOLOGY_MANIFEST: readonly OntologyManifestEntry[] = [
     kind: 'ontology',
     description:
       'Typed context descriptor layer. Seven facet types (Temporal, Provenance, Agent, AccessControl, Semiotic, Trust, Federation), composition operators (union, intersection, restriction, override), and federation primitives. The technical machinery that answers the ie:When / ie:Who / ie:Where / ie:Why / ie:Whose / ie:WhatKind / ie:Whether interrogatives.',
+  },
+  {
+    name: 'cg-shapes',
+    namespace: 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
+    prefix: 'cg',
+    kind: 'shapes',
+    description:
+      'Normative SHACL shapes for the cg: core namespace. Modal-truth consistency (Asserted/Counterfactual/Hypothetical ↔ groundTruth), future-validFrom warning, revocation self-reference rejection, six-facet invariant, and agent-identity consistency across AgentFacet and ProvenanceFacet. Used as oracles by the conformance test suite.',
   },
   {
     name: 'harness',

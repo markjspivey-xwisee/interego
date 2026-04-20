@@ -1,0 +1,197 @@
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#>.
+@prefix owl:  <http://www.w3.org/2002/07/owl#>.
+@prefix sh:   <http://www.w3.org/ns/shacl#>.
+@prefix prov: <http://www.w3.org/ns/prov#>.
+@prefix dct:  <http://purl.org/dc/terms/>.
+
+# ══════════════════════════════════════════════════════════════
+#  Interego 1.0 — Normative SHACL Shapes for cg:
+#
+#  Layer 1 (protocol, normative) — see spec/LAYERS.md.
+#  Conformance test suite uses these shapes as oracles; see
+#  spec/conformance/README.md.
+#
+#  These shapes encode the invariants that a conforming Interego
+#  implementation MUST satisfy when producing or consuming
+#  ContextDescriptors. Each shape is scoped, cited in the spec, and
+#  paired with a conformance-suite fixture.
+# ══════════════════════════════════════════════════════════════
+
+<https://markjspivey-xwisee.github.io/interego/ns/cg-shapes>
+    a owl:Ontology ;
+    owl:versionInfo "1.0" ;
+    dct:title "Interego 1.0 — Normative SHACL Shapes" ;
+    dct:description "Normative SHACL shapes for the cg: core namespace." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+
+# ──────────────────────────────────────────────────────────────
+#  1. SemioticFacet — modal-truth consistency
+#
+#  The modal-status / groundTruth pair is three-valued:
+#    Asserted       ↔ groundTruth MUST be true
+#    Counterfactual ↔ groundTruth MUST be false
+#    Hypothetical   ↔ groundTruth MUST NOT be set
+#    Quoted         ↔ groundTruth MAY be either (quote of external claim)
+#    Retracted      ↔ groundTruth MUST be false (previously asserted)
+#
+#  Prevents a Hypothetical descriptor from being squashed into a
+#  false Counterfactual and a Counterfactual from being queried as
+#  if it were Asserted.
+# ──────────────────────────────────────────────────────────────
+cg:SemioticFacetModalTruthConsistencyShape a sh:NodeShape ;
+    sh:targetClass cg:SemioticFacet ;
+    sh:sparql [
+        sh:message "SemioticFacet: Asserted requires groundTruth=true, Counterfactual requires groundTruth=false, Hypothetical MUST NOT set groundTruth." ;
+        sh:prefixes cg: ;
+        sh:select """
+            PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+            SELECT $this ?modalStatus ?groundTruth WHERE {
+              $this cg:modalStatus ?modalStatus .
+              OPTIONAL { $this cg:groundTruth ?groundTruth . }
+              FILTER (
+                ( ?modalStatus = cg:Asserted       && ( !BOUND(?groundTruth) || ?groundTruth != true ) ) ||
+                ( ?modalStatus = cg:Counterfactual && ( !BOUND(?groundTruth) || ?groundTruth != false ) ) ||
+                ( ?modalStatus = cg:Hypothetical   && BOUND(?groundTruth) )
+              )
+            }
+        """
+    ] .
+
+# ──────────────────────────────────────────────────────────────
+#  2. TemporalFacet — future-validFrom warning
+#
+#  validFrom set to a future wall-clock time is legal at the protocol
+#  level (scheduled claims are a real use case), but SHOULD surface
+#  so readers know the claim is not yet in effect. Implementations
+#  MAY downgrade this from Warning to Info if the descriptor also
+#  carries explicit semantics indicating the future-date is intentional.
+# ──────────────────────────────────────────────────────────────
+cg:TemporalFacetNonFutureValidFromShape a sh:NodeShape ;
+    sh:targetClass cg:TemporalFacet ;
+    sh:severity sh:Warning ;
+    sh:sparql [
+        sh:message "TemporalFacet.validFrom is in the future — claim is not yet in effect. If intentional (scheduled claim), ignore this warning." ;
+        sh:prefixes cg: ;
+        sh:select """
+            PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+            PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+            SELECT $this ?validFrom WHERE {
+              $this cg:validFrom ?validFrom .
+              FILTER (?validFrom > NOW())
+            }
+        """
+    ] .
+
+# ──────────────────────────────────────────────────────────────
+#  3. RevocationCondition — self-reference rejection
+#
+#  A descriptor whose revocation successor-query references its own
+#  graph IRI is trying to revoke itself by its own existence — a
+#  malformed bootstrap. Hard violation.
+#
+#  The shape uses regex against the SPARQL query text rather than
+#  parsing the query; implementations MAY choose a more precise
+#  parser-based check but MUST reject at minimum this string form.
+# ──────────────────────────────────────────────────────────────
+cg:RevocationConditionNoSelfReferenceShape a sh:NodeShape ;
+    sh:targetClass cg:RevocationCondition ;
+    sh:sparql [
+        sh:message "Revocation successor query references the enclosing descriptor's own graph IRI — malformed (self-revoking by existence)." ;
+        sh:prefixes cg: ;
+        sh:select """
+            PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+            SELECT $this ?query WHERE {
+              ?descriptor cg:revokedIf|cg:revokedBy $this .
+              ?descriptor cg:describes ?graphIri .
+              $this cg:successorQuery ?query .
+              FILTER (CONTAINS(STR(?query), STR(?graphIri)))
+            }
+        """
+    ] .
+
+# ──────────────────────────────────────────────────────────────
+#  4. ContextDescriptor — six-facet invariant (core 1.0)
+#
+#  The 1.0 core requires one of each of the six canonical facets:
+#  Temporal, Provenance, Agent, AccessControl, Semiotic, Trust,
+#  Federation. Additional facets (e.g. Causal, Projection, future
+#  RevocationFacet) are permitted but MUST NOT replace any of the
+#  six core facets.
+#
+#  NOTE: extensions to Context Graphs 1.0 (such as a RevocationFacet
+#  proposal) relax "exactly six" to "at least six" without breaking
+#  this shape — they'd add an additional at-most-one shape for the
+#  new facet type. Don't conflate that future relaxation with a
+#  current requirement.
+# ──────────────────────────────────────────────────────────────
+cg:DescriptorSixFacetShape a sh:NodeShape ;
+    sh:targetClass cg:ContextDescriptor ;
+    sh:property [
+        sh:path cg:hasFacet ;
+        sh:qualifiedValueShape [ sh:class cg:TemporalFacet ] ;
+        sh:qualifiedMinCount 1 ;
+        sh:qualifiedMaxCount 1 ;
+        sh:message "ContextDescriptor MUST have exactly one TemporalFacet."
+    ] ;
+    sh:property [
+        sh:path cg:hasFacet ;
+        sh:qualifiedValueShape [ sh:class cg:ProvenanceFacet ] ;
+        sh:qualifiedMinCount 1 ;
+        sh:qualifiedMaxCount 1 ;
+        sh:message "ContextDescriptor MUST have exactly one ProvenanceFacet."
+    ] ;
+    sh:property [
+        sh:path cg:hasFacet ;
+        sh:qualifiedValueShape [ sh:class cg:AgentFacet ] ;
+        sh:qualifiedMinCount 1 ;
+        sh:qualifiedMaxCount 1 ;
+        sh:message "ContextDescriptor MUST have exactly one AgentFacet."
+    ] ;
+    sh:property [
+        sh:path cg:hasFacet ;
+        sh:qualifiedValueShape [ sh:class cg:SemioticFacet ] ;
+        sh:qualifiedMinCount 1 ;
+        sh:qualifiedMaxCount 1 ;
+        sh:message "ContextDescriptor MUST have exactly one SemioticFacet."
+    ] ;
+    sh:property [
+        sh:path cg:hasFacet ;
+        sh:qualifiedValueShape [ sh:class cg:TrustFacet ] ;
+        sh:qualifiedMinCount 1 ;
+        sh:qualifiedMaxCount 1 ;
+        sh:message "ContextDescriptor MUST have exactly one TrustFacet."
+    ] .
+
+# ──────────────────────────────────────────────────────────────
+#  5. ProvenanceFacet ↔ AgentFacet — agent identity consistency
+#
+#  A descriptor that names agent X in its AgentFacet but whose
+#  ProvenanceFacet's wasAssociatedWith points at agent Y is almost
+#  always a bug — the writer forked identity somewhere. Warning
+#  (not violation) because there are legitimate ghost-write patterns
+#  (e.g. agent X proxying for agent Y) where this is intentional.
+# ──────────────────────────────────────────────────────────────
+cg:AgentProvenanceConsistencyShape a sh:NodeShape ;
+    sh:targetClass cg:ContextDescriptor ;
+    sh:severity sh:Warning ;
+    sh:sparql [
+        sh:message "AgentFacet.assertingAgent != ProvenanceFacet.wasAssociatedWith — identity fork detected. If intentional (ghost-write), ignore." ;
+        sh:prefixes cg: ;
+        sh:select """
+            PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+            PREFIX prov: <http://www.w3.org/ns/prov#>
+            SELECT $this ?aa ?pa WHERE {
+              $this cg:hasFacet ?agentFacet .
+              ?agentFacet a cg:AgentFacet ;
+                          cg:assertingAgent/cg:agentIdentity ?aa .
+              $this cg:hasFacet ?provFacet .
+              ?provFacet a cg:ProvenanceFacet ;
+                         cg:wasGeneratedBy ?activity .
+              ?activity cg:agent ?pa .
+              FILTER (?aa != ?pa)
+            }
+        """
+    ] .

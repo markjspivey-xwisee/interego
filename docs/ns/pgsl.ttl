@@ -9,6 +9,7 @@
 @prefix foaf: <http://xmlns.com/foaf/0.1/>.
 @prefix vann: <http://purl.org/vocab/vann/>.
 @prefix skos: <http://www.w3.org/2004/02/skos/core#>.
+@prefix sh:   <http://www.w3.org/ns/shacl#>.
 
 # ══════════════════════════════════════════════════════════════
 #  PGSL — Poly-Granular Sequence Lattice — 1.0 Ontology

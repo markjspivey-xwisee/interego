@@ -81,6 +81,18 @@ export class ContextDescriptor {
     return this;
   }
 
+  /**
+   * Descriptor-level `validFrom` — the instant at which the claim this
+   * descriptor carries STARTS being true. This is NOT the assertion time
+   * (see `prov:generatedAtTime` on the Provenance facet) — they diverge
+   * for backdated claims ("asserted today that X started on 2024-01-01"),
+   * scheduled claims ("asserted today that P takes effect on 2026-06-01"),
+   * and retroactive corrections.
+   *
+   * Per spec/architecture.md §5.2.2 (normative): writers MUST NOT conflate
+   * the two, and the builder enforces this by keeping them on separate
+   * methods with separate defaults.
+   */
   validFrom(dt: string | Date): this {
     this._validFrom = dt instanceof Date ? dt.toISOString() : dt;
     return this;
@@ -159,6 +171,12 @@ export class ContextDescriptor {
       role?: AgentRole;
     },
   ): this {
+    // NOTE on the timestamp: `generatedAtTime` is when the agent made
+    // this assertion. It is deliberately independent of the descriptor's
+    // `validFrom` (the moment the claim starts being true). Callers who
+    // want a claim whose validity starts in the past or future MUST set
+    // `validFrom()` explicitly — this builder will not copy
+    // `generatedAtTime` into `validFrom`.
     const now = opts?.endedAt ?? new Date().toISOString();
     this._facets.push({
       type: 'Provenance',
@@ -218,6 +236,23 @@ export class ContextDescriptor {
         );
       }
     }
+    // Modal-truth consistency (normative — see spec/architecture.md §5.2.2
+    // and conformance category "Facet semantics → SemioticFacet"):
+    //   Asserted       ↔ groundTruth MUST be true
+    //   Counterfactual ↔ groundTruth MUST be false
+    //   Hypothetical   ↔ groundTruth MUST NOT be set (three-valued)
+    // Hypothetical claims have no settled truth value; forcing a boolean
+    // placeholder would make SPARQL filters return false negatives for
+    // "groundTruth is unknown". Reject misuse at the builder layer.
+    if (opts.modalStatus === 'Asserted' && opts.groundTruth === false) {
+      throw new Error(`SemioticFacet: Asserted claims require groundTruth=true (or omit)`);
+    }
+    if (opts.modalStatus === 'Counterfactual' && opts.groundTruth === true) {
+      throw new Error(`SemioticFacet: Counterfactual claims require groundTruth=false (or omit)`);
+    }
+    if (opts.modalStatus === 'Hypothetical' && opts.groundTruth !== undefined) {
+      throw new Error(`SemioticFacet: Hypothetical claims MUST NOT set groundTruth (leave undefined)`);
+    }
     this._facets.push({ type: 'Semiotic', ...opts });
     return this;
   }
@@ -235,11 +270,21 @@ export class ContextDescriptor {
 
   /**
    * Convenience: mark this graph as hypothetical.
+   *
+   * Hypothetical claims carry no settled truth value — groundTruth is
+   * intentionally left undefined so SPARQL filters "is the truth known?"
+   * return the correct three-valued answer. If you need a definite
+   * Counterfactual (rejected approach, known-false), use
+   *
+   *   .semiotic({ modalStatus: 'Counterfactual', groundTruth: false })
+   *
+   * directly (the `counterfactual()` method on this builder is reserved
+   * for Pearl's causal-counterfactual rung, a different concept from the
+   * semiotic modal Counterfactual).
    */
   hypothetical(confidence?: number): this {
     return this.semiotic({
       modalStatus: 'Hypothetical',
-      groundTruth: false,
       epistemicConfidence: confidence,
     });
   }
