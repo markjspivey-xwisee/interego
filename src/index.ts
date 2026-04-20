@@ -68,6 +68,13 @@ export {
   verifyAdjunction,
   semioticField,
   verifySemioticFieldFunctoriality,
+  // Publish-input preprocessing (modal-truth + cleartext mirror)
+  normalizePublishInputs,
+  extractRevocationConditions,
+} from './model/index.js';
+export type {
+  PublishInputs,
+  PreprocessedPublish,
 } from './model/index.js';
 
 // ── Causality (Pearl's SCM Framework) ───────────────────────
