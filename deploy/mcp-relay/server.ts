@@ -414,6 +414,15 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     ipfs = { cid: cryptoComputeCid(turtle), provider: 'local' };
   }
 
+  // Auto-publish pod directory on first write. A pod holding content
+  // but no directory at /.well-known/context-graphs-directory cannot be
+  // discovered by federation clients that traverse directories (see
+  // spec/LAYERS.md L2 federation patterns). Previously operators had
+  // to remember to call publish_directory manually. Now it's asserted
+  // inline — idempotent, best-effort, non-fatal so the publish itself
+  // isn't blocked by directory plumbing.
+  await ensurePodDirectory(podUrl, ownerWebId);
+
   return JSON.stringify({
     published: true,
     owner: ownerWebId,
@@ -427,6 +436,28 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     manifestUrl: result.manifestUrl,
     ipfs,
   });
+}
+
+/**
+ * Ensure the pod has a discoverable directory at
+ * /.well-known/context-graphs-directory. Idempotent + best-effort — if
+ * the directory already exists or the call fails, the caller's publish
+ * is not blocked. Federation clients use the directory to enumerate a
+ * pod's context graphs without having to scan LDP containers.
+ */
+async function ensurePodDirectory(podUrl: string, ownerWebId: string): Promise<void> {
+  const directoryUrl = `${podUrl}.well-known/context-graphs-directory`;
+  try {
+    const existing = await fetchPodDirectory(directoryUrl, { fetch: solidFetch }).catch(() => null);
+    if (existing) return; // already published
+    await publishPodDirectory(
+      { id: directoryUrl as IRI, entries: [] },
+      podUrl,
+      { fetch: solidFetch },
+    );
+  } catch (err) {
+    console.warn(`[relay] ensurePodDirectory(${podUrl}) failed: ${(err as Error).message}`);
+  }
 }
 
 async function handleDiscoverContext(args: ToolArgs): Promise<string> {
