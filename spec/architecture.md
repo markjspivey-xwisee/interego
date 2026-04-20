@@ -2,17 +2,25 @@
 
 **Draft Specification**
 
+**Layer:** Layer 1 — Protocol. Normative. See [LAYERS.md](LAYERS.md) for the layering discipline.
+
 **Latest version:** This document
 
 **Editors:** Interego
 
-**Abstract:** This document is the single source of truth for the architecture
-of Interego 1.0 --- a compositional framework for typed graph contexts
-over RDF 1.2 Named Graphs. It describes the complete system as implemented in
-the `@interego/core` reference implementation: a zero-dependency
-TypeScript library (ESM, Node 20+) totaling 22,636 lines across 66 modules.
+**Abstract:** This document is the normative specification of the Interego 1.0 protocol — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs. It defines the descriptor model, facet vocabulary, composition operators, serialization, and federation behavior that every conforming implementation must satisfy. Examples and architectural patterns are illustrative; the reference TypeScript implementation `@interego/core` is one such implementation and is not itself normative.
 
 **Status:** Draft.
+
+**Normative language:** The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, RECOMMENDED, MAY, and OPTIONAL in this document are to be interpreted as described in [RFC 2119] and [RFC 8174] when, and only when, they appear in all capitals.
+
+**Conformance:** An implementation conforms to Interego 1.0 if and only if it passes the [conformance test suite](conformance/README.md) at the version that accompanies this document. Absence of the suite at the time of first publication means no full conformance claim is possible until it ships; implementations MAY claim *provisional conformance* subject to suite ratification.
+
+**Out of scope — what this document is not:**
+
+- Not a deployment manual. Specific container runtimes, object stores, and identity providers are Layer 3 implementation choices.
+- Not a domain ontology. `code:`, `med:`, `learning:`, and every future domain vocabulary are separate artifacts riding on top of this protocol; they MUST NOT appear in `cg:` / `cgh:` / `pgsl:` / `ie:` / `align:`.
+- Not a product spec. `@interego/core`, the relay, the dashboard, and the CLI are reference implementations; they do not bind the protocol to their choices.
 
 ---
 
@@ -923,6 +931,38 @@ All real implementations. No mocks.
 **Wire format**: the envelope is a JSON document served at `<slug>-graph.envelope.jose.json` with `Content-Type: application/jose+json`. Structure: `{ content: { ciphertext, nonce, algorithm }, wrappedKeys: [{ recipientPublicKey, wrappedKey, nonce, senderPublicKey }], algorithm: "X25519-XSalsa20-Poly1305", version: 1 }`. See [`docs/e2ee.md`](../docs/e2ee.md) for the full architecture.
 
 **Descriptor link to envelope** (HATEOAS — see §6): every descriptor Turtle embeds a `cg:affordance` block that is simultaneously `cg:Affordance`, `cgh:Affordance`, `hydra:Operation`, and `dcat:Distribution`. Clients follow `hydra:target` / `dcat:accessURL` — no filename convention. Described further in §6.4.
+
+#### 5.2.1 Cleartext / ciphertext layering (normative protocol boundary)
+
+The protocol partitions the artifact store into two layers with distinct reader contracts. This partition is the single most important architectural property of Interego at the protocol level:
+
+| Layer | Contents | Reader contract | SPARQL-queryable? |
+|---|---|---|---|
+| **Descriptor layer** | ContextDescriptor RDF: facets, provenance, modal status, trust, temporal bounds, federation pointers, hypermedia affordances, revocation conditions (where present) | MUST be readable without decryption keys | **MUST** be queryable via SPARQL without any decryption step |
+| **Payload layer** | Named-graph content addressed by the descriptor (e.g. the encrypted envelope) | MAY require decryption keys (encryption is OPTIONAL at the protocol level but normative when invoked) | MUST NOT require decryption for federation-layer reasoning that depends only on descriptor metadata |
+
+Normatively, every claim the protocol asks readers to reason about across a federation — recipient eligibility, modal status, temporal validity, revocation condition, trust level — **MUST** be expressible in the descriptor layer. If a new claim can only be evaluated by reading decrypted content, it is out-of-protocol.
+
+This is why the descriptor carries six facets: the facets are the query surface the federation can reach without holding any key. The payload is epistemically opaque to unauthorized readers by design.
+
+**Implementation implication (informative):** the reference implementation publishes descriptors as Turtle at publicly-readable URLs and payloads as JOSE envelopes at companion URLs. Any implementation adopting different serializations or transports MUST preserve this cleartext/ciphertext split at the protocol boundary.
+
+#### 5.2.2 Temporal semantics: `generatedAtTime` vs. `validFrom` (normative distinction)
+
+The protocol distinguishes two temporal concepts that implementations MUST NOT conflate:
+
+- `prov:generatedAtTime` (ProvenanceFacet) — the wall-clock moment at which the assertion was made by the agent.
+- `cg:validFrom` / `cg:validUntil` (TemporalFacet) — the boundaries of the interval over which the assertion holds.
+
+These values are often equal in new claims — the author is asserting "I claim this, and it starts being true now." They diverge for:
+
+- Backdated claims ("I claim today that event E happened at time T₀ < now").
+- Scheduled claims ("I claim today that policy P starts at T₁ > now").
+- Retroactive corrections ("I claim today that the previously-published assertion started earlier than I originally said").
+
+Implementations MUST accept explicit `validFrom` / `validUntil` values distinct from the auto-stamped `generatedAtTime`. Writers SHOULD auto-stamp `generatedAtTime` only when the caller has not supplied one; they MUST NOT copy `generatedAtTime` into `validFrom` as a default when the caller has supplied one.
+
+**Future-dated `validFrom` is legal** at the protocol level but SHOULD emit a warning at validation time to surface scheduled-claim patterns for reader awareness. Server clocks MUST be UTC; renderers are responsible for local-time presentation.
 
 ### 5.3 Zero-Knowledge Proofs
 
