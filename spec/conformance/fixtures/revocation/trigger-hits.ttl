@@ -1,0 +1,62 @@
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix ex:   <https://conformance.interego.example/ns#> .
+@prefix test: <https://conformance.interego.example/test#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+# Conformance fixture: trigger graph that SATISFIES the successor query
+# from facet-form.ttl / predicate-form.ttl.
+#
+# Loaded alongside either proposal's fixture, the revocation evaluator
+# MUST transition the original claim's effective groundTruth to false
+# (per cg:MarkInvalid). The original descriptor is not mutated; its
+# effective interpretation is what changes.
+#
+# This fixture is a ContextDescriptor in its own right (minimal six
+# facets) so it validates on its own. Its payload is the single triple
+# the successor ASK query looks for.
+
+<test:trigger-hits>
+    a cg:ContextDescriptor ;
+    cg:describes <test:graph:trigger-hits-content> ;
+
+    cg:hasFacet [
+        a cg:TemporalFacet ;
+        cg:validFrom "2026-04-15T00:00:00Z"^^xsd:dateTime
+    ] ;
+
+    cg:hasFacet [
+        a cg:ProvenanceFacet ;
+        cg:generatedAtTime "2026-04-15T00:00:00Z"^^xsd:dateTime
+    ] ;
+
+    cg:hasFacet [
+        a cg:AgentFacet ;
+        cg:agentRole cg:Author
+    ] ;
+
+    cg:hasFacet [
+        a cg:AccessControlFacet
+    ] ;
+
+    cg:hasFacet [
+        a cg:SemioticFacet ;
+        cg:modalStatus cg:Asserted ;
+        cg:groundTruth true ;
+        cg:epistemicConfidence "0.95"^^xsd:double
+    ] ;
+
+    cg:hasFacet [
+        a cg:TrustFacet ;
+        cg:trustLevel cg:SelfAsserted
+    ] ;
+
+    cg:hasFacet [
+        a cg:FederationFacet
+    ] .
+
+# Content graph: satisfies BOTH facet-form and predicate-form successor queries.
+
+<test:graph:trigger-hits-content> {
+    <test:successor-claim>
+        ex:supersedes <test:graph:facet-form-claim>, <test:graph:predicate-form-claim> .
+}

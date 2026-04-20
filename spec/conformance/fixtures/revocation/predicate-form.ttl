@@ -1,0 +1,61 @@
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix ex:   <https://conformance.interego.example/ns#> .
+@prefix test: <https://conformance.interego.example/test#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+# Conformance fixture: Proposal B (revokedIf predicate on SemioticFacet)
+# Scenario: identical semantics to facet-form.ttl, different shape.
+# Migration between the two forms is a blank-node rewrite:
+#   move [ ... ] from cg:revokedBy (Proposal A, under RevocationFacet)
+#     to cg:revokedIf (Proposal B, under SemioticFacet), or vice versa.
+
+<test:predicate-form>
+    a cg:ContextDescriptor ;
+    cg:describes <test:graph:predicate-form-claim> ;
+
+    cg:hasFacet [
+        a cg:TemporalFacet ;
+        cg:validFrom "2026-04-01T00:00:00Z"^^xsd:dateTime
+    ] ;
+
+    cg:hasFacet [
+        a cg:ProvenanceFacet ;
+        cg:generatedAtTime "2026-04-01T00:00:00Z"^^xsd:dateTime
+    ] ;
+
+    cg:hasFacet [
+        a cg:AgentFacet ;
+        cg:agentRole cg:Author
+    ] ;
+
+    cg:hasFacet [
+        a cg:AccessControlFacet
+    ] ;
+
+    cg:hasFacet [
+        a cg:SemioticFacet ;
+        cg:modalStatus cg:Asserted ;
+        cg:groundTruth true ;
+        cg:epistemicConfidence "0.85"^^xsd:double ;
+        # Proposal B: predicate directly on SemioticFacet
+        cg:revokedIf [
+            a cg:RevocationCondition ;
+            cg:successorQuery """
+                PREFIX ex: <https://conformance.interego.example/ns#>
+                ASK WHERE {
+                    GRAPH ?g { ?s ex:supersedes <test:graph:predicate-form-claim> . }
+                }
+            """ ;
+            cg:evaluationScope cg:KnownFederation ;
+            cg:onRevocation cg:MarkInvalid
+        ]
+    ] ;
+
+    cg:hasFacet [
+        a cg:TrustFacet ;
+        cg:trustLevel cg:SelfAsserted
+    ] ;
+
+    cg:hasFacet [
+        a cg:FederationFacet
+    ] .

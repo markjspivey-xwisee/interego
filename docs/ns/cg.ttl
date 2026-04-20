@@ -17,6 +17,7 @@
 @prefix vann: <http://purl.org/vocab/vann/>.
 @prefix skos: <http://www.w3.org/2004/02/skos/core#>.
 @prefix sh:   <http://www.w3.org/ns/shacl#>.
+@prefix vs:   <http://www.w3.org/2003/06/sw-vocab-status/ns#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Interego 1.0 Ontology
@@ -933,3 +934,138 @@ cg:parentObservation a owl:ObjectProperty ; rdfs:label "parent observation" ; rd
 cg:parentIntervention a owl:ObjectProperty ; rdfs:label "parent intervention" ; rdfs:range cg:Intervention ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:outcome a owl:ObjectProperty ; rdfs:label "outcome" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:selective a owl:DatatypeProperty ; rdfs:label "selective" ; rdfs:range xsd:boolean ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Revocation Extension (DRAFT — rival proposals A + B)
+#
+#  See spec/revocation.md for the prose specification. These terms
+#  are declared with vs:term_status "testing" (W3C SemWeb Vocabulary
+#  Status) to signal they are NOT YET adopted as protocol-normative.
+#  An implementation MAY emit them; readers MAY consume them; neither
+#  is required for v1.0 conformance.
+#
+#  Once one of Proposal A (7th facet) or Proposal B (predicate on
+#  SemioticFacet) is ratified, the adopted terms move to
+#  vs:term_status "stable" and the rival terms move to "archaic".
+#  Until then, the shared RevocationCondition model is specified in
+#  both proposals identically so migration is a blank-node rewrite.
+# ══════════════════════════════════════════════════════════════
+
+# ─── Shared RevocationCondition model (both proposals) ────────
+
+cg:RevocationCondition a owl:Class ;
+    rdfs:label "Revocation Condition" ;
+    rdfs:comment "A declarative condition under which an asserted claim's effective groundTruth transitions to false. Consists of a successor query (SPARQL 1.1 ASK/SELECT), an evaluation scope, and an action to take when the query matches. Shared by Proposal A (RevocationFacet) and Proposal B (revokedIf predicate) so conditions are portable between the two." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:successorQuery a owl:DatatypeProperty ;
+    rdfs:label "successor query" ;
+    rdfs:comment "SPARQL 1.1 ASK/SELECT/CONSTRUCT query evaluated over the scope declared by cg:evaluationScope. A non-empty result triggers the revocation action. MUST NOT reference the enclosing descriptor's own graph IRI (caught by cg:RevocationConditionNoSelfReferenceShape)." ;
+    rdfs:domain cg:RevocationCondition ;
+    rdfs:range xsd:string ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:evaluationScope a owl:ObjectProperty ;
+    rdfs:label "evaluation scope" ;
+    rdfs:comment "The federation scope over which the successor query is evaluated. One of cg:LocalPod, cg:KnownFederation, cg:WebFingerResolvable." ;
+    rdfs:domain cg:RevocationCondition ;
+    rdfs:range cg:RevocationScope ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:onRevocation a owl:ObjectProperty ;
+    rdfs:label "on-revocation action" ;
+    rdfs:comment "Action to take when the successor query matches. One of cg:MarkInvalid, cg:DowngradeToHypothetical, cg:RequireReconfirmation. Implementations MUST support cg:MarkInvalid; the others are RECOMMENDED." ;
+    rdfs:domain cg:RevocationCondition ;
+    rdfs:range cg:RevocationAction ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:revocationIssuer a owl:ObjectProperty ;
+    rdfs:label "revocation issuer" ;
+    rdfs:comment "The agent or principal that asserts this revocation condition. MAY differ from the enclosing descriptor's author (a regulator, auditor, or domain authority attaching a revocation policy to someone else's claim). When absent, the enclosing descriptor's author is assumed." ;
+    rdfs:domain cg:RevocationCondition ;
+    rdfs:range foaf:Agent ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+# ─── Evaluation-scope closed vocabulary ───────────────────────
+
+cg:RevocationScope a owl:Class ;
+    rdfs:label "Revocation Scope" ;
+    rdfs:comment "Closed vocabulary for the federation scope over which a revocation successor query is evaluated." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:LocalPod a cg:RevocationScope ;
+    rdfs:label "Local Pod" ;
+    rdfs:comment "Evaluate the successor query only against descriptors on the same pod that hosts the declaring descriptor. Cheapest; no federation calls." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:KnownFederation a cg:RevocationScope ;
+    rdfs:label "Known Federation" ;
+    rdfs:comment "Evaluate across every pod in the evaluating reader's known-pods registry. Readers MAY cache federation state; eventual consistency is acceptable." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:WebFingerResolvable a cg:RevocationScope ;
+    rdfs:label "WebFinger Resolvable" ;
+    rdfs:comment "Evaluate across any pod reachable from the query's cited handles via WebFinger (RFC 7033) or DID resolution. Strongest scope; highest latency." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+# ─── Revocation-action closed vocabulary ──────────────────────
+
+cg:RevocationAction a owl:Class ;
+    rdfs:label "Revocation Action" ;
+    rdfs:comment "Closed vocabulary for the effect of a triggered revocation condition on the enclosing descriptor's modal state." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:MarkInvalid a cg:RevocationAction ;
+    rdfs:label "Mark Invalid" ;
+    rdfs:comment "Effective groundTruth transitions to false. Modal status effectively becomes Counterfactual for readers performing currently-valid queries. This is the default and the only action MUST-supported by conforming implementations." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:DowngradeToHypothetical a cg:RevocationAction ;
+    rdfs:label "Downgrade To Hypothetical" ;
+    rdfs:comment "Modal status transitions to Hypothetical; groundTruth becomes undefined. Signals \"we're no longer sure either way.\"" ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:RequireReconfirmation a cg:RevocationAction ;
+    rdfs:label "Require Reconfirmation" ;
+    rdfs:comment "Modal status is preserved but the descriptor is flagged as requiring the original issuer (or a delegated authority) to re-sign before it may be used for downstream assertions. Useful for high-stakes claims where automatic invalidation would be too aggressive." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+# ─── Proposal A — seventh-facet RevocationFacet ───────────────
+
+cg:RevocationFacet a owl:Class ;
+    rdfs:subClassOf cg:ContextFacet ;
+    rdfs:label "Revocation Facet (Proposal A — draft)" ;
+    rdfs:comment "DRAFT. A seventh context-facet type carrying one or more RevocationConditions. Proposal A of the revocation extension spec (see spec/revocation.md). Enables discovery by facet_type=Revocation without inspecting other facets; supports revocation issuers that differ from the descriptor author. Relaxes the six-facet invariant to \"at least six core facets plus at most one RevocationFacet.\" Rival: Proposal B (cg:revokedIf predicate on SemioticFacet). One will be adopted in v1.1; until then, implementations MAY support either, both, or neither." ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:revokedBy a owl:ObjectProperty ;
+    rdfs:label "revoked by (Proposal A)" ;
+    rdfs:comment "Links a RevocationFacet to one or more RevocationConditions. Proposal A form." ;
+    rdfs:domain cg:RevocationFacet ;
+    rdfs:range cg:RevocationCondition ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+# ─── Proposal B — predicate on SemioticFacet ──────────────────
+
+cg:revokedIf a owl:ObjectProperty ;
+    rdfs:label "revoked if (Proposal B)" ;
+    rdfs:comment "DRAFT. Attaches one or more RevocationConditions to a SemioticFacet. When any linked condition's successorQuery returns a hit, the enclosing descriptor's effective groundTruth transitions per the RevocationAction. Proposal B of the revocation extension spec; preserves the exactly-six-facet invariant by nesting revocation inside the Semiotic facet's truth-state unit rather than adding a new facet type. Rival: Proposal A (cg:RevocationFacet)." ;
+    rdfs:domain cg:SemioticFacet ;
+    rdfs:range cg:RevocationCondition ;
+    vs:term_status "testing" ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .

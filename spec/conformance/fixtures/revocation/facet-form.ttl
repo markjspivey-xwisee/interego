@@ -1,0 +1,66 @@
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix ex:   <https://conformance.interego.example/ns#> .
+@prefix test: <https://conformance.interego.example/test#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
+# Conformance fixture: Proposal A (seventh-facet revocation)
+# Scenario: a descriptor that declares its own revocation condition as a
+# separate 7th facet. The condition's successor query asks whether any
+# graph in the federation supersedes this claim; if so, mark invalid.
+
+<test:facet-form>
+    a cg:ContextDescriptor ;
+    cg:describes <test:graph:facet-form-claim> ;
+
+    cg:hasFacet [
+        a cg:TemporalFacet ;
+        cg:validFrom "2026-04-01T00:00:00Z"^^xsd:dateTime
+    ] ;
+
+    cg:hasFacet [
+        a cg:ProvenanceFacet ;
+        cg:generatedAtTime "2026-04-01T00:00:00Z"^^xsd:dateTime
+    ] ;
+
+    cg:hasFacet [
+        a cg:AgentFacet ;
+        cg:agentRole cg:Author
+    ] ;
+
+    cg:hasFacet [
+        a cg:AccessControlFacet
+    ] ;
+
+    cg:hasFacet [
+        a cg:SemioticFacet ;
+        cg:modalStatus cg:Asserted ;
+        cg:groundTruth true ;
+        cg:epistemicConfidence "0.85"^^xsd:double
+    ] ;
+
+    cg:hasFacet [
+        a cg:TrustFacet ;
+        cg:trustLevel cg:SelfAsserted
+    ] ;
+
+    cg:hasFacet [
+        a cg:FederationFacet
+    ] ;
+
+    # Proposal A: seventh facet
+    cg:hasFacet [
+        a cg:RevocationFacet ;
+        cg:revokedBy [
+            a cg:RevocationCondition ;
+            cg:successorQuery """
+                PREFIX ex: <https://conformance.interego.example/ns#>
+                ASK WHERE {
+                    GRAPH ?g { ?s ex:supersedes <test:graph:facet-form-claim> . }
+                }
+            """ ;
+            cg:evaluationScope cg:KnownFederation ;
+            cg:onRevocation cg:MarkInvalid
+        ]
+    ] .
