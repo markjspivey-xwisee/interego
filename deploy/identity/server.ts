@@ -1925,6 +1925,66 @@ app.post('/tokens/me/sign-out-everywhere', async (req, res) => {
 });
 
 /**
+ * POST /users/me/delete
+ *
+ * Tear down the calling user entirely:
+ *   - all in-memory identities (user + every owned agent)
+ *   - all bearer tokens issued for that user
+ *   - the user's pod-side auth-methods.jsonld
+ *   - the user's pod-side agents file
+ *
+ * Bearer-gated by the user's own token, so the operation is self-
+ * service. Used by the Playwright E2E test for happy-path cleanup and
+ * by the periodic janitor (see `janitor` loop below) for stale test
+ * users left behind after a crashed run.
+ *
+ * Pod *files* are deleted via CSS HTTP DELETE; the empty pod *container*
+ * remains (CSS doesn't auto-prune empty containers, and removing them
+ * requires storage-account credentials the identity server doesn't carry).
+ * That's acceptable — empty containers don't slow the root listing
+ * appreciably and the dashboard's discovery cache absorbs the rest.
+ */
+async function deleteUserCompletely(userId: string): Promise<{ agents: string[]; podCleanup: { authMethods: number; agents: number } }> {
+  const ownedAgentIds = [...identities.values()]
+    .filter(i => i.type === 'agent' && i.owner === userId)
+    .map(a => a.id);
+  for (const agentId of ownedAgentIds) {
+    identities.delete(agentId);
+    keys.delete(agentId);
+  }
+  identities.delete(userId);
+  keys.delete(userId);
+
+  for (const [tok, rec] of tokens) {
+    if (rec.userId === userId) tokens.delete(tok);
+  }
+  authMethodsCache.delete(userId);
+  for (const [k, v] of walletIndex) if (v === userId) walletIndex.delete(k);
+  for (const [k, v] of credentialIndex) if (v === userId) credentialIndex.delete(k);
+  for (const [k, v] of didIndex) if (v === userId) didIndex.delete(k);
+
+  const podCleanup = { authMethods: 0, agents: 0 };
+  try {
+    const r = await fetch(podAuthMethodsUrl(userId), { method: 'DELETE' });
+    podCleanup.authMethods = r.status;
+  } catch { /* best-effort */ }
+  try {
+    const r = await fetch(`${CSS_URL}${userId}/agents`, { method: 'DELETE' });
+    podCleanup.agents = r.status;
+  } catch { /* best-effort */ }
+
+  return { agents: ownedAgentIds, podCleanup };
+}
+
+app.post('/users/me/delete', async (req, res) => {
+  const user = await requireUserFromBearer(req, res);
+  if (!user) return;
+  const result = await deleteUserCompletely(user.id);
+  log(`Deleted user ${user.id} (agents removed: ${result.agents.join(', ') || 'none'})`);
+  res.json({ deleted: true, userId: user.id, ...result });
+});
+
+/**
  * GET /agents/me
  *
  * Return the calling user's registered agents. Read from in-memory
@@ -2135,4 +2195,36 @@ app.listen(PORT, () => {
   // before this container restarted are still reachable without re-enrolling.
   // Non-blocking — health checks come up immediately, indexes populate async.
   rebuildAllIndexes().catch(err => log(`WARN: initial index rebuild failed: ${(err as Error).message}`));
+
+  // Janitor — periodic safety net for E2E test users left behind after a
+  // crashed run. The Playwright passkey suite calls /users/me/delete in
+  // its afterEach for happy-path cleanup; this loop only catches the
+  // crash-recovery cases, identified by an agent name matching
+  // TEST_AGENT_PATTERN whose owning user is older than TEST_USER_GRACE_MS.
+  // The grace window is intentionally larger than the longest possible
+  // test run so we never race with an in-flight test.
+  const TEST_AGENT_PATTERN = new RegExp(process.env['TEST_AGENT_PATTERN'] ?? '^playwright-passkey-');
+  const JANITOR_INTERVAL_MS = parseInt(process.env['JANITOR_INTERVAL_MS'] ?? '300000');     // 5 min
+  const TEST_USER_GRACE_MS = parseInt(process.env['TEST_USER_GRACE_MS'] ?? '900000');       // 15 min
+  if (JANITOR_INTERVAL_MS > 0) {
+    setInterval(() => {
+      const cutoff = Date.now() - TEST_USER_GRACE_MS;
+      const allAgents = [...identities.values()].filter(i => i.type === 'agent');
+      const testUserIds = new Set<string>();
+      for (const a of allAgents) {
+        if (TEST_AGENT_PATTERN.test(a.id) && a.owner) {
+          const owner = identities.get(a.owner);
+          if (owner && new Date(owner.createdAt).getTime() < cutoff) {
+            testUserIds.add(a.owner);
+          }
+        }
+      }
+      if (testUserIds.size === 0) return;
+      log(`Janitor: purging ${testUserIds.size} stale test user(s)`);
+      for (const uid of testUserIds) {
+        deleteUserCompletely(uid).catch(err => log(`Janitor: failed to delete ${uid}: ${(err as Error).message}`));
+      }
+    }, JANITOR_INTERVAL_MS).unref();
+    log(`Janitor: scanning every ${JANITOR_INTERVAL_MS}ms; grace ${TEST_USER_GRACE_MS}ms; pattern ${TEST_AGENT_PATTERN}`);
+  }
 });

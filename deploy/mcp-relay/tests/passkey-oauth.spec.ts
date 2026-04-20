@@ -133,4 +133,36 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
   for (const expectedTool of ['publish_context', 'discover_context', 'get_descriptor']) {
     expect(body, `${expectedTool} tool exposed`).toContain(`"name":"${expectedTool}"`);
   }
+
+  // 6. Cleanup — purge the test user so live identity / pod state stays
+  // pristine. The relay's MCP token wraps an identity-server bearer in
+  // its `extra` field; swap it out via /identity-token, then call
+  // /users/me/delete which removes the in-memory identity, kills its
+  // tokens, and DELETEs the pod-side auth-methods + agents files.
+  // Failures here are best-effort logged (the janitor in identity will
+  // sweep stale test users older than the configured grace window).
+  try {
+    const itResp = await api.get(`${RELAY_URL}/identity-token`, {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+    });
+    if (itResp.ok()) {
+      const { identityToken } = await itResp.json() as { identityToken?: string };
+      if (identityToken) {
+        // Identity is on a different host; hit it directly. Resolve via
+        // the relay's /.well-known/oauth-authorization-server which
+        // exposes the identity issuer, OR derive from the relay host.
+        const identityUrl = RELAY_URL.replace('interego-relay', 'interego-identity');
+        const delResp = await api.post(`${identityUrl}/users/me/delete`, {
+          headers: { 'Authorization': `Bearer ${identityToken}` },
+        });
+        if (!delResp.ok()) {
+          console.warn(`[cleanup] /users/me/delete returned ${delResp.status()}: ${await delResp.text()}`);
+        }
+      }
+    } else {
+      console.warn(`[cleanup] /identity-token returned ${itResp.status()}`);
+    }
+  } catch (err) {
+    console.warn(`[cleanup] threw: ${(err as Error).message}`);
+  }
 });
