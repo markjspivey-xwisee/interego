@@ -1,14 +1,28 @@
 # Interego — Ontology Reference
 
-This directory contains the **canonical, versioned, hand-authored OWL/RDFS/SHACL ontologies** that define the Interego 1.0 system. These files are the single source of truth for every class, property, and SKOS concept scheme in the three co-designed layers of the system.
+This directory contains the **canonical, versioned, hand-authored OWL/RDFS/SHACL ontologies** that define the Interego 1.0 system.
 
 **Namespace root:** `https://markjspivey-xwisee.github.io/interego/ns/`
+
+## Layer classification (see [`../../spec/LAYERS.md`](../../spec/LAYERS.md))
+
+Not every ontology here has the same normative weight. They sit on three distinct layers of the protocol stack; treating them identically is the drift that layer discipline exists to prevent.
+
+| Layer | Meaning for ontologies in this directory |
+|---|---|
+| **Layer 1 — Core protocol** | Normative. Terms MUST NOT carry domain-specific semantics. Changes require a protocol version bump and conformance-suite update. |
+| **Layer 2 — Federation pattern** | Informative pattern ontologies that describe how Interego composes with federated data-product architectures. Useful; not required for protocol conformance. |
+| **Layer 3 — Adjacent framework** | Domain-adjacent or cross-framework ontologies that happen to live alongside the protocol in this repository for convenience. They MAY be spun out to separate repositories with separate governance. |
+
+Every namespace below is tagged with its current layer. The transplant test (§2 of [`LAYERS.md`](../../spec/LAYERS.md)) is the discriminator: if an ontology's terms only make sense in a specific domain or stack, it belongs in Layer 3, not Layer 1.
 
 ## Twelve ontologies, twelve prefixes
 
 Interego is a five-core-layer system (substrate → typed context → interrogatives → agent harness → cross-layer alignment) plus seven adjacent-framework ontologies that model how Interego composes with systems the project was designed to interoperate with.
 
-### Core layers (emitted by runtime code)
+### Core layers (Layer 1 — Protocol, normative)
+
+These ontologies define terms that conforming implementations MUST honor. Terms here MUST NOT encode domain-specific meaning; domain semantics belong in a Layer 3 ontology with its own namespace.
 
 | File | Prefix | Kind | Terms | What it defines |
 |---|---|---|---|---|
@@ -18,14 +32,20 @@ Interego is a five-core-layer system (substrate → typed context → interrogat
 | [`harness.ttl`](harness.ttl) | `cgh:` | OWL | 138 | **Agent harness.** Abstract Agent Types (AAT), ODRL policy engine, PROV traces, runtime evaluation with confidence scoring, decision functor, affordance decorators. `cgh:Affordance rdfs:subClassOf hydra:Operation`. |
 | [`alignment.ttl`](alignment.ttl) | `align:` | OWL | 22 | **Cross-layer glue.** Equivalences, SKOS matches, and W3C vocabulary alignments (Hydra, ODRL, ACL, VC 2.0, DCAT, DPROD, OWL-Time) across all twelve namespaces. |
 
-### Federation mesh ontologies
+### Federation mesh ontologies (Layer 2 — Architecture, informative)
+
+Applicability-note ontologies describing patterns that implementations tend to adopt but which the protocol does not mandate. A conformant implementation MAY use different federation shapes and still satisfy Layer 1.
 
 | File | Prefix | Terms | What it defines |
 |---|---|---|---|
 | [`hyprcat.ttl`](hyprcat.ttl) | `hyprcat:` | 15 | **Federated data-product catalog.** Decorates DCAT + DPROD with distributed identity, affordance-bearing distributions, and the three-world federation boundary (UserWorld / AgentWorld / ServiceWorld). `hyprcat:FederatedDistribution` is simultaneously `dcat:Distribution`, `cg:Affordance`, `cgh:Affordance`, and `hydra:Operation`. |
 | [`hypragent.ttl`](hypragent.ttl) | `hypragent:` | 16 | **Agent machinery for HyprCat.** Cross-world delegation via W3C Verifiable Credentials chains, capability typing (canDecryptEnvelope, canPublishContext, canVerifyDelegation, canSubscribe), dispatch-time policy evaluation. `hypragent:Agent` is simultaneously `prov:SoftwareAgent`, `cg:AuthorizedAgent`, and `cgh:Agent`. |
 
-### Adjacent-framework ontologies
+### Adjacent-framework ontologies (Layer 3 — Domain-adjacent, non-normative)
+
+These ontologies live here for convenience while the project is early, but they are conceptually independent of the core protocol. Each one could be spun out to a separate repository with its own governance without affecting conformance to Interego 1.0. None of these are required for protocol conformance; any of them MAY be omitted by an implementation that does not target the domain.
+
+**When to write a new ontology under this section rather than extending a core layer:** if the claim the ontology expresses would not transplant into a different domain with the same semantics (medical research, coding agents, finance, organizational learning), it belongs here, not in `cg:`/`cgh:`/`pgsl:`/`ie:`/`align:`.
 
 | File | Prefix | Terms | What it defines |
 |---|---|---|---|

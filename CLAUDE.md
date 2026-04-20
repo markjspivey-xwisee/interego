@@ -66,6 +66,24 @@ tools/
 
 **Do not invent new `cg:`/`cgh:`/`pgsl:`/`ie:`/`hyprcat:`/`hypragent:`/`hela:`/`sat:`/`cts:`/`olke:`/`amta:` terms in TS code without adding a matching declaration to the corresponding `docs/ns/<prefix>.ttl` file.** CI will block the PR (see `.github/workflows/ontology-lint.yml`). Use existing W3C vocabularies (dcat:, hydra:, prov:, foaf:, etc.) whenever they fit.
 
+### Layering discipline (read before authoring specs, ontologies, or docs)
+
+See [`spec/LAYERS.md`](spec/LAYERS.md). Every artifact in this repository sits on one of three layers:
+
+- **Layer 1 — Protocol** (normative): `cg:`, `cgh:`, `pgsl:`, `ie:`, `align:`; `spec/architecture.md`; `spec/conformance/**`. RFC 2119 language.
+- **Layer 2 — Architecture** (informative patterns): `hyprcat:`, `hypragent:`; applicability notes; `docs/e2ee.md` architecture sections.
+- **Layer 3 — Implementation & Domain** (non-normative): `hela:`, `sat:`, `cts:`, `olke:`, `amta:`; everything under `src/`, `deploy/`, `examples/`; any future domain vocabulary (`code:`, `med:`, `learning:`, ...).
+
+**Five drift triggers — STOP and flag before proceeding if any appears:**
+
+1. **Adding a domain-specific term to a core namespace.** `cg:CommitDescriptor`, `cg:MedicalFacet`, `cg:CodeReview` → No. Domain semantics go in their own namespace (`code:`, `med:`, etc.), not in the Layer 1 core.
+2. **Writing a MUST/SHOULD in a Layer 1 document that names a specific technology.** "Implementations MUST use Solid Notifications" → No. "Implementations MUST provide a subscription mechanism that delivers descriptor-creation events" → Yes. Layer 1 claims are technology-neutral.
+3. **Bundling multiple layers into a single task or PR.** "Build the coding-agent substrate" is actually three things: (a) a Layer 2 applicability note on lifecycle-mirroring, (b) a Layer 3 domain ontology (`code:`), (c) a Layer 3 reference adapter (GitHub App). Split before writing.
+4. **Cross-layer contamination detected in an existing artifact.** A Layer 1 spec importing `ex:` in a normative section, a Layer 2 applicability note depending on a specific implementation repo — open an issue and restructure rather than building on top.
+5. **A new artifact cannot be classified as L1, L2, or L3.** If the layer is ambiguous, the artifact is probably bundling layers. Apply the transplant test: "would this claim still make sense transplanted into a completely different domain or stack?" — yes → L1/L2; no → L3.
+
+These triggers are enforced by the transplant test at review time. Ontology-lint handles the namespace side of trigger #1 for the current list of core/pattern/adjacent prefixes — do not weaken it to let a domain term into `cg:`.
+
 ### E2EE + hypermedia conventions
 
 - Encrypted pod content: use `publish(descriptor, graph, podUrl, { encrypt: { recipients, senderKeyPair } })`. Serialized at `<slug>-graph.envelope.jose.json` with `Content-Type: application/jose+json`.
