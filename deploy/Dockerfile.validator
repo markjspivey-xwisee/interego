@@ -1,0 +1,32 @@
+# ────────────────────────────────────────────────────────────
+#  Interego validator-as-agent service
+#
+#  Layer 3 reference implementation of the Layer 2 "validator as
+#  first-class federated agent" pattern. See spec/LAYERS.md.
+#  Not deployed to the Azure matrix until its rules are wired.
+# ────────────────────────────────────────────────────────────
+FROM node:20-slim AS build
+
+WORKDIR /app
+
+COPY deploy/validator/package.json ./
+RUN npm install
+
+COPY deploy/validator/tsconfig.json ./
+COPY deploy/validator/server.ts ./
+RUN npx tsc
+
+# ────────────────────────────────────────────────────────────
+#  Runtime stage: distroless image running compiled JS
+# ────────────────────────────────────────────────────────────
+FROM gcr.io/distroless/nodejs20-debian12
+
+WORKDIR /app
+
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./
+
+EXPOSE 9090
+
+CMD ["dist/server.js"]
