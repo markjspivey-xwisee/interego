@@ -431,6 +431,50 @@ function stopCSS(): void {
 
 // ── Tool implementations ────────────────────────────────────
 
+/**
+ * Extract cg:revokedIf / cg:revokedBy RevocationCondition blocks from
+ * caller-supplied Turtle graph content. Mirrors the descriptor-side
+ * helper in deploy/mcp-relay/server.ts — same shape so output is
+ * portable between the two paths. Candidate for consolidation into
+ * @interego/core.
+ */
+function extractRevocationConditionsFromContent(turtle: string): Array<{
+  successorQuery: string;
+  evaluationScope?: 'LocalPod' | 'KnownFederation' | 'WebFingerResolvable';
+  onRevocation?: 'MarkInvalid' | 'DowngradeToHypothetical' | 'RequireReconfirmation';
+  revocationIssuer?: IRI;
+}> {
+  const results: ReturnType<typeof extractRevocationConditionsFromContent> = [];
+  const blockRe = /cg:(?:revokedIf|revokedBy)\s*\[([^\]]*)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = blockRe.exec(turtle)) !== null) {
+    const body = m[1] ?? '';
+    const qMatch = body.match(/cg:successorQuery\s+"""([\s\S]*?)"""/)
+      ?? body.match(/cg:successorQuery\s+"([^"]*)"/);
+    if (!qMatch?.[1]) continue;
+    const scopeMatch = body.match(/cg:evaluationScope\s+cg:(\w+)/);
+    const actionMatch = body.match(/cg:onRevocation\s+cg:(\w+)/);
+    const issuerMatch = body.match(/cg:revocationIssuer\s+<([^>]+)>/);
+    const scope = scopeMatch?.[1];
+    const action = actionMatch?.[1];
+    const out: {
+      successorQuery: string;
+      evaluationScope?: 'LocalPod' | 'KnownFederation' | 'WebFingerResolvable';
+      onRevocation?: 'MarkInvalid' | 'DowngradeToHypothetical' | 'RequireReconfirmation';
+      revocationIssuer?: IRI;
+    } = { successorQuery: qMatch[1] };
+    if (scope === 'LocalPod' || scope === 'KnownFederation' || scope === 'WebFingerResolvable') {
+      out.evaluationScope = scope;
+    }
+    if (action === 'MarkInvalid' || action === 'DowngradeToHypothetical' || action === 'RequireReconfirmation') {
+      out.onRevocation = action;
+    }
+    if (issuerMatch) out.revocationIssuer = issuerMatch[1] as IRI;
+    results.push(out);
+  }
+  return results;
+}
+
 async function toolPublishContext(args: {
   graph_iri: string;
   graph_content: string;
@@ -451,6 +495,14 @@ async function toolPublishContext(args: {
   const descId = (args.descriptor_id ?? `urn:cg:${POD_NAME}:${Date.now()}`) as IRI;
   const now = new Date().toISOString();
 
+  // Revocation-condition mirror (L2 — see spec/revocation.md §1). If
+  // the caller's graph content carries cg:revokedIf / cg:revokedBy
+  // blocks, lift them into the cleartext descriptor's SemioticFacet so
+  // federation readers can evaluate without decrypting the payload.
+  // Same extractor shape as deploy/mcp-relay/server.ts — candidate for
+  // consolidation into @interego/core in a follow-up.
+  const revocationConditions = extractRevocationConditionsFromContent(args.graph_content ?? '');
+
   const builder = ContextDescriptor.create(descId)
 .describes(args.graph_iri as IRI)
 .temporal({
@@ -458,11 +510,25 @@ async function toolPublishContext(args: {
       validUntil: args.valid_until,
     })
 .delegatedBy(MY_OWNER_WEBID, MY_AGENT_ID, { endedAt: now })
-.semiotic({
-      modalStatus: (args.modal_status as 'Asserted' | 'Hypothetical') ?? 'Asserted',
-      epistemicConfidence: args.confidence ?? 0.85,
-      groundTruth: (args.modal_status ?? 'Asserted') === 'Asserted',
-    })
+.semiotic((() => {
+      // Modal-truth consistency (spec/architecture.md §5.2.2 normative):
+      //   Asserted       → groundTruth MUST be true
+      //   Counterfactual → groundTruth MUST be false
+      //   Hypothetical   → groundTruth MUST NOT be set (three-valued)
+      // Don't squash Hypothetical into groundTruth=false — that's
+      // Counterfactual, a different modal state.
+      const ms = (args.modal_status as 'Asserted' | 'Hypothetical' | 'Counterfactual') ?? 'Asserted';
+      const base: Record<string, unknown> = {
+        modalStatus: ms,
+        epistemicConfidence: args.confidence ?? 0.85,
+      };
+      if (ms === 'Asserted') base.groundTruth = true;
+      else if (ms === 'Counterfactual') base.groundTruth = false;
+      // else Hypothetical: leave groundTruth undefined
+      if (revocationConditions.length > 0) base.revokedIf = revocationConditions;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return base as any;
+    })())
 .trust({
       trustLevel: 'SelfAsserted',
       issuer: MY_OWNER_WEBID,
