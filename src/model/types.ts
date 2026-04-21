@@ -471,6 +471,12 @@ export interface ContextDescriptorData {
   readonly supersedes?: readonly IRI[];
   readonly validFrom?: string;            // xsd:dateTime (administrative validity)
   readonly validUntil?: string;           // xsd:dateTime
+  /**
+   * Schemas / vocabularies / shapes this descriptor's claim conforms to.
+   * Cleartext-mirrored from dct:conformsTo in the graph content so
+   * federation readers can filter/route by schema without decrypting.
+   */
+  readonly conformsTo?: readonly IRI[];
 }
 
 // ── Peircean Sign Primitive (§2 Semiotic Foundation) ────────

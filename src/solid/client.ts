@@ -182,6 +182,13 @@ function manifestEntryTurtle(
     lines.push(`    cg:validUntil "${descriptor.validUntil}"^^xsd:dateTime ;`);
   }
 
+  // conformsTo (cleartext-mirrored)
+  if (descriptor.conformsTo) {
+    for (const c of descriptor.conformsTo) {
+      lines.push(`    dct:conformsTo <${c}> ;`);
+    }
+  }
+
   // Extract modalStatus from Semiotic facet if present
   const semioticFacet = descriptor.facets.find((f): f is SemioticFacetData => f.type === 'Semiotic');
   if (semioticFacet?.modalStatus) {
@@ -222,6 +229,7 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     validUntil?: string;
     modalStatus?: ModalStatus;
     trustLevel?: TrustLevel;
+    conformsTo?: string[];
   } | null = null;
 
   for (const rawLine of turtle.split('\n')) {
@@ -270,6 +278,12 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     const trustMatch = line.match(/cg:trustLevel\s+cg:(\w+)/);
     if (trustMatch) {
       current.trustLevel = trustMatch[1]! as TrustLevel;
+    }
+
+    const conformsMatch = line.match(/dct:conformsTo\s+<([^>]+)>/);
+    if (conformsMatch) {
+      current.conformsTo = current.conformsTo ?? [];
+      current.conformsTo.push(conformsMatch[1]!);
     }
 
     if (line.endsWith('.')) {
@@ -450,7 +464,7 @@ export async function publish(
       manifestBody = `${existing.trimEnd()}\n\n${newEntry}\n`;
     }
   } else {
-    manifestBody = `${turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
+    manifestBody = `${turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod', 'dct'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
   }
 
   const manifestResp = await fetchFn(manifestUrl, {

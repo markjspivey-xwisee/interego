@@ -964,6 +964,26 @@ Implementations MUST accept explicit `validFrom` / `validUntil` values distinct 
 
 **Future-dated `validFrom` is legal** at the protocol level but SHOULD emit a warning at validation time to surface scheduled-claim patterns for reader awareness. Server clocks MUST be UTC; renderers are responsible for local-time presentation.
 
+#### 5.2.3 Interval-contains discovery: `effective_at` (normative)
+
+Discovery filters MUST distinguish **endpoint filters** (`valid_from` / `valid_until` — "is the descriptor's interval endpoint on this side of T?") from the **interval-contains filter** (`effective_at` — "is T inside the descriptor's validity interval?"). The two are distinct queries and a conformant implementation MUST NOT conflate them.
+
+Given a descriptor with `validFrom = F` and (optionally) `validUntil = U`, and a filter `effective_at = T`:
+
+- Match iff `F ≤ T` AND (`U ≥ T` OR `U` absent).
+- If the descriptor's manifest entry omits `validFrom` or `validUntil`, conformant implementations SHOULD treat the omitted endpoint as "always-started" / "never-ends" respectively — *but* they MUST document this (the reference implementation does).
+
+Manifest writers MUST emit `cg:validFrom` / `cg:validUntil` for every new descriptor so downstream federation readers can compute the interval-contains query without fetching each descriptor body.
+
+#### 5.2.4 Descriptor-level cross-references (normative)
+
+`cg:ContextDescriptor` carries these optional top-level predicates for cross-descriptor relationships:
+
+- `cg:supersedes <iri>` — this descriptor replaces the named prior descriptor.
+- `dct:conformsTo <iri>` — this descriptor's claim conforms to the named schema, vocabulary, or shape.
+
+These MUST be mirrored from the encrypted graph content at publish time (see `normalizePublishInputs` in the reference implementation) and written into both the descriptor Turtle and the manifest entry. Federation readers filter on these without needing to decrypt the payload.
+
 ### 5.3 Zero-Knowledge Proofs
 
 Fiat-Shamir transform for non-interactive proofs:

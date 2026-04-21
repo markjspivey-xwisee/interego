@@ -298,7 +298,11 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const builder = ContextDescriptor.create(descId)
 .describes((args.graph_iri as string) as IRI)
 .temporal({ validFrom: (args.valid_from as string) ?? now, validUntil: args.valid_until as string })
-.delegatedBy(ownerWebId as IRI, agentId as IRI, { endedAt: now })
+.validFrom((args.valid_from as string) ?? now)
+.delegatedBy(ownerWebId as IRI, agentId as IRI, {
+      endedAt: now,
+      derivedFrom: preprocessed.wasDerivedFrom.length > 0 ? preprocessed.wasDerivedFrom : undefined,
+    })
 .semiotic(preprocessed.semiotic)
 .trust({
       trustLevel: 'SelfAsserted',
@@ -310,10 +314,14 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       syncProtocol: 'SolidNotifications',
     })
 .version(1);
+  if (args.valid_until) builder.validUntil(args.valid_until as string);
   // Thread cleartext-mirror relationships from content → descriptor.
   // Keeps federation-queryable links out of the encrypted payload.
   if (preprocessed.supersedes.length > 0) {
     builder.supersedes(...preprocessed.supersedes);
+  }
+  if (preprocessed.conformsTo.length > 0) {
+    builder.conformsTo(...preprocessed.conformsTo);
   }
 
   const descriptor = builder.build();

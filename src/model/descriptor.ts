@@ -37,6 +37,7 @@ export class ContextDescriptor {
   private _facets: ContextFacetData[] = [];
   private _version?: number;
   private _supersedes: IRI[] = [];
+  private _conformsTo: IRI[] = [];
   private _validFrom?: string;
   private _validUntil?: string;
 
@@ -59,6 +60,7 @@ export class ContextDescriptor {
     cd._facets = [...data.facets];
     cd._version = data.version;
     cd._supersedes = data.supersedes ? [...data.supersedes] : [];
+    cd._conformsTo = data.conformsTo ? [...data.conformsTo] : [];
     cd._validFrom = data.validFrom;
     cd._validUntil = data.validUntil;
     return cd;
@@ -78,6 +80,16 @@ export class ContextDescriptor {
 
   supersedes(...iris: IRI[]): this {
     this._supersedes.push(...iris);
+    return this;
+  }
+
+  /**
+   * Declare schemas/vocabularies/shapes this claim conforms to.
+   * Mirrored from dct:conformsTo in graph content during publish so
+   * federation readers can filter by schema without decrypting.
+   */
+  conformsTo(...iris: IRI[]): this {
+    this._conformsTo.push(...iris);
     return this;
   }
 
@@ -169,6 +181,7 @@ export class ContextDescriptor {
     opts?: {
       endedAt?: string;
       role?: AgentRole;
+      derivedFrom?: readonly IRI[];
     },
   ): this {
     // NOTE on the timestamp: `generatedAtTime` is when the agent made
@@ -183,6 +196,9 @@ export class ContextDescriptor {
       wasGeneratedBy: { agent: agentId, endedAt: now },
       wasAttributedTo: ownerWebId,
       generatedAtTime: now,
+      wasDerivedFrom: opts?.derivedFrom && opts.derivedFrom.length > 0
+        ? [...opts.derivedFrom]
+        : undefined,
     });
     this._facets.push({
       type: 'Agent',
@@ -460,6 +476,9 @@ export class ContextDescriptor {
       version: this._version,
       supersedes: this._supersedes.length > 0
         ? Object.freeze([...this._supersedes])
+        : undefined,
+      conformsTo: this._conformsTo.length > 0
+        ? Object.freeze([...this._conformsTo])
         : undefined,
       validFrom: this._validFrom,
       validUntil: this._validUntil,
