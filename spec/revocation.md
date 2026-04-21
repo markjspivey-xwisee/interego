@@ -31,6 +31,17 @@ The architectural principle (spec/architecture.md §5.2.1, normative): any claim
 
 This extension makes revocation conditions first-class, cleartext, and SPARQL-queryable.
 
+**Cleartext-mirror pattern — generalized.** Revocation was the first concrete use of the pattern, but the mirror is not revocation-specific. The reference implementation's `normalizePublishInputs` helper (see [`src/model/publish-preprocess.ts`](../src/model/publish-preprocess.ts)) extracts four classes of cross-descriptor relationship from encrypted graph content and threads them onto the cleartext descriptor at publish time:
+
+| Predicate in content | Mirrored to | Federation-queryable? |
+|---|---|---|
+| `cg:revokedIf` / `cg:revokedBy` | `cg:SemioticFacet.revokedIf` (Proposal B) or `cg:RevocationFacet` (A) | yes |
+| `prov:wasDerivedFrom` | `cg:ProvenanceFacet.wasDerivedFrom` | yes |
+| `cg:supersedes` | descriptor-level `cg:supersedes` | yes (manifest) |
+| `dct:conformsTo` | descriptor-level `dct:conformsTo` + manifest entry | yes (manifest) |
+
+Any future cross-descriptor predicate a reader must reason about without decryption follows the same shape: add the extraction, add the threading, add the manifest emission. The encrypted payload remains the source of truth; the cleartext mirror is a federation-index over it.
+
 ## 2. Shared model (both proposals)
 
 Both proposals use the same `cg:RevocationCondition` structure. This is deliberate — a condition written under one proposal is a blank-node rewrite away from the other. Implementations MUST treat these terms as portable across whichever of A or B is adopted.

@@ -146,6 +146,8 @@ export interface ManifestEntry {
   readonly modalStatus?: ModalStatus;
   /** Trust level from the Trust facet (if present). */
   readonly trustLevel?: TrustLevel;
+  /** Schemas/vocabularies this entry conforms to (cleartext-mirrored from dct:conformsTo). */
+  readonly conformsTo?: readonly string[];
   /**
    * PGSL structural URI (if the content was ingested into the lattice).
    * Same content from different pods produces the same URI —

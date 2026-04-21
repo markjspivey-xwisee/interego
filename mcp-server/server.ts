@@ -264,12 +264,19 @@ const solidFetch: FetchFn = async (url, init) => {
 
 async function ensureCSS(): Promise<void> {
   if (cssReady) return;
-  if (cssUnavailable) throw new Error('CSS marked unavailable this session');
+  // cssUnavailable was previously a one-way latch — once set, the whole
+  // MCP session was poisoned even if CSS recovered. That masked cold
+  // starts and transient network blips. Now it's advisory: we retry on
+  // each call, and fall through to the existing startup logic.
+  if (cssUnavailable) {
+    cssUnavailable = false;
+  }
 
   const homePod = podRegistry.getHome()!;
   const homeUrl = new URL(homePod.url);
 
   // Check if CSS is already running
+  let probeError: unknown = null;
   try {
     const resp = await fetch(homePod.url);
     if (resp.ok || resp.status < 500) {
@@ -278,12 +285,17 @@ async function ensureCSS(): Promise<void> {
       await ensurePod();
       return;
     }
-  } catch { /* not running */ }
+    probeError = new Error(`probe status ${resp.status}`);
+  } catch (err) {
+    probeError = err;
+    log(`CSS probe failed for ${homePod.url}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // Only start local CSS if home pod is localhost
   if (homeUrl.hostname !== 'localhost' && homeUrl.hostname !== '127.0.0.1') {
     cssUnavailable = true;
-    throw new Error(`Cannot reach CSS at ${homePod.url} — remote server must be started independently`);
+    const detail = probeError instanceof Error ? probeError.message : String(probeError ?? 'unknown');
+    throw new Error(`Cannot reach CSS at ${homePod.url} — ${detail}`);
   }
 
   // If the local CSS binary isn't present, skip immediately instead of
@@ -469,7 +481,11 @@ async function toolPublishContext(args: {
       validFrom: args.valid_from ?? now,
       validUntil: args.valid_until,
     })
-.delegatedBy(MY_OWNER_WEBID, MY_AGENT_ID, { endedAt: now })
+.validFrom(args.valid_from ?? now)
+.delegatedBy(MY_OWNER_WEBID, MY_AGENT_ID, {
+      endedAt: now,
+      derivedFrom: preprocessed.wasDerivedFrom.length > 0 ? preprocessed.wasDerivedFrom : undefined,
+    })
 .semiotic(preprocessed.semiotic)
 .trust({
       trustLevel: 'SelfAsserted',
@@ -482,7 +498,9 @@ async function toolPublishContext(args: {
       syncProtocol: 'SolidNotifications',
     })
 .version(1);
+  if (args.valid_until) builder.validUntil(args.valid_until);
   if (preprocessed.supersedes.length > 0) builder.supersedes(...preprocessed.supersedes);
+  if (preprocessed.conformsTo.length > 0) builder.conformsTo(...preprocessed.conformsTo);
 
   const descriptor = builder.build();
   const validation = validate(descriptor);

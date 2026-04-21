@@ -424,6 +424,13 @@ export function toTurtle(
     }
   }
 
+  // conformsTo — cleartext-mirrored from dct:conformsTo in graph content
+  if (descriptor.conformsTo) {
+    for (const c of descriptor.conformsTo) {
+      props.push(`dct:conformsTo ${iri(c)}`);
+    }
+  }
+
   // Described graphs
   for (const g of descriptor.describes) {
     props.push(`cg:describes ${iri(g)}`);
