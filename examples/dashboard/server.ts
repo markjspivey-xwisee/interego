@@ -40,7 +40,15 @@ const PUBLIC_BASE_URL = (process.env['PUBLIC_BASE_URL'] ?? '').replace(/\/?$/, '
 // so the dashboard's `/api/identity/*` endpoint is a server-side proxy.
 const IDENTITY_URL = (process.env['IDENTITY_URL'] ?? '').replace(/\/?$/, '');
 const INDEX_HTML = resolve(__dirname, 'index.html');
-const POLL_INTERVAL = parseInt(process.env['POLL_INTERVAL'] ?? '3000');
+// Default raised from 3000ms → 30000ms (2026-04-21). At 3s cadence with
+// 12 pods the dashboard was hitting CSS's read-write locker with ~480
+// requests/min, exhausting its 6s lock pool and causing genuine user
+// publish/discover calls to time out. 30s is enough cadence for a
+// monitoring dashboard; set POLL_INTERVAL env var explicitly for faster.
+const POLL_INTERVAL = parseInt(process.env['POLL_INTERVAL'] ?? '30000');
+// Cap on how many pods get polled concurrently. Keeps the burst small
+// enough that CSS can service real traffic alongside the dashboard.
+const POLL_CONCURRENCY = parseInt(process.env['POLL_CONCURRENCY'] ?? '2');
 
 // DCR-registered OAuth client at the relay. Registered once on startup;
 // client_id is reused for every dashboard sign-in.
@@ -276,77 +284,69 @@ async function getPodNamesCached(): Promise<string[]> {
 /**
  * Poll all pods and emit changes.
  */
+async function pollOne(name: string): Promise<void> {
+  const podUrl = `${CSS_URL}${name}/`;
+
+  const [registry, descriptors] = await Promise.all([
+    fetchRegistry(podUrl),
+    fetchManifest(podUrl),
+  ]);
+
+  const prev = pods.get(podUrl);
+  const now = new Date().toISOString();
+
+  const state: PodState = {
+    url: podUrl,
+    name,
+    owner: registry ? { webId: registry.webId, name: registry.name } : prev?.owner,
+    agents: registry?.agents ?? prev?.agents ?? [],
+    descriptors,
+    lastSeen: now,
+  };
+
+  for (const d of descriptors) {
+    if (!knownDescriptorUrls.has(d.url)) {
+      knownDescriptorUrls.add(d.url);
+      if (prev) {
+        broadcast({ type: 'descriptor_added', pod: name, data: d, timestamp: now });
+        log(`New descriptor on ${name}: ${d.url}`);
+      }
+    }
+  }
+
+  if (prev) {
+    const prevUrls = new Set(prev.descriptors.map(d => d.url));
+    const currUrls = new Set(descriptors.map(d => d.url));
+    for (const url of prevUrls) {
+      if (!currUrls.has(url)) {
+        knownDescriptorUrls.delete(url);
+        broadcast({ type: 'descriptor_removed', pod: name, data: { url }, timestamp: now });
+      }
+    }
+    const prevAgentIds = new Set(prev.agents.map(a => a.id));
+    for (const a of state.agents) {
+      if (!prevAgentIds.has(a.id)) {
+        broadcast({ type: 'agent_registered', pod: name, data: a, timestamp: now });
+        log(`New agent on ${name}: ${a.id}`);
+      }
+    }
+  }
+
+  pods.set(podUrl, state);
+}
+
 async function pollPods(): Promise<void> {
   const podNames = await getPodNamesCached();
 
-  for (const name of podNames) {
-    const podUrl = `${CSS_URL}${name}/`;
-
-    const [registry, descriptors] = await Promise.all([
-      fetchRegistry(podUrl),
-      fetchManifest(podUrl),
-    ]);
-
-    const prev = pods.get(podUrl);
-    const now = new Date().toISOString();
-
-    const state: PodState = {
-      url: podUrl,
-      name,
-      owner: registry ? { webId: registry.webId, name: registry.name } : prev?.owner,
-      agents: registry?.agents ?? prev?.agents ?? [],
-      descriptors,
-      lastSeen: now,
-    };
-
-    // Detect new descriptors
-    for (const d of descriptors) {
-      if (!knownDescriptorUrls.has(d.url)) {
-        knownDescriptorUrls.add(d.url);
-        if (prev) { // Only emit if we've seen this pod before (avoid flood on startup)
-          broadcast({
-            type: 'descriptor_added',
-            pod: name,
-            data: d,
-            timestamp: now,
-          });
-          log(`New descriptor on ${name}: ${d.url}`);
-        }
-      }
-    }
-
-    // Detect removed descriptors
-    if (prev) {
-      const prevUrls = new Set(prev.descriptors.map(d => d.url));
-      const currUrls = new Set(descriptors.map(d => d.url));
-      for (const url of prevUrls) {
-        if (!currUrls.has(url)) {
-          knownDescriptorUrls.delete(url);
-          broadcast({
-            type: 'descriptor_removed',
-            pod: name,
-            data: { url },
-            timestamp: now,
-          });
-        }
-      }
-
-      // Detect new agents
-      const prevAgentIds = new Set(prev.agents.map(a => a.id));
-      for (const a of state.agents) {
-        if (!prevAgentIds.has(a.id)) {
-          broadcast({
-            type: 'agent_registered',
-            pod: name,
-            data: a,
-            timestamp: now,
-          });
-          log(`New agent on ${name}: ${a.id}`);
-        }
-      }
-    }
-
-    pods.set(podUrl, state);
+  // Poll in chunks of POLL_CONCURRENCY so we don't burst every pod at
+  // once — CSS's read-write locker only has a small pool of active
+  // slots, and 12+ concurrent reads against /{user}/agents exhausts it
+  // within the 6s lock expiry (see commit history for the incident).
+  for (let i = 0; i < podNames.length; i += POLL_CONCURRENCY) {
+    const batch = podNames.slice(i, i + POLL_CONCURRENCY);
+    await Promise.all(
+      batch.map(name => pollOne(name).catch(err => log(`pollOne(${name}) failed: ${(err as Error).message}`))),
+    );
   }
 
   // Broadcast full state update
