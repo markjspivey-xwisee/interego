@@ -25,6 +25,17 @@ export type {
 } from './types.js';
 export { AGENT_REGISTRY_PATH, CREDENTIALS_PATH } from './types.js';
 
+// ── Shape discovery (spec §6.5b) ─────────────────────────────
+export {
+  resolveShape,
+  listPodShapes,
+  parseShapeIndex,
+  shapeIndexTurtle,
+  POD_SHAPES_PATH,
+  POD_SHAPES_INDEX_PATH,
+} from './shapes.js';
+export type { ResolvedShape, ShapeIndexEntry } from './shapes.js';
+
 // ── Pod Directory ───────────────────────────────────────────
 export {
   podDirectoryToTurtle,

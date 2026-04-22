@@ -8,6 +8,99 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-04-22 — protocol streamlining pass
+
+Full-stack audit addressing real gaps surfaced by the "is it
+streamlined / dogfooded / composite enough?" self-critique.
+Changes layer across protocol → ontology → implementation →
+tests → demos.
+
+### Added (L1 — Protocol, `spec/architecture.md`)
+
+- **§6.5a Multi-affordance descriptors and runtime resolution
+  (normative).** A descriptor MAY carry multiple `cg:affordance`
+  blocks with distinct `cg:action` values. Defines canonical
+  action vocabulary (canDecrypt / canFetchPayload / canAudit /
+  canPay / canVerify / canCompose), cross-pod affordance rules,
+  and the runtime-resolution pattern that turns HATEOAS controls
+  into callable tools without harness pre-registration.
+- **§6.5b Shape discovery (normative).** Convention for hosting
+  shapes at `<pod>/schemas/<shape-id>.ttl` + optional index at
+  `<pod>/schemas/index.ttl`. Normative rules for consumers
+  distinguishing nominal vs structural conformance when the
+  schema URL is unreachable.
+- **§6.5c `wasDerivedFrom` consistency (normative).** When a
+  descriptor carries `prov:wasDerivedFrom` both inside
+  `ProvenanceFacet` and at the top level, the two sets MUST be
+  consistent. Divergence is malformed and SHOULD emit a
+  diagnostic.
+
+### Added (L1 — Ontology, `docs/ns/cg.ttl`)
+
+- **Four canonical affordance actions:** `cg:canAudit`,
+  `cg:canPay`, `cg:canVerify`, `cg:canCompose`. Each declared as
+  `cg:Affordance` with rdfs:label + rdfs:comment per lint
+  conventions.
+
+### Added (L3 — Implementation, `src/solid/shapes.ts`)
+
+- **Shape-discovery helpers.** `resolveShape(url)` returns a
+  `ResolvedShape { body, status, resolved }` so callers
+  distinguish network-failure from HTTP-error from success.
+  `listPodShapes(podUrl)` reads the index if present.
+  `shapeIndexTurtle(entries)` emits the canonical index format.
+  Exported from `src/solid/index.ts`.
+- **`getDefaultFetch` promoted** from module-private to exported
+  so sibling solid/ modules share the same default fetch.
+
+### Added (Tests, `tests/lattice-laws.test.ts`)
+
+- **Seven lattice-law tests** pinning the composition operators'
+  algebraic properties: idempotence (type-set level),
+  commutativity, associativity, absorption. Tests recognize the
+  intentional design decision that Interego union preserves
+  multi-facet siblings (modal polyphony) — classical idempotence
+  holds at the facet-TYPE-SET level rather than multiset, and
+  the test comments document why.
+
+### Added (Demos, `examples/_lib.mjs`)
+
+- **Shared helpers module** eliminating ~150 lines of copy-paste
+  across 22+ demo scripts: fetch/put/pool, manifest parse,
+  descriptor parse, mini-SHACL shape parse + validate,
+  `buildDescriptorTurtle` dogfooding `ContextDescriptor.create()`
+  + `toTurtle()`, `publishDescriptorTurtle` as the canonical
+  publish path.
+- **`demo-accumulation-emergence-v2.mjs`** — demonstrates the
+  new pattern. Same semantics as v1 in ~65 lines (v1 was ~125).
+  All descriptor authoring via the library builder.
+
+### Rationale (dogfooding path)
+
+Protocol-first: spec gets normative sections for affordance
+runtime resolution and shape discovery (neither was
+normatively documented before). Ontology absorbs the canonical
+action vocabulary. Implementation adds the shape-discovery
+helpers the spec now requires. Tests pin the lattice algebra
+normatively. Demos migrate to the canonical authoring path.
+Each layer's changes enable the next; nothing is left hanging.
+
+### Skipped this pass (legitimate architectural debates)
+
+- **Modal-status promotion to descriptor top level** — the
+  Peircean Semiotic facet is the right home; promoting it would
+  flatten the interpretant-lens abstraction. Keeping it inside
+  `SemioticFacet`.
+- **issuer / attester / wasAttributedTo unification** — these
+  have legitimately distinct semantics (trust vs provenance vs
+  attestation). Kept separate; applicability notes remain a
+  future docs task.
+- **Spec-as-descriptor bootstrap** — genuinely cool but requires
+  meta-shape infrastructure. Tabled until there's a second
+  implementation to co-validate against.
+
+---
+
 ## 2026-04-21 / 2026-04-22 session
 
 Trust substrate + monetization primitives landed. 25 commits

@@ -59,7 +59,7 @@ function slugFromIri(iri: string): string {
   return encodeURIComponent(last);
 }
 
-function getDefaultFetch(): FetchFn {
+export function getDefaultFetch(): FetchFn {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (typeof globalThis !== 'undefined' && typeof (globalThis as Record<string, unknown>)['fetch'] === 'function') {
     return (globalThis as Record<string, unknown>)['fetch'] as FetchFn;

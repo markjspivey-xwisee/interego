@@ -1120,6 +1120,110 @@ from the top-level index) extracts `{ accessURL, mediaType, encrypted,
 encryptionAlgorithm }` from any descriptor Turtle so library consumers
 and MCP tools follow the link the same way.
 
+### 6.5a Multi-affordance descriptors and runtime resolution (normative)
+
+A descriptor MAY carry multiple `cg:affordance` blocks with distinct
+`cg:action` values. Each is an independent HATEOAS control; consumers
+resolve affordances by `cg:action` and invoke each independently.
+
+**Normative rules:**
+
+- Affordances MUST declare a `cg:action` IRI. Implementations MUST NOT
+  assume any default action; `canDecrypt` was the default for the
+  payload-link case in §6.4 and remains the default only there.
+- Affordances MUST declare either `hydra:method` + `hydra:target` (for
+  HTTP-invocable controls) OR `dcat:accessURL` (for passive data access).
+  When both are present they MUST agree on the URL.
+- The action vocabulary is OPEN. Canonical values that SHOULD be
+  recognized by all implementations:
+  - `cg:canDecrypt` — fetch the encrypted-graph envelope (covers §6.4)
+  - `cg:canFetchPayload` — fetch a plaintext payload
+  - `cg:canAudit` — invoke an audit over the descriptor's target
+  - `cg:canPay` — pay for the resource (x402-compatible)
+  - `cg:canVerify` — invoke signature / proof verification
+  - `cg:canCompose` — apply a composition operator
+  Domain-specific actions use their own namespace (e.g., `cap:`, `med:`).
+- Multiple affordances on the same descriptor MUST have distinct
+  `cg:action` values OR distinct `hydra:target` URLs. Implementations
+  MAY reject descriptors that declare two affordances with identical
+  `(action, target)` pairs as malformed.
+- Affordances MAY cross pod boundaries — `hydra:target` is a URL,
+  not required to be on the descriptor's own pod.
+- A consumer that cannot satisfy an affordance's preconditions (missing
+  payment, wrong content-type, unreachable host) MUST NOT mark the
+  descriptor itself invalid; only THAT affordance is unavailable.
+
+**Runtime resolution pattern (informative reference):**
+
+1. Consumer walks the manifest, enumerates descriptors.
+2. For each descriptor, parses every `cg:affordance` block.
+3. Groups by `cg:action` to find available capabilities.
+4. For a chosen action, constructs the HTTP request from
+   `hydra:method` + `hydra:target`; supplies any additional headers
+   (auth, X-Payment for x402, Accept negotiation).
+5. Publishes the invocation result as a new descriptor citing the
+   source affordance descriptor via `prov:wasDerivedFrom` so the
+   trust chain walks back to the capability declaration.
+
+This closes the declarative/imperative gap: HATEOAS controls become
+callable tools at runtime without the consumer's harness
+pre-registering them. See
+[`examples/affordance-bridge.mjs`](../examples/affordance-bridge.mjs)
+for a reference implementation.
+
+### 6.5b Shape discovery (normative)
+
+Descriptors carry `dct:conformsTo <schema-URL>` to declare semantic
+conformance. For interoperability:
+
+- The schema URL MUST resolve via HTTPS when the schema is intended
+  for federation use. A `conformsTo` pointing at an unreachable URL
+  is nominal-only — consumers MUST label validations against that
+  schema as "nominal, not structurally enforced."
+- Implementations SHOULD publish shapes they produce at stable URLs
+  under a `schemas/` path on their pod (e.g.,
+  `<pod>/schemas/<shape-id>.ttl`). This is a convention, not a
+  protocol requirement; any reachable URL works.
+- A pod MAY publish an index descriptor at a well-known location
+  (SUGGESTED: `<pod>/schemas/index.ttl`) whose graph content
+  enumerates the shapes it hosts plus brief descriptions. Consumers
+  that need to browse available shapes discover them through the
+  index without walking the full manifest.
+- Shape evolution uses the standard supersession model: a new
+  shape version is a new descriptor; the new shape's descriptor
+  MAY declare `cg:supersedes` over the older shape's descriptor
+  so consumers walking the chain find the latest version.
+
+Consumers validating a descriptor against a `dct:conformsTo` target:
+
+1. Dereference the schema URL. If unreachable, alignment is
+   nominal — record the limitation and proceed.
+2. Parse the shape (Turtle SHACL is the interchange format).
+3. Apply constraints to the descriptor's cleartext fields.
+   Payload-level fields (inside encrypted graph envelopes) are
+   NOT accessible to shape validation unless the consumer has
+   decryption authority; the shape SHOULD constrain only the
+   descriptor layer.
+
+### 6.5c `wasDerivedFrom` consistency (normative)
+
+`prov:wasDerivedFrom` is an indicator of derivation provenance.
+Where it MAY appear on both a `cg:ProvenanceFacet` AND at descriptor
+top-level (as a result of the cleartext-mirror pattern in §5.2.4),
+the two sets MUST be consistent:
+
+- Every IRI in the facet-level array MUST also appear at the
+  descriptor level.
+- Every IRI at the descriptor level MUST appear in the facet-level
+  array (unless the descriptor has no ProvenanceFacet, in which
+  case descriptor-level values are the sole record).
+- If an implementation reads both and they disagree, it MUST
+  treat the descriptor as malformed and SHOULD emit a diagnostic.
+
+Rationale: the two locations exist for different consumer needs
+(facet-level for PROV-O walkers; descriptor-level for federation
+queries that don't decrypt the payload). Divergence is always a bug.
+
 ### 6.5 Per-surface agent identity
 
 Each surface a user operates from (Claude Code VS Code, Claude Desktop,

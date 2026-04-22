@@ -657,6 +657,22 @@ cg:canDecrypt a cg:Affordance ;
     rdfs:label "Can Decrypt" ;
     rdfs:comment "The declared graph payload is encrypted; clients whose X25519 key is in the envelope's recipient list can decrypt locally. The cg:encryptionAlgorithm on the dcat:Distribution tells clients which KDF / AEAD pair to use. Only present when the Distribution is encrypted.".
 
+cg:canAudit a cg:Affordance ;
+    rdfs:label "Can Audit" ;
+    rdfs:comment "This endpoint accepts an audit invocation targeting a descriptor (or descriptor set). Consumers GET / POST to hydra:target and receive an audit-result-v1-conforming response. Chained with the semantic-alignment auditor's recursive meta-audit pattern — invoking canAudit on an audit descriptor produces a meta-audit.".
+
+cg:canPay a cg:Affordance ;
+    rdfs:label "Can Pay" ;
+    rdfs:comment "The declared resource is behind an x402-style payment challenge. Consumers receive 402 on initial GET with payment requirements (amount, asset, recipient, nonce, expiration); sign an authorization per §6.5a and retry with an X-Payment header. Settlement is out-of-band via the declared facilitator (Base USDC for production x402).".
+
+cg:canVerify a cg:Affordance ;
+    rdfs:label "Can Verify" ;
+    rdfs:comment "This endpoint verifies a signature, proof, or attestation. For ERC-8004 T1+ attestations, consumers POST the signed Turtle + expected signer address; the endpoint recovers the signer and returns { valid, recovered }. Works uniformly for EIP-191, EIP-712, and ECDSA recovery paths.".
+
+cg:canCompose a cg:Affordance ;
+    rdfs:label "Can Compose" ;
+    rdfs:comment "This endpoint applies a composition operator (union / intersection / restriction / override per §3.4) to operand descriptors and returns the composed descriptor. The cg:compositionOp query parameter selects the operator; operand IRIs are supplied via repeated cg:operand parameters.".
+
 # ── Identity / Auth-methods classes (pod-resident) ────────────
 
 cg:AuthMethods a owl:Class ;

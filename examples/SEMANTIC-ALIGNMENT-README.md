@@ -18,6 +18,17 @@ L6  continuous monitoring ──────────────────
 ┴─  cross-pod boundary ─────────────────────  cross-pod-demo + cross-pod-audit
 ```
 
+## Shared helpers
+
+**`_lib.mjs`** — zero-dep shared module. All new demos should import from here:
+- `POD`, `POD_B`, `MANIFEST_URL` — pod constants
+- `fetchText`, `putText`, `fetchPool` — HTTP helpers (pool = parallel-with-bounded-concurrency)
+- `parseManifestEntries`, `parseDescriptor`, `parseShape`, `validateAgainstShape` — Turtle parsing + mini-SHACL
+- `buildDescriptorTurtle(...)` — dogfoods `ContextDescriptor.create()...build()` + `toTurtle()` from the core library; this is the canonical authoring path
+- `publishDescriptorTurtle(url, graphIri, ttl)` — PUT + manifest-append
+
+Older demos (pre-2026-04-22) hand-rolled their own fetch/parse/publish. New demos like [`demo-accumulation-emergence-v2.mjs`](demo-accumulation-emergence-v2.mjs) use `_lib.mjs` and are ~50% shorter.
+
 ## Script index
 
 ### Setup / one-shot publishers (run once)
