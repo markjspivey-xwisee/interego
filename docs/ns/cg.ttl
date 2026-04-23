@@ -88,8 +88,34 @@ cg:AgentFacet a owl:Class ;
 cg:AccessControlFacet a owl:Class ;
     rdfs:subClassOf cg:ContextFacet ;
     rdfs:label "Access Control Facet" ;
-    rdfs:comment "Access control authorizations aligned with W3C WAC (Web Access Control). Declares who can Read, Write, Append, or Control the annotated graphs." ;
+    rdfs:comment "Access control authorizations. Supports two modes in the same facet: (a) W3C WAC-shaped identity-based authorizations (who can Read, Write, Append, or Control) via acl:Authorization; and (b) attribute-based policy references via cg:policyRef → cg:AccessControlPolicy. Both modes coexist so deployments can migrate from ACL to ABAC incrementally." ;
     rdfs:seeAlso acl:Authorization ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:AccessControlPolicy a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Access Control Policy" ;
+    rdfs:comment "An attribute-based access-control policy, expressed as a first-class context descriptor. A policy carries: (a) cg:policyPredicate — a SHACL shape the subject's attribute graph must satisfy; (b) cg:governedAction — the action (affordance / operation) the policy governs; (c) cg:deonticMode — one of cg:Permit, cg:Deny, cg:Duty; (d) optional cg:policyDuty — obligations to fulfil when Duty mode matches. Attribute sources for the subject can span the federation — the evaluation pattern for that resolution is specified by the abac: L2 ontology, but the structural primitives live here at L1 so that any implementation understands the same policy shape." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:DeonticMode a owl:Class ;
+    rdfs:label "Deontic Mode" ;
+    rdfs:comment "Modality of a policy rule: Permit, Deny, or Duty. Aligned with ODRL deontic semantics (odrl:Permission / odrl:Prohibition / odrl:Duty) so policies are interoperable with ODRL expressions, without requiring the full ODRL vocabulary as a runtime dependency." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:Permit a cg:DeonticMode ;
+    rdfs:label "Permit" ;
+    rdfs:comment "The policy authorizes the governed action when its predicate is satisfied." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:Deny a cg:DeonticMode ;
+    rdfs:label "Deny" ;
+    rdfs:comment "The policy forbids the governed action when its predicate is satisfied. Deny overrides Permit in composition." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:Duty a cg:DeonticMode ;
+    rdfs:label "Duty" ;
+    rdfs:comment "The policy attaches an obligation that MUST be fulfilled alongside the governed action when the predicate is satisfied. Duties accumulate across matching rules." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 cg:SemioticFacet a owl:Class ;
@@ -283,6 +309,42 @@ cg:delegatedBy a owl:ObjectProperty ;
 cg:scope a owl:DatatypeProperty ;
     rdfs:label "scope" ;
     rdfs:comment "Delegation scope: ReadWrite, ReadOnly, PublishOnly, or DiscoverOnly." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+# ── Access Control / Policy properties ───────────────────────
+
+cg:policyRef a owl:ObjectProperty ;
+    rdfs:label "policy reference" ;
+    rdfs:comment "Links an AccessControlFacet to one or more AccessControlPolicy descriptors that govern access to the described graph. Multiple policies compose per the deonticMode rules (Deny overrides Permit; Duties accumulate)." ;
+    rdfs:domain cg:AccessControlFacet ;
+    rdfs:range cg:AccessControlPolicy ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:policyPredicate a owl:ObjectProperty ;
+    rdfs:label "policy predicate" ;
+    rdfs:comment "A SHACL NodeShape that the subject's attribute graph MUST satisfy for the policy to apply. Attributes can be sourced across the federation — the resolution pattern is specified by the abac: L2 ontology." ;
+    rdfs:domain cg:AccessControlPolicy ;
+    rdfs:range sh:NodeShape ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:governedAction a owl:ObjectProperty ;
+    rdfs:label "governed action" ;
+    rdfs:comment "The action (affordance or operation) this policy governs. Typically an IRI for a cg:Affordance, hydra:Operation, or a domain-level action (e.g. code:merge, hr:approve)." ;
+    rdfs:domain cg:AccessControlPolicy ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:deonticMode a owl:ObjectProperty ;
+    rdfs:label "deontic mode" ;
+    rdfs:comment "The policy's modality: cg:Permit, cg:Deny, or cg:Duty. See cg:DeonticMode." ;
+    rdfs:domain cg:AccessControlPolicy ;
+    rdfs:range cg:DeonticMode ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:policyDuty a owl:DatatypeProperty ;
+    rdfs:label "policy duty" ;
+    rdfs:comment "A human-readable obligation attached to a Duty-mode policy. Multiple duties accumulate. Interoperability with ODRL odrl:duty is expected at the evaluator layer." ;
+    rdfs:domain cg:AccessControlPolicy ;
     rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 

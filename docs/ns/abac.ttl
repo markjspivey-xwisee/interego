@@ -1,0 +1,140 @@
+@prefix abac: <https://markjspivey-xwisee.github.io/interego/ns/abac#> .
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
+@prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════
+#  abac: — Attribute-Based Access Control pattern (L2)
+# ══════════════════════════════════════════════════════════════
+#
+#  The L1 core (`cg:`) declares what a policy IS: a first-class
+#  context descriptor carrying a SHACL predicate, a governed
+#  action, a deontic mode, and optional duties. That structural
+#  claim lives at L1 because every implementation must understand
+#  the same policy shape.
+#
+#  This ontology (L2) declares the EVALUATION PATTERN: how a PDP
+#  (Policy Decision Point) resolves attributes for a subject,
+#  evaluates the policy's SHACL predicate against the resolved
+#  graph, caches the decision, and records an audit trail. None
+#  of this is protocol-normative; it is one coherent pattern
+#  among possible implementations, verified by the reference
+#  runtime in `src/abac/`.
+#
+#  Key design points (by way of positioning, not claim):
+#
+#    - An `abac:Evaluator` is a stateless function from
+#      (policy, subject, resource, env) → decision.
+#    - Attributes come from multiple sources — the subject's own
+#      pod, peer pods' attestations (e.g. `amta:` trust axes),
+#      cited descriptors — so an `abac:AttributeResolver`
+#      federates the attribute graph at evaluation time.
+#    - A decision is itself a context descriptor
+#      (`abac:EvaluationRecord`), so the audit trail is
+#      first-class and composable like any other typed context.
+#    - Caching lives on `cg:TrustFacet`-shaped attestations,
+#      which lets repeat decisions short-circuit without losing
+#      verifiability — the attestation carries its own issuer +
+#      validity window, so a stale cache becomes a verifiable
+#      stale-attestation rather than an invisible bug.
+
+<https://markjspivey-xwisee.github.io/interego/ns/abac>
+    a owl:Ontology ;
+    dct:title "abac: — ABAC evaluation pattern" ;
+    dct:description "L2 pattern ontology for attribute-based access-control evaluation on top of cg:AccessControlPolicy descriptors. Specifies evaluator, attribute resolver, decision cache, and audit record as constructions over L1 primitives." ;
+    vann:preferredNamespacePrefix "abac" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/abac#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+
+# ── Classes ─────────────────────────────────────────────────
+
+abac:Evaluator a owl:Class ;
+    rdfs:label "Policy Evaluator" ;
+    rdfs:comment "A stateless function that maps (policy, subject, resource, environment) to a decision. Constructed from a policy descriptor + a context — both L1 primitives — so this class is the pattern-level naming of a computation grounded in L1." ;
+    cg:constructedFrom ( cg:AccessControlPolicy abac:PolicyContext ) .
+
+abac:PolicyContext a owl:Class ;
+    rdfs:label "Policy Evaluation Context" ;
+    rdfs:comment "The ambient state for one policy evaluation: the subject's attribute graph, the resource being accessed, the environmental facets (time, federation origin, etc.), and any pre-resolved attestations. Constructed from the seven L1 facets of the invoking request." ;
+    cg:constructedFrom ( cg:AgentFacet cg:TrustFacet cg:SemioticFacet cg:TemporalFacet cg:FederationFacet ) .
+
+abac:AttributeResolver a owl:Class ;
+    rdfs:label "Attribute Resolver" ;
+    rdfs:comment "Builds the subject's attribute graph by aggregating facets from: the subject's own descriptor(s), peer-issued attestations cited via provenance, and any trust attestations (e.g. amta:TrustAttestation) reachable from the subject. A natural transformation from a subject IRI to an attribute graph, grounded in the facet lattice." ;
+    cg:constructedFrom ( cg:AgentFacet cg:ProvenanceFacet cg:TrustFacet ) .
+
+abac:DecisionCache a owl:Class ;
+    rdfs:label "Decision Cache" ;
+    rdfs:comment "Short-circuits repeat evaluations. A cached decision is stored as a cg:TrustFacet-shaped attestation — the issuer is the evaluator, the validity window is explicit, and the attestation is verifiable. A stale cache entry therefore becomes a verifiable stale attestation rather than silent drift." ;
+    cg:constructedFrom ( cg:TrustFacet cg:TemporalFacet ) .
+
+abac:EvaluationRecord a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Policy Evaluation Record" ;
+    rdfs:comment "An auditable record of one policy evaluation: inputs, decision, duties, matched policies, timestamp. As a cg:ContextDescriptor it composes with the rest of the system (you can publish it, cite it, validate it, query it) — the audit trail IS linked data." .
+
+# ── Verdict individuals ─────────────────────────────────────
+
+abac:Allowed a owl:NamedIndividual ;
+    rdfs:label "Allowed" ;
+    rdfs:comment "Evaluation result: the governed action MAY proceed. Possibly with duties." .
+
+abac:Denied a owl:NamedIndividual ;
+    rdfs:label "Denied" ;
+    rdfs:comment "Evaluation result: the governed action MUST NOT proceed." .
+
+abac:Indeterminate a owl:NamedIndividual ;
+    rdfs:label "Indeterminate" ;
+    rdfs:comment "Evaluation result: insufficient attribute information to decide. Under the open-world assumption at the federation layer, indeterminate is distinct from denied." .
+
+# ── Properties ──────────────────────────────────────────────
+
+abac:resolvedAttributes a owl:ObjectProperty ;
+    rdfs:label "resolved attributes" ;
+    rdfs:comment "The attribute graph resolved for one evaluation, as a set of facet IRIs." ;
+    rdfs:domain abac:PolicyContext .
+
+abac:evaluatedPolicy a owl:ObjectProperty ;
+    rdfs:label "evaluated policy" ;
+    rdfs:comment "The cg:AccessControlPolicy that an evaluation record evaluated." ;
+    rdfs:domain abac:EvaluationRecord ;
+    rdfs:range cg:AccessControlPolicy .
+
+abac:verdict a owl:ObjectProperty ;
+    rdfs:label "verdict" ;
+    rdfs:comment "The decision: abac:Allowed, abac:Denied, or abac:Indeterminate." ;
+    rdfs:domain abac:EvaluationRecord .
+
+abac:matchedRule a owl:ObjectProperty ;
+    rdfs:label "matched rule" ;
+    rdfs:comment "A policy rule that matched during evaluation; used in composed (multi-policy) decisions for traceability." ;
+    rdfs:domain abac:EvaluationRecord ;
+    rdfs:range cg:AccessControlPolicy .
+
+abac:decisionAt a owl:DatatypeProperty ;
+    rdfs:label "decided at" ;
+    rdfs:comment "Instant of the decision. Enables cache validity reasoning." ;
+    rdfs:domain abac:EvaluationRecord ;
+    rdfs:range xsd:dateTime .
+
+abac:cacheValidUntil a owl:DatatypeProperty ;
+    rdfs:label "cache valid until" ;
+    rdfs:comment "Upper bound on when this decision's cached form remains valid. After this instant, re-evaluation is required." ;
+    rdfs:domain abac:DecisionCache ;
+    rdfs:range xsd:dateTime .
+
+# ── Alignments ──────────────────────────────────────────────
+
+abac:EvaluationRecord rdfs:seeAlso cg:TrustFacet ;
+    rdfs:comment "An evaluation record carries the same structural role as a trust attestation — a verifiable claim by an issuer (here, the evaluator) about a subject at a moment in time. Both compose via the same lattice operators." .
+
+abac:AttributeResolver rdfs:seeAlso amta:Attestation ;
+    rdfs:comment "Multi-axis trust attestations (amta:) are a common attribute source for the resolver: a subject's 'reputation-on-axis-X' attribute is the aggregate of attestations that peer agents have issued on that axis. Resolution is cross-pod." .

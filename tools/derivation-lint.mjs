@@ -33,6 +33,8 @@ const GROUNDING_PREFIXES = new Set([
 const L2_L3_FILES = [
   'sat.ttl', 'hela.ttl', 'cts.ttl', 'olke.ttl', 'amta.ttl',
   'hyprcat.ttl', 'hypragent.ttl',
+  // L2 pattern ontologies
+  'abac.ttl',
   // Domain ontologies (L3)
   'code.ttl',
 ];

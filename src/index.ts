@@ -719,3 +719,25 @@ export type {
   Connector,
   SyncState,
 } from './connectors/index.js';
+
+// ── ABAC (attribute-based access control) ───────────────────
+export {
+  evaluate as evaluateAbac,
+  evaluateSingle as evaluateAbacPolicy,
+  validateAgainstShape as validateAbacShape,
+  resolveAttributes,
+  extractAttribute,
+  createDecisionCache,
+  defaultValidUntil,
+} from './abac/index.js';
+export type {
+  AttributeGraph,
+  PolicyContext as AbacPolicyContext,
+  PolicyDecision as AbacPolicyDecision,
+  PolicyPredicateShape,
+  PredicateConstraint,
+  AbacVerdict,
+  DecisionCacheEntry,
+  PolicyRegistry,
+  DecisionCache,
+} from './abac/index.js';

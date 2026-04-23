@@ -61,18 +61,19 @@ tools/
 - **HyprAgent** ([`hypragent.ttl`](docs/ns/hypragent.ttl)) — agent machinery for HyprCat; cross-world delegation; capability typing
 - **OLKE** ([`olke.ttl`](docs/ns/olke.ttl)) — Organizational Learning & Knowledge Evolution (Tacit → Articulate → Collective → Institutional)
 - **AMTA** ([`amta.ttl`](docs/ns/amta.ttl)) — Agent-Mediated Trust Attestation (multi-axis ratings)
+- **abac** ([`abac.ttl`](docs/ns/abac.ttl)) — L2 attribute-based-access-control evaluation pattern. Specifies `Evaluator`, `AttributeResolver`, `DecisionCache`, `PolicyContext`, `EvaluationRecord` as constructions over L1 primitives. Reference runtime in [`src/abac/`](src/abac/).
 - **code** ([`code.ttl`](docs/ns/code.ttl)) — L3 domain ontology for source-code artifacts (Repository, Commit, Branch, PullRequest, Review, Defect, TestRun, BuildResult). Commits are `pgsl:Fragment`; branches are `cg:ParadigmSet`; reviews `cg:constructedFrom (cg:SemioticFacet cg:ProvenanceFacet)`. First domain-specific L3 ontology added to the repo — demonstrates that a non-trivial domain can be expressed without new L1 primitives.
 
 ### Ontology hygiene
 
-**Do not invent new `cg:`/`cgh:`/`pgsl:`/`ie:`/`hyprcat:`/`hypragent:`/`hela:`/`sat:`/`cts:`/`olke:`/`amta:`/`code:` terms in TS code without adding a matching declaration to the corresponding `docs/ns/<prefix>.ttl` file.** CI will block the PR (see `.github/workflows/ontology-lint.yml`). Use existing W3C vocabularies (dcat:, hydra:, prov:, foaf:, etc.) whenever they fit.
+**Do not invent new `cg:`/`cgh:`/`pgsl:`/`ie:`/`hyprcat:`/`hypragent:`/`hela:`/`sat:`/`cts:`/`olke:`/`amta:`/`abac:`/`code:` terms in TS code without adding a matching declaration to the corresponding `docs/ns/<prefix>.ttl` file.** CI will block the PR (see `.github/workflows/ontology-lint.yml`). Use existing W3C vocabularies (dcat:, hydra:, prov:, foaf:, etc.) whenever they fit.
 
 ### Layering discipline (read before authoring specs, ontologies, or docs)
 
 See [`spec/LAYERS.md`](spec/LAYERS.md). Every artifact in this repository sits on one of three layers:
 
 - **Layer 1 — Protocol** (normative): `cg:`, `cgh:`, `pgsl:`, `ie:`, `align:`; `spec/architecture.md`; `spec/conformance/**`. RFC 2119 language.
-- **Layer 2 — Architecture** (informative patterns): `hyprcat:`, `hypragent:`; applicability notes; `docs/e2ee.md` architecture sections.
+- **Layer 2 — Architecture** (informative patterns): `hyprcat:`, `hypragent:`, `abac:`; applicability notes; `docs/e2ee.md` architecture sections.
 - **Layer 3 — Implementation & Domain** (non-normative): `hela:`, `sat:`, `cts:`, `olke:`, `amta:`; everything under `src/`, `deploy/`, `examples/`; any future domain vocabulary (`code:`, `med:`, `learning:`, ...).
 
 **Five drift triggers — STOP and flag before proceeding if any appears:**
