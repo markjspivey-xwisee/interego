@@ -1,0 +1,99 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+
+# ────────────────────────────────────────────────────────────
+#  SHACL 1.2 — additive shapes for Interego
+#
+#  This file is the SHACL-1.2 counterpart to cg-shapes.ttl (which
+#  stays SHACL 1.1 for backward compatibility). It uses the
+#  SHACL-1.2 `sh:reifierShape` + `sh:reificationRequired` pair
+#  to validate RDF 1.2 triple-term annotations on descriptor
+#  triples.
+#
+#  Referenced by: spec/architecture.md §2.x (RDF 1.2 / SHACL 1.2
+#  compliance).
+#
+#  Status: draft. Adopt once SHACL 1.2 Core reaches CR. Safe to
+#  use alongside cg-shapes.ttl; consumers select the version by
+#  dct:conformsTo.
+# ────────────────────────────────────────────────────────────
+
+<https://markjspivey-xwisee.github.io/interego/ns/cg-shapes-1.2> a owl:Ontology ;
+    rdfs:label "Interego SHACL 1.2 Shapes" ;
+    rdfs:comment "SHACL 1.2 shape set adding sh:reifierShape validation for RDF 1.2 triple-term annotations. Additive to cg-shapes.ttl; not a replacement." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+
+# ── Facet-as-triple-annotation shape ────────────────────────
+#
+# When a descriptor uses RDF 1.2 triple-annotation syntax for
+# facets (e.g. `<desc> cg:modalStatus cg:Asserted {| cg:epistemicConfidence
+# 0.9 |}`), the annotation block carries metadata that must be
+# validated. SHACL 1.2's sh:reifierShape attaches constraints to
+# the reifier (the triple-term node), distinct from constraints
+# on the base triple's subject or object.
+
+cg:SemioticAnnotationShape-1.2 a sh:NodeShape ;
+    sh:targetSubjectsOf cg:modalStatus ;
+    sh:reifierShape [
+        a sh:NodeShape ;
+        sh:property [
+            sh:path cg:epistemicConfidence ;
+            sh:minInclusive 0.0 ;
+            sh:maxInclusive 1.0 ;
+            sh:message "If an annotation on cg:modalStatus carries epistemic confidence, it MUST be in [0, 1]."
+        ] ;
+        sh:property [
+            sh:path cg:groundTruth ;
+            sh:in ( true false ) ;
+            sh:message "groundTruth on the annotation MUST be a boolean."
+        ]
+    ] ;
+    sh:reificationRequired false ;
+    rdfs:comment "A modalStatus triple MAY carry a triple-annotation with epistemicConfidence + groundTruth. If present, the annotation itself is validated by the reifierShape." .
+
+# ── Provenance annotation ──────────────────────────────────
+
+cg:ProvenanceAnnotationShape-1.2 a sh:NodeShape ;
+    sh:targetSubjectsOf cg:describes ;
+    sh:reifierShape [
+        a sh:NodeShape ;
+        sh:property [
+            sh:path <http://www.w3.org/ns/prov#generatedAtTime> ;
+            sh:datatype xsd:dateTime ;
+            sh:minCount 1 ;
+            sh:message "cg:describes annotation MUST record prov:generatedAtTime."
+        ]
+    ] ;
+    sh:reificationRequired false ;
+    rdfs:comment "When a descriptor annotates its cg:describes triple with provenance metadata (via RDF 1.2 triple-term syntax), the annotation MUST carry prov:generatedAtTime." .
+
+# ── PGSL containment annotation (already in use) ───────────
+#
+# PGSL emits annotations like:
+#   <parent> cg:hasItem <child> {| cg:position 1 ; cg:contextualDepth 2 |}
+# This shape pins their expected form.
+
+cg:PgslContainmentAnnotationShape-1.2 a sh:NodeShape ;
+    sh:targetSubjectsOf cg:hasItem ;
+    sh:reifierShape [
+        a sh:NodeShape ;
+        sh:property [
+            sh:path cg:position ;
+            sh:datatype xsd:integer ;
+            sh:minInclusive 0 ;
+            sh:minCount 1 ;
+            sh:message "PGSL containment annotation MUST carry cg:position (non-negative integer)."
+        ] ;
+        sh:property [
+            sh:path cg:contextualDepth ;
+            sh:datatype xsd:integer ;
+            sh:minInclusive 0 ;
+            sh:message "PGSL contextualDepth (if present) MUST be non-negative integer."
+        ]
+    ] ;
+    sh:reificationRequired true ;
+    rdfs:comment "PGSL containment triples REQUIRE a triple-term annotation with position + optional contextualDepth." .
