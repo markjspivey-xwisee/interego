@@ -8,6 +8,104 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-04-23 (later still) — attribute-based access control
+
+ABAC built out as a first-class protocol mechanism: policies are typed
+context descriptors, predicates are SHACL shapes, attributes are
+resolved across the federation, and decisions are themselves linked
+data. The structural primitives live at L1 (`cg:`); the evaluation
+pattern is L2 (`abac:`); the reference runtime is L3 (`src/abac/`).
+
+### Added (L1 — Protocol)
+
+- **`cg:AccessControlPolicy`** — a policy IS a `cg:ContextDescriptor`.
+  Every implementation now has the same policy shape.
+- **`cg:DeonticMode`** + individuals `cg:Permit` / `cg:Deny` / `cg:Duty`
+  — ODRL-aligned modal labels without the full ODRL dependency.
+- **`cg:policyRef`** on `cg:AccessControlFacet` — links a facet to one
+  or more policies. WAC-shaped authorizations coexist, so deployments
+  migrate ACL → ABAC incrementally.
+- **`cg:policyPredicate`** (→ `sh:NodeShape`), **`cg:governedAction`**,
+  **`cg:deonticMode`**, **`cg:policyDuty`** properties.
+- **`AccessControlFacetData.policyRefs`** TS field; new
+  `AccessControlPolicyData` + `DeonticMode` types.
+
+### Added (L2 — Architecture pattern: `abac:`)
+
+- **`docs/ns/abac.ttl`** (new) — 5 classes:
+  - `abac:Evaluator` — stateless (policy, context) → decision.
+  - `abac:PolicyContext` — resolved subject attributes + resource + env.
+  - `abac:AttributeResolver` — federates the subject's attribute graph.
+  - `abac:DecisionCache` — cached decisions as verifiable attestations
+    (issuer + validity window), so stale cache is verifiably stale.
+  - `abac:EvaluationRecord rdfs:subClassOf cg:ContextDescriptor` — the
+    audit trail is itself linked data.
+- 5 properties + 3 verdict individuals (`abac:Allowed`,
+  `abac:Denied`, `abac:Indeterminate` — the Indeterminate case matters
+  under open-world federation).
+
+### Added (L3 — Reference runtime `src/abac/`)
+
+- `src/abac/evaluator.ts` — `evaluate(policies, predicates, context)` +
+  `evaluateSingle(...)` + `validateAgainstShape(...)`. Deny overrides
+  Permit. Duties accumulate. No matching policy → Indeterminate.
+- `src/abac/attribute-resolver.ts` — `resolveAttributes(subject,
+  descriptors)` aggregates facets from every descriptor that describes
+  or attributes to the subject. `extractAttribute(graph, path)` reads
+  SHACL-style paths including AMTA-axis attestations.
+- `src/abac/cache.ts` — `createDecisionCache()` + `defaultValidUntil`.
+- `src/abac/types.ts` — `AttributeGraph`, `PolicyContext`,
+  `PolicyDecision`, `PolicyPredicateShape`, `PredicateConstraint`,
+  `AbacVerdict`, `DecisionCacheEntry`.
+- `src/abac/index.ts` — public entry point; re-exported from the
+  top-level package as `evaluateAbac`, `resolveAttributes`,
+  `extractAttribute`, `createDecisionCache`, etc.
+
+### Tests
+
+- `tests/abac.test.ts` — 18 new tests across five scenarios:
+  single-policy Permit/Deny/Duty; Deny-overrides-Permit composition;
+  action mismatch short-circuit; attribute resolver aggregation;
+  extractAttribute for standard + AMTA paths; cache hit/miss/stale.
+
+### Demo
+
+- `examples/demo-abac-cross-pod.mjs` — reviewer merge-gate scenario:
+  two peer pods issue AMTA attestations about alice on `amta:codeQuality`
+  axis; policy requires ≥ 2 attestations ≥ 0.8 + present validity window;
+  evaluator aggregates the attribute graph cross-pod and returns
+  Allowed. Counterfactual (one attestation missing) flips to
+  Indeterminate; adding a Deny-self-asserted policy flips to Denied
+  (deny-overrides-permit); cache entries expire into verifiable-stale.
+
+### Lint changes
+
+- `tools/derivation-lint.mjs` adds `abac.ttl` to L2_L3_FILES.
+  Passes: 5/5 classes grounded.
+- `tools/ontology-lint.mjs` registers `abac` prefix. Passes.
+- `cg.ttl` grew from 318 → 328 terms (L1 ABAC additions).
+- `abac.ttl` adds 5 classes + 9 terms.
+
+### Deferred
+
+- PGSL deontic-engine bridge (`src/pgsl/agent-framework.ts`) —
+  its `PolicyRule` format is tightly coupled to PGSL atom access,
+  and `src/abac/` is the general-purpose integration point. A
+  converter `policyToDeonticRule(policy)` is a follow-up, not a
+  blocker.
+
+### Why
+
+`cg:AccessControlFacet` was WAC-shaped only (identity-based). The
+federation model already provides attribute-rich facets (Trust,
+Semiotic, Provenance, AMTA-axis attestations) but we had no
+evaluator that consumed them as policy inputs. This lands one.
+
+725/725 tests pass (707 + 18 new). Derivation-lint 56/56 grounded.
+Ontology-lint clean.
+
+---
+
 ## 2026-04-23 (later) — first L3 domain ontology (`code:`)
 
 The project now ships with a working, lint-gated, runtime-demonstrated

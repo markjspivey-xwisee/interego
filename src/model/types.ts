@@ -155,12 +155,44 @@ export interface Authorization {
 
 /**
  * Access Control Facet (§5.4)
- * Profiles: WAC
+ * Profiles: WAC + ABAC (attribute-based policy refs).
+ *
+ * Two modes coexist: (a) classic identity-based authorizations per
+ * WAC (`authorizations`); (b) attribute-based policy references
+ * (`policyRefs`) pointing at `cg:AccessControlPolicy` descriptors.
+ * The effective decision is the meet (deny-overrides-permit) across
+ * whichever applies. Evaluation pattern for ABAC is specified by the
+ * `abac:` L2 ontology and implemented in `src/abac/`.
  */
 export interface AccessControlFacetData {
   readonly type: 'AccessControl';
   readonly authorizations: readonly Authorization[];
   readonly consentBasis?: IRI;
+  /** IRIs of `cg:AccessControlPolicy` descriptors that govern access. */
+  readonly policyRefs?: readonly IRI[];
+}
+
+/**
+ * Access Control Policy (ABAC, L1) — attribute-based access-control
+ * policy expressed as a first-class context descriptor. A policy has:
+ *
+ *   - `policyPredicateShape` — IRI of a SHACL NodeShape the subject's
+ *     attribute graph must satisfy for the policy to apply.
+ *   - `governedAction` — IRI of the action this policy governs.
+ *   - `deonticMode` — Permit | Deny | Duty.
+ *   - `duties` — obligations if mode is Duty (string form; ODRL-alignable).
+ *
+ * Attribute sources may span the federation; resolution pattern is
+ * `abac:AttributeResolver`.
+ */
+export type DeonticMode = 'Permit' | 'Deny' | 'Duty';
+
+export interface AccessControlPolicyData {
+  readonly id: IRI;
+  readonly policyPredicateShape: IRI;
+  readonly governedAction: IRI;
+  readonly deonticMode: DeonticMode;
+  readonly duties?: readonly string[];
 }
 
 /**
