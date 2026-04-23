@@ -1,6 +1,6 @@
 {
   "name": "@interego/mcp",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "MCP server for Interego — gives AI coding agents the ability to publish, discover, and compose context-annotated knowledge graphs through Solid pods",
   "author": "Mark Spivey",
   "license": "MIT",

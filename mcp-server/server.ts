@@ -33,12 +33,14 @@ import {
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { WebSocket } from 'ws';
 
 import {
@@ -1574,9 +1576,57 @@ async function toolPgslToTurtle(_args: Record<string, never>): Promise<string> {
 
 // ── MCP Server ──────────────────────────────────────────────
 
+// ── Server-level instructions ────────────────────────────────
+//
+// Returned in the MCP `initialize` response. The connecting agent
+// reads this once at session start to understand WHAT this server is
+// for, WHEN to use it, and HOW its tools relate. Keep concise — the
+// detailed reference material lives in the `docs://interego/*`
+// resources, which the agent can fetch on demand.
+
+const SERVER_INSTRUCTIONS = `Interego is composable, verifiable, federated context infrastructure
+for multi-agent shared memory. Every agent acts on behalf of a human
+or organization (the pod owner); descriptors carry attribution, trust,
+provenance, semiotic frame, and federation metadata.
+
+WHEN TO USE THIS SERVER:
+- The user wants to remember something across sessions or surfaces
+  → use publish_context to persist it as a typed descriptor on their pod.
+- The user references something they (or another agent) shared before
+  → use discover_pod or get_descriptor to find it.
+- The user wants to share context with a specific other person/agent
+  → use share_context_with (cross-pod, end-to-end-encrypted).
+- The user wants to compose multiple contexts into one view
+  → use compose_contexts (union / intersection / restriction / override).
+- The user wants to know who's in the federation or what's shared with them
+  → use list_known_pods or subscribe_to_pod.
+
+KEY INVARIANTS (do not violate):
+- Pods are the source of truth. Identity server is stateless.
+- DIDs are canonical identifiers; userIds are derived. Never accept a
+  user-supplied userId.
+- All cross-pod content is end-to-end encrypted; recipients are
+  cryptographic, not access-list.
+- Descriptors are versioned via cg:supersedes; cached decisions are
+  verifiable-stale, not silent.
+
+DEEPER REFERENCE (fetch via resources/read when you need it):
+- docs://interego/overview        — what Interego is, top-level
+- docs://interego/architecture    — protocol architecture + facets
+- docs://interego/layers          — L1 protocol vs L2 patterns vs L3 domains
+- docs://interego/emergence       — emergent properties + demos
+- docs://interego/abac-pattern    — attribute-based access control
+- docs://interego/code-domain     — example L3 domain ontology
+
+If the user is asking general questions about the protocol, fetch the
+relevant doc resource rather than answering from inferred knowledge.`;
+
 const mcpServer = new Server(
-  { name: '@interego/mcp', version: '0.4.1' },
-  { capabilities: { tools: {}, resources: {} } },
+  { name: '@interego/mcp', version: '0.5.0' },
+  {
+    capabilities: { tools: {}, resources: {}, prompts: {} },
+    instructions: SERVER_INSTRUCTIONS,
+  },
 );
 
 // ── Tool Definitions ────────────────────────────────────────
@@ -1976,8 +2026,88 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // ── Resources ───────────────────────────────────────────────
 
+// ── Doc resources ────────────────────────────────────────────
+//
+// Each doc:// resource is a slice of the project documentation
+// the agent can fetch on demand. Files are resolved by walking up
+// from the module location until the candidate exists, so this
+// works in both dev (mcp-server/server.ts) and dist
+// (mcp-server/dist/server.js) layouts.
+
+const __mcpDir = dirname(fileURLToPath(import.meta.url));
+
+function resolveProjectFile(...segments: string[]): string | null {
+  // Try walking 1, 2, 3 levels up from the module location.
+  for (const ups of [['..'], ['..', '..'], ['..', '..', '..']]) {
+    const candidate = resolve(__mcpDir, ...ups, ...segments);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+interface DocResource {
+  uri: string;
+  name: string;
+  description: string;
+  mimeType: string;
+  segments: string[];
+}
+
+const DOC_RESOURCES: readonly DocResource[] = [
+  {
+    uri: 'docs://interego/overview',
+    name: 'Interego — Overview',
+    description: 'Top-level project README: what Interego is, who it\'s for, key features.',
+    mimeType: 'text/markdown',
+    segments: ['README.md'],
+  },
+  {
+    uri: 'docs://interego/architecture',
+    name: 'Interego — Architecture (normative)',
+    description: 'Protocol architecture: seven facet types, composition operators, federation model, RDF 1.2 / SHACL 1.2 alignment.',
+    mimeType: 'text/markdown',
+    segments: ['spec', 'architecture.md'],
+  },
+  {
+    uri: 'docs://interego/layers',
+    name: 'Interego — Layering Discipline',
+    description: 'L1 (protocol) vs L2 (architecture patterns) vs L3 (implementation + domain). Read before authoring specs, ontologies, or new namespaces.',
+    mimeType: 'text/markdown',
+    segments: ['spec', 'LAYERS.md'],
+  },
+  {
+    uri: 'docs://interego/derivation',
+    name: 'Interego — Derivation Discipline',
+    description: 'Normative construction rules: every L2/L3 ontology class must be grounded in L1 primitives. CI-enforced.',
+    mimeType: 'text/markdown',
+    segments: ['spec', 'DERIVATION.md'],
+  },
+  {
+    uri: 'docs://interego/emergence',
+    name: 'Interego — Emergent Properties',
+    description: 'Four demos showing emergent properties of the protocol: vocabulary alignment, mediator pullback, localized closed-world, stigmergic colony.',
+    mimeType: 'text/markdown',
+    segments: ['docs', 'EMERGENCE.md'],
+  },
+  {
+    uri: 'docs://interego/abac-pattern',
+    name: 'Interego — ABAC pattern (L2)',
+    description: 'Attribute-based access control: policies as descriptors, SHACL predicates, federated attribute resolution, decision caching.',
+    mimeType: 'text/turtle',
+    segments: ['docs', 'ns', 'abac.ttl'],
+  },
+  {
+    uri: 'docs://interego/code-domain',
+    name: 'Interego — code: domain ontology (L3)',
+    description: 'Example L3 domain ontology for source-code artifacts (Repository, Commit, Branch, PullRequest, Review, Defect). Demonstrates that a non-trivial domain expresses fully on top of L1 primitives.',
+    mimeType: 'text/turtle',
+    segments: ['docs', 'ns', 'code.ttl'],
+  },
+];
+
 mcpServer.setRequestHandler(ListResourcesRequestSchema, async () => ({
   resources: [
+    // Live data resources (pod state)
     {
       uri: `solid://${POD_NAME}/manifest`,
       name: 'Home Pod Manifest',
@@ -1996,6 +2126,13 @@ mcpServer.setRequestHandler(ListResourcesRequestSchema, async () => ({
       description: 'All known pods in the federation',
       mimeType: 'application/json',
     },
+    // Documentation resources (read on demand for protocol context)
+    ...DOC_RESOURCES.map(d => ({
+      uri: d.uri,
+      name: d.name,
+      description: d.description,
+      mimeType: d.mimeType,
+    })),
   ],
 }));
 
@@ -2038,7 +2175,168 @@ mcpServer.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     return { contents: [{ uri: request.params.uri, mimeType: 'application/json', text: json }] };
   }
 
+  // Doc resources — read project files on demand.
+  const doc = DOC_RESOURCES.find(d => d.uri === request.params.uri);
+  if (doc) {
+    const path = resolveProjectFile(...doc.segments);
+    if (!path) {
+      return {
+        contents: [{
+          uri: request.params.uri,
+          mimeType: doc.mimeType,
+          text: `(doc not found at expected location: ${doc.segments.join('/')})`,
+        }],
+      };
+    }
+    try {
+      const text = readFileSync(path, 'utf8');
+      return { contents: [{ uri: request.params.uri, mimeType: doc.mimeType, text }] };
+    } catch (err) {
+      return {
+        contents: [{
+          uri: request.params.uri,
+          mimeType: doc.mimeType,
+          text: `(error reading ${path}: ${(err as Error).message})`,
+        }],
+      };
+    }
+  }
+
   throw new Error(`Unknown resource: ${request.params.uri}`);
+});
+
+// ── Prompts ──────────────────────────────────────────────────
+//
+// Workflow templates the connecting agent can offer to the user as
+// canned starting points. Each prompt captures one concrete
+// Interego use case so a brand-new agent has tangible entry points
+// rather than 25 isolated tool descriptions.
+
+interface PromptDef {
+  name: string;
+  description: string;
+  arguments: { name: string; description: string; required: boolean }[];
+  build: (args: Record<string, string>) => string;
+}
+
+const PROMPTS: readonly PromptDef[] = [
+  {
+    name: 'publish-memory',
+    description: 'Publish a typed memory descriptor to the user\'s home pod so it survives across sessions and is discoverable by other agents.',
+    arguments: [
+      { name: 'topic', description: 'Short topic or title for the memory (e.g. "API design preferences").', required: true },
+      { name: 'content', description: 'The actual content to remember (free-form text or RDF Turtle).', required: true },
+      { name: 'modal_status', description: 'Asserted | Hypothetical | Counterfactual (default Asserted).', required: false },
+    ],
+    build: (a) => `Use publish_context to persist this memory to the user's home pod:
+
+Topic: ${a.topic}
+Content: ${a.content}
+Modal status: ${a.modal_status ?? 'Asserted'}
+
+Construct an appropriate graph_iri (urn:graph:memory:<slug>), include the
+content as graph_content (Turtle if structured, otherwise as a plain literal
+in a single-triple graph), and use the modal status above. Confirm with the
+user that the descriptor was published, and report the descriptor URL so they
+can reference it later.`,
+  },
+  {
+    name: 'discover-shared-context',
+    description: 'Find what context other agents have shared with the user, across known pods.',
+    arguments: [
+      { name: 'topic', description: 'Optional topic filter (substring match on descriptor titles or graph IRIs).', required: false },
+      { name: 'since', description: 'Optional ISO 8601 datetime — only descriptors validFrom on/after this.', required: false },
+    ],
+    build: (a) => `Discover context shared with the user across known pods:
+
+1. Use list_known_pods to enumerate the federation surface.
+2. For each pod, use discover_pod (with effective_at = now to filter to
+   currently-valid descriptors).
+${a.topic ? `3. Filter results by topic substring: "${a.topic}".\n` : ''}${a.since ? `4. Filter to descriptors with validFrom ≥ ${a.since}.\n` : ''}
+5. Summarize: which pods returned what, total descriptor count, any
+   noteworthy modal statuses (Counterfactual flags? Hypothetical claims?).
+
+Surface anything the user might have forgotten about, and offer to
+get_descriptor for fuller content on any specific descriptor.`,
+  },
+  {
+    name: 'verify-trust-chain',
+    description: 'Verify the delegation + signature chain on a specific descriptor (provenance audit).',
+    arguments: [
+      { name: 'descriptor_url', description: 'Full URL of the descriptor to verify.', required: true },
+    ],
+    build: (a) => `Verify the trust chain for descriptor: ${a.descriptor_url}
+
+1. Use get_descriptor to fetch the full Turtle.
+2. Read the AgentFacet (assertingAgent + onBehalfOf) and TrustFacet (issuer + trustLevel).
+3. Use discover_pod with verify_delegation=true on the descriptor's origin pod
+   to confirm the agent is in the owner's authorized agents list.
+4. Report: who authored, on whose behalf, with what trust level, and whether
+   the delegation chain verifies.
+
+Flag any of: SelfAsserted trust on a high-stakes claim; missing agent
+registration; mismatched issuer + asserting agent.`,
+  },
+  {
+    name: 'compose-contexts',
+    description: 'Compose two existing contexts via a lattice operator (union / intersection / restriction / override) and persist the result as a new descriptor.',
+    arguments: [
+      { name: 'descriptor_a', description: 'URL of the first descriptor.', required: true },
+      { name: 'descriptor_b', description: 'URL of the second descriptor.', required: true },
+      { name: 'operator', description: 'union | intersection | restriction | override', required: true },
+    ],
+    build: (a) => `Compose two contexts:
+
+A: ${a.descriptor_a}
+B: ${a.descriptor_b}
+Operator: ${a.operator}
+
+1. Fetch both descriptors with get_descriptor.
+2. Use compose_contexts with operator="${a.operator}" — see Interego
+   architecture (docs://interego/architecture) for facet-merge semantics
+   per operator.
+3. Publish the composed result as a new descriptor with a fresh graph_iri,
+   citing both sources via prov:wasDerivedFrom.
+4. Report the composed descriptor's URL.`,
+  },
+  {
+    name: 'explain-interego',
+    description: 'Briefly explain to the user what Interego is and what they can do with this MCP server.',
+    arguments: [],
+    build: () => `Read the docs://interego/overview resource. Then summarize for the
+user, in their words, what Interego is and three concrete things they
+can do right now with this MCP server. Keep it under 150 words.
+
+Offer to show them more — point at docs://interego/architecture for
+the protocol shape, docs://interego/emergence for what's possible,
+or just demo a publish + discover round-trip on their own pod.`,
+  },
+];
+
+mcpServer.setRequestHandler(ListPromptsRequestSchema, async () => ({
+  prompts: PROMPTS.map(p => ({
+    name: p.name,
+    description: p.description,
+    arguments: p.arguments,
+  })),
+}));
+
+mcpServer.setRequestHandler(GetPromptRequestSchema, async (request) => {
+  const prompt = PROMPTS.find(p => p.name === request.params.name);
+  if (!prompt) throw new Error(`Unknown prompt: ${request.params.name}`);
+  const args = (request.params.arguments ?? {}) as Record<string, string>;
+  for (const arg of prompt.arguments) {
+    if (arg.required && !args[arg.name]) {
+      throw new Error(`Missing required argument: ${arg.name}`);
+    }
+  }
+  return {
+    description: prompt.description,
+    messages: [{
+      role: 'user' as const,
+      content: { type: 'text' as const, text: prompt.build(args) },
+    }],
+  };
 });
 
 // ── Start ───────────────────────────────────────────────────
