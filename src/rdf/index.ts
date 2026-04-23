@@ -1,5 +1,14 @@
 export * from './namespaces.js';
 export { toTurtle, toTurtleDocument, toTripleAnnotationTurtle, toTripleAnnotationDocument, type SerializerOptions } from './serializer.js';
+// RDF 1.2 helpers (version directive, directional language tags)
+export {
+  langString,
+  parseLangString,
+  withRdf12VersionDirective,
+  detectRdf12Features,
+  RDF12_VERSION_DIRECTIVE,
+} from './rdf12.js';
+export type { BaseDirection } from './rdf12.js';
 export {
   toJsonLd,
   toJsonLdString,

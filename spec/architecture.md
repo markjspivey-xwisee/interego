@@ -114,6 +114,64 @@ The system is grounded in Peircean triadic semiotics:
 10. **Real cryptography.** No mocks. ethers.js v6 for ECDSA, tweetnacl for
     NaCl encryption, real IPFS CIDs, real SIWE verification.
 
+### 2.1 RDF 1.2 / SHACL 1.2 compliance (normative)
+
+Interego targets **RDF 1.2** (W3C Candidate Recommendation,
+2026-04-07) and **SHACL 1.2** (W3C Working Draft, 2026-04-10).
+
+**RDF 1.2 features used:**
+
+| Feature | Used for | Location |
+|---|---|---|
+| Triple terms (`{\| … \|}` annotation syntax) | PGSL containment annotations; optional for descriptor facets | `src/rdf/serializer.ts` (`toTripleAnnotationTurtle`); `src/pgsl/types.ts` |
+| Directional language-tagged strings | Multi-script text in facet values | `src/rdf/rdf12.ts` (`langString`, `parseLangString`) |
+| Version announcement directive (`@version "1.2" .`) | Emitted in documents that use RDF 1.2-specific syntax | `src/rdf/rdf12.ts` (`withRdf12VersionDirective`) |
+| Associated SPARQL 1.2 | Query pattern builders | `src/sparql/` |
+
+**RDF 1.2 features NOT used (and why):**
+
+- **Triple-term annotations for descriptor facets.** The main
+  descriptor serialization remains blank-node-based
+  (`<desc> cg:hasFacet [ ... ]`) for SHACL 1.1 toolchain
+  compatibility. Callers MAY use the annotation form via
+  `toTripleAnnotationTurtle` when targeting RDF 1.2-native
+  consumers.
+
+**SHACL 1.2 features used:**
+
+- **`sh:reifierShape` + `sh:reificationRequired`** — for
+  validating RDF 1.2 triple-term annotations. See
+  `docs/ns/cg-shapes-1.2.ttl` (additive to `cg-shapes.ttl`).
+- **Standard constraint components** (sh:in, sh:hasValue,
+  sh:minInclusive, sh:maxInclusive, sh:minCount, sh:message)
+  — unchanged from SHACL 1.1.
+- **Property paths** — simple sh:path used throughout. Sequence,
+  inverse, and cardinality paths are valid SHACL 1.2 but not
+  currently exercised by Interego shapes.
+
+**SHACL 1.2 features NOT used:**
+
+- **`sh:rule`** for SHACL-based derivation rules — we use the
+  `cg:constructedFrom` + runtime-constructor pattern instead
+  (see `spec/DERIVATION.md`).
+- **Full SHACL 1.2 Node Expressions** — our mini-SHACL validator
+  in `examples/_lib.mjs` covers the subset we ship shapes for.
+  Production implementations MAY use a full SHACL 1.2 engine.
+
+**Compliance statement:**
+
+- Interego conforming documents MUST be valid RDF 1.2 (or RDF 1.1 +
+  RDF 1.2-compatible syntax).
+- Interego conforming documents SHOULD include the `@version "1.2"`
+  directive when they use triple-term annotations or directional
+  language-tagged strings.
+- Interego conforming SHACL shapes MAY be SHACL 1.1 or SHACL 1.2.
+  Shapes that validate triple-term annotations MUST use SHACL 1.2's
+  `sh:reifierShape`.
+- When RDF 1.2 reaches Recommendation status and SHACL 1.2 reaches
+  Candidate Recommendation, Interego spec v1.1 SHOULD promote the
+  MAY above to SHOULD for the matching surfaces.
+
 ---
 
 ## 3. Layer Architecture
