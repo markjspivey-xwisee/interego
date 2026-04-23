@@ -1224,6 +1224,58 @@ Rationale: the two locations exist for different consumer needs
 (facet-level for PROV-O walkers; descriptor-level for federation
 queries that don't decrypt the payload). Divergence is always a bug.
 
+### 6.5d Progressive-opt-in discovery (normative)
+
+The substrate does not require participants to register with any
+central authority. Discovery operates at SEVEN tiers, each
+independently useful, each opt-in:
+
+| Tier | Publisher opt-in | Consumer method | Example identifier |
+|---|---|---|---|
+| **T0** Raw pod URL | none — publish a pod | direct GET of manifest | `https://bob.example.com/pod/` |
+| **T1** DID-Web | publish DID document at `<domain>/.well-known/did.json` | DID resolution | `did:web:bob.example.com` |
+| **T2** WebFinger | publish WebFinger at `<domain>/.well-known/webfinger` | WebFinger lookup | `acct:bob@bob.example.com` |
+| **T3** Agents catalog | publish `<domain>/.well-known/interego-agents` Turtle | HTTPS GET + catalog parse | `https://bob.example.com/` |
+| **T4** Federation directory | publish a `federation-directory-v1`-conforming descriptor | `discover_context conformsTo=federation-directory-v1` | any pod URL |
+| **T5** Social graph walk | none — citations are inherent | BFS over `prov:wasDerivedFrom` across pod boundaries | any seed pod URL |
+| **T6** On-chain registry | ERC-8004 T0→T3 ladder (attestations → IPFS → chain anchor) | chain RPC + descriptor dereference | any DID or wallet address |
+
+**Normative rules:**
+
+- Consumers MUST NOT assume a central registry. All discovery
+  starts from an identifier the consumer already possesses.
+- Implementations SHOULD provide a unified `resolveIdentifier(id)`
+  operation that branches by identifier kind and tries every
+  applicable tier, returning a result that lists which tiers
+  yielded signal. Reference implementation:
+  [`src/solid/discovery.ts`](../src/solid/discovery.ts).
+- T3 agents-catalog MUST use the well-known path
+  `.well-known/interego-agents`, the path under which domain
+  operators publish a Turtle or JSON-LD document enumerating
+  their pods + agents. Convention is Turtle with
+  `<catalog-iri> a cg:AgentCatalog ; cg:hasAgent [ ... ] ; ...`.
+- T4 federation-directory descriptors MUST conform to a shape
+  with `dct:conformsTo <federation-directory-v1>`. Any pod MAY
+  host such a directory; no single "official" directory exists.
+  Consumers SHOULD treat T4 results as HINTS, not authoritative
+  (any publisher could claim to index anything).
+- T5 social walk MUST be bounded (max depth + max pods) by
+  consumers to avoid runaway fanout. Reference bounds: depth=3,
+  pods=25.
+- T6 chain-anchored attestations MUST carry the
+  `erc8004-attestation-t1-v1` or later shape per
+  [§5.2.5](#) and [`erc8004-t2-anchor.mjs`](../examples/erc8004-t2-anchor.mjs).
+
+**Philosophy.** A participant can advertise at any tier they
+choose. Minimal: a pod URL shared on a business card (T0).
+Moderate: DID + WebFinger for lookup-by-handle (T1+T2). Rich:
+agents catalog + federation directory (T3+T4). Social-graph walk
+(T5) works regardless of publisher opt-in because citations are
+the ground truth of federation connectedness; a consumer with
+one seed URL can traverse the reachable network. On-chain (T6)
+is for agents / organizations that want public, auditable
+registration on a censorship-resistant substrate.
+
 ### 6.5 Per-surface agent identity
 
 Each surface a user operates from (Claude Code VS Code, Claude Desktop,

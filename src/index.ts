@@ -298,6 +298,20 @@ export {
   resolveHandleToPodUrl,
   resolveRecipient,
   resolveRecipients,
+  // Shape discovery (§6.5b)
+  resolveShape,
+  listPodShapes,
+  parseShapeIndex,
+  shapeIndexTurtle,
+  POD_SHAPES_PATH,
+  POD_SHAPES_INDEX_PATH,
+  // Progressive discovery (§6.5d)
+  resolveIdentifier,
+  fetchWellKnownAgents,
+  parseAgentsCatalog,
+  agentsCatalogTurtle,
+  WELL_KNOWN_AGENTS_PATH,
+  socialWalk,
 } from './solid/index.js';
 
 export type {
@@ -332,6 +346,15 @@ export type {
   ResolvedRecipientPod,
   ResolveRecipientsOptions,
   DistributionLink,
+  ResolvedShape,
+  ShapeIndexEntry,
+  DiscoveryResult,
+  DiscoveryTier,
+  AgentCatalogEntry,
+  SocialWalkResult,
+  PodNode,
+  PodEdge,
+  SocialWalkOptions,
 } from './solid/index.js';
 
 // ── PGSL (Poly-Granular Sequence Lattice) ───────────────────

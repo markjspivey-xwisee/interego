@@ -36,6 +36,18 @@ export {
 } from './shapes.js';
 export type { ResolvedShape, ShapeIndexEntry } from './shapes.js';
 
+// ── Progressive discovery (spec §6.5d) ───────────────────────
+export {
+  resolveIdentifier,
+  fetchWellKnownAgents,
+  parseAgentsCatalog,
+  agentsCatalogTurtle,
+  WELL_KNOWN_AGENTS_PATH,
+} from './discovery.js';
+export type { DiscoveryResult, DiscoveryTier, AgentCatalogEntry } from './discovery.js';
+export { socialWalk } from './social-walk.js';
+export type { SocialWalkResult, PodNode, PodEdge, SocialWalkOptions } from './social-walk.js';
+
 // ── Pod Directory ───────────────────────────────────────────
 export {
   podDirectoryToTurtle,
