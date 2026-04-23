@@ -8,6 +8,55 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-04-23 — emergence demo set
+
+Four self-contained simulations showing emergent properties of the
+protocol, each isolating one first-principle and exhibiting the
+phenomenon it enables. All run under a second, zero network
+dependencies, reproducible on any machine.
+
+### Added (L3 — Demos + documentation)
+
+- **`examples/demo-vocabulary-emergence.mjs`** — two agents with
+  incompatible vocabularies converge on aligned semantic classes
+  through co-occurrence alone. Paradigm operations + `ModalAlgebra`
+  modal promotion produce the pullback of the two vocabularies
+  without a translator, alignment file, or central coordinator.
+- **`examples/demo-emergent-mediator.mjs`** — two pods assert
+  disagreeing facts about the same subject; a third "mediator" pod
+  is derived at query time as the pullback of the two source
+  presheaves. Modal states track the correctness of the mediator's
+  inference as sources drift (Asserted → Hypothetical on
+  out-of-range updates).
+- **`examples/demo-localized-closed-world.mjs`** — same query
+  returns different, both-correct authoritative answers inside a
+  SHACL closed-shape boundary vs across the open federation.
+  Three-way distinction visible: in-scope-present /
+  in-scope-absent / out-of-scope.
+- **`examples/demo-stigmergic-colony.mjs`** — agents with no map,
+  no coordination, and no messaging converge on the globally
+  optimal path through a concept graph via shared-pod trace
+  dynamics. Reliably finds optimum (91–96% path concentration
+  across runs) when the landscape gradient is sufficient to escape
+  early lock-in.
+- **`docs/EMERGENCE.md`** — documents all four demos, principles
+  exercised, falsifiable success criteria, captured outputs, and
+  honest limits. Organized so each demo's claim can be verified
+  by running the script.
+
+### Why
+
+The existing demos (teach-teach, accumulation-emergence, emergent-dao,
+sybil-detection, zk-reputation) exercise the HTTP/Solid surface. These
+four isolate the protocol's compositional and categorical dynamics so
+emergent properties are visible in a ≤60-line trace. They answer
+*what does federation without central authority actually buy*.
+
+No test changes; no ontology changes; 707/707 pass; derivation-lint
+41/41 grounded; ontology-lint clean.
+
+---
+
 ## 2026-04-22 (later) — derivation discipline
 
 Higher layers now built from lower layers, operationally. Every
