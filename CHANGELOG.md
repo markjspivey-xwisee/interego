@@ -8,6 +8,58 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-04-23 (latest) — MCP discoverability across both surfaces
+
+Both MCP entry points now advertise system-level instructions, doc
+resources, and workflow prompts so a brand-new agent learns *what*
+this server is, not just *which* tools it exposes.
+
+### `@interego/mcp` (stdio server) — 0.4.1 → 0.5.0
+
+For Claude Code CLI, Codex CLI, and IDE-embedded agents.
+
+- **Instructions block** returned in MCP `initialize`. Concise
+  narrative: what Interego is, when to use each tool family, key
+  invariants, pointers to doc:// resources for deeper context.
+- **7 doc:// resources** (read on demand): `overview`, `architecture`,
+  `layers`, `derivation`, `emergence`, `abac-pattern`, `code-domain`.
+  Files resolved via candidate-path walk so dev (mcp-server/) and
+  dist (mcp-server/dist/) layouts both work.
+- **5 prompts** with `prompts: {}` capability: `publish-memory`,
+  `discover-shared-context`, `verify-trust-chain`,
+  `compose-contexts`, `explain-interego`.
+
+### `@interego/mcp-relay` (HTTP/SSE) — 0.2.0 → 0.3.0
+
+For claude.ai connectors and any other remote MCP client.
+
+- Same instructions block as the stdio server (mirror, not proxy —
+  the relay maintains its own MCP Server instance).
+- Same 7 doc:// resources. `Dockerfile.relay` now bakes README +
+  spec/*.md + docs/EMERGENCE.md + docs/ns/{abac,code}.ttl into
+  `/app/relay-docs/` at build time so the container serves them
+  with no network dependency.
+- 4 prompts (omits `compose-contexts` — relay tool surface differs
+  slightly from the stdio server's; will add when relay implements
+  the corresponding tool).
+
+### Why
+
+Before: a new agent connecting saw 25 tool descriptions in
+isolation and had to infer that publish + share + discover + compose
+form one coherent system. Now: it reads a single instructions block
+on initialize, fetches docs on demand, and offers users 4-5 concrete
+workflows out of the box.
+
+The TurboTax MCP and similar production servers established this
+pattern; this commit brings parity.
+
+No tests added (handlers are plumbing — verified by build + manual
+JSON-RPC probe). Main project still 727/727. CI auto-deploys the
+relay container on push to master; mcp-server publishes on tag.
+
+---
+
 ## 2026-04-23 (later still) — attribute-based access control
 
 ABAC built out as a first-class protocol mechanism: policies are typed
