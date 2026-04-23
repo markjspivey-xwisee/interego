@@ -61,10 +61,11 @@ tools/
 - **HyprAgent** ([`hypragent.ttl`](docs/ns/hypragent.ttl)) — agent machinery for HyprCat; cross-world delegation; capability typing
 - **OLKE** ([`olke.ttl`](docs/ns/olke.ttl)) — Organizational Learning & Knowledge Evolution (Tacit → Articulate → Collective → Institutional)
 - **AMTA** ([`amta.ttl`](docs/ns/amta.ttl)) — Agent-Mediated Trust Attestation (multi-axis ratings)
+- **code** ([`code.ttl`](docs/ns/code.ttl)) — L3 domain ontology for source-code artifacts (Repository, Commit, Branch, PullRequest, Review, Defect, TestRun, BuildResult). Commits are `pgsl:Fragment`; branches are `cg:ParadigmSet`; reviews `cg:constructedFrom (cg:SemioticFacet cg:ProvenanceFacet)`. First domain-specific L3 ontology added to the repo — demonstrates that a non-trivial domain can be expressed without new L1 primitives.
 
 ### Ontology hygiene
 
-**Do not invent new `cg:`/`cgh:`/`pgsl:`/`ie:`/`hyprcat:`/`hypragent:`/`hela:`/`sat:`/`cts:`/`olke:`/`amta:` terms in TS code without adding a matching declaration to the corresponding `docs/ns/<prefix>.ttl` file.** CI will block the PR (see `.github/workflows/ontology-lint.yml`). Use existing W3C vocabularies (dcat:, hydra:, prov:, foaf:, etc.) whenever they fit.
+**Do not invent new `cg:`/`cgh:`/`pgsl:`/`ie:`/`hyprcat:`/`hypragent:`/`hela:`/`sat:`/`cts:`/`olke:`/`amta:`/`code:` terms in TS code without adding a matching declaration to the corresponding `docs/ns/<prefix>.ttl` file.** CI will block the PR (see `.github/workflows/ontology-lint.yml`). Use existing W3C vocabularies (dcat:, hydra:, prov:, foaf:, etc.) whenever they fit.
 
 ### Layering discipline (read before authoring specs, ontologies, or docs)
 

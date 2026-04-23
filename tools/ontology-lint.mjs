@@ -37,6 +37,8 @@ const OWNED_NAMESPACES = {
   cts:        'docs/ns/cts.ttl',
   olke:       'docs/ns/olke.ttl',
   amta:       'docs/ns/amta.ttl',
+  // Domain ontologies (L3)
+  code:       'docs/ns/code.ttl',
 };
 
 // Known-external prefixes we don't own — references are always valid

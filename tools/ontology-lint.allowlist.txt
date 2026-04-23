@@ -1,0 +1,13 @@
+# Known-drift allowlist for ontology-lint.
+#
+# Entries are `prefix:Term` that the lint would otherwise fail on.
+# Migrate OUT by either (a) defining the term in docs/ns/<prefix>.ttl
+# or (b) renaming the code to use an existing term or a non-owned
+# namespace. A growing list is a signal to schedule an ontology pass.
+
+# ── code: ──
+# False positive from regex tokenization: the string
+# `urn:agent:claude-code:local` embeds the literal "code:" inside a
+# URN, not an RDF CURIE reference. The URN itself is a default env
+# var identifier, not a code: ontology term.
+code:local

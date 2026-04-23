@@ -8,6 +8,63 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-04-23 (later) — first L3 domain ontology (`code:`)
+
+The project now ships with a working, lint-gated, runtime-demonstrated
+domain-specific knowledge graph — a practical test that the protocol
+is sufficient for non-trivial domains without new L1 primitives.
+
+### Added (L3 — Domain)
+
+- **`docs/ns/code.ttl`** — 10 classes + 18 properties for source-code
+  artifacts: Repository, Commit, Branch, PullRequest, Review, Defect,
+  TestRun, BuildResult, ReviewVerdict, Severity. Every class grounds
+  in L1 (cg:/pgsl:) or a W3C vocabulary. Commits are `pgsl:Fragment`;
+  branches are `cg:ParadigmSet`; reviews `cg:constructedFrom
+  (cg:SemioticFacet cg:ProvenanceFacet)`; defects
+  `cg:constructedFrom (cg:SemioticFacet)`.
+- **`examples/demo-code-domain.mjs`** — runtime demo of creation +
+  utilization. Builds a repo + PR + reviews as `code:` instances,
+  composes two opposing reviews via `ModalAlgebra.meet` to derive
+  effective PR state, propagates a defect's modal downgrade onto the
+  implicated commit via `ModalAlgebra.not + meet`, exhibits branches
+  as paradigm alternatives, and composes review × trust × build as
+  three independent semiotic facets into a single merge verdict —
+  all with zero adapter code.
+
+### Tooling changes
+
+- `tools/derivation-lint.mjs` — adds `code.ttl` to `L2_L3_FILES`.
+  Passes: 10/10 classes grounded.
+- `tools/ontology-lint.mjs` — registers `code` prefix in
+  `OWNED_NAMESPACES`. Passes: 32 terms defined.
+- `tools/ontology-lint.allowlist.txt` (new) — single-entry allowlist
+  for `code:local`, a false positive from the regex tokenizer
+  matching the literal `claude-code:local` URN default in
+  `mcp-server/server.ts`. Mechanism now exists for future known-drift
+  tracking.
+- `CLAUDE.md` — adds `code` to the ontology-hygiene prefix list.
+
+### Why
+
+CLAUDE.md has long listed `code:`, `med:`, `learning:` as example
+future domain namespaces to prove the protocol is domain-neutral.
+This commit makes that claim concrete for `code:` and verifiable:
+
+- Grounded by derivation-lint (machine-checkable).
+- Used by a runnable demo (observable).
+- Composed with L1 primitives (`ModalAlgebra`, paradigm set) with
+  no new protocol machinery.
+
+If the protocol needs a patch to support a new domain, the
+compositional claim is false. It didn't, so the claim holds for at
+least one non-trivial case.
+
+707/707 tests pass. Derivation-lint 51/51 grounded. Ontology-lint
+clean (1 allowlisted entry).
+
+---
+
 ## 2026-04-23 — emergence demo set
 
 Four self-contained simulations showing emergent properties of the

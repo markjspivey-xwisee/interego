@@ -1,0 +1,245 @@
+@prefix code: <https://markjspivey-xwisee.github.io/interego/ns/code#> .
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix pgsl: <https://markjspivey-xwisee.github.io/interego/ns/pgsl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════
+#  code: — Source code as a typed context domain (L3)
+# ══════════════════════════════════════════════════════════════
+#
+#  An L3 domain ontology for source-code artifacts — repositories,
+#  commits, branches, pull requests, reviews, defects, tests, builds.
+#  Every class is grounded in L1 (cg:/pgsl:) or a W3C vocabulary
+#  (prov:, dcat:, foaf:) per spec/DERIVATION.md.
+#
+#  The design exploits first-principle alignments that the domain
+#  naturally exhibits:
+#
+#    - A commit chain is a syntagm — each code:Commit is a
+#      pgsl:Fragment (granular unit) in an ordered sequence.
+#    - A branch is a paradigm — code:Branch is a cg:ParadigmSet
+#      over commit sequences (alternative trajectories the
+#      repository could take).
+#    - A pull request is a typed context — code:PullRequest is a
+#      cg:ContextDescriptor that carries the full seven-facet
+#      machinery (temporal: opened/merged time, provenance: who
+#      authored, semiotic: status/modal, trust: required approvals,
+#      etc.).
+#    - A review is a modal assertion — code:Review is constructed
+#      from cg:SemioticFacet (the verdict) + cg:ProvenanceFacet
+#      (who + when).
+#    - A defect is a semiotic claim — code:Defect is a cg:SemioticFacet
+#      whose interpretant is "this artifact is buggy" with a
+#      severity + confidence.
+#    - A build result is an attestation — code:BuildResult combines
+#      cg:TrustFacet (who vouches for the outcome) + cg:ProvenanceFacet
+#      (when the activity ran).
+#
+#  None of these domain concepts require new Layer-1 primitives;
+#  they are compositions of existing ones. That's the test —
+#  whether a new domain can be expressed entirely in terms of what
+#  L1 already provides. If this test passes, the protocol has
+#  demonstrated sufficiency for at least one non-trivial domain.
+
+<https://markjspivey-xwisee.github.io/interego/ns/code>
+    a owl:Ontology ;
+    dct:title "code: — Source code domain ontology" ;
+    dct:description "L3 domain ontology for source-code artifacts. Every class is grounded in L1 (cg:/pgsl:) or a W3C vocabulary. Demonstrates that a non-trivial software domain can be expressed compositionally on top of the Interego protocol without new primitives." ;
+    vann:preferredNamespacePrefix "code" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/code#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/pgsl> .
+
+# ── Classes ────────────────────────────────────────────────────
+
+code:Repository a owl:Class ;
+    rdfs:label "Repository" ;
+    rdfs:comment "A source-code repository. Extends dcat:Dataset with the protocol's federation model (each repo surfaces as a typed, federated dataset with commits as its primary records)." ;
+    rdfs:subClassOf dcat:Dataset .
+
+code:Commit a owl:Class ;
+    rdfs:label "Commit" ;
+    rdfs:comment "A single commit — one granular unit in a commit sequence. Modeled as pgsl:Fragment (granular unit in a sequence lattice) since commit chains are naturally syntagmatic; parent/child relations are pgsl:pullback-compatible." ;
+    rdfs:subClassOf pgsl:Fragment .
+
+code:Branch a owl:Class ;
+    rdfs:label "Branch" ;
+    rdfs:comment "A named line of commits. A branch IS a paradigmatic selection over the space of possible commit sequences for a repository — the other branches are the paradigm alternatives." ;
+    rdfs:subClassOf cg:ParadigmSet .
+
+code:PullRequest a owl:Class ;
+    rdfs:label "Pull Request" ;
+    rdfs:comment "A change proposal. Extends cg:ContextDescriptor directly because a PR is inherently a typed context that carries temporal (opened/merged), provenance (author), agent (reviewers), semiotic (open/closed/merged modal), trust (required approvals), and federation (which repo + pod) facets." ;
+    rdfs:subClassOf cg:ContextDescriptor .
+
+code:Review a owl:Class ;
+    rdfs:label "Review" ;
+    rdfs:comment "A review of a pull request. Constructed from a semiotic facet (the verdict + modal state + confidence) and a provenance facet (who reviewed, when). Composes with other reviews via the meet (most-conservative) on the modal lattice." ;
+    cg:constructedFrom ( cg:SemioticFacet cg:ProvenanceFacet ) .
+
+code:Defect a owl:Class ;
+    rdfs:label "Defect" ;
+    rdfs:comment "A reported bug or flaw. Constructed from a semiotic facet whose interpretant is 'this artifact is buggy' with severity + epistemic confidence. Modal state tracks whether the defect is Asserted (confirmed), Hypothetical (suspected), or Counterfactual (refuted)." ;
+    cg:constructedFrom ( cg:SemioticFacet ) .
+
+code:TestRun a owl:Class ;
+    rdfs:label "Test Run" ;
+    rdfs:comment "An execution of a test suite against a commit or PR. A prov:Activity whose outputs include build results + test outcomes. Provenance facet on descriptors carries start/end times + invoking agent." ;
+    rdfs:subClassOf prov:Activity .
+
+code:BuildResult a owl:Class ;
+    rdfs:label "Build Result" ;
+    rdfs:comment "Outcome of a build (pass/fail, artifact produced, logs). An attestation: who vouches for this outcome (trust facet) + when the build activity ran (provenance facet)." ;
+    cg:constructedFrom ( cg:TrustFacet cg:ProvenanceFacet ) .
+
+code:ReviewVerdict a owl:Class ;
+    rdfs:label "Review Verdict" ;
+    rdfs:comment "The modal-typed conclusion of a code review: Approved (Asserted the PR is mergeable), ChangesRequested (Counterfactual — in current form NOT mergeable), or Commented (Hypothetical — observations without gate)." ;
+    rdfs:subClassOf cg:SemioticFacet .
+
+code:Severity a owl:Class ;
+    rdfs:label "Severity Level" ;
+    rdfs:comment "A defect severity ranking (Critical > High > Medium > Low). Primitive enumeration — the values themselves are the unit of meaning, no further decomposition needed at this layer." ;
+    rdfs:subClassOf skos:Concept .
+
+# ── Review verdict individuals ────────────────────────────────
+
+code:Approved a code:ReviewVerdict ;
+    rdfs:label "Approved" ;
+    skos:note "Asserted: the PR is mergeable from this reviewer's perspective." .
+
+code:ChangesRequested a code:ReviewVerdict ;
+    rdfs:label "Changes Requested" ;
+    skos:note "Counterfactual: in its current form, the PR is NOT mergeable." .
+
+code:Commented a code:ReviewVerdict ;
+    rdfs:label "Commented" ;
+    skos:note "Hypothetical: observations offered without gating the merge." .
+
+# ── Severity individuals ──────────────────────────────────────
+
+code:Critical a code:Severity ;
+    rdfs:label "Critical" ;
+    skos:prefLabel "critical" ;
+    skos:broader code:High .
+
+code:High a code:Severity ;
+    rdfs:label "High" ;
+    skos:prefLabel "high" ;
+    skos:broader code:Medium .
+
+code:Medium a code:Severity ;
+    rdfs:label "Medium" ;
+    skos:prefLabel "medium" ;
+    skos:broader code:Low .
+
+code:Low a code:Severity ;
+    rdfs:label "Low" ;
+    skos:prefLabel "low" .
+
+# ── Object properties ─────────────────────────────────────────
+
+code:authoredBy a owl:ObjectProperty ;
+    rdfs:label "authored by" ;
+    rdfs:comment "The agent who authored a commit. Specialises prov:wasAttributedTo for the code domain." ;
+    rdfs:domain code:Commit ;
+    rdfs:range prov:Agent ;
+    rdfs:subPropertyOf prov:wasAttributedTo .
+
+code:parentCommit a owl:ObjectProperty ;
+    rdfs:label "parent commit" ;
+    rdfs:comment "The immediate ancestor of a commit in the syntagmatic chain. A commit may have multiple parents (merge commits)." ;
+    rdfs:domain code:Commit ;
+    rdfs:range code:Commit .
+
+code:targetsBranch a owl:ObjectProperty ;
+    rdfs:label "targets branch" ;
+    rdfs:comment "The branch a pull request proposes to merge into." ;
+    rdfs:domain code:PullRequest ;
+    rdfs:range code:Branch .
+
+code:onRepository a owl:ObjectProperty ;
+    rdfs:label "on repository" ;
+    rdfs:comment "The repository a PR / commit / branch belongs to." ;
+    rdfs:range code:Repository .
+
+code:reviewedBy a owl:ObjectProperty ;
+    rdfs:label "reviewed by" ;
+    rdfs:comment "Associates a pull request with a code review. Multiple reviews per PR compose via the modal lattice." ;
+    rdfs:domain code:PullRequest ;
+    rdfs:range code:Review .
+
+code:verdict a owl:ObjectProperty ;
+    rdfs:label "verdict" ;
+    rdfs:comment "The modal-typed conclusion of a review." ;
+    rdfs:domain code:Review ;
+    rdfs:range code:ReviewVerdict .
+
+code:severity a owl:ObjectProperty ;
+    rdfs:label "severity" ;
+    rdfs:comment "The severity level of a reported defect." ;
+    rdfs:domain code:Defect ;
+    rdfs:range code:Severity .
+
+code:reportedIn a owl:ObjectProperty ;
+    rdfs:label "reported in" ;
+    rdfs:comment "The commit or pull request in which a defect was identified." ;
+    rdfs:domain code:Defect .
+
+code:testedArtifact a owl:ObjectProperty ;
+    rdfs:label "tested artifact" ;
+    rdfs:comment "The commit or PR that a test run executed against." ;
+    rdfs:domain code:TestRun .
+
+# ── Datatype properties ───────────────────────────────────────
+
+code:commitSha a owl:DatatypeProperty ;
+    rdfs:label "commit sha" ;
+    rdfs:domain code:Commit ;
+    rdfs:range xsd:string .
+
+code:commitMessage a owl:DatatypeProperty ;
+    rdfs:label "commit message" ;
+    rdfs:domain code:Commit ;
+    rdfs:range xsd:string .
+
+code:branchName a owl:DatatypeProperty ;
+    rdfs:label "branch name" ;
+    rdfs:domain code:Branch ;
+    rdfs:range xsd:string .
+
+code:linesAdded a owl:DatatypeProperty ;
+    rdfs:label "lines added" ;
+    rdfs:domain code:PullRequest ;
+    rdfs:range xsd:nonNegativeInteger .
+
+code:linesRemoved a owl:DatatypeProperty ;
+    rdfs:label "lines removed" ;
+    rdfs:domain code:PullRequest ;
+    rdfs:range xsd:nonNegativeInteger .
+
+code:buildOutcome a owl:DatatypeProperty ;
+    rdfs:label "build outcome" ;
+    rdfs:comment "The terminal state of a build: success | failure | cancelled." ;
+    rdfs:domain code:BuildResult ;
+    rdfs:range xsd:string .
+
+# ── Alignments with existing ontologies ───────────────────────
+
+code:Commit rdfs:seeAlso pgsl:Fragment ;
+    rdfs:comment "A commit IS a pgsl:Fragment. Parent-child commit relations are pgsl:pullback operations; merge commits are pgsl:join operations. The commit DAG is a PGSL lattice over a single branch's namespace." .
+
+code:Branch rdfs:seeAlso cg:ParadigmSet ;
+    rdfs:comment "Branches of a repository are the paradigmatic alternatives — each branch is one selection from the paradigm of possible commit sequences. Merging is intersection + union over paradigms." .
+
+code:Review rdfs:seeAlso cg:SemioticFacet ;
+    rdfs:comment "A code review's verdict uses the same modal lattice as cg:modalStatus. Approved = Asserted, ChangesRequested = Counterfactual, Commented = Hypothetical. Composing multiple reviews = meet of their modal states." .
