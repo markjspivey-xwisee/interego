@@ -15,6 +15,16 @@ COPY src/ ./src/
 COPY docs/ns/ ./docs/ns/
 RUN npm ci && npx tsc
 
+# Copy doc files the relay serves as MCP resources at /mcp.
+# These are read at runtime by the relay's resources/read handler.
+COPY README.md /relay-docs/README.md
+COPY spec/architecture.md /relay-docs/architecture.md
+COPY spec/LAYERS.md /relay-docs/LAYERS.md
+COPY spec/DERIVATION.md /relay-docs/DERIVATION.md
+COPY docs/EMERGENCE.md /relay-docs/EMERGENCE.md
+COPY docs/ns/abac.ttl /relay-docs/abac.ttl
+COPY docs/ns/code.ttl /relay-docs/code.ttl
+
 # Pack the library into a tarball for the app install
 RUN npm pack && mv interego-core-*.tgz /tmp/interego-core.tgz
 
@@ -46,6 +56,7 @@ WORKDIR /app
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./
+COPY --from=build /relay-docs ./relay-docs
 
 EXPOSE 8080
 

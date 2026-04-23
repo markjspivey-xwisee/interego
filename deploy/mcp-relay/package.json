@@ -1,6 +1,6 @@
 {
   "name": "@interego/mcp-relay",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Cloud-hosted MCP relay — HTTP/SSE bridge for remote AI agents to access Interego tools",
   "type": "module",
   "scripts": {
