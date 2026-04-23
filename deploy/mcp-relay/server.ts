@@ -24,7 +24,13 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { resolve as resolvePath, dirname as pathDirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { InteregoOAuthProvider } from './oauth-provider.js';
@@ -955,19 +961,279 @@ const TOOL_SCHEMAS = [
   },
 ] as const;
 
+// ── MCP discoverability: instructions, doc resources, prompts ──
+//
+// Mirrors what mcp-server/server.ts ships locally, so a remote agent
+// connecting to this relay (e.g. via claude.ai) gets the same
+// system-level narrative + on-demand docs + workflow templates as a
+// local stdio user. Without this, a connector sees 25 isolated tool
+// descriptions and has to infer the system from scratch.
+
+const SERVER_INSTRUCTIONS = `Interego is composable, verifiable, federated context infrastructure
+for multi-agent shared memory. Every agent acts on behalf of a human
+or organization (the pod owner); descriptors carry attribution, trust,
+provenance, semiotic frame, and federation metadata.
+
+WHEN TO USE THIS SERVER:
+- The user wants to remember something across sessions or surfaces
+  → use publish_context to persist it as a typed descriptor on their pod.
+- The user references something they (or another agent) shared before
+  → use discover_context or get_descriptor to find it.
+- The user wants to share context with a specific other person/agent
+  → use publish_context with share_with (cross-pod, end-to-end-encrypted).
+- The user wants to know who's in the federation or what's shared with them
+  → use list_known_pods or subscribe_to_pod.
+
+KEY INVARIANTS (do not violate):
+- Pods are the source of truth. Identity server is stateless.
+- DIDs are canonical identifiers; userIds are derived. Never accept a
+  user-supplied userId.
+- All cross-pod content is end-to-end encrypted; recipients are
+  cryptographic, not access-list.
+- Descriptors are versioned via cg:supersedes; cached decisions are
+  verifiable-stale, not silent.
+
+DEEPER REFERENCE (fetch via resources/read when you need it):
+- docs://interego/overview        — what Interego is, top-level
+- docs://interego/architecture    — protocol architecture + facets
+- docs://interego/layers          — L1 protocol vs L2 patterns vs L3 domains
+- docs://interego/emergence       — emergent properties + demos
+- docs://interego/abac-pattern    — attribute-based access control
+- docs://interego/code-domain     — example L3 domain ontology
+
+If the user is asking general questions about the protocol, fetch the
+relevant doc resource rather than answering from inferred knowledge.`;
+
+// Doc resources are read on demand. Files are baked into the docker
+// image at /app/relay-docs/ (see Dockerfile.relay) and also live one
+// directory up during dev (deploy/mcp-relay/server.ts → context-graphs/{spec,docs,README.md}).
+const __relayDir = pathDirname(fileURLToPath(import.meta.url));
+
+function resolveDocFile(...candidatePaths: string[][]): string | null {
+  for (const segs of candidatePaths) {
+    const candidate = resolvePath(__relayDir, ...segs);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+interface DocResource {
+  uri: string;
+  name: string;
+  description: string;
+  mimeType: string;
+  // Try each path; first one that exists wins. First path is the
+  // production (/app/relay-docs/) layout; second is dev fallback.
+  candidatePaths: string[][];
+}
+
+const DOC_RESOURCES: readonly DocResource[] = [
+  {
+    uri: 'docs://interego/overview',
+    name: 'Interego — Overview',
+    description: 'Top-level project README: what Interego is, who it\'s for, key features.',
+    mimeType: 'text/markdown',
+    candidatePaths: [['relay-docs', 'README.md'], ['..', '..', 'README.md']],
+  },
+  {
+    uri: 'docs://interego/architecture',
+    name: 'Interego — Architecture (normative)',
+    description: 'Protocol architecture: seven facet types, composition operators, federation model, RDF 1.2 / SHACL 1.2 alignment.',
+    mimeType: 'text/markdown',
+    candidatePaths: [['relay-docs', 'architecture.md'], ['..', '..', 'spec', 'architecture.md']],
+  },
+  {
+    uri: 'docs://interego/layers',
+    name: 'Interego — Layering Discipline',
+    description: 'L1 (protocol) vs L2 (architecture patterns) vs L3 (implementation + domain).',
+    mimeType: 'text/markdown',
+    candidatePaths: [['relay-docs', 'LAYERS.md'], ['..', '..', 'spec', 'LAYERS.md']],
+  },
+  {
+    uri: 'docs://interego/derivation',
+    name: 'Interego — Derivation Discipline',
+    description: 'Normative construction rules: every L2/L3 ontology class must be grounded in L1 primitives.',
+    mimeType: 'text/markdown',
+    candidatePaths: [['relay-docs', 'DERIVATION.md'], ['..', '..', 'spec', 'DERIVATION.md']],
+  },
+  {
+    uri: 'docs://interego/emergence',
+    name: 'Interego — Emergent Properties',
+    description: 'Demos showing emergent properties of the protocol: vocabulary alignment, mediator pullback, localized closed-world, stigmergic colony.',
+    mimeType: 'text/markdown',
+    candidatePaths: [['relay-docs', 'EMERGENCE.md'], ['..', '..', 'docs', 'EMERGENCE.md']],
+  },
+  {
+    uri: 'docs://interego/abac-pattern',
+    name: 'Interego — ABAC pattern (L2)',
+    description: 'Attribute-based access control: policies as descriptors, SHACL predicates, federated attribute resolution.',
+    mimeType: 'text/turtle',
+    candidatePaths: [['relay-docs', 'abac.ttl'], ['..', '..', 'docs', 'ns', 'abac.ttl']],
+  },
+  {
+    uri: 'docs://interego/code-domain',
+    name: 'Interego — code: domain ontology (L3)',
+    description: 'Example L3 domain ontology for source-code artifacts (Repository, Commit, Branch, PullRequest, Review, Defect).',
+    mimeType: 'text/turtle',
+    candidatePaths: [['relay-docs', 'code.ttl'], ['..', '..', 'docs', 'ns', 'code.ttl']],
+  },
+];
+
+interface PromptDef {
+  name: string;
+  description: string;
+  arguments: { name: string; description: string; required: boolean }[];
+  build: (args: Record<string, string>) => string;
+}
+
+const PROMPTS: readonly PromptDef[] = [
+  {
+    name: 'publish-memory',
+    description: 'Publish a typed memory descriptor to the user\'s home pod so it survives across sessions and is discoverable by other agents.',
+    arguments: [
+      { name: 'topic', description: 'Short topic or title for the memory.', required: true },
+      { name: 'content', description: 'The actual content to remember (free-form text or RDF Turtle).', required: true },
+      { name: 'modal_status', description: 'Asserted | Hypothetical | Counterfactual (default Asserted).', required: false },
+    ],
+    build: (a) => `Use publish_context to persist this memory to the user's home pod:
+
+Topic: ${a.topic}
+Content: ${a.content}
+Modal status: ${a.modal_status ?? 'Asserted'}
+
+Construct an appropriate graph_iri (urn:graph:memory:<slug>), include the
+content as graph_content, and use the modal status above. Confirm with the
+user that the descriptor was published, and report the descriptor URL.`,
+  },
+  {
+    name: 'discover-shared-context',
+    description: 'Find what context other agents have shared with the user, across known pods.',
+    arguments: [
+      { name: 'topic', description: 'Optional topic filter (substring match).', required: false },
+      { name: 'since', description: 'Optional ISO 8601 datetime — only descriptors validFrom on/after this.', required: false },
+    ],
+    build: (a) => `Discover context shared with the user across known pods:
+
+1. Use list_known_pods to enumerate the federation surface.
+2. For each pod, use discover_context (with effective_at = now to filter
+   to currently-valid descriptors).
+${a.topic ? `3. Filter results by topic substring: "${a.topic}".\n` : ''}${a.since ? `4. Filter to descriptors with validFrom ≥ ${a.since}.\n` : ''}
+5. Summarize: which pods returned what, total descriptor count, any
+   noteworthy modal statuses.
+
+Surface anything the user might have forgotten about, and offer to
+get_descriptor for fuller content on any specific descriptor.`,
+  },
+  {
+    name: 'verify-trust-chain',
+    description: 'Verify the delegation + signature chain on a specific descriptor (provenance audit).',
+    arguments: [
+      { name: 'descriptor_url', description: 'Full URL of the descriptor to verify.', required: true },
+    ],
+    build: (a) => `Verify the trust chain for descriptor: ${a.descriptor_url}
+
+1. Use get_descriptor to fetch the full Turtle.
+2. Read the AgentFacet (assertingAgent + onBehalfOf) and TrustFacet
+   (issuer + trustLevel).
+3. Use discover_context with verify_delegation=true on the descriptor's
+   origin pod to confirm the agent is in the owner's authorized agents list.
+4. Report: who authored, on whose behalf, with what trust level, and
+   whether the delegation chain verifies.`,
+  },
+  {
+    name: 'explain-interego',
+    description: 'Briefly explain to the user what Interego is and what they can do with this MCP server.',
+    arguments: [],
+    build: () => `Read the docs://interego/overview resource. Then summarize for the
+user, in their words, what Interego is and three concrete things they
+can do right now with this MCP server. Keep it under 150 words.
+
+Offer to show them more — point at docs://interego/architecture for
+the protocol shape, docs://interego/emergence for what's possible, or
+just demo a publish + discover round-trip on their own pod.`,
+  },
+];
+
 // ── MCP Server Factory ──────────────────────────────────────
 // One Server instance per /mcp request (stateless mode). Wires ListTools
 // and CallTool to the same handler registry used by the REST routes.
 
 function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string } | null): Server {
   const server = new Server(
-    { name: '@interego/mcp-relay', version: '0.2.0' },
-    { capabilities: { tools: {} } },
+    { name: '@interego/mcp-relay', version: '0.3.0' },
+    {
+      capabilities: { tools: {}, resources: {}, prompts: {} },
+      instructions: SERVER_INSTRUCTIONS,
+    },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOL_SCHEMAS.map((t) => ({...t })),
   }));
+
+  // ── Resources: doc:// URIs serve protocol documentation ────
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: DOC_RESOURCES.map(d => ({
+      uri: d.uri,
+      name: d.name,
+      description: d.description,
+      mimeType: d.mimeType,
+    })),
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (req) => {
+    const doc = DOC_RESOURCES.find(d => d.uri === req.params.uri);
+    if (!doc) throw new Error(`Unknown resource: ${req.params.uri}`);
+    const path = resolveDocFile(...doc.candidatePaths);
+    if (!path) {
+      return {
+        contents: [{
+          uri: req.params.uri,
+          mimeType: doc.mimeType,
+          text: `(doc not bundled in this build; see https://github.com/markjspivey-xwisee/interego)`,
+        }],
+      };
+    }
+    try {
+      const text = readFileSync(path, 'utf8');
+      return { contents: [{ uri: req.params.uri, mimeType: doc.mimeType, text }] };
+    } catch (err) {
+      return {
+        contents: [{
+          uri: req.params.uri,
+          mimeType: doc.mimeType,
+          text: `(error reading ${path}: ${(err as Error).message})`,
+        }],
+      };
+    }
+  });
+
+  // ── Prompts: workflow templates ────────────────────────────
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: PROMPTS.map(p => ({
+      name: p.name,
+      description: p.description,
+      arguments: p.arguments,
+    })),
+  }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (req) => {
+    const prompt = PROMPTS.find(p => p.name === req.params.name);
+    if (!prompt) throw new Error(`Unknown prompt: ${req.params.name}`);
+    const args = (req.params.arguments ?? {}) as Record<string, string>;
+    for (const arg of prompt.arguments) {
+      if (arg.required && !args[arg.name]) {
+        throw new Error(`Missing required argument: ${arg.name}`);
+      }
+    }
+    return {
+      description: prompt.description,
+      messages: [{
+        role: 'user' as const,
+        content: { type: 'text' as const, text: prompt.build(args) },
+      }],
+    };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const { name, arguments: rawArgs } = req.params;
