@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Interego — three apps, one pod</title>
+<style>
+  /* ── Layout ── */
+  :root {
+    --bg: #0e1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-2: #d2a8ff;
+    --good: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --code-bg: #1f242b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  h1 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+  .subtitle { color: var(--muted); font-size: 13px; }
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 0;
+    min-height: calc(100vh - 80px);
+  }
+  /* ── Sidebar (pod content snapshot) ── */
+  .sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .sidebar h2 {
+    margin: 0 0 12px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+  }
+  .pod-item {
+    padding: 8px 10px;
+    border-radius: 6px;
+    margin-bottom: 4px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--muted);
+    border: 1px solid transparent;
+  }
+  .pod-item .id { color: var(--accent); }
+  .pod-item .modal-asserted { color: var(--good); }
+  .pod-item .modal-hypothetical { color: var(--warn); }
+  .pod-item .modal-counterfactual { color: var(--bad); }
+  /* ── Main panel with tabs ── */
+  .main {
+    padding: 24px;
+    overflow-y: auto;
+  }
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    padding: 10px 16px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .tab .badge {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    background: var(--border);
+    color: var(--muted);
+  }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .panel-header {
+    margin: 0 0 16px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .panel-header strong { color: var(--text); }
+  /* ── App 1: Memory Browser timeline ── */
+  .timeline-item {
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    border-left: 3px solid var(--accent);
+    background: var(--panel);
+    border-radius: 0 6px 6px 0;
+  }
+  .timeline-item.modal-hypothetical { border-left-color: var(--warn); }
+  .timeline-item.modal-counterfactual { border-left-color: var(--bad); }
+  .timeline-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .timeline-payload { font-size: 14px; }
+  /* ── App 2: Trust Dashboard ── */
+  .trust-subject {
+    padding: 16px;
+    margin-bottom: 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .trust-subject-title {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    color: var(--accent);
+    margin-bottom: 12px;
+  }
+  .trust-attestation {
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    background: var(--code-bg);
+    border-radius: 4px;
+  }
+  .trust-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .trust-meta .self-tag { color: var(--accent-2); font-weight: 600; }
+  .trust-meta .peer-tag { color: var(--good); font-weight: 600; }
+  .axis-row {
+    display: grid;
+    grid-template-columns: 110px 50px 1fr;
+    gap: 8px;
+    align-items: center;
+    font-size: 11px;
+    margin: 2px 0;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .axis-row .name { color: var(--muted); }
+  .axis-row .value { text-align: right; color: var(--text); }
+  .axis-bar {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .axis-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--good), var(--accent));
+  }
+  /* ── App 3: RDF Inspector ── */
+  .rdf-block {
+    padding: 14px;
+    margin-bottom: 12px;
+    background: var(--code-bg);
+    border-radius: 6px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-x: auto;
+  }
+  .rdf-block .subject { color: var(--accent); }
+  .rdf-block .predicate { color: var(--accent-2); }
+  .rdf-block .object-iri { color: var(--accent); }
+  .rdf-block .object-literal { color: var(--good); }
+  .rdf-block .object-typed { color: var(--warn); }
+  /* ── Footer ── */
+  footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Interego — three apps, one pod</h1>
+  <div class="subtitle">
+    Same pod content. Three different apps presenting it through three different lenses.
+    Zero app-specific schema.
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <h2>Pod content</h2>
+    <div id="pod-list"></div>
+  </aside>
+
+  <main class="main">
+    <div class="tabs">
+      <button class="tab active" data-tab="memory">📓 Memory Browser</button>
+      <button class="tab" data-tab="trust">🛡 Trust Dashboard</button>
+      <button class="tab" data-tab="rdf">🔬 RDF Inspector</button>
+    </div>
+
+    <section id="panel-memory" class="panel active">
+      <div class="panel-header">
+        <strong>App 1.</strong> Reads the same descriptors, presents them as a timeline.
+        Asks: "what did I do recently?"
+      </div>
+      <div id="timeline"></div>
+    </section>
+
+    <section id="panel-trust" class="panel">
+      <div class="panel-header">
+        <strong>App 2.</strong> Same descriptors, grouped by subject; surfaces who attested what about whom.
+        Asks: "who's vouching for what?"
+      </div>
+      <div id="trust"></div>
+    </section>
+
+    <section id="panel-rdf" class="panel">
+      <div class="panel-header">
+        <strong>App 3.</strong> Same descriptors, rendered as raw RDF triples.
+        Asks: "show me the underlying graph."
+      </div>
+      <div id="rdf"></div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <strong>The point:</strong> none of these apps wrote anything app-specific to the pod.
+  None required prior coordination with the pod's author. None know which app produced
+  which descriptor. They all read the same standard <code>cg:</code> + W3C vocabulary
+  shape — Verborgh's interop holy grail.
+  &nbsp; · &nbsp;
+  <a href="https://github.com/markjspivey-xwisee/interego">github</a>
+</footer>
+
+<script>
+// ── The pod content. Same shape as demo-cross-app-pod-interop.mjs. ──
+
+const pod = [
+  {
+    id: 'urn:cg:memory:vocab-emergence-2026-04-22',
+    describes: 'urn:graph:memory:vocab-emergence-2026-04-22',
+    facets: [
+      { type: 'Temporal', validFrom: '2026-04-22T14:00:00Z' },
+      { type: 'Provenance', wasAttributedTo: 'urn:agent:mark', generatedAtTime: '2026-04-22T14:00:00Z' },
+      { type: 'Agent', assertingAgent: { agentIdentity: 'urn:agent:mark' } },
+      { type: 'Semiotic', modalStatus: 'Asserted', epistemicConfidence: 0.92 },
+      { type: 'Trust', trustLevel: 'SelfAsserted', issuer: 'urn:agent:mark' },
+    ],
+    payload: 'Vocabulary alignment converges in ~45 rounds with threshold 3 over 9 subjects.',
+  },
+  {
+    id: 'urn:cg:attestation:bob-attests-mark-2026-04-23',
+    describes: 'urn:agent:mark',
+    facets: [
+      { type: 'Temporal', validFrom: '2026-04-23T09:00:00Z' },
+      { type: 'Provenance', wasAttributedTo: 'urn:agent:bob', generatedAtTime: '2026-04-23T09:00:00Z' },
+      { type: 'Agent', assertingAgent: { agentIdentity: 'urn:agent:bob' } },
+      { type: 'Semiotic', modalStatus: 'Asserted' },
+      { type: 'Trust', trustLevel: 'PeerAttested', issuer: 'urn:agent:bob', amtaAxes: { honesty: 0.9, competence: 0.85 } },
+    ],
+    payload: '(amta:Attestation about urn:agent:mark)',
+  },
+  {
+    id: 'urn:cg:attestation:carol-attests-mark-2026-04-23',
+    describes: 'urn:agent:mark',
+    facets: [
+      { type: 'Temporal', validFrom: '2026-04-23T15:30:00Z' },
+      { type: 'Provenance', wasAttributedTo: 'urn:agent:carol', generatedAtTime: '2026-04-23T15:30:00Z' },
+      { type: 'Agent', assertingAgent: { agentIdentity: 'urn:agent:carol' } },
+      { type: 'Semiotic', modalStatus: 'Asserted' },
+      { type: 'Trust', trustLevel: 'PeerAttested', issuer: 'urn:agent:carol', amtaAxes: { honesty: 0.95, competence: 0.92 } },
+    ],
+    payload: '(amta:Attestation about urn:agent:mark)',
+  },
+  {
+    id: 'urn:cg:code-review:pr42-bob',
+    describes: 'urn:code:pr:42',
+    facets: [
+      { type: 'Temporal', validFrom: '2026-04-22T11:15:00Z' },
+      { type: 'Provenance', wasAttributedTo: 'urn:agent:bob', generatedAtTime: '2026-04-22T11:15:00Z' },
+      { type: 'Agent', assertingAgent: { agentIdentity: 'urn:agent:bob' } },
+      { type: 'Semiotic', modalStatus: 'Asserted', interpretationFrame: 'code:Approved' },
+      { type: 'Trust', trustLevel: 'PeerAttested', issuer: 'urn:agent:bob' },
+    ],
+    payload: '(code:Review verdict=Approved on PR #42)',
+  },
+  {
+    id: 'urn:cg:memory:meeting-notes-2026-04-23',
+    describes: 'urn:graph:notes/team-meeting-2026-04-23',
+    facets: [
+      { type: 'Temporal', validFrom: '2026-04-23T16:00:00Z' },
+      { type: 'Provenance', wasAttributedTo: 'urn:agent:mark', generatedAtTime: '2026-04-23T16:00:00Z' },
+      { type: 'Agent', assertingAgent: { agentIdentity: 'urn:agent:mark' } },
+      { type: 'Semiotic', modalStatus: 'Asserted', epistemicConfidence: 0.85 },
+      { type: 'Trust', trustLevel: 'SelfAsserted', issuer: 'urn:agent:mark' },
+    ],
+    payload: 'Discussed Q3 priorities; revisit after pitch on Friday.',
+  },
+  {
+    id: 'urn:cg:hypothetical:emergent-policy-shared-threshold',
+    describes: 'urn:claim:emergent-shared-policy-threshold',
+    facets: [
+      { type: 'Temporal', validFrom: '2026-04-23T18:00:00Z' },
+      { type: 'Provenance', wasAttributedTo: 'urn:agent:carol', generatedAtTime: '2026-04-23T18:00:00Z' },
+      { type: 'Agent', assertingAgent: { agentIdentity: 'urn:agent:carol' } },
+      { type: 'Semiotic', modalStatus: 'Hypothetical', epistemicConfidence: 0.6 },
+      { type: 'Trust', trustLevel: 'PeerAttested', issuer: 'urn:agent:carol' },
+    ],
+    payload: 'Hypothesis: emergent policy threshold ≈ median of independent inputs. Needs more data.',
+  },
+];
+
+// ── Helpers (same as the Node demo) ──
+const facet = (d, type) => d.facets.find(f => f.type === type);
+const timeOf = d => facet(d, 'Temporal')?.validFrom;
+const authorOf = d => facet(d, 'Provenance')?.wasAttributedTo;
+const modalOf = d => facet(d, 'Semiotic')?.modalStatus;
+const confidenceOf = d => facet(d, 'Semiotic')?.epistemicConfidence;
+const trustOf = d => facet(d, 'Trust');
+const shortIri = iri => iri.split(':').slice(-2).join(':');
+const shortAgent = iri => iri?.split(':').at(-1) ?? '(unknown)';
+
+// ── Sidebar pod-content snapshot ──
+function renderPodList() {
+  const el = document.getElementById('pod-list');
+  el.innerHTML = pod.map(d => {
+    const modal = modalOf(d);
+    const cls = modal ? `modal-${modal.toLowerCase()}` : '';
+    return `<div class="pod-item">
+      <div class="id">${shortIri(d.id)}</div>
+      <div class="${cls}">${modal ?? '?'}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── App 1: Memory Browser ──
+function renderTimeline() {
+  const sorted = [...pod].sort((a, b) => timeOf(a).localeCompare(timeOf(b)));
+  document.getElementById('timeline').innerHTML = sorted.map(d => {
+    const time = timeOf(d).slice(0, 16).replace('T', ' ');
+    const author = shortAgent(authorOf(d));
+    const modal = modalOf(d);
+    const conf = confidenceOf(d);
+    const confStr = conf !== undefined ? `&nbsp;·&nbsp;conf ${conf.toFixed(2)}` : '';
+    return `<div class="timeline-item modal-${modal.toLowerCase()}">
+      <div class="timeline-meta">
+        <span>${time}</span>
+        <span>by ${author}</span>
+        <span>${modal}${confStr}</span>
+      </div>
+      <div class="timeline-payload">${escapeHtml(d.payload)}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── App 2: Trust Dashboard ──
+function renderTrust() {
+  const bySubject = new Map();
+  for (const d of pod) {
+    const trust = trustOf(d);
+    if (!trust) continue;
+    if (!bySubject.has(d.describes)) bySubject.set(d.describes, []);
+    bySubject.get(d.describes).push({ d, trust });
+  }
+  const blocks = [];
+  for (const [subject, entries] of bySubject) {
+    const attestations = entries.map(({ d, trust }) => {
+      const issuer = shortAgent(trust.issuer);
+      const isSelf = trust.issuer === d.describes;
+      const tag = isSelf
+        ? `<span class="self-tag">self-asserted</span>`
+        : `<span class="peer-tag">peer-attested</span>`;
+      const axes = trust.amtaAxes ? Object.entries(trust.amtaAxes).map(([axis, value]) => {
+        const pct = Math.round(value * 100);
+        return `<div class="axis-row">
+          <div class="name">${axis}</div>
+          <div class="value">${value.toFixed(2)}</div>
+          <div class="axis-bar"><div class="axis-bar-fill" style="width: ${pct}%"></div></div>
+        </div>`;
+      }).join('') : '';
+      return `<div class="trust-attestation">
+        <div class="trust-meta">
+          ${tag}<span>${issuer}</span><span>trustLevel: ${trust.trustLevel}</span>
+        </div>
+        ${axes}
+      </div>`;
+    }).join('');
+    blocks.push(`<div class="trust-subject">
+      <div class="trust-subject-title">subject: ${shortIri(subject)}</div>
+      ${attestations}
+    </div>`);
+  }
+  document.getElementById('trust').innerHTML = blocks.join('');
+}
+
+// ── App 3: RDF Inspector ──
+function renderRdf() {
+  document.getElementById('rdf').innerHTML = pod.map(d => {
+    const lines = [`<span class="subject">&lt;${shortIri(d.id)}&gt;</span>`];
+    lines.push(`  a <span class="object-iri">cg:ContextDescriptor</span> ;`);
+    lines.push(`  <span class="predicate">cg:describes</span>             <span class="object-iri">&lt;${shortIri(d.describes)}&gt;</span> ;`);
+    for (const f of d.facets) {
+      switch (f.type) {
+        case 'Temporal':
+          lines.push(`  <span class="predicate">cg:validFrom</span>             <span class="object-typed">"${f.validFrom}"^^xsd:dateTime</span> ;`);
+          break;
+        case 'Provenance':
+          lines.push(`  <span class="predicate">prov:wasAttributedTo</span>     <span class="object-iri">&lt;${shortIri(f.wasAttributedTo)}&gt;</span> ;`);
+          break;
+        case 'Agent':
+          lines.push(`  <span class="predicate">cg:assertingAgent</span>        <span class="object-iri">&lt;${shortIri(f.assertingAgent.agentIdentity)}&gt;</span> ;`);
+          break;
+        case 'Semiotic':
+          lines.push(`  <span class="predicate">cg:modalStatus</span>           <span class="object-iri">cg:${f.modalStatus}</span> ;`);
+          if (f.epistemicConfidence !== undefined) {
+            lines.push(`  <span class="predicate">cg:epistemicConfidence</span>   <span class="object-typed">"${f.epistemicConfidence}"^^xsd:double</span> ;`);
+          }
+          break;
+        case 'Trust':
+          lines.push(`  <span class="predicate">cg:trustLevel</span>            <span class="object-iri">cg:${f.trustLevel}</span> ;`);
+          lines.push(`  <span class="predicate">cg:issuer</span>                <span class="object-iri">&lt;${shortIri(f.issuer)}&gt;</span> ;`);
+          break;
+      }
+    }
+    lines[lines.length - 1] = lines[lines.length - 1].replace(/;$/, '.');
+    return `<div class="rdf-block">${lines.join('<br>')}</div>`;
+  }).join('');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// ── Tabs ──
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('panel-' + t.dataset.tab).classList.add('active');
+  });
+});
+
+// ── Render once on load ──
+renderPodList();
+renderTimeline();
+renderTrust();
+renderRdf();
+</script>
+</body>
+</html>
