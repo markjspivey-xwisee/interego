@@ -31,17 +31,61 @@ export function sha256(content: string): string {
 // ── Real CID Computation ─────────────────────────────────────
 
 /**
- * Compute a real content identifier from content.
- * Uses SHA-256 multihash encoding compatible with IPFS CID v1.
+ * Compute a real CIDv1 (raw codec, sha2-256) from content.
  *
- * Format: base32-encoded CID v1 with raw codec + SHA-256 multihash.
- * This produces the same hash that IPFS would use for the same content.
+ * Format: `b` (multibase prefix for base32) + base32-lowercase encoding of:
+ *   [CID version byte (0x01)] + [codec (0x55 = raw)] +
+ *   [multihash header (0x12 = sha2-256, 0x20 = 32 bytes)] +
+ *   [SHA-256 digest (32 bytes)]
+ *
+ * Output looks like `bafkreif7...` and resolves correctly on any IPFS gateway
+ * for the given content. Prior implementation concatenated `bafkrei` + raw hex,
+ * which is NOT a valid base32 multihash and never resolves.
  */
 export function computeCid(content: string): CID {
-  const hash = sha256(content);
-  // CID v1 with raw codec (0x55) and sha2-256 multihash (0x12, 0x20 = 32 bytes)
-  // Simplified base32-like encoding for portability
-  return `bafkrei${hash.slice(0, 52)}` as CID;
+  const hashHex = sha256(content); // 64-char hex string
+  // Build the binary multihash: [0x12, 0x20, ...digest32]
+  // Then prepend the CID v1 prefix: [0x01, 0x55, ...multihash]
+  const digest = hexToBytes(hashHex);
+  const multihash = new Uint8Array(2 + digest.length);
+  multihash[0] = 0x12; // sha2-256
+  multihash[1] = 0x20; // 32-byte length
+  multihash.set(digest, 2);
+  const cidBytes = new Uint8Array(2 + multihash.length);
+  cidBytes[0] = 0x01; // CIDv1
+  cidBytes[1] = 0x55; // raw codec
+  cidBytes.set(multihash, 2);
+  // Multibase prefix `b` = base32 lowercase, no padding (RFC 4648 §6).
+  return `b${base32Encode(cidBytes)}` as CID;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
+// RFC 4648 base32 lowercase, no padding.
+const BASE32_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+
+function base32Encode(bytes: Uint8Array): string {
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i]!;
+    bits += 8;
+    while (bits >= 5) {
+      out += BASE32_ALPHABET[(value >>> (bits - 5)) & 0x1f];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    out += BASE32_ALPHABET[(value << (5 - bits)) & 0x1f];
+  }
+  return out;
 }
 
 // ── IPFS Pinning ─────────────────────────────────────────────

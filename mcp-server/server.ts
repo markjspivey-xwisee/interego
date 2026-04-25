@@ -458,6 +458,15 @@ async function toolPublishContext(args: {
   valid_until?: string;
   target_pod?: string;
   share_with?: string[];
+  /**
+   * When true (default), look up any prior descriptor on the same pod
+   * that describes the same graph_iri and add a cg:supersedes link to
+   * it. This makes republishing-to-add-recipients cleanly mark the old
+   * version as superseded so federation queries filter it out. Set to
+   * false if you want multiple coexisting descriptors for the same
+   * graph (e.g., different agents' perspectives on the same subject).
+   */
+  auto_supersede_prior?: boolean;
 }): Promise<string> {
   await ensureCSS();
   await ensureRegistry();
@@ -466,6 +475,24 @@ async function toolPublishContext(args: {
   const podUrl = args.target_pod ?? homePod.url;
   const descId = (args.descriptor_id ?? `urn:cg:${POD_NAME}:${Date.now()}`) as IRI;
   const now = new Date().toISOString();
+
+  // Auto-supersede: if previous descriptor(s) on this pod describe the
+  // same graph_iri, our new one supersedes them. Disabled with
+  // auto_supersede_prior: false. Failure is non-fatal — we just publish
+  // without the supersedes link if discovery fails.
+  const priorVersions: IRI[] = [];
+  if (args.auto_supersede_prior !== false) {
+    try {
+      const entries = await discover(podUrl, undefined, { fetch: solidFetch });
+      for (const e of entries) {
+        if (e.describes.includes(args.graph_iri as IRI) && e.descriptorUrl !== descId) {
+          priorVersions.push(e.descriptorUrl as IRI);
+        }
+      }
+    } catch {
+      // Manifest not yet present, or pod unreachable — proceed without supersedes.
+    }
+  }
 
   // L1 protocol preprocessing — modal-truth consistency + cleartext
   // mirror (spec/architecture.md §5.2.2 + spec/revocation.md §1).
@@ -501,7 +528,10 @@ async function toolPublishContext(args: {
     })
 .version(1);
   if (args.valid_until) builder.validUntil(args.valid_until);
-  if (preprocessed.supersedes.length > 0) builder.supersedes(...preprocessed.supersedes);
+  // Union the auto-detected prior versions with any cg:supersedes
+  // explicitly carried in the graph content. Both contribute.
+  const allSupersedes = [...new Set([...preprocessed.supersedes, ...priorVersions])];
+  if (allSupersedes.length > 0) builder.supersedes(...allSupersedes);
   if (preprocessed.conformsTo.length > 0) builder.conformsTo(...preprocessed.conformsTo);
 
   const descriptor = builder.build();
@@ -558,6 +588,10 @@ async function toolPublishContext(args: {
     ...(shareResolved.length > 0 ? [
       `  Shared with:`,
       ...shareResolved.map(s => `    ${s.handle} → ${s.podUrl || 'UNRESOLVED'} (${s.agentCount} agent(s))`),
+    ] : []),
+    ...(priorVersions.length > 0 ? [
+      `  Supersedes prior versions for this graph_iri:`,
+      ...priorVersions.map(p => `    ${p}`),
     ] : []),
     args.task_description ? `  Task: ${args.task_description}` : '',
   ];
@@ -1653,6 +1687,10 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'array',
             items: { type: 'string' },
             description: 'Optional list of external identity handles (did:web:..., WebID URLs, or acct:user@host) to include as additional E2EE recipients. Their pods are resolved and their authorized agents are added to the envelope recipient set — only those specific agents can decrypt THIS graph. Use for selective cross-pod sharing without exposing other pod content.',
+          },
+          auto_supersede_prior: {
+            type: 'boolean',
+            description: 'When true (default), automatically add cg:supersedes links to any prior descriptor on this pod that describes the same graph_iri. Makes republish-to-add-recipients cleanly mark the older version as superseded. Set to false to allow multiple coexisting descriptors for the same graph.',
           },
         },
         required: ['graph_iri', 'graph_content'],

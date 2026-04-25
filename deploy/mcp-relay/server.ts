@@ -301,6 +301,25 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     graphContent: args.graph_content as string | undefined,
   });
 
+  // Auto-supersede: when republishing a graph_iri (typically because
+  // share_with added recipients), mark prior descriptor(s) on this pod
+  // for the same graph_iri as superseded. Keeps federation queries
+  // returning the canonical current version. Disable via
+  // auto_supersede_prior: false.
+  const priorVersions: IRI[] = [];
+  if (args.auto_supersede_prior !== false) {
+    try {
+      const entries = await discover(podUrl, undefined, { fetch: solidFetch });
+      for (const e of entries) {
+        if (e.describes.includes((args.graph_iri as string) as IRI) && e.descriptorUrl !== descId) {
+          priorVersions.push(e.descriptorUrl as IRI);
+        }
+      }
+    } catch {
+      // Manifest not yet present, or pod unreachable — proceed without supersedes.
+    }
+  }
+
   const builder = ContextDescriptor.create(descId)
 .describes((args.graph_iri as string) as IRI)
 .temporal({ validFrom: (args.valid_from as string) ?? now, validUntil: args.valid_until as string })
@@ -321,10 +340,12 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     })
 .version(1);
   if (args.valid_until) builder.validUntil(args.valid_until as string);
-  // Thread cleartext-mirror relationships from content → descriptor.
+  // Thread cleartext-mirror relationships from content → descriptor,
+  // unioned with any auto-detected prior versions for this graph_iri.
   // Keeps federation-queryable links out of the encrypted payload.
-  if (preprocessed.supersedes.length > 0) {
-    builder.supersedes(...preprocessed.supersedes);
+  const allSupersedes = [...new Set([...preprocessed.supersedes, ...priorVersions])];
+  if (allSupersedes.length > 0) {
+    builder.supersedes(...allSupersedes);
   }
   if (preprocessed.conformsTo.length > 0) {
     builder.conformsTo(...preprocessed.conformsTo);
@@ -795,6 +816,10 @@ const TOOL_SCHEMAS = [
           type: 'array',
           items: { type: 'string' },
           description: 'Optional list of external identity handles (did:web:..., WebID URLs, or acct:user@host). Each is resolved to its pod, and their authorized agents\' X25519 keys are added as recipients on the envelope — per-graph cross-pod sharing without any pod-level ACL change. Use to share a specific graph with another person while keeping your other graphs private.',
+        },
+        auto_supersede_prior: {
+          type: 'boolean',
+          description: 'When true (default), automatically add cg:supersedes links to any prior descriptor on this pod that describes the same graph_iri. Makes republish-to-add-recipients cleanly mark the older version as superseded. Set to false to allow multiple coexisting descriptors for the same graph.',
         },
       },
       required: ['graph_iri', 'graph_content'],
