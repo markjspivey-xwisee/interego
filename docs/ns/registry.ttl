@@ -1,0 +1,142 @@
+@prefix registry: <https://markjspivey-xwisee.github.io/interego/ns/registry#> .
+@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix amta:     <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix rdf:      <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:     <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:      <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:      <http://www.w3.org/2002/07/owl#> .
+@prefix dct:      <http://purl.org/dc/terms/> .
+@prefix prov:     <http://www.w3.org/ns/prov#> .
+@prefix vann:     <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════
+#  registry: — Public Agent Attestation Registry pattern (L2)
+# ══════════════════════════════════════════════════════════════
+#
+#  Federated, public-facing index of agents, their capabilities,
+#  and the trust attestations they have accumulated. Anyone can
+#  run a registry. Multiple registries can co-exist + cross-cite
+#  each other; agents register against whichever serve their
+#  community. Reputation aggregates across registries an agent is
+#  listed in, weighted by each registry's own reputation.
+#
+#  No single registry is the source of truth. The protocol gives
+#  the index its shape; operators give it its content.
+#
+#  Architecture (built on existing primitives):
+#    - A registry IS a cg:ContextDescriptor describing a list of
+#      registered agents (registry:RegistryEntry instances).
+#    - Each entry cites the agent's pod URL + capability set.
+#    - Reputation = aggregated amta:Attestation descriptors that
+#      describe the agent, weighted by issuer trust + recency.
+#    - Cross-registry citations use prov:wasDerivedFrom so an
+#      agent that's listed in registry A can be cited by entry
+#      in registry B with full provenance.
+#
+#  This is the L2 pattern. The reference runtime in
+#  src/registry/ implements one viable evaluator + reputation
+#  aggregator.
+
+<https://markjspivey-xwisee.github.io/interego/ns/registry>
+    a owl:Ontology ;
+    dct:title "registry: — Public Agent Attestation Registry" ;
+    dct:description "L2 pattern for federated public agent registries. Multiple registries co-exist and cross-cite. Reputation aggregates from amta:Attestation across all registries an agent is listed in." ;
+    vann:preferredNamespacePrefix "registry" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/registry#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/amta> .
+
+# ── Classes ─────────────────────────────────────────────────
+
+registry:Registry a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Public Agent Registry" ;
+    rdfs:comment "A public, federated index of agents. Constructed as a cg:ContextDescriptor whose graph holds RegistryEntry instances. Registries are themselves discoverable via cg:FederationFacet so other registries can cite them." .
+
+registry:RegistryEntry a owl:Class ;
+    rdfs:label "Registry Entry" ;
+    rdfs:comment "One agent's listing within a registry. Carries the agent's identity (DID/WebID), pod URL, declared capability set, and current aggregated reputation snapshot." ;
+    cg:constructedFrom ( cg:AgentFacet cg:FederationFacet cg:TrustFacet ) .
+
+registry:CapabilityDeclaration a owl:Class ;
+    rdfs:label "Capability Declaration" ;
+    rdfs:comment "An agent's claim that it offers a specific capability (typically a cg:Affordance class). Declared by the agent itself; trust comes from attestations, not from the declaration." ;
+    rdfs:subClassOf cg:SemioticFacet .
+
+registry:ReputationSnapshot a owl:Class ;
+    rdfs:label "Reputation Snapshot" ;
+    rdfs:comment "Aggregated trust attestations for an agent at a moment in time. Computed across all amta:Attestation descriptors describing the agent, optionally weighted by issuer reputation, recency, and registry-specific policies. Snapshot is verifiable: every contributing attestation is cited via prov:wasDerivedFrom." ;
+    cg:constructedFrom ( amta:Attestation cg:TemporalFacet cg:TrustFacet ) .
+
+registry:CrossRegistryCitation a owl:Class ;
+    rdfs:label "Cross-Registry Citation" ;
+    rdfs:comment "A registry entry that references an agent's listing on another registry. Lets reputation flow across registries without requiring a single source of truth." ;
+    cg:constructedFrom ( registry:RegistryEntry prov:wasDerivedFrom ) .
+
+# ── Properties ──────────────────────────────────────────────
+
+registry:hasEntry a owl:ObjectProperty ;
+    rdfs:label "has entry" ;
+    rdfs:domain registry:Registry ;
+    rdfs:range registry:RegistryEntry ;
+    rdfs:comment "Lists an agent's entry in this registry." .
+
+registry:agentIdentity a owl:ObjectProperty ;
+    rdfs:label "agent identity" ;
+    rdfs:domain registry:RegistryEntry ;
+    rdfs:comment "The agent's canonical identifier (DID or WebID)." .
+
+registry:agentPod a owl:ObjectProperty ;
+    rdfs:label "agent pod" ;
+    rdfs:domain registry:RegistryEntry ;
+    rdfs:comment "The agent's home pod URL — where its descriptors live." .
+
+registry:declaresCapability a owl:ObjectProperty ;
+    rdfs:label "declares capability" ;
+    rdfs:domain registry:RegistryEntry ;
+    rdfs:range registry:CapabilityDeclaration ;
+    rdfs:comment "A capability the agent claims to offer." .
+
+registry:currentReputation a owl:ObjectProperty ;
+    rdfs:label "current reputation" ;
+    rdfs:domain registry:RegistryEntry ;
+    rdfs:range registry:ReputationSnapshot ;
+    rdfs:comment "Current aggregated reputation snapshot for this entry." .
+
+registry:registryDescription a owl:DatatypeProperty ;
+    rdfs:label "registry description" ;
+    rdfs:domain registry:Registry ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Human-readable purpose of this registry (e.g. 'Code-quality reviewers', 'Research peer reviewers')." .
+
+registry:registryPolicy a owl:ObjectProperty ;
+    rdfs:label "registry policy" ;
+    rdfs:domain registry:Registry ;
+    rdfs:range cg:AccessControlPolicy ;
+    rdfs:comment "Policies governing who can register, what capabilities are valid, how reputation is aggregated. Concretized as cg:AccessControlPolicy descriptors." .
+
+registry:citesRegistry a owl:ObjectProperty ;
+    rdfs:label "cites registry" ;
+    rdfs:domain registry:Registry ;
+    rdfs:range registry:Registry ;
+    rdfs:comment "This registry recognizes another registry as authoritative for some agents/capabilities." .
+
+registry:aggregatedScore a owl:DatatypeProperty ;
+    rdfs:label "aggregated score" ;
+    rdfs:domain registry:ReputationSnapshot ;
+    rdfs:range xsd:double ;
+    rdfs:comment "The aggregated numeric reputation score [0.0, 1.0]." .
+
+registry:contributingAttestations a owl:ObjectProperty ;
+    rdfs:label "contributing attestations" ;
+    rdfs:domain registry:ReputationSnapshot ;
+    rdfs:range amta:Attestation ;
+    rdfs:comment "The amta:Attestation descriptors that contributed to this snapshot." .
+
+# ── Alignments ──────────────────────────────────────────────
+
+registry:Registry rdfs:seeAlso cg:ContextDescriptor ;
+    rdfs:comment "A registry is just a context descriptor with a particular shape. Same composition operators (union/intersection/restriction/override) apply: two registries can be UNIONED to form a federation; INTERSECTED to find agents listed in both; RESTRICTED to a capability subset." .
+
+registry:ReputationSnapshot rdfs:seeAlso amta:Attestation ;
+    rdfs:comment "A snapshot is a derivative artifact over a set of attestations. Recomputing from the same attestations + same policy yields the same snapshot — verifiable." .

@@ -39,6 +39,7 @@ const OWNED_NAMESPACES = {
   amta:       'docs/ns/amta.ttl',
   // L2 pattern ontologies
   abac:       'docs/ns/abac.ttl',
+  registry:   'docs/ns/registry.ttl',
   // Domain ontologies (L3)
   code:       'docs/ns/code.ttl',
 };

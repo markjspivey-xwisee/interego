@@ -727,6 +727,26 @@ export type {
   SyncState,
 } from './connectors/index.js';
 
+// ── Registry (public agent attestation registry) ────────────
+export {
+  createRegistry,
+  registerAgent,
+  refreshReputation,
+  queryEntries,
+  federateLookup,
+  aggregateReputation,
+  registryToDescriptor,
+  DEFAULT_AGGREGATION_POLICY,
+} from './registry/index.js';
+export type {
+  Registry,
+  RegistryConfig,
+  RegistryEntry,
+  ReputationSnapshot,
+  AttestationInput,
+  AggregationPolicy,
+} from './registry/index.js';
+
 // ── ABAC (attribute-based access control) ───────────────────
 export {
   evaluate as evaluateAbac,

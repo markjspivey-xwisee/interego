@@ -35,6 +35,7 @@ const L2_L3_FILES = [
   'hyprcat.ttl', 'hypragent.ttl',
   // L2 pattern ontologies
   'abac.ttl',
+  'registry.ttl',
   // Domain ontologies (L3)
   'code.ttl',
 ];
