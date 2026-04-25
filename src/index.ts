@@ -747,6 +747,26 @@ export type {
   AggregationPolicy,
 } from './registry/index.js';
 
+// ── Passport (capability passport, persistent biography) ────
+export {
+  createPassport,
+  recordLifeEvent,
+  stateValue,
+  registerOn,
+  migrateInfrastructure,
+  demonstratedCapabilities,
+  activeValues,
+  detectValueDrift,
+  passportToDescriptor,
+  passportSummary,
+} from './passport/index.js';
+export type {
+  Passport,
+  LifeEvent,
+  LifeEventKind,
+  StatedValue,
+} from './passport/index.js';
+
 // ── ABAC (attribute-based access control) ───────────────────
 export {
   evaluate as evaluateAbac,

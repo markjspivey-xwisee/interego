@@ -1,0 +1,125 @@
+@prefix passport: <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
+@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix amta:     <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix registry: <https://markjspivey-xwisee.github.io/interego/ns/registry#> .
+@prefix rdf:      <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:     <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:      <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:      <http://www.w3.org/2002/07/owl#> .
+@prefix dct:      <http://purl.org/dc/terms/> .
+@prefix prov:     <http://www.w3.org/ns/prov#> .
+@prefix vann:     <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════
+#  passport: — Capability Passport (persistent agent biography)
+# ══════════════════════════════════════════════════════════════
+#
+#  An agent identity that survives infrastructure changes — new pod,
+#  new framework, new model backing. DIDs give cryptographic identity
+#  continuity (the same key signs); a passport gives BIOGRAPHICAL
+#  continuity (the same accumulated history follows).
+#
+#  Practical scenario: alice's agent has been working for 6 months,
+#  accumulated 200 attestations, completed 50 verified actions, has
+#  earned trust on multiple registries. She switches AI framework
+#  (Claude Code → OpenClaw). Without a passport: starts from zero.
+#  With a passport: the new framework reads alice's passport from her
+#  pod, sees the entire biography, instantly has full reputation.
+#
+#  A passport IS a cg:ContextDescriptor with a specialized facet
+#  composition: temporal range covering the agent's full active span,
+#  provenance citing every contributing event, semiotic carrying the
+#  agent's stated values, trust accumulating attestations.
+#
+#  This is the L2 pattern. Reference runtime: src/passport/.
+
+<https://markjspivey-xwisee.github.io/interego/ns/passport>
+    a owl:Ontology ;
+    dct:title "passport: — Capability Passport" ;
+    dct:description "Persistent agent biographical identity that survives infrastructure changes. Built on cg:ContextDescriptor + amta:Attestation + registry:RegistryEntry." ;
+    vann:preferredNamespacePrefix "passport" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/passport#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/amta> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/registry> .
+
+# ── Classes ─────────────────────────────────────────────────
+
+passport:Passport a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Capability Passport" ;
+    rdfs:comment "An agent's biographical identity. A specialized cg:ContextDescriptor whose graph contains the agent's lifespan, accumulated attestations, completed actions, registered capabilities, and stated values. Versioned via cg:supersedes; signed by the agent's stable DID/WebID." .
+
+passport:LifeEvent a owl:Class ;
+    rdfs:label "Life Event" ;
+    rdfs:comment "A milestone in the agent's biography — registration on a registry, earning an attestation, completing a notable action, switching infrastructure. Each LifeEvent cites its evidence (descriptor URLs) so the passport is auditable end-to-end." ;
+    cg:constructedFrom ( cg:TemporalFacet cg:ProvenanceFacet ) .
+
+passport:InfrastructureMigration a owl:Class ;
+    rdfs:subClassOf passport:LifeEvent ;
+    rdfs:label "Infrastructure Migration" ;
+    rdfs:comment "A specific kind of LifeEvent: the agent moved from one framework / pod / model to another, with continuity of identity. Records the from/to + the cryptographic proof that the same DID owns both." .
+
+passport:CapabilityAcquisition a owl:Class ;
+    rdfs:subClassOf passport:LifeEvent ;
+    rdfs:label "Capability Acquisition" ;
+    rdfs:comment "A LifeEvent recording when the agent first demonstrated a capability — the action descriptor that proves it, plus any attestations that corroborated." .
+
+passport:StatedValue a owl:Class ;
+    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:label "Stated Value" ;
+    rdfs:comment "A value the agent commits to (e.g. \"prefer cited sources\", \"refuse off-topic requests\", \"escalate uncertain claims to human review\"). Carried in the passport as Asserted-modal SemioticFacet so violators are detectable post-hoc by comparing actions to stated values." .
+
+# ── Properties ──────────────────────────────────────────────
+
+passport:hasLifeEvent a owl:ObjectProperty ;
+    rdfs:label "has life event" ;
+    rdfs:domain passport:Passport ;
+    rdfs:range passport:LifeEvent .
+
+passport:agentIdentity a owl:ObjectProperty ;
+    rdfs:label "agent identity" ;
+    rdfs:domain passport:Passport ;
+    rdfs:comment "The agent's stable cryptographic identity (DID/WebID). Same identity across all infrastructure migrations." .
+
+passport:livesAt a owl:ObjectProperty ;
+    rdfs:label "lives at" ;
+    rdfs:domain passport:Passport ;
+    rdfs:comment "Current home pod URL where the canonical passport version is published." .
+
+passport:previousIdentity a owl:ObjectProperty ;
+    rdfs:label "previous identity" ;
+    rdfs:domain passport:InfrastructureMigration ;
+    rdfs:comment "Identity used before this migration, if different from the current one (e.g., legacy username before DID adoption)." .
+
+passport:newInfrastructure a owl:DatatypeProperty ;
+    rdfs:label "new infrastructure" ;
+    rdfs:domain passport:InfrastructureMigration ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Identifier for the framework/runtime/pod the agent migrated TO." .
+
+passport:demonstratedCapability a owl:ObjectProperty ;
+    rdfs:label "demonstrated capability" ;
+    rdfs:domain passport:CapabilityAcquisition .
+
+passport:demonstrationEvidence a owl:ObjectProperty ;
+    rdfs:label "demonstration evidence" ;
+    rdfs:domain passport:CapabilityAcquisition ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "The action descriptor(s) proving the capability." .
+
+passport:statedValue a owl:ObjectProperty ;
+    rdfs:label "stated value" ;
+    rdfs:domain passport:Passport ;
+    rdfs:range passport:StatedValue .
+
+passport:registeredOn a owl:ObjectProperty ;
+    rdfs:label "registered on" ;
+    rdfs:domain passport:Passport ;
+    rdfs:range registry:Registry ;
+    rdfs:comment "Public registries this agent is listed on. Lets a passport-reader find aggregated reputation across the agent's active registries." .
+
+# ── Alignments ──────────────────────────────────────────────
+
+passport:Passport rdfs:seeAlso cg:ContextDescriptor , registry:RegistryEntry ;
+    rdfs:comment "A passport differs from a registry entry: a registry entry is what others say about you (your slot in their index); a passport is what YOU say about yourself, signed by your own key. Both contribute to a complete identity picture, but ownership of the data differs." .

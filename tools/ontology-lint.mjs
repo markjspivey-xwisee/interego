@@ -40,6 +40,7 @@ const OWNED_NAMESPACES = {
   // L2 pattern ontologies
   abac:       'docs/ns/abac.ttl',
   registry:   'docs/ns/registry.ttl',
+  passport:   'docs/ns/passport.ttl',
   // Domain ontologies (L3)
   code:       'docs/ns/code.ttl',
 };

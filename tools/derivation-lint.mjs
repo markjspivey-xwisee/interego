@@ -36,6 +36,7 @@ const L2_L3_FILES = [
   // L2 pattern ontologies
   'abac.ttl',
   'registry.ttl',
+  'passport.ttl',
   // Domain ontologies (L3)
   'code.ttl',
 ];
