@@ -15,7 +15,7 @@ import {
 const FAKE = {
   anthropic: 'sk' + '-ant-' + 'api03-FIXTUREDONOTUSE12345678abcdef',
   openai:    'sk' + '-FIXTUREDONOTUSE1234567890abcdef',
-  aws:       'AKIA' + 'FIXTUREDONOTUSEXX',
+  aws:       'AKIA' + 'FIXTUREDONOTUSEX', // AKIA + 16 chars per real format
   github:    'ghp' + '_FIXTUREDONOTUSE12345678901234567890ab',
   stripe:    'sk' + '_live_' + 'FIXTUREDONOTUSE1234567890abcdef',
 } as const;
