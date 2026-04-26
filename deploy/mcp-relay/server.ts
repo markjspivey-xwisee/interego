@@ -72,6 +72,7 @@ import {
   loadOrCreateComplianceWallet,
   signDescriptor,
   verifyDescriptorSignature,
+  predictDescriptorUrl,
   type ComplianceFramework,
   type AuditableDescriptor,
   type PersistedComplianceWallet,
@@ -365,11 +366,27 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       derivedFrom: preprocessed.wasDerivedFrom.length > 0 ? preprocessed.wasDerivedFrom : undefined,
     })
 .semiotic(preprocessed.semiotic)
-.trust({
-      // Compliance grade upgrades to HighAssurance per spec.
-      trustLevel: args.compliance === true ? 'CryptographicallyVerified' : 'SelfAsserted',
-      issuer: ownerWebId as IRI,
-    })
+.trust(await (async () => {
+      const baseTrust = {
+        // Compliance grade upgrades to HighAssurance per spec.
+        trustLevel: (args.compliance === true ? 'CryptographicallyVerified' : 'SelfAsserted') as 'CryptographicallyVerified' | 'SelfAsserted',
+        issuer: ownerWebId as IRI,
+      };
+      if (args.compliance !== true) return baseTrust;
+      // Pre-compute the sig URL so cg:proof can be embedded in the
+      // Turtle BEFORE signing. Verifies against tampering: if anyone
+      // edits cg:proof in transit the signature won't validate.
+      const predicted = predictDescriptorUrl(podUrl, descId);
+      const cw = await ensureRelayComplianceWallet();
+      return {
+        ...baseTrust,
+        proof: {
+          scheme: 'ECDSA-secp256k1',
+          proofUrl: `${predicted}.sig.json` as IRI,
+          signer: cw.wallet.address,
+        },
+      };
+    })())
 .federation({
       origin: podUrl as IRI,
       storageEndpoint: podUrl as IRI,
@@ -523,27 +540,35 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
           let signed: SignedDescriptor | null = null;
           let signError: string | null = null;
           let sigUrl: string | null = null;
+          let sigIpfsCid: string | null = null;
           try {
             const cw = await ensureRelayComplianceWallet();
-            const turtleForSig = `descriptor: ${descriptor.id}`; // we don't have the raw Turtle here; sign descriptor.id + content hash via descriptor data
-            // Re-serialize Turtle to sign over the canonical form.
-            // Note: relay wraps publish() which returns descriptorUrl, so
-            // we re-fetch the published Turtle to sign exactly what's
-            // stored. This sounds redundant but ensures signature targets
-            // the canonical bytes the pod actually persists.
-            void turtleForSig;
+            // Re-fetch the published Turtle to sign canonical bytes the
+            // pod actually persists (storage layer may normalize).
             const ttlResp = await solidFetch(result.descriptorUrl, {
               headers: { 'Accept': 'text/turtle' },
             });
             const canonicalTurtle = ttlResp.ok ? await ttlResp.text() : '';
             signed = await signDescriptor(descriptor.id, canonicalTurtle, cw.wallet);
             sigUrl = `${result.descriptorUrl}.sig.json`;
+            const sigBody = JSON.stringify(signed, null, 2);
             const sigResp = await solidFetch(sigUrl, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(signed, null, 2),
+              body: sigBody,
             });
             if (!sigResp.ok) signError = `pod write failed (${sigResp.status})`;
+            // Auto-pin the signature alongside the descriptor when an
+            // IPFS provider is configured. Non-fatal on failure.
+            const sigIpfsConfig = resolveIpfsConfig(args._req ?? {});
+            if (sigIpfsConfig.provider !== 'local' && sigIpfsConfig.apiKey) {
+              try {
+                const sigPin = await pinToIpfs(sigBody, `signature-${descriptor.id}`, sigIpfsConfig, solidFetch);
+                sigIpfsCid = sigPin.cid;
+              } catch (err) {
+                signError = signError ?? `signature pin failed: ${(err as Error).message}`;
+              }
+            }
           } catch (err) {
             signError = (err as Error).message;
           }
@@ -556,7 +581,12 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
           return {
             complianceCheck: check,
             signature: signed
-              ? { url: sigUrl, signer: signed.signerAddress, signedAt: signed.signedAt }
+              ? {
+                  url: sigUrl,
+                  signer: signed.signerAddress,
+                  signedAt: signed.signedAt,
+                  ipfsCid: sigIpfsCid ?? undefined,
+                }
               : { error: signError },
           };
         })()

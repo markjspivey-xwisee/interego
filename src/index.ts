@@ -326,6 +326,7 @@ export {
   agentsCatalogTurtle,
   WELL_KNOWN_AGENTS_PATH,
   socialWalk,
+  predictDescriptorUrl,
 } from './solid/index.js';
 
 export type {
@@ -780,6 +781,9 @@ export {
   walkLineage,
   FRAMEWORK_CONTROLS,
   loadOrCreateComplianceWallet,
+  rotateComplianceWallet,
+  importComplianceWallet,
+  listValidSignerAddresses,
 } from './compliance/index.js';
 export type {
   ComplianceFramework,
@@ -789,6 +793,8 @@ export type {
   AuditableDescriptor,
   LineageNode,
   PersistedComplianceWallet,
+  ComplianceWalletEntry,
+  ComplianceWalletStore,
 } from './compliance/index.js';
 
 // ── Privacy hygiene (pre-publish content screening) ─────────

@@ -256,6 +256,25 @@ export interface TrustFacetData {
   // Payment metadata (X402)
   readonly paymentRequirement?: PaymentRequirement;
   readonly paymentReceipt?: PaymentReceipt;
+  /**
+   * Inline proof reference (cg:proof). For compliance descriptors:
+   * carries the URL of the sibling .sig.json + the signature scheme
+   * + the public signer address. Lets verifiers find the signature
+   * via the descriptor itself rather than guessing a URL convention.
+   *
+   * The proof URL is included in the Turtle that gets SIGNED, so
+   * tampering with the proof reference breaks the signature.
+   */
+  readonly proof?: ProofReference;
+}
+
+export interface ProofReference {
+  /** Type of proof (e.g. "ECDSA-secp256k1", "Ed25519", "BBS+"). */
+  readonly scheme: string;
+  /** Where the proof artifact lives (typically a sibling .sig.json). */
+  readonly proofUrl: IRI;
+  /** Public signer identifier (Ethereum address, did:key, etc.). */
+  readonly signer?: string;
 }
 
 /**

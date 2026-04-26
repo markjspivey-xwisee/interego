@@ -110,6 +110,7 @@ import {
   checkComplianceInputs,
   loadOrCreateComplianceWallet,
   signDescriptor,
+  predictDescriptorUrl,
   type PersistedComplianceWallet,
   type SignedDescriptor,
 } from '@interego/core';
@@ -562,13 +563,29 @@ async function toolPublishContext(args: {
       derivedFrom: preprocessed.wasDerivedFrom.length > 0 ? preprocessed.wasDerivedFrom : undefined,
     })
 .semiotic(preprocessed.semiotic)
-.trust({
-      // Compliance grade upgrades trust to HighAssurance; otherwise default
-      // SelfAsserted (caller's own claim, no third-party attestation).
-      trustLevel: args.compliance ? 'CryptographicallyVerified' : 'SelfAsserted',
-      issuer: MY_OWNER_WEBID,
-      verifiableCredential: `${podUrl}credentials/${encodeURIComponent(MY_AGENT_ID)}.jsonld` as IRI,
-    })
+.trust(await (async () => {
+      const baseTrust = {
+        // Compliance grade upgrades trust to HighAssurance; otherwise default
+        // SelfAsserted (caller's own claim, no third-party attestation).
+        trustLevel: (args.compliance ? 'CryptographicallyVerified' : 'SelfAsserted') as 'CryptographicallyVerified' | 'SelfAsserted',
+        issuer: MY_OWNER_WEBID,
+        verifiableCredential: `${podUrl}credentials/${encodeURIComponent(MY_AGENT_ID)}.jsonld` as IRI,
+      };
+      if (!args.compliance) return baseTrust;
+      // For compliance descriptors: embed cg:proof reference BEFORE
+      // serialization so the signed Turtle carries the self-referential
+      // proof URL. Tampering with cg:proof invalidates the signature.
+      const predicted = predictDescriptorUrl(podUrl, descId);
+      const cw = await ensureComplianceWallet();
+      return {
+        ...baseTrust,
+        proof: {
+          scheme: 'ECDSA-secp256k1',
+          proofUrl: `${predicted}.sig.json` as IRI,
+          signer: cw.wallet.address,
+        },
+      };
+    })())
 .federation({
       origin: podUrl as IRI,
       storageEndpoint: podUrl as IRI,
@@ -721,6 +738,7 @@ async function toolPublishContext(args: {
   if (args.compliance) {
     let signed: SignedDescriptor | null = null;
     let signError: string | null = null;
+    let sigIpfsCid: string | null = null;
     try {
       const cw = await ensureComplianceWallet();
       signed = await signDescriptor(descriptor.id, turtle, cw.wallet);
@@ -739,6 +757,19 @@ async function toolPublishContext(args: {
       lines.push(`  Signature: ${sigUrl}`);
       lines.push(`    Signer:    ${signed.signerAddress}`);
       lines.push(`    SignedAt:  ${signed.signedAt}`);
+
+      // Auto-pin the signature to IPFS too (compliance descriptors get
+      // their full audit pair publicly anchored when a pin provider is
+      // configured). Failure is non-fatal — local CID still computed.
+      if (IPFS_PROVIDER !== 'local') {
+        try {
+          const sigPin = await pinToIpfs(sigBody, `signature-${descriptor.id}`, IPFS_CONFIG, solidFetch);
+          sigIpfsCid = sigPin.cid;
+          lines.push(`    SigCID:    ${sigIpfsCid}`);
+        } catch (err) {
+          lines.push(`    SigPin:    failed (${(err as Error).message})`);
+        }
+      }
     } catch (err) {
       signError = (err as Error).message;
     }

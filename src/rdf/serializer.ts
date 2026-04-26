@@ -202,6 +202,15 @@ function serializeTrustFacet(f: TrustFacetData): string {
   if (f.trustLevel) props.push(`cg:trustLevel cg:${f.trustLevel}`);
   if (f.revocationStatus) props.push(`cg:revocationStatus ${iri(f.revocationStatus)}`);
 
+  if (f.proof) {
+    const proofProps: string[] = [
+      `cg:proofScheme "${f.proof.scheme}"`,
+      `cg:proofUrl ${iri(f.proof.proofUrl)}`,
+    ];
+    if (f.proof.signer) proofProps.push(`cg:proofSigner "${f.proof.signer}"`);
+    props.push(`cg:proof ${bnode(proofProps)}`);
+  }
+
   return bnode(props);
 }
 

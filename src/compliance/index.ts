@@ -212,79 +212,211 @@ export function generateFrameworkReport(
 // resulting wallet's private key never leaves the host filesystem.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { createWallet, importWallet, type Wallet } from '../crypto/index.js';
+import { importWallet, type Wallet } from '../crypto/index.js';
+
+/**
+ * On-disk format for the compliance wallet store. Supports rotation:
+ * the `active` wallet signs new descriptors; `history` retains all
+ * prior wallets so signatures from previous epochs still verify.
+ *
+ * Operators rotate by calling rotateComplianceWallet() — which moves
+ * the current active to history and generates a fresh active. Old
+ * descriptors remain verifiable forever (until you actively remove
+ * a wallet from history, which you should only do in extreme cases).
+ */
+export interface ComplianceWalletEntry {
+  readonly privateKey: string; // hex with 0x prefix
+  readonly address: string;
+  readonly createdAt: string;
+  readonly label?: string;
+  readonly retiredAt?: string;
+}
+
+export interface ComplianceWalletStore {
+  readonly active: ComplianceWalletEntry;
+  readonly history: readonly ComplianceWalletEntry[];
+}
 
 export interface PersistedComplianceWallet {
   readonly wallet: Wallet;
-  readonly privateKey: string; // hex with 0x prefix
+  readonly privateKey: string;
   readonly createdAt: string;
   readonly path: string;
-  readonly fresh: boolean; // true if just generated this session
+  readonly fresh: boolean;
+  readonly historyCount: number;
+}
+
+function generatePrivateKey(): string {
+  // Lazy-load ethers to avoid surfacing it in the type API.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
+  const { ethers } = require('ethers');
+  return new ethers.Wallet(ethers.Wallet.createRandom().privateKey).privateKey;
+}
+
+function addressFromPrivateKey(privateKey: string): string {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
+  const { ethers } = require('ethers');
+  return new ethers.Wallet(privateKey).address;
+}
+
+function readStore(path: string): ComplianceWalletStore | null {
+  if (!existsSync(path)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    // Backward-compat: old format had a flat { privateKey, createdAt, ... }
+    // Migrate by treating it as the active entry with empty history.
+    if (raw.privateKey && !raw.active) {
+      return {
+        active: {
+          privateKey: raw.privateKey,
+          address: raw.address ?? addressFromPrivateKey(raw.privateKey),
+          createdAt: raw.createdAt ?? new Date().toISOString(),
+          label: raw.label,
+        },
+        history: [],
+      };
+    }
+    return raw as ComplianceWalletStore;
+  } catch {
+    return null;
+  }
+}
+
+function writeStore(path: string, store: ComplianceWalletStore): void {
+  try {
+    writeFileSync(path, JSON.stringify(store, null, 2), { mode: 0o600 });
+  } catch {
+    // best-effort
+  }
 }
 
 /**
- * Load an ECDSA wallet from a JSON file, or create + persist one if
- * absent. Used by stdio mcp-server + relay to obtain a stable signer
- * for compliance-grade descriptors.
+ * Load the compliance wallet store, or create a fresh one with a new
+ * active wallet if absent. Returns the active wallet for signing;
+ * history is preserved for verification of older signatures.
  */
 export async function loadOrCreateComplianceWallet(
   path: string,
   label = 'compliance-signer',
 ): Promise<PersistedComplianceWallet> {
-  if (existsSync(path)) {
-    try {
-      const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
-        privateKey: string;
-        createdAt: string;
-        label?: string;
-      };
-      const wallet = importWallet(parsed.privateKey, 'agent', parsed.label ?? label);
-      return {
-        wallet,
-        privateKey: parsed.privateKey,
-        createdAt: parsed.createdAt,
-        path,
-        fresh: false,
-      };
-    } catch {
-      // Corrupt file — overwrite below.
-    }
+  let store = readStore(path);
+  if (!store) {
+    const privateKey = generatePrivateKey();
+    store = {
+      active: {
+        privateKey,
+        address: addressFromPrivateKey(privateKey),
+        createdAt: new Date().toISOString(),
+        label,
+      },
+      history: [],
+    };
+    writeStore(path, store);
   }
-  const wallet = await createWallet('agent', label);
-  // Re-derive the underlying ethers wallet to extract the private key.
-  // (createWallet stores the signing wallet keyed by address; we need
-  //  the raw private key to persist it for restart-survivability.)
-  const { ethers } = await import('ethers');
-  const ethersWallet = new ethers.Wallet(
-    // We can't get the priv key from the createWallet API without
-    // touching ethers directly — generate the key OURSELVES then
-    // import, so we control persistence.
-    ethers.Wallet.createRandom().privateKey,
-  );
-  const persisted = importWallet(ethersWallet.privateKey, 'agent', label);
-  const record = {
-    privateKey: ethersWallet.privateKey,
+  const wallet = importWallet(store.active.privateKey, 'agent', store.active.label ?? label);
+  return {
+    wallet,
+    privateKey: store.active.privateKey,
+    createdAt: store.active.createdAt,
+    path,
+    fresh: !existsSync(path) ? false : false, // existed by the time we returned
+    historyCount: store.history.length,
+  };
+}
+
+/**
+ * Rotate the compliance signing wallet: retire the current active,
+ * promote a freshly-generated key to active. The retired wallet stays
+ * in history so previously-signed descriptors keep verifying.
+ *
+ * Returns the new active wallet plus the retired wallet's address (for
+ * logging / passport:LifeEvent records).
+ */
+export async function rotateComplianceWallet(
+  path: string,
+  label = 'compliance-signer',
+): Promise<{
+  newActiveAddress: string;
+  retiredAddress: string;
+  historyCount: number;
+}> {
+  const existing = readStore(path);
+  if (!existing) {
+    // Nothing to rotate — create fresh active + return as if rotated from null.
+    await loadOrCreateComplianceWallet(path, label);
+    const fresh = readStore(path)!;
+    return { newActiveAddress: fresh.active.address, retiredAddress: '(no prior)', historyCount: 0 };
+  }
+  const retired: ComplianceWalletEntry = {
+    ...existing.active,
+    retiredAt: new Date().toISOString(),
+  };
+  const newPrivateKey = generatePrivateKey();
+  const newActive: ComplianceWalletEntry = {
+    privateKey: newPrivateKey,
+    address: addressFromPrivateKey(newPrivateKey),
     createdAt: new Date().toISOString(),
     label,
-    address: ethersWallet.address,
   };
-  try {
-    writeFileSync(path, JSON.stringify(record, null, 2), { mode: 0o600 });
-  } catch {
-    // best-effort; in environments where filesystem writes fail
-    // (read-only mounts, container ephemeral disks), the wallet
-    // is regenerated each restart — caller should warn.
-  }
-  // Suppress unused-var: we use `wallet` for type inference but
-  // re-derive a persistable one just above. Return the persistable.
-  void wallet;
+  const newStore: ComplianceWalletStore = {
+    active: newActive,
+    history: [...existing.history, retired],
+  };
+  writeStore(path, newStore);
   return {
-    wallet: persisted,
-    privateKey: ethersWallet.privateKey,
-    createdAt: record.createdAt,
-    path,
-    fresh: true,
+    newActiveAddress: newActive.address,
+    retiredAddress: retired.address,
+    historyCount: newStore.history.length,
   };
+}
+
+/**
+ * Import an externally-managed wallet (e.g., a hardware-backed key,
+ * a key generated on a co-signer service) as the new active. The
+ * current active moves to history. Use this when an operator wants
+ * to replace the active wallet WITHOUT generating a fresh random key
+ * (e.g., switching to a custodial signer).
+ */
+export async function importComplianceWallet(
+  path: string,
+  privateKey: string,
+  label = 'compliance-signer-imported',
+): Promise<{ newActiveAddress: string; retiredAddress: string; historyCount: number }> {
+  const existing = readStore(path);
+  const newActive: ComplianceWalletEntry = {
+    privateKey,
+    address: addressFromPrivateKey(privateKey),
+    createdAt: new Date().toISOString(),
+    label,
+  };
+  if (!existing) {
+    writeStore(path, { active: newActive, history: [] });
+    return { newActiveAddress: newActive.address, retiredAddress: '(no prior)', historyCount: 0 };
+  }
+  const retired: ComplianceWalletEntry = { ...existing.active, retiredAt: new Date().toISOString() };
+  const newStore: ComplianceWalletStore = {
+    active: newActive,
+    history: [...existing.history, retired],
+  };
+  writeStore(path, newStore);
+  return {
+    newActiveAddress: newActive.address,
+    retiredAddress: retired.address,
+    historyCount: newStore.history.length,
+  };
+}
+
+/**
+ * Return the set of addresses that should be considered valid signers
+ * for verification — the active wallet plus all retired wallets in
+ * history. Use this when verifying a signature: if the recovered
+ * address is in this set, the signature is valid even if the wallet
+ * has since been rotated.
+ */
+export function listValidSignerAddresses(path: string): readonly string[] {
+  const store = readStore(path);
+  if (!store) return [];
+  return [store.active.address, ...store.history.map(h => h.address)];
 }
 
 // ── Lineage walk ─────────────────────────────────────────────

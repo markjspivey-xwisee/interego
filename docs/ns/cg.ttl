@@ -486,6 +486,28 @@ cg:revocationStatus a owl:DatatypeProperty ;
     rdfs:comment "Whether the trust assertion has been revoked." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
+cg:proof a owl:ObjectProperty ;
+    rdfs:label "proof" ;
+    rdfs:comment "Inline cryptographic proof reference on a TrustFacet. For compliance-grade descriptors: links to the sibling .sig.json (cg:proofUrl) and names the signing scheme (cg:proofScheme) + signer (cg:proofSigner). Included in the signed Turtle so tampering with the proof reference invalidates the signature." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:proofScheme a owl:DatatypeProperty ;
+    rdfs:label "proof scheme" ;
+    rdfs:comment "Signature scheme: ECDSA-secp256k1, Ed25519, BBS+, etc." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:proofUrl a owl:ObjectProperty ;
+    rdfs:label "proof URL" ;
+    rdfs:comment "URL of the proof artifact (typically a sibling .sig.json file containing the SignedDescriptor record)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:proofSigner a owl:DatatypeProperty ;
+    rdfs:label "proof signer" ;
+    rdfs:comment "Public identifier of the signer (Ethereum address, did:key fingerprint, ORCID, etc.). Verifiers recover the signer from the signature itself; this field is the authoritative claim of who SHOULD have signed." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
 # ── Federation properties ─────────────────────────────────────
 
 cg:origin a owl:ObjectProperty ;

@@ -4,6 +4,7 @@ export {
   parseDistributionFromDescriptorTurtle,
   writeAgentRegistry, readAgentRegistry,
   writeDelegationCredential, verifyAgentDelegation,
+  predictDescriptorUrl,
 } from './client.js';
 export type { DistributionLink } from './client.js';
 export type {

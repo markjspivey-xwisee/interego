@@ -59,6 +59,28 @@ function slugFromIri(iri: string): string {
   return encodeURIComponent(last);
 }
 
+/**
+ * Predict the URL `publish()` will use for a given pod + descriptor ID
+ * BEFORE actually calling publish(). Used by callers (notably the
+ * compliance flow) that need to know the future URL — e.g., to embed
+ * a self-referential `cg:proof` URL in the descriptor's TrustFacet
+ * before the descriptor is serialized + signed.
+ *
+ * Returns the same URL `publish()` would generate as `descriptorUrl`.
+ * If the caller passes custom `containerPath` or `descriptorSlug` to
+ * publish(), they should pass them here too so the prediction matches.
+ */
+export function predictDescriptorUrl(
+  podUrl: string,
+  descriptorId: string,
+  options?: { containerPath?: string; descriptorSlug?: string },
+): string {
+  const pod = ensureTrailingSlash(podUrl);
+  const container = ensureTrailingSlash(`${pod}${options?.containerPath ?? DEFAULT_CONTAINER}`);
+  const slug = options?.descriptorSlug ?? slugFromIri(descriptorId);
+  return `${container}${slug}.ttl`;
+}
+
 export function getDefaultFetch(): FetchFn {
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   if (typeof globalThis !== 'undefined' && typeof (globalThis as Record<string, unknown>)['fetch'] === 'function') {
