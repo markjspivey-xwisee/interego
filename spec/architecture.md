@@ -10,7 +10,7 @@
 
 **Abstract:** This document is the normative specification of the Interego 1.0 protocol — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs. It defines the descriptor model, facet vocabulary, composition operators, serialization, and federation behavior that every conforming implementation must satisfy. Examples and architectural patterns are illustrative; the reference TypeScript implementation `@interego/core` is one such implementation and is not itself normative.
 
-**Status:** Draft.
+**Status:** Working Draft (2026-04-26). Core sections (§1–§5: descriptor model, facets, composition, serialization, federation) are stable for v1.0 — implementations conforming to L1 of [`CONFORMANCE.md`](CONFORMANCE.md) MUST satisfy the normative MUST/SHOULD claims in those sections. Sections explicitly marked "informative" or "extension" are non-normative and may evolve in v1.1. Promotion to W3C-style "Candidate Recommendation" requires (a) two independent interoperable implementations passing the L1 conformance fixtures and (b) a 30-day review window with no substantive change requests; neither has occurred yet.
 
 **Normative language:** The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, RECOMMENDED, MAY, and OPTIONAL in this document are to be interpreted as described in [RFC 2119] and [RFC 8174] when, and only when, they appear in all capitals.
 

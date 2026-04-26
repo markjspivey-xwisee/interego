@@ -131,8 +131,31 @@ export class PodRegistry {
     }
   }
 
+  /**
+   * Unsubscribe a single pod. Leaves the pod in the registry; only
+   * the subscription handle is closed. Returns true if a subscription
+   * was active and is now closed; false if the pod was unknown or
+   * had no active subscription.
+   */
+  unsubscribe(url: string): boolean {
+    const pod = this.pods.get(normalize(url));
+    if (!pod || !pod.subscription) return false;
+    pod.subscription.unsubscribe();
+    pod.subscription = undefined;
+    return true;
+  }
+
   /** Number of pods. */
   get size(): number {
     return this.pods.size;
+  }
+
+  /** Number of currently-active subscriptions. */
+  get activeSubscriptionCount(): number {
+    let n = 0;
+    for (const pod of this.pods.values()) {
+      if (pod.subscription) n++;
+    }
+    return n;
   }
 }

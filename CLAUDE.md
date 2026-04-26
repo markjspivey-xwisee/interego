@@ -32,7 +32,9 @@ src/
 Plus surrounding infrastructure:
 
 ```
-mcp-server/    Stdio MCP server — 25 tools including publish_context + share_with
+mcp-server/    Stdio MCP server — 60 tools including publish_context + share_with;
+               subscriptions capped at CG_MAX_SUBSCRIPTIONS (default 32);
+               unsubscribe_from_pod tool releases a slot
 deploy/
   identity/    Stateless DID resolver + signature verifier;
                auth-methods live in each user's pod (auth-methods.jsonld)
@@ -67,7 +69,7 @@ tools/
 - **code** ([`code.ttl`](docs/ns/code.ttl)) — L3 domain ontology for source-code artifacts (Repository, Commit, Branch, PullRequest, Review, Defect, TestRun, BuildResult). Commits are `pgsl:Fragment`; branches are `cg:ParadigmSet`; reviews `cg:constructedFrom (cg:SemioticFacet cg:ProvenanceFacet)`.
 - **eu-ai-act** ([`eu-ai-act.ttl`](docs/ns/eu-ai-act.ttl)) — L3 regulatory mapping ontology for the EU AI Act (Articles 6, 9, 10, 12, 13, 14, 15, 50). Lets compliance teams query an Interego pod using the regulation's own vocabulary.
 - **nist-rmf** ([`nist-rmf.ttl`](docs/ns/nist-rmf.ttl)) — L3 mapping for NIST AI Risk Management Framework (Govern / Map / Measure / Manage four-function model).
-- **soc2** ([`soc2.ttl`](docs/ns/soc2.ttl)) — L3 mapping for AICPA SOC 2 Trust Services Criteria (Security/Availability/Processing Integrity/Confidentiality/Privacy).
+- **soc2** ([`soc2.ttl`](docs/ns/soc2.ttl)) — L3 mapping for AICPA SOC 2 Trust Services Criteria (Security/Availability/Processing Integrity/Confidentiality/Privacy). Operational event subtypes (DeployEvent, AccessChangeEvent, KeyRotationEvent, IncidentEvent, QuarterlyReviewEvent) live alongside the control IRIs and are emitted by [`src/ops/`](src/ops/) — Interego eats its own dog food as the SOC 2 evidence substrate. See [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md), [`spec/policies/`](spec/policies/), [`spec/OPS-RUNBOOK.md`](spec/OPS-RUNBOOK.md).
 
 ### Ontology hygiene
 

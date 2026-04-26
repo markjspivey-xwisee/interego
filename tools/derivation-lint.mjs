@@ -72,7 +72,7 @@ function isGrounded(body, otherGroundedClasses, prefix) {
   if (subClassMatches) {
     const targets = subClassMatches[1].split(/\s*,\s*/);
     for (const t of targets) {
-      const m = t.match(/^([a-zA-Z]+):([A-Za-z0-9]+)$/);
+      const m = t.match(/^([a-zA-Z][a-zA-Z0-9-]*):([A-Za-z0-9]+)$/);
       if (!m) continue;
       const [, targetPrefix, targetClass] = m;
       if (GROUNDING_PREFIXES.has(targetPrefix)) {

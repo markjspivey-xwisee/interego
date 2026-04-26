@@ -808,6 +808,35 @@ export type {
   SensitivityKind,
 } from './privacy/index.js';
 
+// ── RFC 9116 security.txt (shared body builder) ─────────────
+export {
+  buildSecurityTxt,
+  buildSecurityTxtFromEnv,
+} from './security-txt/index.js';
+export type {
+  SecurityTxtOptions,
+} from './security-txt/index.js';
+
+// ── Operational events (SOC 2 evidence builders) ────────────
+export {
+  buildDeployEvent,
+  buildAccessChangeEvent,
+  buildWalletRotationEvent,
+  buildIncidentEvent,
+  buildQuarterlyReviewEvent,
+} from './ops/index.js';
+export type {
+  OpsEventPayload,
+  DeployEventInput,
+  AccessChangeInput,
+  AccessAction,
+  WalletRotationInput,
+  IncidentInput,
+  IncidentSeverity,
+  QuarterlyReviewInput,
+  ReviewKind,
+} from './ops/index.js';
+
 // ── Federated transactions (saga pattern) ───────────────────
 export {
   createTransaction,

@@ -15,7 +15,8 @@
  */
 
 import express from 'express';
-import { randomBytes } from 'node:crypto';
+import rateLimit from 'express-rate-limit';
+import { randomBytes, createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { WebSocket } from 'ws';
 
@@ -73,6 +74,8 @@ import {
   signDescriptor,
   verifyDescriptorSignature,
   predictDescriptorUrl,
+  buildSecurityTxtFromEnv,
+  buildAccessChangeEvent,
   type ComplianceFramework,
   type AuditableDescriptor,
   type PersistedComplianceWallet,
@@ -271,16 +274,37 @@ let notificationLog: ContextChangeEvent[] = [];
 // previously-encrypted envelopes). Generated fresh on first run.
 const RELAY_AGENT_KEY_FILE = process.env['RELAY_AGENT_KEY_FILE'] ?? '/app/relay-agent-key.json';
 const relayAgentKey: EncryptionKeyPair = (() => {
-  try {
-    if (existsSync(RELAY_AGENT_KEY_FILE)) {
-      const parsed = JSON.parse(readFileSync(RELAY_AGENT_KEY_FILE, 'utf8'));
-      if (parsed?.publicKey && parsed?.secretKey && parsed?.algorithm === 'X25519-XSalsa20-Poly1305') {
-        return parsed as EncryptionKeyPair;
-      }
+  // If the file exists, it MUST be loadable. Silently regenerating
+  // on parse failure would mint a new identity and orphan every
+  // previously-encrypted envelope keyed to the old public key.
+  // Better to fail fast and let the operator restore from backup.
+  if (existsSync(RELAY_AGENT_KEY_FILE)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(RELAY_AGENT_KEY_FILE, 'utf8'));
+    } catch (err) {
+      throw new Error(
+        `RELAY_AGENT_KEY_FILE (${RELAY_AGENT_KEY_FILE}) exists but is not valid JSON: ${(err as Error).message}. ` +
+        `Restore from backup or move the file aside to mint a new identity.`,
+      );
     }
-  } catch { /* fall through */ }
+    const p = parsed as Partial<EncryptionKeyPair>;
+    if (p?.publicKey && p?.secretKey && p?.algorithm === 'X25519-XSalsa20-Poly1305') {
+      return p as EncryptionKeyPair;
+    }
+    throw new Error(
+      `RELAY_AGENT_KEY_FILE (${RELAY_AGENT_KEY_FILE}) is missing required fields ` +
+      `(publicKey + secretKey + algorithm=X25519-XSalsa20-Poly1305). ` +
+      `Restore from backup or move the file aside to mint a new identity.`,
+    );
+  }
   const kp = generateKeyPair();
-  try { writeFileSync(RELAY_AGENT_KEY_FILE, JSON.stringify(kp, null, 2), { mode: 0o600 }); } catch { /* best-effort */ }
+  try {
+    writeFileSync(RELAY_AGENT_KEY_FILE, JSON.stringify(kp, null, 2), { mode: 0o600 });
+  } catch (err) {
+    log(`[startup-warn] Could not persist relay agent key to ${RELAY_AGENT_KEY_FILE}: ${(err as Error).message}. ` +
+        `Identity will reset on next restart, orphaning any envelopes encrypted this session.`);
+  }
   return kp;
 })();
 
@@ -1143,7 +1167,9 @@ WHEN TO USE EACH TOOL FAMILY:
 - publish_context → persist memory + cross-pod E2EE share
 - discover_context / discover_all / get_descriptor → search pods + read
 - list_known_pods / subscribe_to_pod → federation surface
-- register_agent / verify_agent → identity ops
+- register_agent / revoke_agent / verify_agent → identity ops; revoke
+  emits a soc2:AccessChangeEvent in the response, ready for
+  publish_context with compliance: true (CC6.2/CC6.3 evidence)
 
 PRIVACY HYGIENE (before publishing):
 - The relay runs a screenForSensitiveContent preflight. If it flags HIGH
@@ -1563,8 +1589,33 @@ app.use(express.json());
 // Login form POSTs x-www-form-urlencoded; OAuth token endpoint does too.
 app.use(express.urlencoded({ extended: false }));
 
-// CORS for remote agents + claude.ai connector discovery. Expose
-// Authorization so browser-based MCP clients can send Bearer tokens.
+// CORS: deliberately open origin, deliberately bounded by OAuth.
+//
+// Why `Access-Control-Allow-Origin: *`:
+//   The MCP relay is consumed by browser-based clients (claude.ai
+//   custom connectors, OpenAI plugin runtime, Cursor's web shell,
+//   etc.) whose origins we do not enumerate or want to. The OAuth
+//   2.1 + DCR flow already gates every state-changing call: the
+//   browser obtains a bearer token only after the user authenticates
+//   against THEIR pod's identity, and the bearer is bound to a
+//   per-user agent IRI. CORS-open + OAuth-gated is the standard
+//   pattern for MCP / OpenAPI services that serve browser clients.
+//
+// What this would not work for:
+//   Cookie-based session auth. We don't use cookies; bearer tokens
+//   in the Authorization header are required. Without that header
+//   no request authenticates.
+//
+// What's still risk-bounded:
+//   /audit/* endpoints are read-only public audit metadata (per
+//   the comments at their declaration). /health is intentionally
+//   public. /x402/price/:podName is public price discovery. Every
+//   tool call that mutates state requires `verifyBearerToken`.
+//
+// Do NOT tighten this without re-validating that browser-based MCP
+// clients still work — specifically claude.ai's custom-connector
+// preflight + OpenAI's plugin runtime. Audit-relevant: this is an
+// intentional design choice, not an oversight.
 app.use((_req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
@@ -1601,7 +1652,20 @@ app.use(mcpAuthRouter({
  * No shared secrets — every successful call is backed by a cryptographic
  * signature verified by identity against the user's public key.
  */
-app.post('/oauth/verify', async (req, res) => {
+// Rate limiter for /oauth/verify. Each successful call ultimately
+// produces a signature-verification request to the identity service;
+// without a per-IP cap an attacker could grind through pending_id
+// guesses or hammer credential-verification endpoints. The limit is
+// generous enough to allow normal interactive auth retries (a user
+// fumbling WebAuthn or a SIWE wallet prompt) but kills sustained abuse.
+// 30 attempts per minute per IP, then 429 with standard headers.
+const oauthVerifyLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   const { pending_id, method, ...proofBody } = req.body as {
     pending_id?: string;
     method?: 'siwe' | 'webauthn-register' | 'webauthn-authenticate' | 'did';
@@ -1689,6 +1753,18 @@ app.post('/oauth/verify', async (req, res) => {
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', css: CSS_URL, tools: Object.keys(TOOLS).length, auth: 'bearer-token', x402: true });
+});
+
+// ── /.well-known/security.txt — RFC 9116 ─────────────────────
+//
+// Coordinated disclosure contact for security researchers. Body
+// generated by the shared @interego/core builder so all 5 surfaces
+// emit identical content (single source of truth for policy URL +
+// Expires + Acknowledgments). See spec/policies/14-vulnerability-management.md §5.3.
+const SECURITY_TXT_BODY = buildSecurityTxtFromEnv(PUBLIC_BASE_URL || undefined);
+app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(SECURITY_TXT_BODY);
 });
 
 // ── /audit/* — compliance + lineage endpoints ──────────────
@@ -1939,7 +2015,37 @@ app.post('/agents/:agentIri/revoke', async (req, res) => {
     const updated = removeAuthorizedAgent(profile, agentIri);
     await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
     const remaining = updated.authorizedAgents.filter(a => !a.revoked).length;
-    res.json({ revoked: true, agentIri, remaining });
+
+    // Emit a SOC 2 access-change descriptor — every agent revocation
+    // is auditable evidence per spec/policies/02-access-control.md §5.3
+    // and spec/policies/04-incident-response.md §5.8 (credential
+    // compromise). Failure here MUST NOT fail the revoke (the registry
+    // mutation is the source of truth); we log + surface in the
+    // response.
+    let auditEvent: ReturnType<typeof buildAccessChangeEvent> | null = null;
+    let auditWarning: string | null = null;
+    try {
+      auditEvent = buildAccessChangeEvent({
+        action: 'revoked',
+        principal: agentIri,
+        system: `pod:${podUrl}`,
+        scope: `cg:authorizedAgent on ${podUrl}`,
+        grantorDid: tokenOwnerWebId,
+        justification: (req.body && typeof req.body === 'object' && typeof req.body.reason === 'string')
+          ? req.body.reason
+          : 'operator-initiated revocation via /agents/:agentIri/revoke',
+      });
+    } catch (auditErr) {
+      auditWarning = `Audit-event generation failed: ${(auditErr as Error).message}`;
+      log(`[audit] revoke ${agentIri}: ${auditWarning}`);
+    }
+    res.json({
+      revoked: true,
+      agentIri,
+      remaining,
+      ...(auditEvent ? { audit: auditEvent } : {}),
+      ...(auditWarning ? { auditWarning } : {}),
+    });
   } catch (err) {
     res.status(500).json({ error: `Revoke failed: ${(err as Error).message}` });
   }
@@ -2160,12 +2266,28 @@ app.delete('/mcp', mcpGate, handleMcp);
 
 // ── Start ───────────────────────────────────────────────────
 
+// Compute fingerprints (sha256 prefix) for sensitive material we
+// hold in memory so the operator can confirm at startup that the
+// expected key/secret was loaded — without ever logging the secret
+// itself. SOC 2 CC6.7 evidence ("we know what's running") without
+// SOC 2 CC6.7 violation ("we logged the secret in plaintext").
+function fingerprint(material: string): string {
+  if (!material) return '<unset>';
+  return createHash('sha256').update(material).digest('hex').slice(0, 12);
+}
+
 app.listen(PORT, () => {
   log(`MCP Relay started on port ${PORT}`);
   log(`CSS: ${CSS_URL}`);
-  log(`/mcp auth: OAuth 2.1 + legacy Bearer <RELAY_MCP_API_KEY> fallback (${RELAY_MCP_API_KEY ? 'enabled' : 'disabled'})`);
+  log(`/mcp auth: OAuth 2.1 + legacy Bearer <RELAY_MCP_API_KEY> fallback (${RELAY_MCP_API_KEY ? `enabled fp=${fingerprint(RELAY_MCP_API_KEY)}` : 'disabled — OAuth-only'})`);
+  if (!RELAY_MCP_API_KEY && !PUBLIC_BASE_URL) {
+    log(`[startup-warn] Neither RELAY_MCP_API_KEY nor PUBLIC_BASE_URL is set. Local OAuth will work, but no remote MCP client can connect.`);
+  }
   log(`OAuth issuer: ${PUBLIC_BASE_URL || `http://localhost:${PORT}`}`);
   log(`Identity server: ${IDENTITY_URL}`);
+  log(`Relay agent key fingerprint (X25519 public): ${fingerprint(relayAgentKey.publicKey)}`);
+  log(`CDP API key: ${ORG_CDP_API_KEY_NAME ? `name=${ORG_CDP_API_KEY_NAME} priv-fp=${fingerprint(ORG_CDP_API_KEY_PRIVATE)}` : '<unset>'}`);
+  log(`IPFS: provider=${ORG_IPFS_PROVIDER} api-key-fp=${fingerprint(ORG_IPFS_API_KEY)}`);
   log(`Endpoints:`);
   log(`  GET  /health                                  Health check`);
   log(`  GET  /tools  |  POST /tool/:name              REST convenience`);

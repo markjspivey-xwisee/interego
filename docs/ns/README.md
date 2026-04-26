@@ -16,9 +16,9 @@ Not every ontology here has the same normative weight. They sit on three distinc
 
 Every namespace below is tagged with its current layer. The transplant test (§2 of [`LAYERS.md`](../../spec/LAYERS.md)) is the discriminator: if an ontology's terms only make sense in a specific domain or stack, it belongs in Layer 3, not Layer 1.
 
-## Twelve ontologies, twelve prefixes
+## Nineteen ontologies, nineteen prefixes
 
-Interego is a five-core-layer system (substrate → typed context → interrogatives → agent harness → cross-layer alignment) plus seven adjacent-framework ontologies that model how Interego composes with systems the project was designed to interoperate with.
+Interego is a five-core-layer system (substrate → typed context → interrogatives → agent harness → cross-layer alignment) plus five Layer-2 federation pattern ontologies plus eight Layer-3 adjacent / domain / regulatory mapping ontologies that model how Interego composes with the wider world.
 
 ### Core layers (Layer 1 — Protocol, normative)
 
@@ -38,8 +38,11 @@ Applicability-note ontologies describing patterns that implementations tend to a
 
 | File | Prefix | Terms | What it defines |
 |---|---|---|---|
-| [`hyprcat.ttl`](hyprcat.ttl) | `hyprcat:` | 15 | **Federated data-product catalog.** Decorates DCAT + DPROD with distributed identity, affordance-bearing distributions, and the three-world federation boundary (UserWorld / AgentWorld / ServiceWorld). `hyprcat:FederatedDistribution` is simultaneously `dcat:Distribution`, `cg:Affordance`, `cgh:Affordance`, and `hydra:Operation`. |
-| [`hypragent.ttl`](hypragent.ttl) | `hypragent:` | 16 | **Agent machinery for HyprCat.** Cross-world delegation via W3C Verifiable Credentials chains, capability typing (canDecryptEnvelope, canPublishContext, canVerifyDelegation, canSubscribe), dispatch-time policy evaluation. `hypragent:Agent` is simultaneously `prov:SoftwareAgent`, `cg:AuthorizedAgent`, and `cgh:Agent`. |
+| [`hyprcat.ttl`](hyprcat.ttl) | `hyprcat:` | 18 | **Federated data-product catalog.** Decorates DCAT + DPROD with distributed identity, affordance-bearing distributions, and the three-world federation boundary (UserWorld / AgentWorld / ServiceWorld). `hyprcat:FederatedDistribution` is simultaneously `dcat:Distribution`, `cg:Affordance`, `cgh:Affordance`, and `hydra:Operation`. |
+| [`hypragent.ttl`](hypragent.ttl) | `hypragent:` | 18 | **Agent machinery for HyprCat.** Cross-world delegation via W3C Verifiable Credentials chains, capability typing (canDecryptEnvelope, canPublishContext, canVerifyDelegation, canSubscribe), dispatch-time policy evaluation. `hypragent:Agent` is simultaneously `prov:SoftwareAgent`, `cg:AuthorizedAgent`, and `cgh:Agent`. |
+| [`abac.ttl`](abac.ttl) | `abac:` | 16 | **Attribute-based access control.** `abac:Policy` as a typed context descriptor with SHACL predicates; `abac:Evaluator`, `abac:AttributeResolver`, `abac:DecisionCache`, `abac:PolicyContext`, `abac:EvaluationRecord`. Reference runtime in [`src/abac/`](../../src/abac/). |
+| [`registry.ttl`](registry.ttl) | `registry:` | 17 | **Public agent attestation registry.** Federated NPM-for-AI-agents primitive: multiple registries co-exist, reputation aggregates cross-registry. Reference runtime in [`src/registry/`](../../src/registry/). |
+| [`passport.ttl`](passport.ttl) | `passport:` | 15 | **Capability passport.** Persistent agent biographical identity that survives infrastructure migration (framework / pod / model changes) — life events, demonstrated values. Reference runtime in [`src/passport/`](../../src/passport/). |
 
 ### Adjacent-framework ontologies (Layer 3 — Domain-adjacent, non-normative)
 
@@ -53,7 +56,11 @@ These ontologies live here for convenience while the project is early, but they 
 | [`sat.ttl`](sat.ttl) | `sat:` | 10 | **Semiotic Agent Topos.** Semiotic Field Functor Σ : Situations → SemioticFields. `sat:SemioticFieldFunctor owl:equivalentClass cg:SemioticFacet`. |
 | [`cts.ttl`](cts.ttl) | `cts:` | 11 | **Compositional Tuple Store.** Usage-based linguistic substrate — meaning is usage, structure emerges from usage. `cts:Pattern owl:equivalentClass cg:SyntagmaticPattern`. |
 | [`olke.ttl`](olke.ttl) | `olke:` | 11 | **Organizational Learning & Knowledge Evolution.** Four-stage ladder Tacit → Articulate → Collective → Institutional; annotates `cg:ContextDescriptor` with current stage. |
-| [`amta.ttl`](amta.ttl) | `amta:` | 13 | **Agent-Mediated Trust Attestation.** Multi-axis trust (competence / honesty / relevance / recency). `amta:Attestation rdfs:subClassOf cg:TrustFacet`. |
+| [`amta.ttl`](amta.ttl) | `amta:` | 14 | **Agent-Mediated Trust Attestation.** Multi-axis trust (competence / honesty / relevance / recency). `amta:Attestation rdfs:subClassOf cg:TrustFacet`. |
+| [`code.ttl`](code.ttl) | `code:` | 35 | **Source-code domain.** Repository, Commit, Branch, PullRequest, Review, Defect, TestRun, BuildResult. Commits are `pgsl:Fragment`; branches are `cg:ParadigmSet`; reviews `cg:constructedFrom (cg:SemioticFacet cg:ProvenanceFacet)`. First L3 domain example. |
+| [`eu-ai-act.ttl`](eu-ai-act.ttl) | `eu-ai-act:` | 17 | **EU AI Act mapping.** Articles 6, 9, 10, 12, 13, 14, 15, 50. Lets compliance teams query an Interego pod using the regulation's own vocabulary. |
+| [`nist-rmf.ttl`](nist-rmf.ttl) | `nist-rmf:` | 20 | **NIST AI Risk Management Framework.** Govern / Map / Measure / Manage four-function model. Used together with `compliance: true` publishes for L4 conformance. |
+| [`soc2.ttl`](soc2.ttl) | `soc2:` | 63 | **AICPA SOC 2 Trust Services Criteria.** Common Criteria + Availability + Processing Integrity + Confidentiality + Privacy. Operational event subtypes (DeployEvent, AccessChangeEvent, KeyRotationEvent, IncidentEvent, QuarterlyReviewEvent) emitted by [`src/ops/`](../../src/ops/) — Interego eats its own dog food as the SOC 2 evidence substrate. |
 
 ### SHACL shape files
 
@@ -63,7 +70,7 @@ These ontologies live here for convenience while the project is early, but they 
 | [`interego-shapes.ttl`](interego-shapes.ttl) | `ie:` | Shape file for interrogative bindings |
 | [`harness-shapes.ttl`](harness-shapes.ttl) | `cgh:` | Shape file for harness structures |
 
-**Totals:** 12 ontology files, 1 alignment file, 3 SHACL shape files — **607 defined terms** across all twelve namespaces.
+**Totals (2026-04-26):** 19 ontology files, 1 alignment file, 3 SHACL shape files (cg-shapes-1.2.ttl is a draft tracking the SHACL 1.2 CR). Term count by namespace — `cg:` 336, `cgh:` 138, `pgsl:` 35, `ie:` 34, `align:` 22, `hyprcat:` 18, `hypragent:` 18, `abac:` 16, `registry:` 17, `passport:` 15, `hela:` 9, `sat:` 12, `cts:` 13, `olke:` 12, `amta:` 14, `code:` 35, `eu-ai-act:` 17, `nist-rmf:` 20, `soc2:` 63. CI lint enforces every term used in TS code has a matching declaration here.
 
 ## Ontology-lint CI gate
 

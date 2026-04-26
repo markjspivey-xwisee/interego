@@ -1484,6 +1484,39 @@ app.post('/tokens/verify', (req, res) => {
 // application-level user. Now the server has its own key.
 const SERVER_KEY = generateEd25519();
 
+// ── /.well-known/security.txt — RFC 9116 ─────────────────────
+//
+// Coordinated disclosure contact for security researchers. The
+// identity service deliberately has zero dependency on @interego/core
+// (lean container, separate Dockerfile). Body MUST stay in lockstep
+// with @interego/core's buildSecurityTxt — verified by
+// tests/security-txt-consistency.test.ts so audit consistency holds.
+// See spec/policies/14-vulnerability-management.md §5.3.
+const SECURITY_CONTACT = process.env.SECURITY_CONTACT;
+const SECURITY_TXT_BODY = (() => {
+  const contact = SECURITY_CONTACT
+    ? (SECURITY_CONTACT.startsWith('mailto:') || SECURITY_CONTACT.startsWith('https:') || SECURITY_CONTACT.startsWith('tel:')
+        ? SECURITY_CONTACT
+        : `mailto:${SECURITY_CONTACT}`)
+    : 'https://github.com/markjspivey-xwisee/interego/security/advisories/new';
+  const lines = [
+    `Contact: ${contact}`,
+    `Expires: 2027-01-01T00:00:00Z`,
+    `Preferred-Languages: en`,
+  ];
+  if (BASE_URL) {
+    lines.push(`Canonical: ${BASE_URL.replace(/\/$/, '')}/.well-known/security.txt`);
+  }
+  lines.push(`Policy: https://github.com/markjspivey-xwisee/interego/blob/main/spec/policies/14-vulnerability-management.md`);
+  lines.push(`Acknowledgments: https://github.com/markjspivey-xwisee/interego/blob/main/SECURITY-ACKNOWLEDGMENTS.md`);
+  lines.push('');
+  return lines.join('\n');
+})();
+app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(SECURITY_TXT_BODY);
+});
+
 app.get('/.well-known/did.json', (_req, res) => {
   const serverDid = `did:web:${new URL(BASE_URL).host}`;
   res.json({

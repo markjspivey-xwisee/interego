@@ -94,6 +94,14 @@ The pod is shared across all the user's surfaces (Claude Code CLI, Claude Deskto
 
 **Mistake to avoid:** assuming "I haven't seen this in the conversation" means "this isn't in memory." That's wrong on Interego.
 
+### Subscriptions
+
+Long-lived sessions exploring federation can accumulate WebSocket subscriptions. The stdio MCP enforces a cap (default 32, override via `CG_MAX_SUBSCRIPTIONS`):
+
+- `subscribe_to_pod` opens a subscription and counts toward the cap. If the cap is reached, you'll get a clear error pointing you at `unsubscribe_from_pod`.
+- `unsubscribe_from_pod` releases the slot. Call it when you're done with a pod that's no longer relevant to the conversation — the subscription accumulates state and bandwidth.
+- A reasonable rule: subscribe on demand when the user asks you to watch a pod live; unsubscribe when the user moves on.
+
 ---
 
 ## 7. Trust signals — what to do with them

@@ -961,12 +961,23 @@ async function toolGetPodStatus(args: { pod_url?: string }): Promise<string> {
   return lines.join('\n');
 }
 
+// Per-process cap on simultaneous WebSocket subscriptions. Each
+// open subscription is a long-lived WebSocket; without a cap a
+// long-running MCP session could accumulate hundreds of them as the
+// agent explores federation. Default 32 — generous for normal use,
+// finite for resource bounding. Override via CG_MAX_SUBSCRIPTIONS.
+const MAX_SUBSCRIPTIONS = parseInt(process.env['CG_MAX_SUBSCRIPTIONS'] ?? '32', 10);
+
 async function toolSubscribeToPod(args: { pod_url: string }): Promise<string> {
   await ensureCSS();
 
   const existing = podRegistry.get(args.pod_url);
   if (existing?.subscription) {
     return `Already subscribed to ${args.pod_url}`;
+  }
+
+  if (podRegistry.activeSubscriptionCount >= MAX_SUBSCRIPTIONS) {
+    return `Subscription cap reached (${MAX_SUBSCRIPTIONS} active). Call unsubscribe_from_pod on a pod you no longer need, or raise CG_MAX_SUBSCRIPTIONS.`;
   }
 
   try {
@@ -979,10 +990,18 @@ async function toolSubscribeToPod(args: { pod_url: string }): Promise<string> {
     });
 
     podRegistry.setSubscription(args.pod_url, sub);
-    return `Subscribed to ${args.pod_url} via WebSocket.`;
+    return `Subscribed to ${args.pod_url} via WebSocket. (${podRegistry.activeSubscriptionCount}/${MAX_SUBSCRIPTIONS} active.)`;
   } catch (err) {
     return `Failed to subscribe to ${args.pod_url}: ${(err as Error).message}`;
   }
+}
+
+async function toolUnsubscribeFromPod(args: { pod_url: string }): Promise<string> {
+  const closed = podRegistry.unsubscribe(args.pod_url);
+  if (!closed) {
+    return `No active subscription on ${args.pod_url}.`;
+  }
+  return `Unsubscribed from ${args.pod_url}. (${podRegistry.activeSubscriptionCount}/${MAX_SUBSCRIPTIONS} active.)`;
 }
 
 async function toolRegisterAgent(args: {
@@ -1549,7 +1568,28 @@ async function toolCheckBalance(args: { address?: string }): Promise<string> {
     ].join('\n');
   }
 
-  const address = args.address ?? MY_DID; // TODO: use stored wallet address
+  // Address resolution priority:
+  //   1. Explicit args.address (caller-supplied — wins)
+  //   2. The persisted ECDSA compliance wallet (if loaded; this is
+  //      the canonical signer identity for all on-chain action)
+  //   3. MY_DID (a `did:web:` identifier — NOT a fundable wallet
+  //      address but useful as a last-resort label for diagnostics)
+  // Falling through to MY_DID will produce an "invalid address"
+  // surface from checkBalance for any real chain mode; that's the
+  // correct failure mode (operator should configure a wallet).
+  let address = args.address;
+  if (!address) {
+    if (_complianceWallet) {
+      address = _complianceWallet.wallet.address;
+    } else {
+      try {
+        const cw = await ensureComplianceWallet();
+        address = cw.wallet.address;
+      } catch {
+        address = MY_DID;
+      }
+    }
+  }
   const balance = await checkBalance(address);
 
   const lines = [
@@ -1776,7 +1816,11 @@ WHEN TO USE EACH TOOL FAMILY:
 - discover_context / discover_all / get_descriptor → search pods + read
 - compose_contexts → union / intersection / restriction / override
 - list_known_pods / subscribe_to_pod → federation surface
-- register_agent / verify_agent → identity ops
+- unsubscribe_from_pod → release a subscription slot when no longer needed
+  (subscriptions capped per-process via CG_MAX_SUBSCRIPTIONS, default 32)
+- register_agent / revoke_agent / verify_agent → identity ops; revoke
+  events are auditable (the response carries a soc2:AccessChangeEvent
+  ready for publish_context with compliance: true)
 
 PRIVACY HYGIENE (before publishing):
 - The MCP runs a screenForSensitiveContent preflight. If it flags HIGH
@@ -1903,11 +1947,22 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'subscribe_to_pod',
-      description: 'Subscribe to live WebSocket notifications from a Solid pod.',
+      description: 'Subscribe to live WebSocket notifications from a Solid pod. Capped at CG_MAX_SUBSCRIPTIONS (default 32) per process; call unsubscribe_from_pod to release a slot.',
       inputSchema: {
         type: 'object' as const,
         properties: {
           pod_url: { type: 'string', description: 'Solid pod URL to subscribe to' },
+        },
+        required: ['pod_url'],
+      },
+    },
+    {
+      name: 'unsubscribe_from_pod',
+      description: 'Close an active WebSocket subscription on a Solid pod. Releases a slot toward the CG_MAX_SUBSCRIPTIONS cap. No-op if not subscribed.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          pod_url: { type: 'string', description: 'Solid pod URL to unsubscribe from' },
         },
         required: ['pod_url'],
       },
@@ -2159,6 +2214,9 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       case 'subscribe_to_pod':
         result = await toolSubscribeToPod(args as Parameters<typeof toolSubscribeToPod>[0]);
+        break;
+      case 'unsubscribe_from_pod':
+        result = await toolUnsubscribeFromPod(args as Parameters<typeof toolUnsubscribeFromPod>[0]);
         break;
       case 'get_pod_status':
         result = await toolGetPodStatus(args as Parameters<typeof toolGetPodStatus>[0]);

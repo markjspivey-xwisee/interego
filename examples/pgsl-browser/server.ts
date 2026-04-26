@@ -72,6 +72,7 @@ import {
   systemToTurtle,
   systemToJsonLd,
   getCertificates,
+  buildSecurityTxtFromEnv,
 } from '@interego/core';
 
 import {
@@ -802,6 +803,14 @@ app.post('/api/paradigm-intervene', (req, res) => {
 // Serve the HTML — root and node-specific URLs
 app.get('/', (_req, res) => {
   res.sendFile(resolve(__dirname, 'index.html'));
+});
+
+// /.well-known/security.txt — RFC 9116. Body from the shared
+// @interego/core builder (single source of truth across all 5
+// surfaces). See spec/policies/14-vulnerability-management.md §5.3.
+app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(buildSecurityTxtFromEnv(process.env['PUBLIC_BASE_URL']));
 });
 
 // Hypermedia: dereferenceable node URLs

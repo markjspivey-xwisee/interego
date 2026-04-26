@@ -113,8 +113,17 @@ soc2:CC7.2 a owl:NamedIndividual ;
 soc2:CC7.3 a owl:NamedIndividual ;
     rdfs:label "CC7.3 — evaluates security events to determine response" .
 
+soc2:CC7.4 a owl:NamedIndividual ;
+    rdfs:label "CC7.4 — responds to identified security incidents" .
+
+soc2:CC7.5 a owl:NamedIndividual ;
+    rdfs:label "CC7.5 — recovers from identified security incidents" .
+
 soc2:CC8.1 a owl:NamedIndividual ;
     rdfs:label "CC8.1 — authorizes, designs, develops, configures, documents, tests, approves changes" .
+
+soc2:CC9.2 a owl:NamedIndividual ;
+    rdfs:label "CC9.2 — assesses + manages risks associated with vendors + business partners" .
 
 # ── Confidentiality controls ──────────────────────────────
 
@@ -153,6 +162,140 @@ soc2:auditPeriodEnd a owl:DatatypeProperty ;
 soc2:trustServicesCategory a owl:ObjectProperty ;
     rdfs:label "trust services category" ;
     rdfs:comment "Which TSC category the evidence is for (Security / Availability / etc.)." .
+
+# ── Operational event types ────────────────────────────────
+#
+#   Concrete subtypes of soc2:ControlEvidence emitted by the
+#   src/ops/ builders. Every operator action that affects
+#   production becomes one of these.
+
+soc2:DeployEvent a owl:Class ;
+    rdfs:subClassOf soc2:ControlEvidence ;
+    rdfs:label "Production deploy event" ;
+    rdfs:comment "Records that a specific commit was deployed to a specific component in a specific environment by a specific principal. Maps to CC8.1." .
+
+soc2:AccessChangeEvent a owl:Class ;
+    rdfs:subClassOf soc2:ControlEvidence ;
+    rdfs:label "Access change event" ;
+    rdfs:comment "Records grant / revoke / modify of access for a principal on a system. Maps to CC6.1, CC6.2, CC6.3." .
+
+soc2:KeyRotationEvent a owl:Class ;
+    rdfs:subClassOf soc2:ControlEvidence ;
+    rdfs:label "Cryptographic key rotation event" ;
+    rdfs:comment "Records rotation of a signing or encryption key. Carries retired + new addresses. Maps to CC6.7." .
+
+soc2:IncidentEvent a owl:Class ;
+    rdfs:subClassOf soc2:ControlEvidence ;
+    rdfs:label "Security or operational incident event" ;
+    rdfs:comment "Records a Sev-1..Sev-4 incident with severity, status, summary, affected components. Maps to CC7.3 (open/contained) → CC7.4, CC7.5 (resolved)." .
+
+soc2:QuarterlyReviewEvent a owl:Class ;
+    rdfs:subClassOf soc2:ControlEvidence ;
+    rdfs:label "Quarterly review event" ;
+    rdfs:comment "Records completion of a recurring quarterly review (access / change / risk / vendor / monitoring). Maps to the controls relevant to the review kind." .
+
+# ── Operational event properties ───────────────────────────
+
+soc2:component a owl:DatatypeProperty ;
+    rdfs:label "component" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "System component a deploy or incident event refers to (e.g., 'relay', 'identity', 'all')." .
+
+soc2:commitSha a owl:DatatypeProperty ;
+    rdfs:label "commit SHA" ;
+    rdfs:range xsd:string .
+
+soc2:environment a owl:DatatypeProperty ;
+    rdfs:label "environment" ;
+    rdfs:range xsd:string .
+
+soc2:rollbackPlan a owl:DatatypeProperty ;
+    rdfs:label "rollback plan" ;
+    rdfs:range xsd:string .
+
+soc2:accessAction a owl:DatatypeProperty ;
+    rdfs:label "access action" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "One of granted | revoked | modified." .
+
+soc2:principal a owl:DatatypeProperty ;
+    rdfs:label "principal" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "DID or identifier of the principal whose access changed." .
+
+soc2:system a owl:DatatypeProperty ;
+    rdfs:label "system" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Target system on which the access change occurred (e.g., azure, github, npm)." .
+
+soc2:scope a owl:DatatypeProperty ;
+    rdfs:label "scope" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Role / permission scope granted, revoked, or modified." .
+
+soc2:justification a owl:DatatypeProperty ;
+    rdfs:label "justification" ;
+    rdfs:range xsd:string .
+
+soc2:rotationReason a owl:DatatypeProperty ;
+    rdfs:label "rotation reason" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "One of scheduled | compromise-response | other." .
+
+soc2:retiredKeyAddress a owl:DatatypeProperty ;
+    rdfs:label "retired key address" ;
+    rdfs:range xsd:string .
+
+soc2:newKeyAddress a owl:DatatypeProperty ;
+    rdfs:label "new key address" ;
+    rdfs:range xsd:string .
+
+soc2:incidentSeverity a owl:DatatypeProperty ;
+    rdfs:label "incident severity" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "One of sev-1 | sev-2 | sev-3 | sev-4." .
+
+soc2:incidentStatus a owl:DatatypeProperty ;
+    rdfs:label "incident status" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "One of open | contained | resolved." .
+
+soc2:summary a owl:DatatypeProperty ;
+    rdfs:label "summary" ;
+    rdfs:range xsd:string .
+
+soc2:detectionSource a owl:DatatypeProperty ;
+    rdfs:label "detection source" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "How the incident was detected (alert name, customer report, manual observation)." .
+
+soc2:detectedAt a owl:DatatypeProperty ;
+    rdfs:label "detected at" ;
+    rdfs:range xsd:dateTime .
+
+soc2:affectedComponent a owl:DatatypeProperty ;
+    rdfs:label "affected component" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "System component impacted by an incident." .
+
+soc2:reviewQuarter a owl:DatatypeProperty ;
+    rdfs:label "review quarter" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Quarter identifier (e.g., 2026-Q2)." .
+
+soc2:reviewKind a owl:DatatypeProperty ;
+    rdfs:label "review kind" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "One of access | change | risk | vendor | monitoring." .
+
+soc2:findingCount a owl:DatatypeProperty ;
+    rdfs:label "finding count" ;
+    rdfs:range xsd:integer .
+
+soc2:finding a owl:DatatypeProperty ;
+    rdfs:label "finding" ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Free-text finding from a quarterly review." .
 
 # ── Alignments ─────────────────────────────────────────────
 

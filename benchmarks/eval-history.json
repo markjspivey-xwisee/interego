@@ -1,0 +1,2052 @@
+[
+  {
+    "timestamp": "2026-04-11T13:17:26.267Z",
+    "model": "opus",
+    "runs": 1,
+    "overall": 0.7741935483870968,
+    "perType": {
+      "temporal": 0.9230769230769231,
+      "counting": 0.4444444444444444,
+      "sum": 1,
+      "preference": 1,
+      "knowledge-update": 0,
+      "single-session": 1
+    },
+    "failures": [
+      54,
+      60,
+      70,
+      71,
+      77,
+      93,
+      133
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 0
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 1
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 0
+      },
+      {
+        "qi": 71,
+        "passRate": 0
+      },
+      {
+        "qi": 77,
+        "passRate": 0
+      },
+      {
+        "qi": 93,
+        "passRate": 0
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 1
+      },
+      {
+        "qi": 203,
+        "passRate": 1
+      },
+      {
+        "qi": 133,
+        "passRate": 0
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-11T14:01:23.427Z",
+    "model": "opus",
+    "runs": 1,
+    "overall": 0.9032258064516129,
+    "perType": {
+      "temporal": 1,
+      "counting": 0.7777777777777778,
+      "sum": 1,
+      "preference": 0.75,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      60,
+      77,
+      205
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 1
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 1
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 0
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 0
+      },
+      {
+        "qi": 203,
+        "passRate": 1
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-11T15:44:42.383Z",
+    "model": "opus",
+    "runs": 3,
+    "overall": 0.870967741935484,
+    "perType": {
+      "temporal": 0.9487179487179488,
+      "counting": 0.7037037037037037,
+      "sum": 1,
+      "preference": 0.8333333333333333,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      23,
+      54,
+      61,
+      60,
+      77,
+      205,
+      203
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 0.6666666666666666
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 0.6666666666666666
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 0.3333333333333333
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 0.6666666666666666
+      },
+      {
+        "qi": 203,
+        "passRate": 0.6666666666666666
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-11T16:21:38.845Z",
+    "model": "opus",
+    "runs": 1,
+    "overall": 0.9032258064516129,
+    "perType": {
+      "temporal": 1,
+      "counting": 0.6666666666666666,
+      "sum": 1,
+      "preference": 1,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      61,
+      60,
+      77
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 1
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 0
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 1
+      },
+      {
+        "qi": 203,
+        "passRate": 1
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-11T17:19:03.939Z",
+    "model": "opus",
+    "runs": 1,
+    "overall": 0.8064516129032258,
+    "perType": {
+      "temporal": 0.9230769230769231,
+      "counting": 0.6666666666666666,
+      "sum": 1,
+      "preference": 0.5,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      54,
+      61,
+      60,
+      93,
+      205,
+      203
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 0
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 1
+      },
+      {
+        "qi": 93,
+        "passRate": 0
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 0
+      },
+      {
+        "qi": 203,
+        "passRate": 0
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-11T19:33:30.264Z",
+    "model": "opus",
+    "runs": 1,
+    "overall": 0.8387096774193549,
+    "perType": {
+      "temporal": 1,
+      "counting": 0.6666666666666666,
+      "sum": 1,
+      "preference": 0.5,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      61,
+      60,
+      93,
+      200,
+      203
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 1
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 1
+      },
+      {
+        "qi": 93,
+        "passRate": 0
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 0
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 1
+      },
+      {
+        "qi": 203,
+        "passRate": 0
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-11T21:02:14.562Z",
+    "model": "opus",
+    "runs": 1,
+    "overall": 0.8064516129032258,
+    "perType": {
+      "temporal": 1,
+      "counting": 0.7777777777777778,
+      "sum": 0.5,
+      "preference": 0.25,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      61,
+      60,
+      63,
+      200,
+      205,
+      203
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 1
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 1
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 0
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 0
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 0
+      },
+      {
+        "qi": 203,
+        "passRate": 0
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-12T12:58:17.418Z",
+    "model": "opus",
+    "runs": 1,
+    "overall": 0.9354838709677419,
+    "perType": {
+      "temporal": 1,
+      "counting": 0.7777777777777778,
+      "sum": 1,
+      "preference": 1,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      61,
+      60
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 1
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 1
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 1
+      },
+      {
+        "qi": 203,
+        "passRate": 1
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-12T13:32:10.419Z",
+    "model": "opus",
+    "runs": 1,
+    "overall": 0.8387096774193549,
+    "perType": {
+      "temporal": 0.7692307692307693,
+      "counting": 0.7777777777777778,
+      "sum": 1,
+      "preference": 1,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      23,
+      54,
+      57,
+      61,
+      60
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 0
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 0
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 0
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 1
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 1
+      },
+      {
+        "qi": 203,
+        "passRate": 1
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-12T14:16:20.923Z",
+    "model": "opus",
+    "runs": 1,
+    "overall": 0.9032258064516129,
+    "perType": {
+      "temporal": 1,
+      "counting": 0.6666666666666666,
+      "sum": 1,
+      "preference": 1,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      61,
+      60,
+      77
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 1
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 0
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 1
+      },
+      {
+        "qi": 203,
+        "passRate": 1
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-12T15:31:48.322Z",
+    "model": "opus",
+    "runs": 2,
+    "overall": 0.9193548387096774,
+    "perType": {
+      "temporal": 1,
+      "counting": 0.7777777777777778,
+      "sum": 0.75,
+      "preference": 1,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      61,
+      60,
+      66
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 1
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 1
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 0.5
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 1
+      },
+      {
+        "qi": 203,
+        "passRate": 1
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-12T22:29:08.954Z",
+    "model": "opus",
+    "runs": 2,
+    "overall": 0.8870967741935484,
+    "perType": {
+      "temporal": 0.9230769230769231,
+      "counting": 0.7222222222222222,
+      "sum": 1,
+      "preference": 1,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      46,
+      61,
+      60,
+      77
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 0
+      },
+      {
+        "qi": 54,
+        "passRate": 1
+      },
+      {
+        "qi": 55,
+        "passRate": 1
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 0.5
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 1
+      },
+      {
+        "qi": 203,
+        "passRate": 1
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-12T23:48:12.189Z",
+    "model": "opus",
+    "runs": 2,
+    "overall": 0.8548387096774194,
+    "perType": {
+      "temporal": 0.9230769230769231,
+      "counting": 0.7777777777777778,
+      "sum": 0.5,
+      "preference": 0.875,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      55,
+      61,
+      60,
+      66,
+      200
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 1
+      },
+      {
+        "qi": 55,
+        "passRate": 0
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 1
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 0
+      },
+      {
+        "qi": 200,
+        "passRate": 0.5
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 1
+      },
+      {
+        "qi": 203,
+        "passRate": 1
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-13T00:57:47.683Z",
+    "model": "opus",
+    "runs": 2,
+    "overall": 0.9032258064516129,
+    "perType": {
+      "temporal": 0.9230769230769231,
+      "counting": 0.7777777777777778,
+      "sum": 1,
+      "preference": 1,
+      "knowledge-update": 1,
+      "single-session": 1
+    },
+    "failures": [
+      55,
+      61,
+      60
+    ],
+    "results": [
+      {
+        "qi": 0,
+        "passRate": 1
+      },
+      {
+        "qi": 4,
+        "passRate": 1
+      },
+      {
+        "qi": 10,
+        "passRate": 1
+      },
+      {
+        "qi": 3,
+        "passRate": 1
+      },
+      {
+        "qi": 7,
+        "passRate": 1
+      },
+      {
+        "qi": 19,
+        "passRate": 1
+      },
+      {
+        "qi": 23,
+        "passRate": 1
+      },
+      {
+        "qi": 28,
+        "passRate": 1
+      },
+      {
+        "qi": 34,
+        "passRate": 1
+      },
+      {
+        "qi": 46,
+        "passRate": 1
+      },
+      {
+        "qi": 54,
+        "passRate": 1
+      },
+      {
+        "qi": 55,
+        "passRate": 0
+      },
+      {
+        "qi": 57,
+        "passRate": 1
+      },
+      {
+        "qi": 15,
+        "passRate": 1
+      },
+      {
+        "qi": 61,
+        "passRate": 0
+      },
+      {
+        "qi": 68,
+        "passRate": 1
+      },
+      {
+        "qi": 60,
+        "passRate": 0
+      },
+      {
+        "qi": 70,
+        "passRate": 1
+      },
+      {
+        "qi": 71,
+        "passRate": 1
+      },
+      {
+        "qi": 77,
+        "passRate": 1
+      },
+      {
+        "qi": 93,
+        "passRate": 1
+      },
+      {
+        "qi": 99,
+        "passRate": 1
+      },
+      {
+        "qi": 63,
+        "passRate": 1
+      },
+      {
+        "qi": 66,
+        "passRate": 1
+      },
+      {
+        "qi": 200,
+        "passRate": 1
+      },
+      {
+        "qi": 201,
+        "passRate": 1
+      },
+      {
+        "qi": 205,
+        "passRate": 1
+      },
+      {
+        "qi": 203,
+        "passRate": 1
+      },
+      {
+        "qi": 133,
+        "passRate": 1
+      },
+      {
+        "qi": 230,
+        "passRate": 1
+      },
+      {
+        "qi": 300,
+        "passRate": 1
+      }
+    ]
+  }
+]

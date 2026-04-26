@@ -8,6 +8,119 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-04-26 — broad codebase pass (post-review fixes)
+
+Acted on the broader code-review survey across the whole project — not just SOC 2/security. Tightened security at the relay, fixed two real ESM bugs in the compliance module, added subscription cap to the stdio MCP server, formalized deploy/access/key documentation, promoted the architecture spec status, and adopted Proposal B as the v1.1 path for descriptor self-revocation.
+
+### Fixed — silent ESM bugs in `src/compliance/`
+
+- `generatePrivateKey()` and `addressFromPrivateKey()` used CJS `require('ethers')` inside an ESM module. Worked at compile time, threw `ReferenceError: require is not defined` at runtime for any caller of `loadOrCreateComplianceWallet`. Replaced with `import { Wallet } from 'ethers'`. The bug shipped silently because no test exercised the wallet code path; a regression test now exists in `tests/compliance.test.ts`.
+- `loadOrCreateComplianceWallet().fresh` was hardcoded `false` (the `!existsSync(path) ? false : false` ternary always evaluated to `false`). Operators relying on the `fresh` flag to back up newly-minted wallets received no signal. Now correctly returns `true` on first mint, `false` on subsequent loads.
+
+### Added — `tools/publish-ops-event.mjs` integrations
+
+- Relay's `/agents/:agentIri/revoke` endpoint now emits a `soc2:AccessChangeEvent` audit descriptor in the response (using `buildAccessChangeEvent`). Operators can pipe directly into `publish_context` with `compliance:true` for SOC 2 CC6.2/CC6.3 evidence. Failure here MUST NOT fail the revoke; surfaced as `auditWarning`.
+- `examples/compliance-end-to-end.mjs` walks the full pipeline: build event → check compliance grade → generate framework report → load/rotate wallet. Self-contained, no live pod. Catches three real bugs (above + a stale ContextDescriptor reference).
+
+### Added — `mcp-server` subscription cap + `unsubscribe_from_pod` tool
+
+- Per-process cap of 32 active WebSocket subscriptions, configurable via `CG_MAX_SUBSCRIPTIONS`. Prior behavior allowed unbounded accumulation as the agent explored federation.
+- New `unsubscribe_from_pod` tool releases a slot. PodRegistry gains `unsubscribe(url)` + `activeSubscriptionCount` getter.
+
+### Hardened — relay startup
+
+- `relay-agent-key.json` parse failures are now fatal at startup. Prior behavior silently regenerated a fresh key, orphaning every envelope encrypted to the prior public key. Operators see a clear error and a hint to restore from backup.
+- Startup logs sha256 fingerprints (12-char hex) of: `RELAY_MCP_API_KEY`, `relayAgentKey.publicKey`, `ORG_CDP_API_KEY_PRIVATE`, `ORG_IPFS_API_KEY`. Operator can confirm key identity at boot without ever logging the secret itself.
+- `/oauth/verify` now rate-limited (30 req/min/IP, RFC 6585 standard headers). Was previously the only auth-relevant endpoint outside `mcpAuthRouter`'s rate limiter.
+- CORS open-origin design rationale documented inline (claude.ai connector + OpenAI plugin compatibility) with explicit "do not tighten" guidance.
+
+### Resolved — `mcp-server` wallet TODO
+
+- `check_balance` falls back to the persisted ECDSA compliance wallet address when no `address` arg is provided, instead of the meaningless `MY_DID` (a `did:web:` identifier, not a fundable address).
+
+### Added — coverage gating + new shared helper module
+
+- `vitest.config.ts` thresholds (50% baseline, 80–100% on protocol-critical modules: `compliance`, `security-txt`, `ops`, `privacy`). `npm run test:coverage` enforces; `npm test` is unaffected.
+- `src/security-txt/` — RFC 9116 body builder, single source of truth across the 3 servers that depend on `@interego/core`. Identity + validator inlines kept (no-core-dep design) but verified byte-identical via `tests/security-txt.test.ts`.
+- `tools/security-txt-expiry-check.mjs` — fails CI when `Expires` is within 30 days, per the annual-refresh policy commitment.
+
+### Examples — now parameterizable
+
+- `examples/_lib.mjs` reads `CG_DEMO_POD`, `CG_DEMO_POD_B`, `CG_DEMO_POD_BASE` env vars; defaults preserved. External users can run any demo against their own pod without editing source.
+
+### Connectors — surface clarified
+
+- `src/connectors/index.ts` docstring now reflects what's actually implemented (Notion, Slack, Web) vs. the four declared-but-unimplemented types. New `tests/connectors.test.ts` exercises the dispatch + each implemented type with mocked `fetch`.
+
+### Spec status promotions
+
+- `spec/architecture.md` — promoted from "Draft" to "Working Draft" with explicit stability commitments per section. Promotion to Candidate Recommendation now has documented criteria (two interoperable implementations + 30-day review window).
+- `spec/revocation.md` — Proposal B (predicate form) adopted as the recommended path; Proposal A retained as an L2 extension for cross-org governance. Both interop per §8 (existing); migration plan documented.
+- `spec/OPS-RUNBOOK.md` — TBDs filled (custom-domain mapping plan, gitleaks chosen for pre-commit secret scanning).
+
+### Hygiene
+
+- `tsconfig.json` `exactOptionalPropertyTypes: false` decision documented inline with the rationale.
+- `benchmarks/README.md` — schema doc for `eval-history.json`, file inventory, methodology notes.
+- 304MB of `benchmarks/*.log` files now gitignored (already done in prior pass).
+
+### Stats
+
+- Tests: 859 → 874 (+5 wallet regression tests + 10 connector tests, less the 3 redundant)
+- Coverage: now measured + gated; 60.07% overall (well above the 50% baseline; per-module gates at 80–100% on protocol-critical modules)
+- Real bugs caught + fixed: 3 (CJS-in-ESM × 2; `fresh` flag stuck on `false`)
+
+---
+
+## 2026-04-25 — SOC 2 readiness package (eats own dog food)
+
+Builds on the same-day compliance-grade publish work. Provides the human + operational scaffolding to take Interego itself through a SOC 2 examination, and demonstrates that the protocol's compliance-evidence substrate is what the operator uses to record the operator's own behavior.
+
+### Added — written policy set ([`spec/policies/`](spec/policies/))
+
+15 policies, each with Purpose / Scope / Roles / Statements / Procedures / Exceptions / Review / Mapping to CC IDs:
+
+- 01 Information Security · 02 Access Control · 03 Change Management · 04 Incident Response · 05 Business Continuity · 06 Vendor Management · 07 Data Classification · 08 Encryption · 09 Secure SDLC · 10 Logging & Monitoring · 11 Acceptable Use · 12 Data Retention · 13 Risk Management · 14 Vulnerability Management · 15 Privacy
+
+### Added — strategic + operational docs
+
+- [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) — scope, current-vs-target gap, mapping of Interego features to SOC 2 controls, vendor inventory, solo-operator compensating controls, candidate Type 1 → Type 2 timeline + cost estimate.
+- [`spec/OPS-RUNBOOK.md`](spec/OPS-RUNBOOK.md) — production topology, deploy procedure, access management, wallet rotation, backup, monitoring, incident response, quarterly + annual reviews. Calls out current state vs target for each section.
+- [`SECURITY.md`](SECURITY.md) + [`SECURITY-ACKNOWLEDGMENTS.md`](SECURITY-ACKNOWLEDGMENTS.md) — coordinated disclosure contact, severity SLA, scope.
+
+### Added — RFC 9116 `/.well-known/security.txt`
+
+Served by every Interego-operated container app: relay, identity, validator, dashboard, pgsl-browser. Single contact + policy URL across the surface area.
+
+### Added — operational event builders ([`src/ops/`](src/ops/index.ts))
+
+Eat own dog food: every operational action becomes a compliance descriptor on the operator's pod.
+
+- `buildDeployEvent` → `soc2:DeployEvent`, cites `soc2:CC8.1`
+- `buildAccessChangeEvent` → `soc2:AccessChangeEvent`, cites `soc2:CC6.1`+`soc2:CC6.3`
+- `buildWalletRotationEvent` → `soc2:KeyRotationEvent`, cites `soc2:CC6.7`
+- `buildIncidentEvent` → `soc2:IncidentEvent`, cites `soc2:CC7.3`(open) / `soc2:CC7.3`+`CC7.4`+`CC7.5`(resolved)
+- `buildQuarterlyReviewEvent` → `soc2:QuarterlyReviewEvent`, controls per kind (access / change / risk / vendor / monitoring)
+
+CLI: `tools/publish-ops-event.mjs` — emits the JSON payload ready for `publish_context(..., compliance: true)`. Wired into `deploy/azure-deploy.sh` end-of-run hint.
+
+### Added — five new operational event classes + 22 properties on `soc2:`
+
+`docs/ns/soc2.ttl` extended with `DeployEvent`, `AccessChangeEvent`, `KeyRotationEvent`, `IncidentEvent`, `QuarterlyReviewEvent` (all subclasses of `soc2:ControlEvidence`) plus 22 datatype properties (component, commitSha, accessAction, principal, system, scope, justification, rotationReason, retiredKeyAddress, newKeyAddress, incidentSeverity, incidentStatus, summary, detectionSource, detectedAt, affectedComponent, reviewQuarter, reviewKind, findingCount, finding, environment, rollbackPlan). Plus three previously-implicit controls: `CC7.4`, `CC7.5`, `CC9.2`.
+
+### Fixed — `tools/derivation-lint.mjs` regex
+
+Same-file transitive grounding was failing for any prefix containing a digit (e.g., `soc2:`). Regex updated from `[a-zA-Z]+:` to `[a-zA-Z][a-zA-Z0-9-]*:` (matches valid TTL prefix names). All 91 L2/L3 classes now grounded (was 86/91).
+
+### Stats
+
+- Tests: 817 → 835 (+18 ops builder tests)
+- Derivation-lint: 86/91 → 91/91 grounded (closed the bug + added 5 new classes that resolve transitively)
+- SOC 2 controls covered: 10 → 13 (+CC7.4, CC7.5, CC9.2)
+- Policies: 0 → 15 written
+
+---
+
 ## 2026-04-25 — compliance grade publish (regulatory audit-trail substrate)
 
 Closes the "Federated Compliance Graph for AI Agent Governance" gap.

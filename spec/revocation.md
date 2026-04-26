@@ -2,7 +2,9 @@
 
 **Layer:** Layer 1 — Protocol extension. Normative. See [`LAYERS.md`](LAYERS.md).
 
-**Status:** Draft. **Two rival proposals** — A and B. Neither is ratified yet. Implementations MAY support either, both, or neither; none is required for v1.0 conformance. One will be adopted into v1.1 Core once a conformance fixture set demonstrates one form consistently outperforms the other.
+**Status:** Working Draft (2026-04-26). **Proposal B (predicate form) is the recommended path** — it is the common case (descriptor author == revocation issuer), ships on top of v1.0 validators without a spec-version bump, and treats revocation as an intrinsic part of the claim's truth state rather than an external governance relationship. **Proposal A (facet form)** remains documented as an extension point for the rarer case where the revocation issuer is structurally distinct from the descriptor author (cross-organization governance, separately-evolving revocation policies, named policy IRIs). Implementations MUST support Proposal B; they MAY additionally support Proposal A. The two are interoperable per §8 — a descriptor written under one form is mechanically rewritable to the other.
+
+**Migration plan (v1.0 → v1.1):** Proposal B graduates to Layer 1 Core in v1.1; Proposal A becomes an optional L2 extension. The reference implementation already extracts both forms from encrypted graph content (`normalizePublishInputs`) so existing pods need no rewrite. Conformance fixtures under [`conformance/fixtures/revocation/`](conformance/fixtures/revocation/) cover both forms; the L1 subset is Proposal B only.
 
 **Latest version:** This document
 

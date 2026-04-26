@@ -21,3 +21,25 @@ examples/*/solid-data/
 Thumbs.db
 benchmarks/LongMemEval/
 benchmarks/locomo/
+
+# Benchmark run logs — large (300MB+ across 30+ files), regenerable.
+# Keep curated result JSONs (eval-history.json etc.); ignore raw run logs.
+benchmarks/*.log
+benchmarks/.tmp-*
+
+# npm pack output (build artifacts, regeneratable from source)
+interego-core-*.tgz
+
+# vitest --coverage output (generated; HTML report ~12MB)
+coverage/
+
+# Playwright test runner output
+deploy/mcp-relay/test-results/
+deploy/mcp-relay/playwright-report/
+
+# Operator-private multi-agent test scaffolding (per-machine agent IDs,
+# MCP configs, launcher scripts). Each operator regenerates locally.
+scripts/agent-*.bat
+scripts/agent-*.json
+scripts/mcp-config-*.json
+scripts/run-mcp-multiagent-test.bat

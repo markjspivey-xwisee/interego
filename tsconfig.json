@@ -1,3 +1,5 @@
+// tsconfig.json supports JSONC (JSON with comments) — TypeScript's
+// loader strips them. Settings worth explaining inline below.
 {
   "compilerOptions": {
     "target": "ES2022",
@@ -13,6 +15,15 @@
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
+    // exactOptionalPropertyTypes: false
+    //   When true, `{ x?: number }` rejects `{ x: undefined }`. Many
+    //   builder patterns in this codebase pass-through optional fields
+    //   from caller args (which can be undefined) into typed objects,
+    //   and the strict variant turns each such pass-through into a
+    //   non-trivial guard. The relaxation is intentional, not an
+    //   oversight; revisit once those builders are refactored to
+    //   conditional spread (`...(x !== undefined ? { x } : {})`)
+    //   throughout.
     "exactOptionalPropertyTypes": false,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,

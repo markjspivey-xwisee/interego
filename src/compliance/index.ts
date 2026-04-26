@@ -212,6 +212,7 @@ export function generateFrameworkReport(
 // resulting wallet's private key never leaves the host filesystem.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { Wallet as EthersWallet } from 'ethers';
 import { importWallet, type Wallet } from '../crypto/index.js';
 
 /**
@@ -247,16 +248,15 @@ export interface PersistedComplianceWallet {
 }
 
 function generatePrivateKey(): string {
-  // Lazy-load ethers to avoid surfacing it in the type API.
-  // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-  const { ethers } = require('ethers');
-  return new ethers.Wallet(ethers.Wallet.createRandom().privateKey).privateKey;
+  // ethers.Wallet.createRandom() returns a Wallet whose privateKey
+  // is a 0x-prefixed hex string suitable for re-instantiation via
+  // new Wallet(privateKey). The intermediate Wallet construction
+  // mirrors the original CJS require() shape.
+  return new EthersWallet(EthersWallet.createRandom().privateKey).privateKey;
 }
 
 function addressFromPrivateKey(privateKey: string): string {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-require-imports
-  const { ethers } = require('ethers');
-  return new ethers.Wallet(privateKey).address;
+  return new EthersWallet(privateKey).address;
 }
 
 function readStore(path: string): ComplianceWalletStore | null {
@@ -300,6 +300,10 @@ export async function loadOrCreateComplianceWallet(
   label = 'compliance-signer',
 ): Promise<PersistedComplianceWallet> {
   let store = readStore(path);
+  // Capture whether the store had to be minted on this call before we
+  // mutate it. `fresh` is the operator-visible signal that "your
+  // wallet was just generated; back this file up immediately."
+  const wasFresh = store === null;
   if (!store) {
     const privateKey = generatePrivateKey();
     store = {
@@ -319,7 +323,7 @@ export async function loadOrCreateComplianceWallet(
     privateKey: store.active.privateKey,
     createdAt: store.active.createdAt,
     path,
-    fresh: !existsSync(path) ? false : false, // existed by the time we returned
+    fresh: wasFresh,
     historyCount: store.history.length,
   };
 }

@@ -20,6 +20,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { resolve, dirname } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { buildSecurityTxtFromEnv } from '@interego/core';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DASH_PORT = parseInt(process.env['PORT'] ?? '4000');
@@ -375,6 +376,15 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
   if (url === '/' && method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(readFileSync(INDEX_HTML, 'utf-8'));
+    return;
+  }
+
+  // /.well-known/security.txt — RFC 9116. Body from the shared
+  // @interego/core builder (single source of truth across all 5
+  // surfaces). See spec/policies/14-vulnerability-management.md §5.3.
+  if ((url === '/.well-known/security.txt' || url === '/security.txt') && method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end(buildSecurityTxtFromEnv(process.env['PUBLIC_BASE_URL']));
     return;
   }
 

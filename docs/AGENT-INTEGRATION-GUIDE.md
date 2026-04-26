@@ -38,7 +38,7 @@ HTTP/SSE (remote, OAuth-gated, for browser/cloud agents):
 https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp
 ```
 
-That's it. Your agent now has 25+ Interego tools. The MCP server's `initialize` response includes top-level instructions explaining the protocol.
+That's it. Your agent now has 60 Interego tools (six progressive tiers: core, delegation, federation, identity, PGSL, and crypto/x402). The MCP server's `initialize` response includes top-level instructions explaining the protocol, and `docs://interego/playbook` is fetched on demand the first time a relevant trigger fires.
 
 ## What to embed in your system prompt
 

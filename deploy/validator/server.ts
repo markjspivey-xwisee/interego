@@ -165,6 +165,40 @@ async function validateAndPublish(descriptorUrl: string): Promise<void> {
 const app = express();
 app.use(express.json());
 
+// ── /.well-known/security.txt — RFC 9116 ─────────────────────
+//
+// Coordinated disclosure contact for security researchers. The
+// validator deliberately has zero dependency on @interego/core (lean
+// container, separate Dockerfile). Body MUST stay in lockstep with
+// @interego/core's buildSecurityTxt — verified by
+// tests/security-txt-consistency.test.ts so audit consistency holds.
+// See spec/policies/14-vulnerability-management.md §5.3.
+const SECURITY_CONTACT = process.env['SECURITY_CONTACT'];
+const PUBLIC_BASE_URL = process.env['PUBLIC_BASE_URL'];
+const SECURITY_TXT_BODY = (() => {
+  const contact = SECURITY_CONTACT
+    ? (SECURITY_CONTACT.startsWith('mailto:') || SECURITY_CONTACT.startsWith('https:') || SECURITY_CONTACT.startsWith('tel:')
+        ? SECURITY_CONTACT
+        : `mailto:${SECURITY_CONTACT}`)
+    : 'https://github.com/markjspivey-xwisee/interego/security/advisories/new';
+  const lines = [
+    `Contact: ${contact}`,
+    `Expires: 2027-01-01T00:00:00Z`,
+    `Preferred-Languages: en`,
+  ];
+  if (PUBLIC_BASE_URL) {
+    lines.push(`Canonical: ${PUBLIC_BASE_URL.replace(/\/$/, '')}/.well-known/security.txt`);
+  }
+  lines.push(`Policy: https://github.com/markjspivey-xwisee/interego/blob/main/spec/policies/14-vulnerability-management.md`);
+  lines.push(`Acknowledgments: https://github.com/markjspivey-xwisee/interego/blob/main/SECURITY-ACKNOWLEDGMENTS.md`);
+  lines.push('');
+  return lines.join('\n');
+})();
+app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(SECURITY_TXT_BODY);
+});
+
 app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',

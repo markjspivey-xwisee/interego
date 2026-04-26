@@ -13,6 +13,7 @@ Interego gives autonomous AI agents the infrastructure to publish, discover, com
 
 The protocol surface has grown substantially. Highlights:
 
+- **SOC 2 readiness package** — [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) (scope, timeline, vendor inventory, mapping of Interego features to SOC 2 controls, solo-operator compensating controls), [`spec/policies/`](spec/policies/) (15 written policies covering CC1–CC9, A1, C1, P-series), [`spec/OPS-RUNBOOK.md`](spec/OPS-RUNBOOK.md) (deploy/access/key-rotation/backup procedures with current vs target state). [`SECURITY.md`](SECURITY.md) + RFC 9116 `/.well-known/security.txt` on every container app. Operational events (deploy, access change, wallet rotation, incident, quarterly review) build into compliance-grade descriptors via `buildDeployEvent` / `buildAccessChangeEvent` / `buildWalletRotationEvent` / `buildIncidentEvent` / `buildQuarterlyReviewEvent` and `tools/publish-ops-event.mjs` — Interego eats its own dog food as the SOC 2 evidence substrate.
 - **Compliance grade publish + regulatory mapping (L4 conformance)** — `publish_context(..., compliance: true, compliance_framework: 'eu-ai-act' | 'nist-rmf' | 'soc2')` produces audit-trail-grade descriptors. Upgrades trust to `CryptographicallyVerified`, signs with ECDSA (secp256k1), embeds inline `cg:proof` in the TrustFacet, writes a sibling `.sig.json` to the pod, auto-pins both to IPFS when configured, validates against the named framework. Wallet rotation + history supported via `rotateComplianceWallet` / `importComplianceWallet`. See [`spec/CONFORMANCE.md`](spec/CONFORMANCE.md) §L4 + [`docs/ns/eu-ai-act.ttl`](docs/ns/eu-ai-act.ttl) / [`nist-rmf.ttl`](docs/ns/nist-rmf.ttl) / [`soc2.ttl`](docs/ns/soc2.ttl).
 - **Audit endpoints on the relay** — `/audit/events`, `/audit/lineage`, `/audit/compliance/<framework>`, `/audit/verify-signature`, `/audit/frameworks`. Public read; auditors verify any compliance descriptor's signature without trusting the relay. Companion: [`examples/compliance-dashboard.html`](examples/compliance-dashboard.html) — open in a browser, no install.
 - **Privacy-hygiene preflight** — `screenForSensitiveContent` runs in `publish_context` on both surfaces; flags API keys, JWTs, PEM keys, Luhn-valid credit cards, US SSNs, emails/phones/IPs across three severity tiers. Warning surfaced to the calling agent; never silently filtered.
@@ -25,7 +26,7 @@ The protocol surface has grown substantially. Highlights:
 - **[RDF 1.2 + SHACL 1.2 alignment](docs/ns/cg-shapes-1.2.ttl)** — triple-term annotations (`{| ... |}`), directional language tags, `sh:reifierShape` validation per April 2026 CR/WD.
 - **[Conformance test suite](spec/CONFORMANCE.md)** — four levels (L1 Core / L2 Federation / L3 Advanced / L4 Compliance) with badge output. Run `node spec/conformance/runner.mjs`.
 - **[Federated transactions](spec/FEDERATED-TRANSACTIONS.md)** + **[Constitutional layer](spec/CONSTITUTIONAL-LAYER.md)** + **[CRDT offline merge spec](spec/CRDT-OFFLINE-MERGE.md)** + **[DP+ZK aggregate spec](spec/AGGREGATE-PRIVACY.md)** + **[TLA+ proof outlines](spec/proofs/)** — protocol-level guarantees and design specs.
-- **20+ runnable demo scripts** in [`examples/`](examples/) including emergence demos, ABAC scenarios, Idehen-inspired (federated reasoning, nanotation pipeline), Verborgh-inspired (distributed affordances, cross-app interop, pod-as-graph views), agent registry, code domain.
+- **45+ runnable demo scripts** in [`examples/`](examples/) including emergence demos, ABAC scenarios, Idehen-inspired (federated reasoning, nanotation pipeline), Verborgh-inspired (distributed affordances, cross-app interop, pod-as-graph views), agent registry, code domain. End-to-end compliance walkthrough at [`examples/compliance-end-to-end.mjs`](examples/compliance-end-to-end.mjs) — `node examples/compliance-end-to-end.mjs` to see ops event → check → framework report → wallet load, no live pod required. Most demos read `CG_DEMO_POD` / `CG_DEMO_POD_B` env vars; defaults point at the maintainer's deployed pods.
 
 For dated detail see [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -63,7 +64,7 @@ For runnable demos of the trust substrate (auditor, ERC-8004 T0-T2, x402, afford
 
 - **Nineteen formal ontologies** covering L1 protocol (`cg:`, `cgh:`, `pgsl:`, `ie:`, `align:`), L2 architecture patterns (`hyprcat:`, `hypragent:`, `abac:`, `registry:`, `passport:`), L3 implementation/domain (`hela:`, `sat:`, `cts:`, `olke:`, `amta:`, `code:`), L3 regulatory mappings (`eu-ai-act:`, `nist-rmf:`, `soc2:`). See [`docs/ns/README.md`](docs/ns/README.md). All terms enforced by CI lint.
 - **CI ontology-lint gate.** `tools/ontology-lint.mjs` scans TS source for `<prefix>:<Term>` emissions and verifies each against its corresponding `docs/ns/<prefix>.ttl`. New code cannot land `cg:NewType` without a matching OWL declaration.
-- **CI derivation-lint gate.** `tools/derivation-lint.mjs` enforces that every L2/L3 ontology class has explicit L1 grounding (`owl:equivalentClass` / `rdfs:subClassOf` / `cg:constructedFrom` / declared primitive). Currently 66/66 grounded.
+- **CI derivation-lint gate.** `tools/derivation-lint.mjs` enforces that every L2/L3 ontology class has explicit L1 grounding (`owl:equivalentClass` / `rdfs:subClassOf` / `cg:constructedFrom` / declared primitive). Currently 91/91 grounded.
 - **Layering discipline** (L1 protocol / L2 architecture / L3 implementation). See [`spec/LAYERS.md`](spec/LAYERS.md). Namespace is the boundary contract — domain terms stay out of core namespaces.
 - **Conformance test suite** ([`spec/CONFORMANCE.md`](spec/CONFORMANCE.md)) defines L1 / L2 / L3 conformance levels with badge output. Third-party implementations can claim a level by passing the suite against their serialized output.
 
@@ -143,10 +144,12 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 │                     reverse-compensation on failure)
 ├── src/constitutional/ Self-amending policies — proposeAmendment, vote,
 │                     tryRatify (tier-aware), forkConstitution
-├── mcp-server/       MCP server (25+ tools) — stdio + SSE + Streamable HTTP.
+├── mcp-server/       MCP server (60 tools) — stdio + SSE + Streamable HTTP.
 │                     v0.5.0 ships system-level instructions, doc resources,
 │                     workflow prompts so connecting agents understand the
-│                     system without trial-and-error tool calls.
+│                     system without trial-and-error tool calls. Subscriptions
+│                     capped at CG_MAX_SUBSCRIPTIONS (default 32) per process;
+│                     unsubscribe_from_pod releases a slot.
 ├── deploy/           Dockerfiles, Azure Container Apps, identity server, relay
 │   ├── identity/     WebID + DID + Ed25519 + WebFinger + bearer tokens + SIWE
 │   ├── mcp-relay/    HTTP/SSE bridge — v0.3.0 mirrors stdio discoverability
@@ -720,7 +723,7 @@ Auto-onboarding: first tool call provisions pod + registry + credential automati
 
 **Delegation (3):** `register_agent`, `revoke_agent`, `verify_agent`
 
-**Federation (8):** `discover_all`, `subscribe_all`, `list_known_pods`, `add_pod`, `remove_pod`, `discover_directory`, `publish_directory`, `resolve_webfinger`
+**Federation (9):** `discover_all`, `subscribe_all`, `list_known_pods`, `add_pod`, `remove_pod`, `discover_directory`, `publish_directory`, `resolve_webfinger`, `unsubscribe_from_pod` (releases a CG_MAX_SUBSCRIPTIONS slot)
 
 **Identity (2):** `setup_identity`, `link_wallet`
 
@@ -841,7 +844,11 @@ npm run test:watch   # Watch mode
 | [`spec/architecture.md`](spec/architecture.md) | Architecture overview + RDF 1.2 / SHACL 1.2 alignment statement |
 | [`spec/LAYERS.md`](spec/LAYERS.md) | Layering discipline (L1 / L2 / L3); namespace-as-projection-contract; drift triggers |
 | [`spec/DERIVATION.md`](spec/DERIVATION.md) | Construction rules: every L2/L3 class must ground in L1 (CI-enforced) |
-| [`spec/CONFORMANCE.md`](spec/CONFORMANCE.md) | Three-level conformance test suite + badge program |
+| [`spec/CONFORMANCE.md`](spec/CONFORMANCE.md) | Four-level conformance test suite + badge program (L1 Core, L2 Federation, L3 Advanced, L4 Compliance) |
+| [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) | SOC 2 readiness package: scope, gap analysis, vendor inventory, solo-operator compensating controls, Type 1 → Type 2 timeline |
+| [`spec/policies/`](spec/policies/) | 15 written policies (info sec, access, change, IR, BCP, vendor, classification, encryption, SDLC, logging, AUP, retention, risk, vulnmgmt, privacy) |
+| [`spec/OPS-RUNBOOK.md`](spec/OPS-RUNBOOK.md) | Operational procedures: deploy, access reviews, wallet rotation, backup, monitoring, quarterly + annual cadence |
+| [`SECURITY.md`](SECURITY.md) | Coordinated disclosure contact + severity SLA + scope. Mirrored at `/.well-known/security.txt` (RFC 9116) on every container app |
 | [`spec/FEDERATED-TRANSACTIONS.md`](spec/FEDERATED-TRANSACTIONS.md) | Saga pattern for cross-pod atomic writes; isolation levels; failure modes |
 | [`spec/CONSTITUTIONAL-LAYER.md`](spec/CONSTITUTIONAL-LAYER.md) | Self-amending policies; tiered ratification; graceful forks |
 | [`spec/CRDT-OFFLINE-MERGE.md`](spec/CRDT-OFFLINE-MERGE.md) | Descriptor-fragment-level CRDTs for offline-first collaboration |

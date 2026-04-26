@@ -8,8 +8,19 @@
 // Intentionally zero-dep — uses only globals (fetch, AbortController)
 // and no Node-specific imports beyond what's already in Node 20.
 
-export const POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
-export const POD_B = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/u-pk-0a7f04106a54/';
+// Default to the maintainer's deployed pods so demos are runnable
+// out of the box. Override with environment variables when running
+// against your own pod:
+//
+//   CG_DEMO_POD=https://your-pod.example/me/ \
+//   CG_DEMO_POD_B=https://your-pod.example/colleague/ \
+//   node examples/<demo>.mjs
+//
+// CG_DEMO_POD_BASE swaps the host root if you keep the same usernames.
+const DEFAULT_HOST = process.env.CG_DEMO_POD_BASE
+  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+export const POD = process.env.CG_DEMO_POD ?? `${DEFAULT_HOST}/markj/`;
+export const POD_B = process.env.CG_DEMO_POD_B ?? `${DEFAULT_HOST}/u-pk-0a7f04106a54/`;
 export const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 
 // ── HTTP ────────────────────────────────────────────────────

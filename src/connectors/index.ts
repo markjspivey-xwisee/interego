@@ -5,13 +5,19 @@
  * Each connector watches an external source for changes,
  * extracts content, ingests into PGSL, and publishes to a pod.
  *
- * Connectors:
- *   - Notion: watches Notion databases/pages via API
- *   - Slack: watches channels via Web API
- *   - Google Drive: watches files via Drive API
- *   - S3: watches buckets via ListObjects polling
- *   - Filesystem: watches local directories
- *   - Web: fetches URLs and extracts content
+ * Implemented today:
+ *   - Notion (`createNotionConnector`) — Notion API v1; query a database
+ *     for pages modified since lastSyncAt, fetch block contents.
+ *   - Slack (`createSlackConnector`) — `conversations.history` polling
+ *     against a single channel; new messages since lastTs.
+ *   - Web (`createWebConnector`) — HTTP GET against a URL list, content
+ *     type sniffed for the extractor.
+ *
+ * Declared in `ConnectorType` but NOT implemented: `google-drive`,
+ * `s3`, `filesystem`. `createConnector` throws on those types. Open
+ * an issue if you need one before contributing — the existing three
+ * are the minimum shape; new connectors should follow the same
+ * `Connector` interface.
  *
  * All connectors produce ConnectorEvent objects that the SDK
  * can publish as context descriptors.

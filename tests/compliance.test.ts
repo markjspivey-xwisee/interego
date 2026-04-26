@@ -1,15 +1,22 @@
 /**
  * Compliance helper tests — checkComplianceInputs +
- * generateFrameworkReport + walkLineage.
+ * generateFrameworkReport + walkLineage + wallet load/rotate.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { unlinkSync, existsSync } from 'node:fs';
 import type { IRI } from '../src/model/types.js';
 import {
   checkComplianceInputs,
   generateFrameworkReport,
   walkLineage,
   FRAMEWORK_CONTROLS,
+  loadOrCreateComplianceWallet,
+  rotateComplianceWallet,
+  importComplianceWallet,
+  listValidSignerAddresses,
   type AuditableDescriptor,
 } from '../src/compliance/index.js';
 
@@ -184,5 +191,81 @@ describe('walkLineage', () => {
     ]);
     const r = walkLineage(ROOT, idx);
     expect(r.length).toBe(2); // visited set prevents re-walk
+  });
+});
+
+describe('compliance wallet — ESM-safe wallet generation', () => {
+  // Regression: a prior version of generatePrivateKey() used CJS
+  // require('ethers') inside an ESM module, which silently broke
+  // any caller of loadOrCreateComplianceWallet at runtime. The unit
+  // tests above don't touch wallet generation, so the breakage
+  // shipped. These tests exist so it can't ship again.
+
+  const paths: string[] = [];
+  afterEach(() => {
+    for (const p of paths.splice(0)) {
+      try { if (existsSync(p)) unlinkSync(p); } catch { /* ignore */ }
+    }
+  });
+
+  function freshPath(): string {
+    const p = join(tmpdir(), `interego-wallet-test-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+    paths.push(p);
+    return p;
+  }
+
+  it('mints a fresh wallet on first load and persists it', async () => {
+    const path = freshPath();
+    const w = await loadOrCreateComplianceWallet(path, 'test-signer');
+    expect(w.fresh).toBe(true);
+    expect(w.wallet.address).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    expect(w.privateKey).toMatch(/^0x[0-9a-fA-F]{64}$/);
+    expect(w.path).toBe(path);
+    expect(w.historyCount).toBe(0);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it('reloads the same wallet on subsequent calls', async () => {
+    const path = freshPath();
+    const a = await loadOrCreateComplianceWallet(path, 'test-signer');
+    const b = await loadOrCreateComplianceWallet(path, 'test-signer');
+    expect(b.fresh).toBe(false);
+    expect(b.wallet.address).toBe(a.wallet.address);
+    expect(b.privateKey).toBe(a.privateKey);
+  });
+
+  it('rotation produces a new active wallet and retires the prior', async () => {
+    const path = freshPath();
+    const before = await loadOrCreateComplianceWallet(path, 'test-signer');
+    const result = await rotateComplianceWallet(path);
+    expect(result.retiredAddress).toBe(before.wallet.address);
+    expect(result.newActiveAddress).not.toBe(before.wallet.address);
+    const after = await loadOrCreateComplianceWallet(path, 'test-signer');
+    expect(after.wallet.address).toBe(result.newActiveAddress);
+    expect(after.historyCount).toBe(1);
+  });
+
+  it('listValidSignerAddresses returns active + history after rotation', async () => {
+    const path = freshPath();
+    const before = await loadOrCreateComplianceWallet(path, 'test-signer');
+    await rotateComplianceWallet(path);
+    const after = await loadOrCreateComplianceWallet(path, 'test-signer');
+    const valid = listValidSignerAddresses(path);
+    expect(valid).toContain(after.wallet.address);
+    expect(valid).toContain(before.wallet.address);
+    expect(valid).toHaveLength(2);
+  });
+
+  it('importComplianceWallet rotates in a caller-supplied key', async () => {
+    const path = freshPath();
+    await loadOrCreateComplianceWallet(path, 'test-signer');
+    // Use a deterministic well-known test key (NEVER use this for production —
+    // this is the first key from the Hardhat default mnemonic)
+    const testKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+    const result = await importComplianceWallet(path, testKey, 'imported-signer');
+    expect(result.newActiveAddress).toBe('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266');
+    const reloaded = await loadOrCreateComplianceWallet(path, 'test-signer');
+    expect(reloaded.wallet.address).toBe('0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266');
+    expect(reloaded.historyCount).toBe(1);
   });
 });
