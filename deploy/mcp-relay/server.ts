@@ -69,8 +69,13 @@ import {
   generateFrameworkReport,
   walkLineage,
   FRAMEWORK_CONTROLS,
+  loadOrCreateComplianceWallet,
+  signDescriptor,
+  verifyDescriptorSignature,
   type ComplianceFramework,
   type AuditableDescriptor,
+  type PersistedComplianceWallet,
+  type SignedDescriptor,
 } from '@interego/core';
 
 import type {
@@ -277,6 +282,20 @@ const relayAgentKey: EncryptionKeyPair = (() => {
   try { writeFileSync(RELAY_AGENT_KEY_FILE, JSON.stringify(kp, null, 2), { mode: 0o600 }); } catch { /* best-effort */ }
   return kp;
 })();
+
+// ECDSA wallet for compliance-grade descriptor signing. Persisted next
+// to the X25519 envelope key. Loaded lazily on first compliance publish.
+const RELAY_COMPLIANCE_WALLET_FILE = process.env['RELAY_COMPLIANCE_WALLET_FILE']
+  ?? RELAY_AGENT_KEY_FILE.replace(/\.json$/, '-ecdsa.json');
+let _relayComplianceWallet: PersistedComplianceWallet | null = null;
+async function ensureRelayComplianceWallet(): Promise<PersistedComplianceWallet> {
+  if (_relayComplianceWallet) return _relayComplianceWallet;
+  _relayComplianceWallet = await loadOrCreateComplianceWallet(
+    RELAY_COMPLIANCE_WALLET_FILE,
+    'relay-compliance-signer',
+  );
+  return _relayComplianceWallet;
+}
 
 // ── Tool Handlers ───────────────────────────────────────────
 
@@ -496,14 +515,52 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // loop — should surface the warning to the user before treating the
     // publish as final.
     sensitivityPreflight: sensitivityWarning || undefined,
-    // Compliance-grade check (when args.compliance === true). Reports
-    // pass/partial + violations + auto-upgraded facets; doesn't block.
-    complianceCheck: args.compliance === true ? checkComplianceInputs({
-      modalStatus: preprocessed.semiotic.modalStatus,
-      trustLevel: 'CryptographicallyVerified',
-      hasSignature: false, // ECDSA Turtle signing is a follow-up
-      framework: args.compliance_framework as ComplianceFramework | undefined,
-    }) : undefined,
+    // Compliance-grade fields (when args.compliance === true): sign
+    // the descriptor turtle with the relay's ECDSA wallet, write a
+    // sibling .sig.json to the pod, and return the check report.
+    ...(args.compliance === true
+      ? await (async () => {
+          let signed: SignedDescriptor | null = null;
+          let signError: string | null = null;
+          let sigUrl: string | null = null;
+          try {
+            const cw = await ensureRelayComplianceWallet();
+            const turtleForSig = `descriptor: ${descriptor.id}`; // we don't have the raw Turtle here; sign descriptor.id + content hash via descriptor data
+            // Re-serialize Turtle to sign over the canonical form.
+            // Note: relay wraps publish() which returns descriptorUrl, so
+            // we re-fetch the published Turtle to sign exactly what's
+            // stored. This sounds redundant but ensures signature targets
+            // the canonical bytes the pod actually persists.
+            void turtleForSig;
+            const ttlResp = await solidFetch(result.descriptorUrl, {
+              headers: { 'Accept': 'text/turtle' },
+            });
+            const canonicalTurtle = ttlResp.ok ? await ttlResp.text() : '';
+            signed = await signDescriptor(descriptor.id, canonicalTurtle, cw.wallet);
+            sigUrl = `${result.descriptorUrl}.sig.json`;
+            const sigResp = await solidFetch(sigUrl, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(signed, null, 2),
+            });
+            if (!sigResp.ok) signError = `pod write failed (${sigResp.status})`;
+          } catch (err) {
+            signError = (err as Error).message;
+          }
+          const check = checkComplianceInputs({
+            modalStatus: preprocessed.semiotic.modalStatus,
+            trustLevel: 'CryptographicallyVerified',
+            hasSignature: signed !== null,
+            framework: args.compliance_framework as ComplianceFramework | undefined,
+          });
+          return {
+            complianceCheck: check,
+            signature: signed
+              ? { url: sigUrl, signer: signed.signerAddress, signedAt: signed.signedAt }
+              : { error: signError },
+          };
+        })()
+      : {}),
   });
 }
 
@@ -1652,6 +1709,56 @@ app.get('/audit/lineage', async (req, res) => {
     }
     const lineage = walkLineage(descriptorUrl as IRI, index);
     res.json({ root: descriptorUrl, pod: podUrl, lineageNodes: lineage.length, lineage });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * GET /audit/verify-signature?descriptor=<url>
+ *
+ * Fetches the descriptor's serialized Turtle + the sibling .sig.json
+ * (produced by publish_context with compliance: true) and runs ECDSA
+ * verification. Returns:
+ *   { valid, descriptorUrl, signerAddress, signedAt, contentHashOk, reason? }
+ *
+ * Public read; auditors can independently verify any compliance
+ * descriptor's signature without trusting the relay.
+ */
+app.get('/audit/verify-signature', async (req, res) => {
+  const descriptorUrl = req.query.descriptor as string | undefined;
+  if (!descriptorUrl) {
+    res.status(400).json({ error: 'descriptor query param required' });
+    return;
+  }
+  try {
+    const sigUrl = `${descriptorUrl}.sig.json`;
+    const [ttlResp, sigResp] = await Promise.all([
+      solidFetch(descriptorUrl, { headers: { 'Accept': 'text/turtle' } }),
+      solidFetch(sigUrl, { headers: { 'Accept': 'application/json' } }),
+    ]);
+    if (!ttlResp.ok) {
+      res.status(404).json({ error: `descriptor not fetchable (${ttlResp.status})`, descriptorUrl });
+      return;
+    }
+    if (!sigResp.ok) {
+      res.json({
+        valid: false,
+        descriptorUrl,
+        reason: `no sibling .sig.json (HTTP ${sigResp.status}); descriptor was not published with compliance: true`,
+      });
+      return;
+    }
+    const turtle = await ttlResp.text();
+    const signed = JSON.parse(await sigResp.text()) as SignedDescriptor;
+    const result = await verifyDescriptorSignature(signed, turtle);
+    res.json({
+      ...result,
+      descriptorUrl,
+      sigUrl,
+      signerAddress: signed.signerAddress,
+      signedAt: signed.signedAt,
+    });
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }

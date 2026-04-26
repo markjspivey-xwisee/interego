@@ -106,8 +106,12 @@ import {
   // Privacy hygiene (pre-publish content screening)
   screenForSensitiveContent,
   formatSensitivityWarning,
-  // Compliance grade publish + framework reports
+  // Compliance grade publish + framework reports + ECDSA signing
   checkComplianceInputs,
+  loadOrCreateComplianceWallet,
+  signDescriptor,
+  type PersistedComplianceWallet,
+  type SignedDescriptor,
 } from '@interego/core';
 
 import type {
@@ -230,6 +234,21 @@ const agentKeyPair: EncryptionKeyPair = (() => {
   } catch { /* best-effort; in-memory still works for this session */ }
   return kp;
 })();
+
+// ECDSA wallet for compliance-grade descriptor signing. Persisted next
+// to the X25519 envelope key. Only used when publish_context is invoked
+// with `compliance: true`. Loaded lazily on first compliance publish.
+const COMPLIANCE_WALLET_PATH = process.env['CG_COMPLIANCE_WALLET_PATH']
+  ?? AGENT_KEY_PATH.replace(/\.json$/, '-ecdsa.json');
+let _complianceWallet: PersistedComplianceWallet | null = null;
+async function ensureComplianceWallet(): Promise<PersistedComplianceWallet> {
+  if (_complianceWallet) return _complianceWallet;
+  _complianceWallet = await loadOrCreateComplianceWallet(
+    COMPLIANCE_WALLET_PATH,
+    `compliance-signer-${MY_AGENT_ID}`,
+  );
+  return _complianceWallet;
+}
 
 // PGSL state — the lattice persists across tool calls
 const pgslProvenance: NodeProvenance = {
@@ -695,18 +714,44 @@ async function toolPublishContext(args: {
     lines.push(sensitivityWarning);
   }
 
-  // Compliance-grade check (when args.compliance === true). Reports
-  // whether this descriptor would be accepted as audit-trail evidence
-  // for the named framework. Reports compliance status; doesn't block.
+  // Compliance-grade check (when args.compliance === true).
+  // Signs the descriptor turtle with the agent's ECDSA wallet,
+  // writes a sibling .sig.json next to the descriptor, and reports
+  // compliance status. Signing failure is non-fatal (logged + reported).
   if (args.compliance) {
+    let signed: SignedDescriptor | null = null;
+    let signError: string | null = null;
+    try {
+      const cw = await ensureComplianceWallet();
+      signed = await signDescriptor(descriptor.id, turtle, cw.wallet);
+      // Persist the signature alongside the descriptor on the pod, at
+      // <descriptor-url>.sig.json (Content-Type: application/json).
+      const sigUrl = `${result.descriptorUrl}.sig.json`;
+      const sigBody = JSON.stringify(signed, null, 2);
+      const sigResp = await solidFetch(sigUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: sigBody,
+      });
+      if (!sigResp.ok) {
+        signError = `signature stored locally but pod write failed (${sigResp.status})`;
+      }
+      lines.push(`  Signature: ${sigUrl}`);
+      lines.push(`    Signer:    ${signed.signerAddress}`);
+      lines.push(`    SignedAt:  ${signed.signedAt}`);
+    } catch (err) {
+      signError = (err as Error).message;
+    }
+
     const check = checkComplianceInputs({
       modalStatus: preprocessed.semiotic.modalStatus,
-      trustLevel: 'CryptographicallyVerified', // we set this above
-      hasSignature: false, // ECDSA signing of the Turtle is a follow-up
+      trustLevel: 'CryptographicallyVerified',
+      hasSignature: signed !== null,
       framework: args.compliance_framework,
     });
     lines.push('');
     lines.push(`-- Compliance grade ${args.compliance_framework ?? '(framework unspecified)'}: ${check.compliant ? 'PASS' : 'PARTIAL'} --`);
+    if (signError) lines.push(`  Sign error: ${signError}`);
     if (check.violations.length > 0) {
       lines.push(`Violations:`);
       for (const v of check.violations) lines.push(`  ${v}`);

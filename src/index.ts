@@ -779,6 +779,7 @@ export {
   generateFrameworkReport,
   walkLineage,
   FRAMEWORK_CONTROLS,
+  loadOrCreateComplianceWallet,
 } from './compliance/index.js';
 export type {
   ComplianceFramework,
@@ -787,6 +788,7 @@ export type {
   FrameworkReportEntry,
   AuditableDescriptor,
   LineageNode,
+  PersistedComplianceWallet,
 } from './compliance/index.js';
 
 // ── Privacy hygiene (pre-publish content screening) ─────────

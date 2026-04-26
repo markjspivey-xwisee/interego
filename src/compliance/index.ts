@@ -203,6 +203,90 @@ export function generateFrameworkReport(
   };
 }
 
+// ── Persisted ECDSA wallet for compliance signing ───────────
+//
+// The publish surfaces (stdio + relay) need a stable ECDSA wallet
+// so signatures over compliance descriptors are verifiable across
+// restarts. This helper loads the wallet from disk if present,
+// otherwise generates a fresh one + persists it (mode 0600). The
+// resulting wallet's private key never leaves the host filesystem.
+
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createWallet, importWallet, type Wallet } from '../crypto/index.js';
+
+export interface PersistedComplianceWallet {
+  readonly wallet: Wallet;
+  readonly privateKey: string; // hex with 0x prefix
+  readonly createdAt: string;
+  readonly path: string;
+  readonly fresh: boolean; // true if just generated this session
+}
+
+/**
+ * Load an ECDSA wallet from a JSON file, or create + persist one if
+ * absent. Used by stdio mcp-server + relay to obtain a stable signer
+ * for compliance-grade descriptors.
+ */
+export async function loadOrCreateComplianceWallet(
+  path: string,
+  label = 'compliance-signer',
+): Promise<PersistedComplianceWallet> {
+  if (existsSync(path)) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
+        privateKey: string;
+        createdAt: string;
+        label?: string;
+      };
+      const wallet = importWallet(parsed.privateKey, 'agent', parsed.label ?? label);
+      return {
+        wallet,
+        privateKey: parsed.privateKey,
+        createdAt: parsed.createdAt,
+        path,
+        fresh: false,
+      };
+    } catch {
+      // Corrupt file — overwrite below.
+    }
+  }
+  const wallet = await createWallet('agent', label);
+  // Re-derive the underlying ethers wallet to extract the private key.
+  // (createWallet stores the signing wallet keyed by address; we need
+  //  the raw private key to persist it for restart-survivability.)
+  const { ethers } = await import('ethers');
+  const ethersWallet = new ethers.Wallet(
+    // We can't get the priv key from the createWallet API without
+    // touching ethers directly — generate the key OURSELVES then
+    // import, so we control persistence.
+    ethers.Wallet.createRandom().privateKey,
+  );
+  const persisted = importWallet(ethersWallet.privateKey, 'agent', label);
+  const record = {
+    privateKey: ethersWallet.privateKey,
+    createdAt: new Date().toISOString(),
+    label,
+    address: ethersWallet.address,
+  };
+  try {
+    writeFileSync(path, JSON.stringify(record, null, 2), { mode: 0o600 });
+  } catch {
+    // best-effort; in environments where filesystem writes fail
+    // (read-only mounts, container ephemeral disks), the wallet
+    // is regenerated each restart — caller should warn.
+  }
+  // Suppress unused-var: we use `wallet` for type inference but
+  // re-derive a persistable one just above. Return the persistable.
+  void wallet;
+  return {
+    wallet: persisted,
+    privateKey: ethersWallet.privateKey,
+    createdAt: record.createdAt,
+    path,
+    fresh: true,
+  };
+}
+
 // ── Lineage walk ─────────────────────────────────────────────
 
 /**
