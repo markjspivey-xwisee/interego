@@ -8,6 +8,54 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-04-26 — Tier 5 P2P transport (Schnorr + 1:N encrypted share)
+
+Ships the local-first storage tier ladder + a working P2P option. Three commits land in sequence:
+
+### Tier ladder ([`spec/STORAGE-TIERS.md`](spec/STORAGE-TIERS.md))
+
+- 5-tier deployment progression: Tier 0 (library only) → Tier 1 (default — MCP auto-spawns CSS) → Tier 2 (LAN) → Tier 3 (self-hosted public) → Tier 4 (federated cross-pod) → Tier 5 (P2P relay-mediated).
+- Each tier is a strict superset of the one below; protocol surface unchanged across the stack.
+- Smoke tests for tiers 0/1/4 in [`tests/storage-tiers.test.ts`](tests/storage-tiers.test.ts) using an `InMemoryPod` class that backs a real fetch handler. 6 tests pass.
+
+### Tier 5 base — Nostr-style relay transport ([`src/p2p/`](src/p2p/))
+
+- `P2pClient` + `InMemoryRelay` + `P2pRelay` interface. Same client API works against in-memory (tests), WebSocket → public Nostr relay (production), or libp2p (future Tier 6).
+- Three custom kinds in NIP-33 parameterized-replaceable range: `KIND_DESCRIPTOR` (30040), `KIND_DIRECTORY` (30041), `KIND_ATTESTATION` (30042).
+- Mobile + desktop interop with no central server: cross-surface deployment topology in [`docs/p2p.md`](docs/p2p.md).
+
+### Schnorr (BIP-340) signatures — public-Nostr interop
+
+- New [`src/crypto/schnorr.ts`](src/crypto/schnorr.ts) wraps `@noble/curves` BIP-340 schnorr sign/verify + `getNostrPubkey(privateKey)` deriving the 32-byte x-only pubkey.
+- `P2pClient` gains `signingScheme: 'ecdsa' | 'schnorr'` option. Same wallet, two pubkey representations (Ethereum address / x-only hex). `verifyEvent` auto-dispatches by pubkey format — both schemes coexist on the wire.
+- New runtime dep: `@noble/curves ^2.2.0` (replaces `@noble/secp256k1` which dropped Schnorr in v2.3).
+- Means: an Interego deployment can publish to public Nostr relays with Schnorr-signed events that interop with non-Interego Nostr clients. One wallet, two faces, full Nostr-ecosystem participation.
+
+### 1:N encrypted share — closes Tier 4 / Tier 5 gap
+
+- New `KIND_ENCRYPTED_SHARE = 30043`. Reuses Tier 4's existing 1:N NaCl envelope (`createEncryptedEnvelope` / `openEncryptedEnvelope`), wrapped in a relay-routable event.
+- `publishEncryptedShare` / `queryEncryptedShares` / `subscribeEncryptedShares` / `decryptEncryptedShare` on `P2pClient`.
+- Recipients tagged via `p` (signing pubkey for filtering); X25519 encryption pubkeys live inside the envelope, invisible to the relay. Same security model as Tier 4 cross-pod share, transport-agnostic.
+
+### Side fixes
+
+- `FRAMEWORK_CONTROLS.soc2` catalog gained CC6.2, CC6.7, CC7.3, CC7.4, CC7.5, CC9.2 — all controls the `src/ops/` event builders emit but the framework report wouldn't recognize. Caught by THE ADVERSARIAL AUDIT test ([`tests/adversarial-audit.test.ts`](tests/adversarial-audit.test.ts)).
+- Added `signMessageRaw(wallet, message)` + `recoverMessageSigner(message, sig)` exports from `crypto/wallet.ts` for use by P2P (also useful for x402, ad-hoc challenges).
+
+### Stats
+
+- Tests: 859 → **903 passing** (+6 storage-tier, +7 adversarial-audit, +16 P2P, +5 wallet, +10 connectors, less 8 deltas / cleanups)
+- New runtime dep: `@noble/curves ^2.2.0`
+- New modules: [`src/p2p/`](src/p2p/), [`src/crypto/schnorr.ts`](src/crypto/schnorr.ts)
+- New docs: [`spec/STORAGE-TIERS.md`](spec/STORAGE-TIERS.md), [`docs/p2p.md`](docs/p2p.md)
+- All 3 lints clean throughout.
+
+### THE ADVERSARIAL AUDIT — six-act demonstration
+
+[`tests/adversarial-audit.test.ts`](tests/adversarial-audit.test.ts) ships a single 548-line vitest test that's also a six-act narrative demonstration. Each act is backed by hard cryptographic assertions. Demonstrates capabilities that, taken together, no other system in the world has all of: (1) operator with valid creds CANNOT rewrite history; (2) ONE signed action satisfies MULTIPLE regulatory regimes; (3) independent witnesses on DIFFERENT pods can verify; (4) audit substrate self-protects (attacks become evidence); (5) time-locked attribution survives key rotation; (6) O(log n) third-party Merkle verification with no central authority.
+
+---
+
 ## 2026-04-26 — broad codebase pass (post-review fixes)
 
 Acted on the broader code-review survey across the whole project — not just SOC 2/security. Tightened security at the relay, fixed two real ESM bugs in the compliance module, added subscription cap to the stdio MCP server, formalized deploy/access/key documentation, promoted the architecture spec status, and adopted Proposal B as the v1.1 path for descriptor self-revocation.

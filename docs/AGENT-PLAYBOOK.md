@@ -102,6 +102,12 @@ Long-lived sessions exploring federation can accumulate WebSocket subscriptions.
 - `unsubscribe_from_pod` releases the slot. Call it when you're done with a pod that's no longer relevant to the conversation — the subscription accumulates state and bandwidth.
 - A reasonable rule: subscribe on demand when the user asks you to watch a pod live; unsubscribe when the user moves on.
 
+### P2P transport (when the user references mobile / cross-device memory)
+
+If the user mentions wanting their memory to flow between mobile (claude.ai app, ChatGPT app) and desktop (Claude Code, Cursor) without a central server they operate, that's [Tier 5 of `spec/STORAGE-TIERS.md`](../spec/STORAGE-TIERS.md). The `@interego/core` `P2pClient` uses Nostr-style relays — commodity, multiple per client, no single one is authoritative. Their wallet IS their identity on the relay (same secp256k1 key as everywhere else); two signing schemes coexist (ECDSA for Interego-internal, Schnorr for public-Nostr interop). Encrypted 1:N share works over P2P transport via `KIND_ENCRYPTED_SHARE` (30043), same security model as Tier 4 cross-pod sharing.
+
+Don't propose this until the user actually has a cross-device need — Tier 1 (local pod, default) is the right answer for most personal use.
+
 ---
 
 ## 7. Trust signals — what to do with them

@@ -99,6 +99,14 @@ The Interego protocol defines four conformance levels (see `spec/CONFORMANCE.md`
 
 Most harnesses are L1+L2 just by using the MCP correctly. L3 features are opt-in. L4 is per-deployment when used as a regulatory audit substrate.
 
+## P2P transport (Tier 5 of [`spec/STORAGE-TIERS.md`](../spec/STORAGE-TIERS.md))
+
+If your harness needs **mobile + desktop interop without a central server you operate**, the `@interego/core` `P2pClient` works against any Nostr-style relay. Two signing schemes are supported on the wire — ECDSA (Ethereum-address pubkey, matches the wallet identity used everywhere else) and BIP-340 Schnorr (32-byte x-only pubkey, for public-Nostr-relay interop). `verifyEvent` auto-dispatches by pubkey format, so the schemes coexist.
+
+`KIND_ENCRYPTED_SHARE = 30043` carries 1:N NaCl-envelope-encrypted payloads. Recipients tagged via `p` (signing pubkey, for filtering); X25519 encryption pubkeys live inside the envelope, invisible to the relay.
+
+For the cross-surface deployment topology (operator-bridge vs user-bridge shapes), see [`docs/p2p.md`](p2p.md). The 16 tests in [`tests/p2p.test.ts`](../tests/p2p.test.ts) cover two-agent exchange, replaceable semantics, witness attestation, security properties, dual-scheme signing, and 1:N encrypted share — including a desktop ↔ mobile cross-surface simulation.
+
 If you want to claim conformance publicly:
 
 ```markdown

@@ -8,7 +8,7 @@ Reference implementation of **Interego 1.0**, a specification by Interego that d
 
 ## Architecture
 
-TypeScript library (ESM, Node 20+) with eight modules:
+TypeScript library (ESM, Node 20+):
 
 ```
 src/
@@ -24,9 +24,27 @@ src/
   crypto/       Real cryptography — nacl/tweetnacl E2EE envelopes
                 (createEncryptedEnvelope, openEncryptedEnvelope), field-level
                 encryption (encryptFacetValue / decryptFacetValue), ethers.js
-                ECDSA / SIWE, ZK proofs (Merkle / range / temporal), IPFS CID,
+                ECDSA / SIWE, BIP-340 Schnorr (@noble/curves) for public-Nostr
+                interop, ZK proofs (Merkle / range / temporal), IPFS CID,
                 Pinata pinning
   affordance/   Affordance engine — cgh:Affordance generation at runtime
+  abac/         Attribute-Based Access Control (L2): policies as descriptors,
+                cross-pod attribute resolution, sybil resistance
+  registry/     Public agent attestation registry (L2): federated NPM-for-AI
+  passport/     Capability passport (L2): persistent agent biographical identity
+  compliance/   Compliance-grade publish (L4): ECDSA signing, framework reports,
+                wallet rotation w/ history, lineage walking
+  ops/          SOC 2 evidence builders: deploy / access change / wallet rotation /
+                incident / quarterly review events ready for publish_context
+  privacy/      Pre-publish sensitivity screening (API keys, JWTs, PII patterns)
+  security-txt/ RFC 9116 body builder (single source of truth across 5 servers)
+  p2p/          Tier 5 transport: Nostr-style relay-mediated, ECDSA + Schnorr
+                dual signing, 1:N encrypted share via KIND_ENCRYPTED_SHARE.
+                Mobile + desktop interop with no central server.
+  transactions/ Federated saga transactions (cross-pod atomic writes)
+  constitutional/ Self-amending policies (amendments, voting, ratification)
+  connectors/   Source connectors: Notion / Slack / Web (extensible)
+  extractors/   Content extraction: PDF / JSON / CSV / HTML
 ```
 
 Plus surrounding infrastructure:
@@ -40,7 +58,7 @@ deploy/
                auth-methods live in each user's pod (auth-methods.jsonld)
   mcp-relay/   HTTP/SSE OAuth-gated MCP proxy for claude.ai connectors;
                per-surface agent minting; cross-pod sharing
-docs/ns/       Twelve OWL ontologies + three SHACL shape files (607 terms)
+docs/ns/       Nineteen OWL ontologies + three SHACL shape files (~840 terms — see docs/ns/README.md)
 tools/
   ontology-lint.mjs  Scans TS for cg:/cgh:/pgsl:/ie:/hyprcat:/hypragent:/hela:/
                      sat:/cts:/olke:/amta: usages vs ontology definitions.
