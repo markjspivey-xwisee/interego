@@ -61,6 +61,8 @@ export {
   createWallet,
   importWallet,
   exportPrivateKey,
+  signMessageRaw,
+  recoverMessageSigner,
   createDelegation,
   verifyDelegationSignature,
   signDescriptor,

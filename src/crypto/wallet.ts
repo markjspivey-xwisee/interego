@@ -204,6 +204,27 @@ export function exportPrivateKey(address: string): string {
   return getSigningWallet(address).privateKey;
 }
 
+/**
+ * Sign an arbitrary UTF-8 message with the wallet. Used by transports
+ * (p2p relay events, x402 payment proofs, ad-hoc challenges) that need
+ * a wallet attestation without the EIP-712 / descriptor structure.
+ *
+ * Returns a hex signature (65 bytes, 0x-prefixed). Verifiable with
+ * `recoverMessageSigner`.
+ */
+export async function signMessageRaw(wallet: Wallet, message: string): Promise<string> {
+  const signer = getSigningWallet(wallet.address);
+  return signer.signMessage(message);
+}
+
+/**
+ * Recover the secp256k1 address that signed `message` to produce
+ * `signature`. Pure function; no key store access needed.
+ */
+export function recoverMessageSigner(message: string, signature: string): string {
+  return ethers.verifyMessage(message, signature);
+}
+
 // ═════════════════════════════════════════════════════════════
 //  Real Wallet Delegation (EIP-712 Typed Data)
 // ═════════════════════════════════════════════════════════════

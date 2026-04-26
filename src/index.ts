@@ -617,6 +617,8 @@ export {
   createWallet,
   importWallet,
   exportPrivateKey,
+  signMessageRaw,
+  recoverMessageSigner,
   createDelegation,
   verifyDelegationSignature,
   signDescriptor,
@@ -816,6 +818,26 @@ export {
 export type {
   SecurityTxtOptions,
 } from './security-txt/index.js';
+
+// ── P2P transport (Tier 5: Nostr-style relay-mediated) ──────
+export {
+  KIND_DESCRIPTOR,
+  KIND_DIRECTORY,
+  KIND_ATTESTATION,
+  P2pClient,
+  InMemoryRelay,
+  verifyEvent,
+} from './p2p/index.js';
+export type {
+  P2pEvent,
+  P2pFilter,
+  P2pRelay,
+  P2pSubscription,
+  DescriptorAnnouncement,
+  DirectoryEntry,
+  PublishDescriptorInput,
+  PublishDirectoryInput,
+} from './p2p/index.js';
 
 // ── Operational events (SOC 2 evidence builders) ────────────
 export {

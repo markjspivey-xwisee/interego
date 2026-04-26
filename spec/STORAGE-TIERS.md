@@ -166,18 +166,57 @@ Discovery primitives:
 
 ---
 
-## Tier 5 — Fully peer-to-peer (not yet built)
+## Tier 5 — Relay-mediated peer-to-peer (Nostr-style, shipped)
 
-**No servers anywhere. Pods talk directly via libp2p, NAT traversal, and content-addressed routing.**
+**Pods exchange descriptor announcements through Nostr-style commodity relays. Mobile + desktop work the same way; no central server we operate.**
 
-This isn't shipped. The protocol could support it — descriptors are content-addressed, identities are DIDs, federation is cryptographic — but the transport layer (P2P discovery, NAT punching, gossip) is not implemented. Building it would mean:
+Implemented as [`src/p2p/`](../src/p2p/):
 
-- Replace HTTP with libp2p streams
-- Replace WebFinger with a DHT-based lookup (e.g., IPNS or libp2p's record store)
-- Replace pod-hosted manifests with gossiped manifest deltas
-- Add NAT traversal (STUN/TURN/ICE)
+- **Identity** — your secp256k1 wallet IS your peer identity. Same key the operator uses for compliance signing, x402, SIWE.
+- **Events** — NIP-01-shaped: `id` is sha256 of canonical JSON, `sig` is ECDSA over the id (Schnorr adapter for public-Nostr interop is a future drop-in).
+- **Kinds** — three custom kinds in the NIP-33 parameterized-replaceable range: `30040` descriptor announcement, `30041` directory, `30042` attestation.
+- **Relays** — `P2pRelay` interface lets the same client speak to:
+  - `InMemoryRelay` (this repo) for tests + single-process simulation
+  - WebSocket → any conformant Nostr relay (write the adapter; the protocol stays unchanged)
+  - libp2p-backed peer (a future Tier 6)
 
-**Status:** roadmap. If you need it, open an issue — the protocol-level work is small; the transport-level work is the project.
+```ts
+import { P2pClient, InMemoryRelay, importWallet } from '@interego/core';
+
+const wallet = importWallet('0x...', 'agent', 'me');
+const relay = new InMemoryRelay(); // or any P2pRelay implementation
+const client = new P2pClient(relay, wallet);
+
+await client.publishDescriptor({
+  descriptorId: 'urn:cg:my-claim',
+  cid: 'bafkrei...',
+  graphIri: 'urn:graph:my-data',
+  facetTypes: ['Temporal', 'Trust'],
+});
+
+const found = await client.queryDescriptors({ graphIri: 'urn:graph:my-data' });
+```
+
+**Storage tradeoff:** Nostr events carry the manifest entry (descriptor ID, CID, graph IRI, facet types, conformsTo). The descriptor *bytes* still live somewhere content-addressed (IPFS, your pod, a peer who has it). Nostr is the discovery + notification plane; storage stays in Tier 1-4 substrates. Hybrid by design.
+
+**Cross-surface (mobile + desktop):** the `P2pClient` API is transport-agnostic. Mobile clients (claude.ai app, ChatGPT app) speak WebSocket to a relay; desktop clients (Claude Code, custom MCP servers) do the same. They exchange events through any common relay without sharing infrastructure. See [`docs/p2p.md`](../docs/p2p.md) for the deployment topology.
+
+**What you give up vs. true libp2p P2P:**
+- Relays are still servers (just commodity ones — anyone can run one). Not censorship-immune; just censorship-resistant.
+- Event size is constrained by relay policy (~64KB typical). Big descriptors must use CID + external storage.
+- Multi-recipient encryption (NIP-44 is 1:1) maps awkwardly to our 1:N envelope encryption — current adapter punts on encrypted P2P share, leaving that to Tier 4 cross-pod sharing.
+
+**What you get:**
+- Mobile + desktop interop with no special infrastructure beyond a relay URL.
+- Identity is the same wallet you already have.
+- Censorship-resistance (publish to multiple relays; aggregate from multiple relays).
+- Bootstrap problem solved (public Nostr relay lists are well-known).
+
+**Tested end-to-end:** [`tests/p2p.test.ts`](../tests/p2p.test.ts) — 10 tests covering two-agent exchange, replaceable semantics, third-party observation, directory advertisement, witness attestation, security (tampered events rejected, foreign signatures rejected), and a desktop ↔ mobile cross-surface simulation.
+
+### Why "Tier 5" not "Tier 5+"
+
+A future tier could replace relays with libp2p (no servers, even commodity ones). The protocol surface is unchanged; only `P2pRelay` would have a new implementation. We aren't building it today because relay-mediated solves the practical "mobile + desktop" use case at a fraction of the complexity.
 
 ---
 
@@ -189,15 +228,16 @@ This isn't shipped. The protocol could support it — descriptors are content-ad
 | ECDSA signing + verification | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | IPFS CID computation (no pinning) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | ZK proofs (Merkle, range, temporal) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Persistent pod storage | – | ✓ | ✓ | ✓ | ✓ | ✓ |
-| WebSocket notifications | – | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Persistent pod storage | – | ✓ | ✓ | ✓ | ✓ | ✓ (hybrid: events on relay, content on IPFS/pod) |
+| WebSocket notifications | – | ✓ | ✓ | ✓ | ✓ | ✓ (via relay subscriptions) |
 | Multi-device single-user | – | – | ✓ | ✓ | ✓ | ✓ |
-| Internet-reachable pod | – | – | – | ✓ | ✓ | – (not needed) |
-| Cross-pod publish / discover | – | – | – | – | ✓ | ✓ |
-| Cross-pod E2EE share | – | – | – | – | ✓ | ✓ |
+| Internet-reachable pod | – | – | – | ✓ | ✓ | – (relay-reachable instead) |
+| Cross-pod publish / discover | – | – | – | – | ✓ | ✓ (via relay) |
+| Cross-pod E2EE share | – | – | – | – | ✓ | – (planned, NIP-44 adapter) |
 | Federated witness attestation | – | – | – | – | ✓ | ✓ |
-| IPFS pin to a real network (Pinata / Filecoin) | – | – (use `local`) | – | optional | optional | – (DHT) |
-| No servers anywhere | – | – | – | – | – | ✓ (when built) |
+| IPFS pin to a real network (Pinata / Filecoin) | – | – (use `local`) | – | optional | optional | optional |
+| Mobile + desktop interop with no central infra | – | – | – | – | partial | ✓ |
+| Truly server-less (no relays anywhere) | – | – | – | – | – | – (would be Tier 6) |
 
 ---
 
