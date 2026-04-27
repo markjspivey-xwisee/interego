@@ -8,6 +8,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, unlinkSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import {
   FileBackedRelay,
   P2pClient,
@@ -16,6 +17,10 @@ import {
 } from '../src/index.js';
 
 const ALICE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+
+function deriveKey(seed: string): string {
+  return createHash('sha256').update(seed, 'utf8').digest('base64');
+}
 
 function freshPath(): string {
   return join(tmpdir(), `interego-fbr-test-${Date.now()}-${Math.random().toString(36).slice(2)}.jsonl`);
@@ -106,6 +111,85 @@ describe('FileBackedRelay — JSONL persistence', () => {
     const r2 = new FileBackedRelay(path, { log: () => {} });
     // The single valid event still loads
     expect(r2.size()).toBe(1);
+  });
+
+  it('encrypted persistence: round-trip works with the same key', async () => {
+    const path = freshPath();
+    cleanups.push(path);
+    const key = deriveKey('test-seed-1');
+
+    // Session 1: write encrypted
+    const r1 = new FileBackedRelay(path, { log: () => {}, encryptionKey: key });
+    expect(r1.isEncrypted()).toBe(true);
+    const alice = new P2pClient(r1, importWallet(ALICE_KEY, 'agent', 'alice'));
+    await alice.publishDescriptor({
+      descriptorId: 'urn:cg:enc-test:secret-1',
+      cid: 'bafk-secret-cid',
+      graphIri: 'urn:graph:enc',
+      summary: 'CONFIDENTIAL: this should not appear in plaintext on disk',
+    });
+    expect(r1.size()).toBe(1);
+
+    // Disk inspection: nothing sensitive should appear in plaintext
+    const onDisk = readFileSync(path, 'utf8');
+    expect(onDisk).not.toContain('CONFIDENTIAL');
+    expect(onDisk).not.toContain('secret-1');
+    expect(onDisk).not.toContain('bafk-secret-cid');
+    expect(onDisk).not.toContain('urn:graph:enc');
+    // Encrypted-line format: nonce_b64:ct_b64\n
+    expect(onDisk).toMatch(/^[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+\n$/);
+
+    // Session 2: same key opens it
+    const r2 = new FileBackedRelay(path, { log: () => {}, encryptionKey: key });
+    expect(r2.size()).toBe(1);
+    const events = await r2.query({ kinds: [KIND_DESCRIPTOR] });
+    expect(events).toHaveLength(1);
+    const restoredCid = events[0]!.tags.find(t => t[0] === 'cid')?.[1];
+    expect(restoredCid).toBe('bafk-secret-cid');
+  });
+
+  it('encrypted persistence: wrong key cannot decrypt — events skipped', async () => {
+    const path = freshPath();
+    cleanups.push(path);
+    const correctKey = deriveKey('correct-seed');
+    const wrongKey = deriveKey('wrong-seed');
+
+    const r1 = new FileBackedRelay(path, { log: () => {}, encryptionKey: correctKey });
+    const alice = new P2pClient(r1, importWallet(ALICE_KEY, 'agent', 'alice'));
+    await alice.publishDescriptor({
+      descriptorId: 'urn:cg:wrong-key',
+      cid: 'bafk-wk',
+      graphIri: 'urn:graph:wk',
+    });
+
+    // A reader with the wrong key sees nothing — lines fail Poly1305
+    // auth and are skipped silently (logged via opts.log if provided)
+    const r2 = new FileBackedRelay(path, { log: () => {}, encryptionKey: wrongKey });
+    expect(r2.size()).toBe(0);
+  });
+
+  it('encryption survives NIP-33 replaceability', async () => {
+    const path = freshPath();
+    cleanups.push(path);
+    const key = deriveKey('test-seed-2');
+
+    const r1 = new FileBackedRelay(path, { log: () => {}, encryptionKey: key });
+    const alice = new P2pClient(r1, importWallet(ALICE_KEY, 'agent', 'alice'));
+    await alice.publishDescriptor({ descriptorId: 'urn:cg:enc-replace', cid: 'v1', graphIri: 'urn:graph:enc-replace' });
+    await new Promise(r => setTimeout(r, 1100));
+    await alice.publishDescriptor({ descriptorId: 'urn:cg:enc-replace', cid: 'v2', graphIri: 'urn:graph:enc-replace' });
+
+    const r2 = new FileBackedRelay(path, { log: () => {}, encryptionKey: key });
+    expect(r2.size()).toBe(1);
+    const events = await r2.query({ kinds: [KIND_DESCRIPTOR] });
+    expect(events[0]!.tags.find(t => t[0] === 'cid')?.[1]).toBe('v2');
+  });
+
+  it('rejects an encryption key that is not 32 bytes', () => {
+    const path = freshPath();
+    cleanups.push(path);
+    const tooShort = Buffer.from('too short').toString('base64');
+    expect(() => new FileBackedRelay(path, { log: () => {}, encryptionKey: tooShort })).toThrow(/32 bytes/);
   });
 
   it('publish failure (file write error) propagates as ok=false', async () => {

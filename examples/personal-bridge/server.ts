@@ -42,6 +42,7 @@ import {
 } from '@interego/core';
 import { homedir } from 'node:os';
 import { join as pathJoin } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -103,8 +104,24 @@ const BRIDGE_DATA_DIR = process.env['BRIDGE_DATA_DIR']
   ?? pathJoin(homedir(), '.interego-bridge');
 const eventsFile = pathJoin(BRIDGE_DATA_DIR, 'events.jsonl');
 
+// At-rest encryption ON by default. Storage key is derived
+// deterministically from BRIDGE_KEY so the same wallet that signs
+// events also opens the file — no separate key to manage. Anyone
+// with read access to the file (curious sysadmin, accidental
+// backup, malware) sees only opaque base64. Set BRIDGE_ENCRYPT=0
+// only if you want plaintext on disk for inspection.
+const BRIDGE_ENCRYPT = process.env['BRIDGE_ENCRYPT'] !== '0';
+function deriveStorageKey(privateKeyHex: string): string {
+  const seed = privateKeyHex.toLowerCase().replace(/^0x/, '') + ':interego-bridge-storage-v1';
+  return createHash('sha256').update(seed, 'utf8').digest('base64');
+}
+const storageKey = BRIDGE_ENCRYPT ? deriveStorageKey(BRIDGE_KEY) : undefined;
+
 const innerRelay: InMemoryRelay = BRIDGE_PERSIST
-  ? new FileBackedRelay(eventsFile, { log })
+  ? new FileBackedRelay(eventsFile, {
+      log,
+      ...(storageKey ? { encryptionKey: storageKey } : {}),
+    })
   : new InMemoryRelay();
 
 // If external relays are configured, wrap the in-memory relay with
@@ -282,8 +299,14 @@ function bridgeStatus(): Record<string, unknown> {
     encryptionPubkey: encryptionKeyPair.publicKey,
     relayEventCount: innerRelay.size(),
     persistence: BRIDGE_PERSIST
-      ? { mode: 'file-backed', path: eventsFile }
-      : { mode: 'in-memory', path: null },
+      ? {
+          mode: 'file-backed',
+          path: eventsFile,
+          atRestEncryption: BRIDGE_ENCRYPT
+            ? 'NaCl XSalsa20-Poly1305, key derived from BRIDGE_KEY'
+            : 'disabled (plaintext on disk — set BRIDGE_ENCRYPT=1 to enable)',
+        }
+      : { mode: 'in-memory', path: null, atRestEncryption: 'n/a' },
     externalRelays: externalRelayUrls,
     externalRelayForwarding: externalRelayUrls.length === 0
       ? 'disabled (truly local-first)'

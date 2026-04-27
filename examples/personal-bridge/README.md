@@ -94,6 +94,7 @@ Open the admin UI in any browser to verify.
 | `MCP_TRANSPORT` | `http` | `http` (Express server with admin UI + REST + multi-device) or `stdio` (single-client, JSON-RPC over stdin/stdout, ideal for `.mcp.json` spawn). |
 | `BRIDGE_PERSIST` | `1` | When `1` (default), events are persisted to JSONL and replayed on restart. Set `BRIDGE_PERSIST=0` for the volatile in-memory relay (useful for tests / one-shot demos). |
 | `BRIDGE_DATA_DIR` | `~/.interego-bridge` | Where the events file (`events.jsonl`) lives when persistence is on. |
+| `BRIDGE_ENCRYPT` | `1` | At-rest encryption of the JSONL file via NaCl XSalsa20-Poly1305. Default ON. The 32-byte symmetric key is derived deterministically from `BRIDGE_KEY` (sha256 of privkey + storage tag) so the same wallet that signs your events also opens the file — no second key to manage. Set `BRIDGE_ENCRYPT=0` only if you want plaintext on disk for inspection / debugging. |
 | `BRIDGE_KEY` | (test key) | Your wallet private key. **MUST be set in production.** Persist this for stable identity. |
 | `SIGNING_SCHEME` | `ecdsa` | `ecdsa` (Ethereum-style address) or `schnorr` (BIP-340 x-only — for public-Nostr-relay interop). |
 | `EXTERNAL_RELAYS` | `(empty)` | Comma-separated `wss://` URLs of public Nostr relays to mirror events to. Empty = fully local. |
