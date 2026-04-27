@@ -1,0 +1,26 @@
+{
+  "name": "@interego/personal-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first P2P hub for Interego — one MCP URL, all your devices, no central server.",
+  "type": "module",
+  "main": "dist/server.js",
+  "bin": {
+    "interego-personal-bridge": "dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx server.ts"
+  },
+  "dependencies": {
+    "@interego/core": "file:../../",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

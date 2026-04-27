@@ -212,7 +212,11 @@ const found = await client.queryDescriptors({ graphIri: 'urn:graph:my-data' });
 - Censorship-resistance (publish to multiple relays; aggregate from multiple relays).
 - Bootstrap problem solved (public Nostr relay lists are well-known).
 
-**Tested end-to-end:** [`tests/p2p.test.ts`](../tests/p2p.test.ts) — 10 tests covering two-agent exchange, replaceable semantics, third-party observation, directory advertisement, witness attestation, security (tampered events rejected, foreign signatures rejected), and a desktop ↔ mobile cross-surface simulation.
+**Tested end-to-end:** [`tests/p2p.test.ts`](../tests/p2p.test.ts) — 16 tests covering two-agent exchange, replaceable semantics, third-party observation, directory advertisement, witness attestation, security (tampered events rejected, foreign signatures rejected), dual-scheme signing (ECDSA + Schnorr), 1:N encrypted share, and a desktop ↔ mobile cross-surface simulation.
+
+### Run it locally — `@interego/personal-bridge`
+
+For zero-config Tier 5 with no central server we operate, see [`examples/personal-bridge/`](../examples/personal-bridge/). One Node process you run on your laptop / Raspberry Pi / NAS / Tailscale-exposed home server. Embeds `InMemoryRelay`, exposes MCP at `POST /mcp`, REST at `/api/*`, an admin UI at `/`. All your devices point at the same bridge URL forever — no URL switching, no global/local mode toggle. Sharing is per-publish (`share_with`) or per-bridge (`EXTERNAL_RELAYS` env var to mirror to public Nostr relays). Local-first by default. See [`examples/personal-bridge/README.md`](../examples/personal-bridge/README.md) for the quick start + cross-device connection table.
 
 ### Why "Tier 5" not "Tier 5+"
 

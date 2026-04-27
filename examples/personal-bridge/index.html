@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Personal Bridge — Interego</title>
+  <style>
+    :root {
+      --bg: #0d0f12;
+      --panel: #161a20;
+      --border: #2a2f38;
+      --text: #d8dde6;
+      --muted: #8a93a3;
+      --accent: #6df0c8;
+      --warn: #f0c86d;
+      --danger: #f06d8a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+    h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
+    h2 { font-size: 14px; margin: 0 0 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .lede { color: var(--muted); margin: 0 0 24px; font-size: 13px; }
+    .grid { display: grid; gap: 16px; max-width: 980px; }
+    @media (min-width: 700px) { .grid { grid-template-columns: 1fr 1fr; } .full { grid-column: 1 / -1; } }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    code, .mono { font-family: "SF Mono", "Cascadia Code", "Consolas", monospace; font-size: 12px; color: var(--accent); word-break: break-all; }
+    .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px dashed var(--border); }
+    .row:last-child { border-bottom: none; }
+    .key { color: var(--muted); }
+    .val { text-align: right; max-width: 70%; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; }
+    .pill.local { background: rgba(109, 240, 200, 0.15); color: var(--accent); }
+    .pill.warn { background: rgba(240, 200, 109, 0.15); color: var(--warn); }
+    button {
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    button:hover { filter: brightness(1.1); }
+    button.secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    input, textarea {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 13px;
+      width: 100%;
+      font-family: inherit;
+    }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+    pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; color: var(--text); margin: 0; }
+    .feed { max-height: 200px; overflow-y: auto; font-size: 12px; }
+    .feed .item { padding: 6px 0; border-bottom: 1px dashed var(--border); }
+    .empty { color: var(--muted); font-style: italic; padding: 12px 0; }
+    .footer { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Personal Bridge — Interego</h1>
+  <p class="lede">
+    Your local-first P2P hub. One URL, all your devices.
+    <span id="sharing-mode" class="pill local">Local-only</span>
+  </p>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Identity + status</h2>
+      <div id="status">Loading…</div>
+    </div>
+
+    <div class="panel">
+      <h2>Sharing mode</h2>
+      <div id="sharing-explain">
+        <p style="margin-top:0;">
+          By default this bridge keeps your data on your network.
+          Sharing happens two ways:
+        </p>
+        <ul style="margin: 8px 0 12px 18px; padding: 0;">
+          <li><strong>Per-publish:</strong> pass <code>share_with</code> when you publish — the bridge encrypts to those specific recipients.</li>
+          <li><strong>Per-bridge:</strong> set <code>EXTERNAL_RELAYS=wss://relay.example,...</code> in your bridge env to mirror events to public Nostr relays.</li>
+        </ul>
+        <p style="margin: 0; color: var(--muted); font-size: 12px;">
+          There's no global on/off switch. Sharing is a gradient — choose per-thing.
+        </p>
+      </div>
+    </div>
+
+    <div class="panel full">
+      <h2>Publish a descriptor (test)</h2>
+      <label>Descriptor IRI</label>
+      <input id="pub-id" value="urn:cg:test-from-ui" />
+      <label>CID (IPFS)</label>
+      <input id="pub-cid" value="bafkrei-from-ui" />
+      <label>Graph IRI</label>
+      <input id="pub-graph" value="urn:graph:bridge-ui-test" />
+      <label>Summary</label>
+      <input id="pub-summary" placeholder="optional" />
+      <div style="margin-top: 12px;">
+        <button onclick="publishTest()">Publish</button>
+        <button class="secondary" onclick="queryAll()">Query all</button>
+      </div>
+      <div id="pub-result" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="panel full">
+      <h2>Live event feed</h2>
+      <div id="feed" class="feed"><div class="empty">Waiting for events…</div></div>
+    </div>
+
+    <div class="panel full">
+      <h2>How devices connect</h2>
+      <p style="margin-top: 0;">
+        Point any MCP client at <code id="mcp-url">http://&lt;your-host&gt;:&lt;port&gt;/mcp</code> as a custom connector.
+      </p>
+      <div class="row">
+        <span class="key">Phone (claude.ai mobile / ChatGPT app)</span>
+        <span class="val">Add bridge URL as custom MCP connector. Use a stable hostname (Tailscale or LAN mDNS) so it survives across networks.</span>
+      </div>
+      <div class="row">
+        <span class="key">Desktop (Claude Code, Cursor, custom)</span>
+        <span class="val">Same URL. Or run the bridge on the same machine and use stdio.</span>
+      </div>
+      <div class="row">
+        <span class="key">Sharing with another person</span>
+        <span class="val">Per-publish: their bridge needs to reach the same relay. For now, set <code>EXTERNAL_RELAYS</code> on both bridges to a common public Nostr relay.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Open source. Local-first by design. No hosted server we operate is required for personal use.
+  </div>
+
+  <script>
+    function pre(obj) {
+      return '<pre>' + JSON.stringify(obj, null, 2).replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>';
+    }
+
+    async function refresh() {
+      const r = await fetch('/status');
+      const j = await r.json();
+      const isLocal = !j.externalRelays || j.externalRelays.length === 0;
+      document.getElementById('sharing-mode').className = 'pill ' + (isLocal ? 'local' : 'warn');
+      document.getElementById('sharing-mode').textContent = isLocal ? 'Local-only' : ('Mirroring to ' + j.externalRelays.length + ' relay(s)');
+      document.getElementById('status').innerHTML = `
+        <div class="row"><span class="key">Bridge pubkey</span><span class="val mono">${j.bridgePubkey}</span></div>
+        <div class="row"><span class="key">Signing scheme</span><span class="val mono">${j.signingScheme}</span></div>
+        <div class="row"><span class="key">Encryption pubkey</span><span class="val mono">${j.encryptionPubkey}</span></div>
+        <div class="row"><span class="key">Bind</span><span class="val mono">${j.bind}</span></div>
+        <div class="row"><span class="key">Local events</span><span class="val mono">${j.relayEventCount}</span></div>
+        <div class="row"><span class="key">External relays</span><span class="val">${j.externalRelays.length === 0 ? '(none — fully local)' : j.externalRelays.join('<br/>')}</span></div>
+      `;
+      document.getElementById('mcp-url').textContent = window.location.origin + '/mcp';
+    }
+
+    async function publishTest() {
+      const body = {
+        descriptorId: document.getElementById('pub-id').value,
+        cid: document.getElementById('pub-cid').value,
+        graphIri: document.getElementById('pub-graph').value,
+        summary: document.getElementById('pub-summary').value || undefined,
+      };
+      const r = await fetch('/api/publish', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      document.getElementById('pub-result').innerHTML = pre(await r.json());
+      refresh();
+    }
+
+    async function queryAll() {
+      const r = await fetch('/api/query', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      document.getElementById('pub-result').innerHTML = pre(await r.json());
+    }
+
+    function startFeed() {
+      const ev = new EventSource('/events');
+      const feed = document.getElementById('feed');
+      ev.addEventListener('descriptor', (e) => {
+        const d = JSON.parse(e.data);
+        if (feed.querySelector('.empty')) feed.innerHTML = '';
+        const item = document.createElement('div');
+        item.className = 'item';
+        item.innerHTML = `<span class="mono">${d.publishedAt}</span> · <strong>${d.descriptorId}</strong> → ${d.graphIri} <span style="color:var(--muted);">(by ${d.publisher.slice(0, 12)}…)</span>`;
+        feed.insertBefore(item, feed.firstChild);
+      });
+    }
+
+    refresh();
+    startFeed();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
