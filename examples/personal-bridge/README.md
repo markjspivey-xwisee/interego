@@ -25,6 +25,41 @@ There's no `local` / `global` switch because the model isn't binary. Sharing is 
 
 ## Quick start
 
+Two transport modes — pick the one that matches what you want:
+
+### Easiest: stdio (Claude Code spawns it for you)
+
+Best for **single Claude Code session, single device**. Zero terminal management — Claude Code starts + stops the bridge as a subprocess. No port conflicts, no admin UI, no multi-device.
+
+Once:
+```bash
+cd examples/personal-bridge
+npm install
+npm run build
+```
+
+Then add to your `.mcp.json` (or `~/.claude.json`):
+```json
+{
+  "mcpServers": {
+    "personal-bridge": {
+      "command": "node",
+      "args": ["d:/devstuff/harness/context-graphs/examples/personal-bridge/dist/server.js"],
+      "env": {
+        "MCP_TRANSPORT": "stdio",
+        "BRIDGE_KEY": "0xYOUR_PRIVATE_KEY"
+      }
+    }
+  }
+}
+```
+
+Reload Claude Code → 6 tools available immediately. The bridge process lives + dies with the session.
+
+### Full: HTTP (multi-device, admin UI, mobile-ready)
+
+Best for **phone + desktop both connecting to one bridge**. Runs as a long-lived process; requires keeping a terminal or service open.
+
 ```bash
 cd examples/personal-bridge
 npm install
@@ -32,14 +67,14 @@ npm run build
 PORT=5050 BRIDGE_KEY=0xYOUR_PRIVATE_KEY npm start
 ```
 
-You'll see:
+You'll see (on stderr):
 
 ```
 @interego/personal-bridge running
-  Bind:           http://0.0.0.0:5050
-  Bridge pubkey:  0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-  Signing:        ecdsa
-  Encryption pk:  ...base64...
+  Bind:            http://0.0.0.0:5050
+  Bridge pubkey:   0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+  Signing:         ecdsa
+  Encryption pk:   ...base64...
   External relays: (none — fully local)
 
 Point your MCP clients at:
@@ -55,7 +90,8 @@ Open the admin UI in any browser to verify.
 | Env var | Default | What it does |
 |---|---|---|
 | `PORT` | `5050` | TCP port to bind |
-| `BIND` | `0.0.0.0` | Bind address. Use `127.0.0.1` to firewall to the local machine. |
+| `BIND` | `0.0.0.0` | Bind address (HTTP mode only). Use `127.0.0.1` to firewall to the local machine. |
+| `MCP_TRANSPORT` | `http` | `http` (Express server with admin UI + REST + multi-device) or `stdio` (single-client, JSON-RPC over stdin/stdout, ideal for `.mcp.json` spawn). |
 | `BRIDGE_KEY` | (test key) | Your wallet private key. **MUST be set in production.** Persist this for stable identity. |
 | `SIGNING_SCHEME` | `ecdsa` | `ecdsa` (Ethereum-style address) or `schnorr` (BIP-340 x-only — for public-Nostr-relay interop). |
 | `EXTERNAL_RELAYS` | `(empty)` | Comma-separated `wss://` URLs of public Nostr relays to mirror events to. Empty = fully local. |

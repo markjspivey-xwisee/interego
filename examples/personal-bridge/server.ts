@@ -51,6 +51,19 @@ const PORT = parseInt(process.env['PORT'] ?? '5050', 10);
 // firewall the bridge to the local machine only.
 const BIND = process.env['BIND'] ?? '0.0.0.0';
 
+// Transport: 'http' (default — Express server with /mcp + REST + admin
+// UI) or 'stdio' (JSON-RPC over stdin/stdout, single-client, perfect
+// for spawning from a Claude Code .mcp.json entry). Stdio mode skips
+// the HTTP server entirely; logging goes to stderr only.
+const TRANSPORT = (process.env['MCP_TRANSPORT'] ?? 'http') as 'http' | 'stdio';
+
+// Logging — stderr only, never stdout. Stdout is reserved for the MCP
+// protocol channel in stdio mode; using console.log there would
+// corrupt the protocol stream.
+function log(msg: string): void {
+  process.stderr.write(`[bridge] ${msg}\n`);
+}
+
 // Bridge identity — your wallet's private key. If unset we mint a
 // fresh one for the session (development only). Persist this for
 // stable identity across restarts.
@@ -59,7 +72,7 @@ function loadOrMintKey(): string {
   if (fromEnv) return fromEnv;
   // Hardhat default mnemonic key — DEV ONLY. Production deployments
   // MUST set BRIDGE_KEY to a real wallet private key.
-  console.warn('[bridge] BRIDGE_KEY not set; using a public test key. Set BRIDGE_KEY in production.');
+  process.stderr.write('[bridge] BRIDGE_KEY not set; using a public test key. Set BRIDGE_KEY in production.\n');
   return '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 }
 
@@ -93,7 +106,7 @@ const relay: P2pRelay = externalRelayUrls.length === 0
   : (mirror = new WebSocketRelayMirror(innerRelay, externalRelayUrls, {
       onStatusChange: (s: RelayConnectionStatus) => {
         broadcastSseEvent('mirror-status', s as unknown as Record<string, unknown>);
-        console.log(`[mirror] ${s.url} → ${s.state}${s.lastError ? ` (${s.lastError})` : ''}`);
+        log(`[mirror] ${s.url} → ${s.state}${s.lastError ? ` (${s.lastError})` : ''}`);
       },
     }));
 
@@ -315,14 +328,12 @@ app.get('/events', (req, res) => {
   });
 });
 
-// ── MCP — minimal Streamable HTTP at /mcp ────────────────────
+// ── MCP request handler — transport-agnostic ─────────────────
 //
-// JSON-RPC 2.0 per MCP spec. Three handlers:
-//   initialize, tools/list, tools/call
-//
-// Any MCP client (Claude Code custom connector, claude.ai mobile,
-// Cursor, etc.) configured with this URL will see + invoke the
-// tools defined above.
+// JSON-RPC 2.0 per MCP spec. Used by both the HTTP /mcp endpoint
+// and the stdio mode below. Returns the response object (or null
+// for notifications), never throws — protocol errors are encoded
+// as JSON-RPC `error` objects.
 
 interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -331,13 +342,17 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
-app.post('/mcp', async (req, res) => {
-  const reqBody = req.body as JsonRpcRequest;
-  const { method, params, id } = reqBody;
+interface JsonRpcResponse {
+  jsonrpc: '2.0';
+  id: string | number | null;
+  result?: unknown;
+  error?: { code: number; message: string };
+}
 
-  const respond = (result?: unknown, error?: { code: number; message: string }): void => {
-    res.json(error ? { jsonrpc: '2.0', id, error } : { jsonrpc: '2.0', id, result });
-  };
+async function handleMcpRequest(req: JsonRpcRequest): Promise<JsonRpcResponse | null> {
+  const { method, params, id } = req;
+  const respond = (result?: unknown, error?: { code: number; message: string }): JsonRpcResponse =>
+    error ? { jsonrpc: '2.0', id, error } : { jsonrpc: '2.0', id, result };
 
   if (method === 'initialize') {
     return respond({
@@ -346,6 +361,10 @@ app.post('/mcp', async (req, res) => {
       serverInfo: { name: '@interego/personal-bridge', version: '0.1.0' },
       instructions: `Personal bridge for Interego — your local-first P2P hub. Bridge identity: ${client.pubkey}. Use publish_p2p / query_p2p for descriptor announcements; share_encrypted for 1:N encrypted shares; query_my_inbox + decrypt_share to read what's addressed to you. Sharing is per-publish (share_with) or per-bridge (EXTERNAL_RELAYS env var); local by default.`,
     });
+  }
+
+  if (method === 'notifications/initialized') {
+    return null; // notification — no response per JSON-RPC spec
   }
 
   if (method === 'tools/list') {
@@ -368,23 +387,24 @@ app.post('/mcp', async (req, res) => {
     try {
       const result = await tool.handler(args);
       return respond({
-        content: [
-          { type: 'text', text: JSON.stringify(result, null, 2) },
-        ],
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
       });
     } catch (err) {
-      return respond(undefined, {
-        code: -32000,
-        message: `Tool error: ${(err as Error).message}`,
-      });
+      return respond(undefined, { code: -32000, message: `Tool error: ${(err as Error).message}` });
     }
   }
 
-  // Notifications (no id) and unknown methods
-  if (id === null || id === undefined) {
-    return res.status(202).end();
-  }
+  if (id === null || id === undefined) return null; // notification
   return respond(undefined, { code: -32601, message: `Unknown method: ${method}` });
+}
+
+app.post('/mcp', async (req, res) => {
+  const result = await handleMcpRequest(req.body as JsonRpcRequest);
+  if (result === null) {
+    res.status(202).end();
+    return;
+  }
+  res.json(result);
 });
 
 // REST mirrors of the MCP tools — for non-MCP clients (curl,
@@ -408,26 +428,75 @@ app.post('/api/inbox', async (req, res) => {
 });
 
 // ── Start ────────────────────────────────────────────────────
-// Skip auto-listen when imported under vitest (NODE_ENV=test) so the
-// test suite can import + exercise the tools directly without
-// spawning a real HTTP listener.
+// Skip auto-start when imported under vitest (NODE_ENV=test) so the
+// test suite can import + exercise the handler directly without
+// spawning a listener or stealing stdin.
 
-if (process.env['NODE_ENV'] !== 'test') {
-  // Start the mirror (open WebSocket connections to external relays)
-  if (mirror) mirror.start();
+async function startStdioTransport(): Promise<void> {
+  // JSON-RPC over stdin/stdout. One message per line. Stdout is the
+  // protocol channel — never write anything else there.
+  log(`stdio transport active (bridge pubkey: ${client.pubkey})`);
+  log(`external relays: ${externalRelayUrls.length === 0 ? '(none — fully local)' : externalRelayUrls.join(', ')}`);
 
-  app.listen(PORT, BIND, () => {
-    console.log(`\n@interego/personal-bridge running`);
-    console.log(`  Bind:           http://${BIND}:${PORT}`);
-    console.log(`  Bridge pubkey:  ${client.pubkey}`);
-    console.log(`  Signing:        ${SIGNING_SCHEME}`);
-    console.log(`  Encryption pk:  ${encryptionKeyPair.publicKey}`);
-    console.log(`  External relays: ${externalRelayUrls.length === 0 ? '(none — fully local)' : externalRelayUrls.join(', ')}`);
-    console.log(`\nPoint your MCP clients at:`);
-    console.log(`  http://<your-host>:${PORT}/mcp`);
-    console.log(`\nAdmin UI:  http://<your-host>:${PORT}/`);
-    console.log(`Status:    http://<your-host>:${PORT}/status\n`);
+  let buffer = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk: string) => {
+    buffer += chunk;
+    let nl: number;
+    while ((nl = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line) continue;
+      void processStdioLine(line);
+    }
+  });
+  process.stdin.on('end', () => {
+    log('stdin closed; exiting');
+    process.exit(0);
   });
 }
 
-export { app, tools, bridgeStatus, client };
+async function processStdioLine(line: string): Promise<void> {
+  let req: JsonRpcRequest;
+  try {
+    req = JSON.parse(line) as JsonRpcRequest;
+  } catch {
+    // Malformed JSON — emit a JSON-RPC parse error per spec
+    process.stdout.write(JSON.stringify({
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32700, message: 'Parse error' },
+    }) + '\n');
+    return;
+  }
+  const response = await handleMcpRequest(req);
+  if (response !== null) {
+    process.stdout.write(JSON.stringify(response) + '\n');
+  }
+}
+
+if (process.env['NODE_ENV'] !== 'test') {
+  if (mirror) mirror.start();
+
+  if (TRANSPORT === 'stdio') {
+    void startStdioTransport();
+  } else {
+    app.listen(PORT, BIND, () => {
+      log('');
+      log(`@interego/personal-bridge running`);
+      log(`  Bind:            http://${BIND}:${PORT}`);
+      log(`  Bridge pubkey:   ${client.pubkey}`);
+      log(`  Signing:         ${SIGNING_SCHEME}`);
+      log(`  Encryption pk:   ${encryptionKeyPair.publicKey}`);
+      log(`  External relays: ${externalRelayUrls.length === 0 ? '(none — fully local)' : externalRelayUrls.join(', ')}`);
+      log(``);
+      log(`Point your MCP clients at:`);
+      log(`  http://<your-host>:${PORT}/mcp`);
+      log(``);
+      log(`Admin UI:  http://<your-host>:${PORT}/`);
+      log(`Status:    http://<your-host>:${PORT}/status`);
+    });
+  }
+}
+
+export { app, tools, bridgeStatus, client, handleMcpRequest };

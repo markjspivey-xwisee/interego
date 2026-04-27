@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { tools, bridgeStatus, client } from '../examples/personal-bridge/server.js';
+import { tools, bridgeStatus, client, handleMcpRequest } from '../examples/personal-bridge/server.js';
 import { generateKeyPair, importWallet, P2pClient, InMemoryRelay } from '../src/index.js';
 
 describe('personal-bridge — tool surface', () => {
@@ -67,6 +67,81 @@ describe('personal-bridge — tool surface', () => {
     const r = await tools.decrypt_share!.handler({ eventId: '0'.repeat(64) }) as { ok: boolean; reason?: string };
     expect(r.ok).toBe(false);
     expect(r.reason).toBeDefined();
+  });
+
+  it('handleMcpRequest — initialize → returns serverInfo + capabilities', async () => {
+    const r = await handleMcpRequest({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+    expect(r).not.toBeNull();
+    const result = r!.result as { protocolVersion: string; capabilities: { tools: object }; serverInfo: { name: string }; instructions: string };
+    expect(result.protocolVersion).toBe('2024-11-05');
+    expect(result.capabilities.tools).toBeDefined();
+    expect(result.serverInfo.name).toBe('@interego/personal-bridge');
+    expect(result.instructions).toContain(client.pubkey);
+  });
+
+  it('handleMcpRequest — tools/list → all 6 tools present with schemas', async () => {
+    const r = await handleMcpRequest({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    expect(r).not.toBeNull();
+    const result = r!.result as { tools: { name: string; description: string; inputSchema: object }[] };
+    const names = result.tools.map(t => t.name).sort();
+    expect(names).toEqual([
+      'bridge_status', 'decrypt_share', 'publish_p2p',
+      'query_my_inbox', 'query_p2p', 'share_encrypted',
+    ]);
+    for (const t of result.tools) {
+      expect(t.description).toBeTruthy();
+      expect(t.inputSchema).toBeDefined();
+    }
+  });
+
+  it('handleMcpRequest — tools/call publish_p2p round-trips', async () => {
+    const r = await handleMcpRequest({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: {
+        name: 'publish_p2p',
+        arguments: { descriptorId: 'urn:cg:mcp-handler-test', cid: 'bafkrei-mcp', graphIri: 'urn:graph:mcp-handler' },
+      },
+    });
+    expect(r).not.toBeNull();
+    const result = r!.result as { content: { type: string; text: string }[] };
+    expect(result.content[0]!.type).toBe('text');
+    const parsed = JSON.parse(result.content[0]!.text) as { ok: boolean; eventId: string };
+    expect(parsed.ok).toBe(true);
+    expect(parsed.eventId).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('handleMcpRequest — tools/call unknown tool → -32601', async () => {
+    const r = await handleMcpRequest({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: { name: 'no_such_tool', arguments: {} },
+    });
+    expect(r).not.toBeNull();
+    expect(r!.error).toBeDefined();
+    expect(r!.error!.code).toBe(-32601);
+  });
+
+  it('handleMcpRequest — notifications/initialized → null (no response)', async () => {
+    const r = await handleMcpRequest({
+      jsonrpc: '2.0',
+      id: null,
+      method: 'notifications/initialized',
+    });
+    expect(r).toBeNull();
+  });
+
+  it('handleMcpRequest — unknown method → -32601', async () => {
+    const r = await handleMcpRequest({
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'foo/bar',
+    });
+    expect(r).not.toBeNull();
+    expect(r!.error).toBeDefined();
+    expect(r!.error!.code).toBe(-32601);
   });
 
   it('two bridges sharing a relay can exchange encrypted shares (cross-bridge round-trip)', async () => {
