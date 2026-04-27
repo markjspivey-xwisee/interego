@@ -834,6 +834,7 @@ export {
   WebSocketRelayMirror,
   verifyEvent,
   detectSignatureScheme,
+  isInteregoEvent,
 } from './p2p/index.js';
 export type {
   P2pEvent,

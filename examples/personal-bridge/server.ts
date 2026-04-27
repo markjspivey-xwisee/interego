@@ -33,6 +33,7 @@ import {
   FileBackedRelay,
   P2pClient,
   WebSocketRelayMirror,
+  isInteregoEvent,
   importWallet,
   generateKeyPair,
   type EncryptedShare,
@@ -91,6 +92,19 @@ const externalRelayUrls = EXTERNAL_RELAYS_RAW
   .map((s) => s.trim())
   .filter(Boolean);
 
+// Authors to subscribe to inbound from external relays. Empty by
+// default = OUTBOUND-ONLY mode: your events go to the world, but
+// you don't pull random kind-30040 events back. Set to
+// comma-separated Nostr pubkeys (Schnorr x-only hex OR ECDSA 0x-
+// address) of identities you explicitly want to follow. Apply
+// after explicit consent — kind 30000-39999 is a shared range,
+// auto-subscribe will pull in unrelated app traffic.
+const INBOUND_AUTHORS_RAW = process.env['INBOUND_AUTHORS'] ?? '';
+const inboundAuthors = INBOUND_AUTHORS_RAW
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 // ── Bridge state ─────────────────────────────────────────────
 
 const wallet = importWallet(BRIDGE_KEY, 'agent', 'personal-bridge');
@@ -135,6 +149,16 @@ let mirror: WebSocketRelayMirror | null = null;
 const relay: P2pRelay = externalRelayUrls.length === 0
   ? innerRelay
   : (mirror = new WebSocketRelayMirror(innerRelay, externalRelayUrls, {
+      // Inbound: explicit allow-list only. With INBOUND_AUTHORS empty,
+      // the mirror sends NO subscription request — outbound publishing
+      // works fine, but no random kind-30040 traffic from unrelated
+      // Nostr apps lands in your encrypted store.
+      subscribeAuthors: inboundAuthors,
+      // Defense in depth: even when subscribed to specific authors,
+      // require events to have the Interego tag shape. Drops
+      // kind-30040 events from those authors that aren't actually
+      // Interego descriptors.
+      inboundFilter: isInteregoEvent,
       onStatusChange: (s: RelayConnectionStatus) => {
         broadcastSseEvent('mirror-status', s as unknown as Record<string, unknown>);
         log(`[mirror] ${s.url} → ${s.state}${s.lastError ? ` (${s.lastError})` : ''}`);
@@ -311,6 +335,11 @@ function bridgeStatus(): Record<string, unknown> {
     externalRelayForwarding: externalRelayUrls.length === 0
       ? 'disabled (truly local-first)'
       : 'enabled (bidirectional WebSocket mirror, v1.1)',
+    inbound: {
+      mode: inboundAuthors.length === 0 ? 'outbound-only' : 'allow-list',
+      followingAuthors: inboundAuthors,
+      structuralFilter: 'isInteregoEvent (drops events without Interego tag shape)',
+    },
     mirrorStatus: mirror ? mirror.status() : null,
     bind: `${BIND}:${PORT}`,
     note: 'Persistence: events survive restarts. Set BRIDGE_PERSIST=0 to use volatile in-memory storage. Add wss://... to EXTERNAL_RELAYS to broadcast events beyond this bridge.',

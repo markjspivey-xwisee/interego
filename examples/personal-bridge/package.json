@@ -11,7 +11,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "dev": "tsx server.ts"
+    "dev": "tsx server.ts",
+    "wipe-strangers": "node dist/wipe-strangers.js"
   },
   "dependencies": {
     "@interego/core": "file:../../",

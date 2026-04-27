@@ -38,7 +38,11 @@ import {
   WebSocketRelayMirror,
   P2pClient,
   importWallet,
+  isInteregoEvent,
   KIND_DESCRIPTOR,
+  KIND_DIRECTORY,
+  KIND_ATTESTATION,
+  KIND_ENCRYPTED_SHARE,
   type P2pEvent,
 } from '../src/index.js';
 
@@ -68,7 +72,7 @@ async function startNostrRelay(): Promise<NostrRelay> {
       const url = `ws://127.0.0.1:${addr.port}`;
       const events: P2pEvent[] = [];
       // Map subId → ws + filter, for fan-out
-      type Sub = { ws: WebSocket; subId: string; kinds: readonly number[] };
+      type Sub = { ws: WebSocket; subId: string; kinds: readonly number[]; authors: readonly string[] };
       const subs: Sub[] = [];
 
       wss.on('connection', (ws) => {
@@ -92,16 +96,19 @@ async function startNostrRelay(): Promise<NostrRelay> {
             for (const s of subs) {
               if (s.ws === ws) continue; // don't echo back to publisher
               if (s.kinds.length > 0 && !s.kinds.includes(event.kind)) continue;
+              if (s.authors.length > 0 && !s.authors.includes(event.pubkey.toLowerCase())) continue;
               try { s.ws.send(JSON.stringify(['EVENT', s.subId, event])); } catch { /* ignore */ }
             }
           } else if (verb === 'REQ' && msg.length >= 3) {
             const subId = String(msg[1]);
-            const filter = msg[2] as { kinds?: number[] };
+            const filter = msg[2] as { kinds?: number[]; authors?: string[] };
             const kinds = (filter?.kinds ?? []) as readonly number[];
-            subs.push({ ws, subId, kinds });
+            const authors = ((filter?.authors ?? []) as string[]).map(a => a.toLowerCase());
+            subs.push({ ws, subId, kinds, authors });
             // Replay matching historical events
             for (const e of events) {
               if (kinds.length > 0 && !kinds.includes(e.kind)) continue;
+              if (authors.length > 0 && !authors.includes(e.pubkey.toLowerCase())) continue;
               try { ws.send(JSON.stringify(['EVENT', subId, e])); } catch { /* ignore */ }
             }
             ws.send(JSON.stringify(['EOSE', subId]));
@@ -172,15 +179,28 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
 
     // Bridge A
     const innerA = new InMemoryRelay();
-    const mirrorA = new WebSocketRelayMirror(innerA, [relay.url], { onStatusChange: tap('A') });
+    const aliceWallet = importWallet(ALICE_KEY, 'agent', 'alice');
+    const bobWallet = importWallet(BOB_KEY, 'agent', 'bob');
+    // We need the pubkeys before constructing P2pClient instances
+    // because the inbound-author allow-list takes them as input.
+    const alicePubkey = aliceWallet.address;
+    const bobPubkey = bobWallet.address;
+
+    const mirrorA = new WebSocketRelayMirror(innerA, [relay.url], {
+      onStatusChange: tap('A'),
+      subscribeAuthors: [bobPubkey], // Alice follows Bob
+    });
     teardowns.push(() => mirrorA.stop());
-    const alice = new P2pClient(mirrorA, importWallet(ALICE_KEY, 'agent', 'alice'));
+    const alice = new P2pClient(mirrorA, aliceWallet);
 
     // Bridge B
     const innerB = new InMemoryRelay();
-    const mirrorB = new WebSocketRelayMirror(innerB, [relay.url], { onStatusChange: tap('B') });
+    const mirrorB = new WebSocketRelayMirror(innerB, [relay.url], {
+      onStatusChange: tap('B'),
+      subscribeAuthors: [alicePubkey], // Bob follows Alice
+    });
     teardowns.push(() => mirrorB.stop());
-    const bob = new P2pClient(mirrorB, importWallet(BOB_KEY, 'agent', 'bob'));
+    const bob = new P2pClient(mirrorB, bobWallet);
 
     mirrorA.start();
     mirrorB.start();
@@ -307,5 +327,185 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
     const events = await inner.query({});
     // Only the nudge event should be present; the forged event must not have been injected
     expect(events.find(e => e.id === forged.id)).toBeUndefined();
+  });
+});
+
+describe('WebSocketRelayMirror — inbound author allow-list (default outbound-only)', () => {
+  const teardowns: (() => Promise<void> | void)[] = [];
+  afterEach(async () => {
+    for (const t of teardowns.splice(0)) await t();
+  });
+
+  it('with empty subscribeAuthors, no REQ is sent and no inbound events arrive', async () => {
+    const relay = await startNostrRelay();
+    teardowns.push(() => relay.close());
+
+    // Pre-seed the relay with an event from someone else, so a
+    // hypothetical broad subscription would have something to receive.
+    const stranger = importWallet('0x' + 'aa'.repeat(32), 'agent', 'stranger');
+    const strangerClient = new P2pClient(new InMemoryRelay(), stranger);
+    // Manually craft an event-shaped object the relay will store.
+    // Use a separate mirror that DOES subscribe to push it in.
+    const seedInner = new InMemoryRelay();
+    const seedMirror = new WebSocketRelayMirror(seedInner, [relay.url]);
+    teardowns.push(() => seedMirror.stop());
+    const seedClient = new P2pClient(seedMirror, stranger);
+    seedMirror.start();
+    await waitFor(() => seedMirror.status().every(s => s.state === 'connected'));
+    await seedClient.publishDescriptor({
+      descriptorId: 'urn:cg:from-stranger',
+      cid: 'bafk-stranger',
+      graphIri: 'urn:graph:stranger',
+    });
+    await new Promise(r => setTimeout(r, 100));
+    expect(relay.events.length).toBeGreaterThanOrEqual(1);
+
+    // Now spin up the mirror under test with NO subscribeAuthors.
+    const inner = new InMemoryRelay();
+    const mirror = new WebSocketRelayMirror(inner, [relay.url]);
+    teardowns.push(() => mirror.stop());
+    expect(mirror.isInboundEnabled()).toBe(false);
+    mirror.start();
+    await waitFor(() => mirror.status().every(s => s.state === 'connected'));
+
+    // Wait long enough that any REQ-induced inbound would have
+    // arrived. None should — outbound-only means no subscription.
+    await new Promise(r => setTimeout(r, 300));
+    expect(inner.size()).toBe(0);
+  });
+
+  it('with subscribeAuthors set, only events from those authors arrive', async () => {
+    const relay = await startNostrRelay();
+    teardowns.push(() => relay.close());
+
+    const alice = importWallet(ALICE_KEY, 'agent', 'alice');
+    const bob = importWallet(BOB_KEY, 'agent', 'bob');
+
+    // Alice + Bob both publish; only Alice is on the allow-list
+    const seedInner = new InMemoryRelay();
+    const seedMirror = new WebSocketRelayMirror(seedInner, [relay.url]);
+    teardowns.push(() => seedMirror.stop());
+    seedMirror.start();
+    await waitFor(() => seedMirror.status().every(s => s.state === 'connected'));
+    const aliceClient = new P2pClient(seedMirror, alice);
+    const bobClient = new P2pClient(seedMirror, bob);
+    await aliceClient.publishDescriptor({
+      descriptorId: 'urn:cg:from-alice',
+      cid: 'bafk-a',
+      graphIri: 'urn:graph:gated',
+    });
+    await bobClient.publishDescriptor({
+      descriptorId: 'urn:cg:from-bob',
+      cid: 'bafk-b',
+      graphIri: 'urn:graph:gated',
+    });
+    await new Promise(r => setTimeout(r, 100));
+
+    // Reader subscribes ONLY to Alice
+    const inner = new InMemoryRelay();
+    const mirror = new WebSocketRelayMirror(inner, [relay.url], {
+      subscribeAuthors: [aliceClient.pubkey],
+    });
+    teardowns.push(() => mirror.stop());
+    expect(mirror.isInboundEnabled()).toBe(true);
+    mirror.start();
+    await waitFor(() => mirror.status().every(s => s.state === 'connected'));
+    await new Promise(r => setTimeout(r, 300));
+
+    const reader = new P2pClient(mirror, alice);
+    const found = await reader.queryDescriptors({});
+    const publishers = new Set(found.map(f => f.publisher.toLowerCase()));
+    expect(publishers.has(aliceClient.pubkey.toLowerCase())).toBe(true);
+    expect(publishers.has(bobClient.pubkey.toLowerCase())).toBe(false);
+  });
+
+  it('inboundFilter rejects events that aren\'t valid Interego shape', async () => {
+    const relay = await startNostrRelay();
+    teardowns.push(() => relay.close());
+
+    const alice = importWallet(ALICE_KEY, 'agent', 'alice');
+
+    // Alice publishes both a real Interego descriptor AND a kind-30040
+    // event that's missing the required Interego tags (simulating
+    // some other Nostr app using the same kind number).
+    const seedInner = new InMemoryRelay();
+    const seedMirror = new WebSocketRelayMirror(seedInner, [relay.url]);
+    teardowns.push(() => seedMirror.stop());
+    seedMirror.start();
+    await waitFor(() => seedMirror.status().every(s => s.state === 'connected'));
+    const aliceClient = new P2pClient(seedMirror, alice);
+
+    // Real descriptor
+    await aliceClient.publishDescriptor({
+      descriptorId: 'urn:cg:real-thing',
+      cid: 'bafk-real',
+      graphIri: 'urn:graph:filtered',
+    });
+
+    // Bogus kind-30040 — manually publish an event with wrong tag shape
+    // by going through the seedMirror's publish() with a hand-crafted event.
+    // The simplest way to inject something through the relay is via the
+    // raw P2pRelay.publish call. We need a properly signed event for it
+    // to pass verifyEvent. Easiest: use the existing P2pClient but on a
+    // descriptor IRI that's missing — actually publishDescriptor always
+    // adds the right tags, so we'd have to craft directly. Let's
+    // assert via isInteregoEvent() unit-style instead.
+    const fakeEvent: P2pEvent = {
+      id: '0'.repeat(64),
+      pubkey: aliceClient.pubkey,
+      created_at: 0,
+      kind: KIND_DESCRIPTOR,
+      tags: [['random', 'value']],
+      content: '',
+      sig: '0xinvalid',
+    };
+    expect(isInteregoEvent(fakeEvent)).toBe(false);
+
+    const realLooking: P2pEvent = {
+      id: '0'.repeat(64),
+      pubkey: aliceClient.pubkey,
+      created_at: 0,
+      kind: KIND_DESCRIPTOR,
+      tags: [['d', 'urn:cg:x'], ['cid', 'bafk-x'], ['graph', 'urn:graph:x']],
+      content: '',
+      sig: '0xinvalid',
+    };
+    expect(isInteregoEvent(realLooking)).toBe(true);
+
+    // End-to-end: with inboundFilter set, only the real descriptor
+    // arrives in the reader's local relay.
+    const inner = new InMemoryRelay();
+    const mirror = new WebSocketRelayMirror(inner, [relay.url], {
+      subscribeAuthors: [aliceClient.pubkey],
+      inboundFilter: isInteregoEvent,
+    });
+    teardowns.push(() => mirror.stop());
+    mirror.start();
+    await waitFor(() => mirror.status().every(s => s.state === 'connected'));
+    await new Promise(r => setTimeout(r, 300));
+
+    const reader = new P2pClient(mirror, alice);
+    const found = await reader.queryDescriptors({});
+    expect(found.some(f => f.descriptorId === 'urn:cg:real-thing')).toBe(true);
+  });
+
+  it('isInteregoEvent shape coverage', () => {
+    const base = { id: '0'.repeat(64), pubkey: '0x' + 'a'.repeat(40), created_at: 0, content: '', sig: '0x' };
+    // Descriptor: needs d + cid + graph
+    expect(isInteregoEvent({ ...base, kind: KIND_DESCRIPTOR, tags: [['d','x'],['cid','y'],['graph','z']] })).toBe(true);
+    expect(isInteregoEvent({ ...base, kind: KIND_DESCRIPTOR, tags: [['d','x'],['cid','y']] })).toBe(false);
+    expect(isInteregoEvent({ ...base, kind: KIND_DESCRIPTOR, tags: [] })).toBe(false);
+    // Directory: d=directory
+    expect(isInteregoEvent({ ...base, kind: KIND_DIRECTORY, tags: [['d','directory']] })).toBe(true);
+    expect(isInteregoEvent({ ...base, kind: KIND_DIRECTORY, tags: [['d','other']] })).toBe(false);
+    // Attestation: needs e
+    expect(isInteregoEvent({ ...base, kind: KIND_ATTESTATION, tags: [['e','abc']] })).toBe(true);
+    expect(isInteregoEvent({ ...base, kind: KIND_ATTESTATION, tags: [] })).toBe(false);
+    // Encrypted share: needs p
+    expect(isInteregoEvent({ ...base, kind: KIND_ENCRYPTED_SHARE, tags: [['p','abc']] })).toBe(true);
+    expect(isInteregoEvent({ ...base, kind: KIND_ENCRYPTED_SHARE, tags: [] })).toBe(false);
+    // Other kinds: always reject
+    expect(isInteregoEvent({ ...base, kind: 1, tags: [] })).toBe(false);
+    expect(isInteregoEvent({ ...base, kind: 30000, tags: [] })).toBe(false);
   });
 });

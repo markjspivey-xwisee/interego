@@ -64,6 +64,29 @@ export interface MirrorOptions {
   readonly subscribeKinds?: readonly number[];
 
   /**
+   * Pubkeys (hex, no `0x`/no-prefix Schnorr form OR ECDSA address)
+   * to subscribe to inbound. **If empty or omitted, the mirror
+   * sends NO subscription request** — outbound-only mode. This is
+   * the recommended default: the kind-30000 range is shared with
+   * other Nostr apps using these numbers for unrelated purposes,
+   * so unfiltered subscriptions pull in lots of garbage.
+   *
+   * Set this only when you want to follow specific identities
+   * across the federation.
+   */
+  readonly subscribeAuthors?: readonly string[];
+
+  /**
+   * Optional structural validator applied AFTER signature
+   * verification, BEFORE injection into the inner relay. Return
+   * `true` to accept, `false` to drop. Use `isInteregoEvent` from
+   * this module to require the Interego tag shape — defense in
+   * depth against random kind-30040 events from other Nostr apps
+   * sneaking into your local store.
+   */
+  readonly inboundFilter?: (event: P2pEvent) => boolean;
+
+  /**
    * Cap on the number of unique event ids we remember for dedup.
    * Older ids are evicted FIFO. Default: 10000 — enough for ~hours
    * of normal traffic without unbounded growth.
@@ -81,6 +104,23 @@ export interface MirrorOptions {
    * Useful for surfacing in admin UIs.
    */
   readonly onStatusChange?: (status: RelayConnectionStatus) => void;
+}
+
+/**
+ * Default structural validator for inbound events. Requires the
+ * shape an Interego event must have to be useful. Use as
+ * `inboundFilter: isInteregoEvent` to drop random kind-30040 events
+ * from unrelated Nostr apps.
+ */
+export function isInteregoEvent(event: P2pEvent): boolean {
+  const has = (name: string): boolean => event.tags.some(t => t[0] === name);
+  switch (event.kind) {
+    case KIND_DESCRIPTOR:        return has('d') && has('cid') && has('graph');
+    case KIND_DIRECTORY:         return event.tags.some(t => t[0] === 'd' && t[1] === 'directory');
+    case KIND_ATTESTATION:       return has('e');
+    case KIND_ENCRYPTED_SHARE:   return has('p');
+    default:                     return false;
+  }
 }
 
 // ── Implementation ───────────────────────────────────────────
@@ -109,6 +149,8 @@ export class WebSocketRelayMirror implements P2pRelay {
   private readonly inner: P2pRelay;
   private readonly urls: readonly string[];
   private readonly subscribeKinds: readonly number[];
+  private readonly subscribeAuthors: readonly string[];
+  private readonly inboundFilter: ((event: P2pEvent) => boolean) | null;
   private readonly backoff: { initialMs: number; maxMs: number };
   private readonly onStatusChange?: (status: RelayConnectionStatus) => void;
 
@@ -125,9 +167,16 @@ export class WebSocketRelayMirror implements P2pRelay {
     this.inner = inner;
     this.urls = urls.slice();
     this.subscribeKinds = opts.subscribeKinds ?? DEFAULT_KINDS;
+    this.subscribeAuthors = (opts.subscribeAuthors ?? []).map(a => a.toLowerCase());
+    this.inboundFilter = opts.inboundFilter ?? null;
     this.dedupCacheSize = opts.dedupCacheSize ?? 10000;
     this.backoff = opts.backoff ?? { initialMs: 1000, maxMs: 30000 };
     if (opts.onStatusChange) this.onStatusChange = opts.onStatusChange;
+  }
+
+  /** Whether inbound events from external relays are accepted. */
+  isInboundEnabled(): boolean {
+    return this.subscribeAuthors.length > 0;
   }
 
   /** Open WebSocket connections to all configured external relays. */
@@ -219,9 +268,15 @@ export class WebSocketRelayMirror implements P2pRelay {
       conn.connectedSince = Math.floor(Date.now() / 1000);
       conn.reconnectAttempts = 0;
       this.fireStatus(conn);
-      // Subscribe to Interego kinds so we see incoming events from
-      // this relay. NIP-01: ["REQ", <subscription_id>, <filter>, ...]
-      const filter = { kinds: [...this.subscribeKinds] };
+      // Inbound subscription: only when subscribeAuthors is non-empty.
+      // The kind range 30000-39999 is shared on public Nostr; an
+      // unfiltered subscription pulls in lots of unrelated events.
+      // Outbound publishing is unaffected by this gate.
+      if (this.subscribeAuthors.length === 0) return;
+      const filter = {
+        kinds: [...this.subscribeKinds],
+        authors: [...this.subscribeAuthors],
+      };
       try {
         ws.send(JSON.stringify(['REQ', conn.subId, filter]));
       } catch { /* will reconnect */ }
@@ -276,6 +331,14 @@ export class WebSocketRelayMirror implements P2pRelay {
       if (verifyEvent(event) === null) return;
       // Dedup
       if (this.seenIds.has(event.id)) return;
+      // Structural filter (defense in depth — kind 30000-39999
+      // is shared with other Nostr apps; we only want the shape
+      // Interego defines). Marked seen even if filtered so we
+      // don't re-evaluate the same event arriving from N relays.
+      if (this.inboundFilter && !this.inboundFilter(event)) {
+        this.rememberId(event.id);
+        return;
+      }
       this.rememberId(event.id);
       conn.eventsIn++;
       // Inject into local relay; existing local subscribers will see
