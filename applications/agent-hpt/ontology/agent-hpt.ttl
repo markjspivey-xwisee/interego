@@ -1,0 +1,227 @@
+@prefix agent-hpt: <https://markjspivey-xwisee.github.io/interego/applications/agent-hpt#> .
+@prefix cg:        <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix amta:      <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix hela:      <https://markjspivey-xwisee.github.io/interego/ns/hela#> .
+@prefix passport:  <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
+@prefix olke:      <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
+@prefix prov:      <http://www.w3.org/ns/prov#> .
+@prefix rdf:       <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:      <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:       <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:       <http://www.w3.org/2002/07/owl#> .
+@prefix dct:       <http://purl.org/dc/terms/> .
+@prefix vann:      <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════
+#  agent-hpt: — Agent Human Performance Technology
+#
+#  Vertical-scoped vocabulary for treating AI agents as managed
+#  performers in an L&D / performance consulting practice.
+#
+#  Status: VERTICAL APPLICATION OVER L3.
+#
+#  - NOT part of the Interego protocol (cg:, cgh:, pgsl:, ie:, align:).
+#  - NOT a reference implementation of the protocol.
+#  - One of many possible verticals; no special status.
+#  - Every term subclasses an existing L1/L2/L3 class — this
+#    vocabulary adds composition / role / category labels for the
+#    HPT framework, not new protocol semantics.
+#
+#  See applications/agent-hpt/README.md for the full spec.
+# ══════════════════════════════════════════════════════════════
+
+<https://markjspivey-xwisee.github.io/interego/applications/agent-hpt>
+    a owl:Ontology ;
+    dct:title "Agent HPT — Human Performance Technology applied to AI agents" ;
+    dct:description "Vertical-application ontology over Interego L2/L3. Composes passport, amta, olke, hela, abac into a coherent agent performance-management practice." ;
+    vann:preferredNamespacePrefix "agent-hpt" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/agent-hpt#" ;
+    rdfs:comment "VERTICAL APPLICATION — non-normative; not part of the protocol; not a reference implementation. See applications/agent-hpt/README.md." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/amta> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/hela> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/passport> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/olke> .
+
+# ── Capability + gap + intervention ────────────────────────
+
+agent-hpt:Capability a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Capability" ;
+    rdfs:comment "What an agent can demonstrably do. Carries a cg:Affordance for invocation + cg:SemioticFacet for the rubric criterion + agent-hpt:requiredPrerequisite chain. Not the same as 'is permitted' — that's ABAC. Capability says CAN; ABAC says MAY." .
+
+agent-hpt:CapabilityGap a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Capability Gap" ;
+    rdfs:comment "Asserted gap between desired and actual performance for one capability. Carries the BEM diagnosis (which Gilbert category is the cause) and prov:wasDerivedFrom links to the observations that surfaced the gap." .
+
+agent-hpt:Intervention a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Intervention" ;
+    rdfs:comment "A change made to close a capability gap. Cites the gap via agent-hpt:targetGap; carries an intervention type from the controlled vocabulary (PromptUpdate / ToolGrant / TrainingPublish / AbacChange / ModelUpgrade)." .
+
+# ── Observation + review (composition over L3 primitives) ──
+
+agent-hpt:PerformanceObservation a owl:Class ;
+    rdfs:subClassOf hela:Statement ;
+    rdfs:label "Performance Observation" ;
+    rdfs:comment "One signed observation of an agent action. Subclass of hela:Statement (xAPI Statement) — same actor / verb / object / result / context / timestamp shape, just typed for the HPT pipeline. Lives on the agent's own pod (agent owns its observations)." .
+
+agent-hpt:PerformanceReview a owl:Class ;
+    rdfs:subClassOf amta:Attestation ;
+    rdfs:label "Performance Review" ;
+    rdfs:comment "Periodic multi-axis judgment of an agent's performance over a window. Subclass of amta:Attestation — competence / honesty / relevance / recency. Cites the observations it considered via prov:wasDerivedFrom; supersedes the prior review via cg:supersedes." .
+
+# ── Capability lifecycle events (subclass passport:LifeEvent) ─
+
+agent-hpt:CapabilityGranted a owl:Class ;
+    rdfs:subClassOf passport:LifeEvent ;
+    rdfs:label "Capability Granted" ;
+    rdfs:comment "Promotion event — agent demonstrated the prerequisite reviews and is now entitled to the capability + the ABAC scope it gates." .
+
+agent-hpt:CapabilityRevoked a owl:Class ;
+    rdfs:subClassOf passport:LifeEvent ;
+    rdfs:label "Capability Revoked" ;
+    rdfs:comment "Demotion / revocation event. Carries the reason; supersedes the prior CapabilityGranted via cg:supersedes." .
+
+# ── Rubric + criteria ─────────────────────────────────────
+
+agent-hpt:RubricCriterion a owl:Class ;
+    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:label "Rubric Criterion" ;
+    rdfs:comment "One criterion in a capability's evaluation rubric. Carries weight, threshold, scoring scheme. Aggregated criteria define what 'mastery' means for the capability." .
+
+# ── Properties (bridges between primitives) ───────────────
+
+agent-hpt:capability a owl:ObjectProperty ;
+    rdfs:label "capability" ;
+    rdfs:comment "Links a gap, intervention, observation, or review to the agent-hpt:Capability it concerns." ;
+    rdfs:range agent-hpt:Capability .
+
+agent-hpt:targetGap a owl:ObjectProperty ;
+    rdfs:label "target gap" ;
+    rdfs:comment "Links an intervention to the capability gap it addresses." ;
+    rdfs:domain agent-hpt:Intervention ;
+    rdfs:range agent-hpt:CapabilityGap .
+
+agent-hpt:demonstratedBy a owl:ObjectProperty ;
+    rdfs:label "demonstrated by" ;
+    rdfs:comment "Links a CapabilityGranted event to the reviews / observations that established demonstrated mastery." ;
+    rdfs:domain agent-hpt:CapabilityGranted .
+
+agent-hpt:requiredPrerequisite a owl:ObjectProperty ;
+    rdfs:label "required prerequisite" ;
+    rdfs:comment "Capability A requires capability B to be granted first. DAG enforcement happens in ABAC." ;
+    rdfs:domain agent-hpt:Capability ;
+    rdfs:range agent-hpt:Capability .
+
+agent-hpt:bemCategory a owl:ObjectProperty ;
+    rdfs:label "BEM category" ;
+    rdfs:comment "Which Gilbert Behavior Engineering Model category is the diagnosed root cause of the gap. Disciplines the intervention design — different category, different intervention type." ;
+    rdfs:domain agent-hpt:CapabilityGap ;
+    rdfs:range agent-hpt:BemCategory .
+
+agent-hpt:olkeStage a owl:ObjectProperty ;
+    rdfs:label "OLKE knowledge stage" ;
+    rdfs:comment "Where this capability sits on the OLKE Tacit → Articulate → Collective → Institutional ladder for the agent / org." ;
+    rdfs:domain agent-hpt:Capability ;
+    rdfs:range olke:Stage .
+
+agent-hpt:rubricCriterion a owl:ObjectProperty ;
+    rdfs:label "rubric criterion" ;
+    rdfs:comment "Links an observation's result to the rubric criterion against which it was scored." ;
+    rdfs:range agent-hpt:RubricCriterion .
+
+agent-hpt:capabilityScope a owl:ObjectProperty ;
+    rdfs:label "capability scope" ;
+    rdfs:comment "Scopes a review to one capability (or a set). A single review can cover multiple capabilities by emitting one Attestation per capability." ;
+    rdfs:domain agent-hpt:PerformanceReview ;
+    rdfs:range agent-hpt:Capability .
+
+agent-hpt:beforeStateRef a owl:ObjectProperty ;
+    rdfs:label "before-state reference" ;
+    rdfs:comment "Snapshot reference of the agent's relevant state before an intervention applied (system prompt commit, tool inventory hash, ABAC policy version, model class)." ;
+    rdfs:domain agent-hpt:Intervention .
+
+agent-hpt:afterStateRef a owl:ObjectProperty ;
+    rdfs:label "after-state reference" ;
+    rdfs:comment "Snapshot reference after the intervention applied. The pair (before, after) is what makes the intervention auditable." ;
+    rdfs:domain agent-hpt:Intervention .
+
+agent-hpt:appliedAt a owl:DatatypeProperty ;
+    rdfs:label "applied at" ;
+    rdfs:range xsd:dateTime .
+
+agent-hpt:rootCause a owl:DatatypeProperty ;
+    rdfs:label "root cause" ;
+    rdfs:comment "Free-text description of the diagnosed root cause. Auditable; should cite specific observations." ;
+    rdfs:range xsd:string .
+
+agent-hpt:desiredOutcome a owl:DatatypeProperty ;
+    rdfs:label "desired outcome" ;
+    rdfs:range xsd:string .
+
+agent-hpt:actualOutcome a owl:DatatypeProperty ;
+    rdfs:label "actual outcome" ;
+    rdfs:range xsd:string .
+
+agent-hpt:subject a owl:ObjectProperty ;
+    rdfs:label "subject" ;
+    rdfs:comment "The agent (cg:AuthorizedAgent / prov:SoftwareAgent) being evaluated, granted, or having a gap." ;
+    rdfs:range prov:Agent .
+
+# ── BEM categories (Gilbert's six) ─────────────────────────
+
+agent-hpt:BemCategory a owl:Class ;
+    rdfs:label "BEM Category" ;
+    rdfs:comment "Gilbert's Behavior Engineering Model — six categories of performance influence. Diagnosing which category is the root cause disciplines the intervention design." .
+
+agent-hpt:InformationAndFeedback a agent-hpt:BemCategory, owl:NamedIndividual ;
+    rdfs:label "Information & Feedback" ;
+    rdfs:comment "Does the agent know what's expected? Does it get feedback on whether it succeeded? Intervention shape: prompt clarification, eval-loop wiring, tool-result feedback enrichment." .
+
+agent-hpt:ToolsAndResources a agent-hpt:BemCategory, owl:NamedIndividual ;
+    rdfs:label "Tools & Resources" ;
+    rdfs:comment "Does the agent have the right tools / pods / API keys to do the work? Intervention shape: ToolGrant, AbacChange." .
+
+agent-hpt:Incentives a agent-hpt:BemCategory, owl:NamedIndividual ;
+    rdfs:label "Incentives" ;
+    rdfs:comment "Is the framing aligned with the desired behavior? Intervention shape: PromptUpdate (system prompt scoring framing)." .
+
+agent-hpt:KnowledgeAndSkills a agent-hpt:BemCategory, owl:NamedIndividual ;
+    rdfs:label "Knowledge & Skills" ;
+    rdfs:comment "Has the agent ingested the relevant knowledge? Demonstrated the skill? Intervention shape: TrainingPublish, knowledge graph injection." .
+
+agent-hpt:Capacity a agent-hpt:BemCategory, owl:NamedIndividual ;
+    rdfs:label "Capacity" ;
+    rdfs:comment "Does the model class / context window / rate limit support the task? Intervention shape: ModelUpgrade, batching changes, capacity provisioning." .
+
+agent-hpt:Motives a agent-hpt:BemCategory, owl:NamedIndividual ;
+    rdfs:label "Motives" ;
+    rdfs:comment "Does the agent's framing / values align with the goal? Intervention shape: PromptUpdate (values / mission framing) or in extreme cases capability revocation." .
+
+# ── Intervention types ─────────────────────────────────────
+
+agent-hpt:InterventionType a owl:Class ;
+    rdfs:label "Intervention Type" ;
+    rdfs:comment "Controlled vocabulary of the kinds of interventions that close gaps. Each maps to a typical BEM category but combinations are possible." .
+
+agent-hpt:PromptUpdate a agent-hpt:InterventionType, owl:NamedIndividual ;
+    rdfs:label "Prompt Update" ;
+    rdfs:comment "Change to the system prompt. Typical for InformationAndFeedback or Incentives gaps." .
+
+agent-hpt:ToolGrant a agent-hpt:InterventionType, owl:NamedIndividual ;
+    rdfs:label "Tool Grant" ;
+    rdfs:comment "New tool / MCP server connected to the agent. Typical for ToolsAndResources gaps." .
+
+agent-hpt:TrainingPublish a agent-hpt:InterventionType, owl:NamedIndividual ;
+    rdfs:label "Training Publish" ;
+    rdfs:comment "Knowledge descriptors published to the agent's pod or shared via cross-pod E2EE share. Typical for KnowledgeAndSkills gaps." .
+
+agent-hpt:AbacChange a agent-hpt:InterventionType, owl:NamedIndividual ;
+    rdfs:label "ABAC Change" ;
+    rdfs:comment "Change to the agent's ABAC scope. Typical for ToolsAndResources or as a consequence of CapabilityGranted / CapabilityRevoked." .
+
+agent-hpt:ModelUpgrade a agent-hpt:InterventionType, owl:NamedIndividual ;
+    rdfs:label "Model Upgrade" ;
+    rdfs:comment "Move the agent to a different model class. Typical for Capacity gaps. Triggers a passport:LifeEvent recording the migration." .
