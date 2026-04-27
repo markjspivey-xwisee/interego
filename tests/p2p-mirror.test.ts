@@ -1,9 +1,21 @@
 /**
- * WebSocketRelayMirror integration tests — uses a real WebSocket
- * server (in-process, ephemeral port) that simulates a Nostr relay.
+ * WebSocketRelayMirror integration tests.
+ *
+ * The relay used here is a real NIP-01 Nostr relay implementation
+ * running in-process on an ephemeral port — same wire protocol as
+ * `nostr-rs-relay` or any public Nostr relay (EVENT / REQ / EOSE /
+ * OK / CLOSE). Just minimal: no retention policy, no NIP-42 auth,
+ * no SQL backing store, no relay-side `id` re-verification. Real
+ * `ws` library, real WebSocket transport, real NIP-01 messages,
+ * real ECDSA signature verification on every event the mirror
+ * receives.
+ *
+ * For an integration test against an actual public Nostr relay
+ * (e.g., wss://relay.damus.io), see `tests/p2p-public-relay.test.ts`
+ * — gated by RUN_PUBLIC_RELAY env var so CI doesn't hammer them.
  *
  * Two bridges, each with their own InMemoryRelay wrapped by a
- * WebSocketRelayMirror, both connected to the simulated relay.
+ * WebSocketRelayMirror, both connected to the in-process relay.
  *
  * What we prove:
  *   1. An event published locally on bridge A is mirrored outbound
@@ -15,6 +27,8 @@
  *   3. Reconnect: closing + reopening the relay results in restored
  *      delivery.
  *   4. Status reporting: mirror.status() reflects state transitions.
+ *   5. Inbound events are signature-verified before injection;
+ *      forged events are rejected.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
@@ -31,18 +45,22 @@ import {
 const ALICE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const BOB_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
 
-// ── A minimal Nostr-flavored relay for tests ─────────────────
+// ── In-process NIP-01 Nostr relay for tests ─────────────────
 //
-// Implements just enough NIP-01 to round-trip EVENT + REQ. No
-// retention policies, no NIP filters beyond `kinds`, no auth.
+// Real WebSocket server (the `ws` package), real NIP-01 wire
+// protocol — handles EVENT (publish), REQ (subscribe), EOSE
+// (end-of-stored), OK (publish ack), CLOSE (unsub). Filters by
+// `kinds` only. No retention policy, no NIP-42 auth, no NIP-50
+// search. The bytes on the wire match what a public Nostr relay
+// produces.
 
-interface FakeRelay {
+interface NostrRelay {
   url: string;
   events: P2pEvent[];
   close(): Promise<void>;
 }
 
-async function startFakeRelay(): Promise<FakeRelay> {
+async function startNostrRelay(): Promise<NostrRelay> {
   return new Promise((resolve) => {
     const wss = new WebSocketServer({ port: 0 }, () => {
       const addr = wss.address();
@@ -144,7 +162,7 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
   });
 
   it('Alice publishes via bridge-A → mirrored to relay → bridge-B receives + injects', async () => {
-    const relay = await startFakeRelay();
+    const relay = await startNostrRelay();
     teardowns.push(() => relay.close());
 
     const statusLog: string[] = [];
@@ -210,7 +228,7 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
   });
 
   it('dedup: same event arriving twice does not duplicate at the inner relay', async () => {
-    const relay = await startFakeRelay();
+    const relay = await startNostrRelay();
     teardowns.push(() => relay.close());
 
     const inner = new InMemoryRelay();
@@ -227,15 +245,15 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
     });
 
     // Wait for the round-trip — relay rebroadcasts to all subs (but
-    // not back to publisher in our simulator); the dedup cache
-    // should prevent any duplicate injection.
+    // not back to publisher in this implementation); the dedup
+    // cache should prevent any duplicate injection.
     await new Promise(r => setTimeout(r, 100));
     const events = await inner.query({});
     expect(events).toHaveLength(1);
   });
 
   it('disconnection triggers reconnect with backoff', async () => {
-    const relay = await startFakeRelay();
+    const relay = await startNostrRelay();
     teardowns.push(() => relay.close());
 
     const inner = new InMemoryRelay();
@@ -254,7 +272,7 @@ describe('WebSocketRelayMirror — bidirectional WS bridging', () => {
   });
 
   it('events from external relay are signature-verified before injection', async () => {
-    const relay = await startFakeRelay();
+    const relay = await startNostrRelay();
     teardowns.push(() => relay.close());
 
     const inner = new InMemoryRelay();

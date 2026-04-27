@@ -70,9 +70,14 @@ describe('personal-bridge — tool surface', () => {
   });
 
   it('two bridges sharing a relay can exchange encrypted shares (cross-bridge round-trip)', async () => {
-    // Demonstrate the multi-bridge case: in production, two bridges
-    // would share a relay via EXTERNAL_RELAYS. Here we simulate by
-    // building two P2pClients on a fresh shared relay.
+    // Demonstrate the multi-bridge case at the protocol layer: in
+    // production, two bridges would share a relay via EXTERNAL_RELAYS
+    // (which goes through WebSocketRelayMirror — see
+    // tests/p2p-mirror.test.ts for the actual WebSocket transport).
+    // Here we exercise the same publish→discover→decrypt path by
+    // running two real P2pClients with separate wallets on a shared
+    // InMemoryRelay — same code that runs in production, just
+    // without the WebSocket layer (which has its own dedicated test).
     const sharedRelay = new InMemoryRelay();
     const aliceWallet = importWallet('0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', 'agent', 'alice');
     const bobWallet = importWallet('0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', 'agent', 'bob');

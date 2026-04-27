@@ -478,12 +478,14 @@ describe('P2P transport — 1:N encrypted share (closes Tier 4 gap)', () => {
   });
 });
 
-describe('P2P transport — three independent processes (cross-surface simulation)', () => {
-  // Simulating "Claude Code on desktop talks to claude.ai mobile through
-  // a shared relay" — both sides are just `P2pClient` instances. Mobile
-  // and desktop don't share state; they share a relay URL. The fact
-  // that they're on different OSes / form factors is invisible to the
-  // protocol.
+describe('P2P transport — desktop + mobile workflow (single-process verification)', () => {
+  // Two independent P2pClients with separate wallets, exchanging
+  // events through a shared relay. The desktop / mobile labels are
+  // semantic, not architectural — the protocol doesn't know about
+  // form factor; what matters is that the two clients share NO state
+  // except a relay URL. For the actual cross-device manual test (real
+  // phone + real desktop hitting a deployed bridge), see
+  // docs/CROSS-DEVICE-TEST-PLAN.md.
   it('desktop publishes; mobile queries; mobile publishes back; desktop sees it live', async () => {
     const relay = new InMemoryRelay(); // in production: WebSocket to a Nostr relay
     const desktop = makeAgent('desktop-claude-code', ALICE_KEY, relay);
