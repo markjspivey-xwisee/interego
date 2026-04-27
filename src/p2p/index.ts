@@ -46,6 +46,8 @@ export type {
 } from './client.js';
 
 export { InMemoryRelay } from './relay.js';
+export { FileBackedRelay } from './file-backed-relay.js';
+export type { FileBackedRelayOptions } from './file-backed-relay.js';
 export { WebSocketRelayMirror } from './websocket-relay-mirror.js';
 export type {
   RelayConnectionStatus,

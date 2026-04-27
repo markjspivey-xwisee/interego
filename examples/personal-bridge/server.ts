@@ -30,6 +30,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   InMemoryRelay,
+  FileBackedRelay,
   P2pClient,
   WebSocketRelayMirror,
   importWallet,
@@ -39,6 +40,8 @@ import {
   type RelayConnectionStatus,
   type P2pRelay,
 } from '@interego/core';
+import { homedir } from 'node:os';
+import { join as pathJoin } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -91,7 +94,18 @@ const externalRelayUrls = EXTERNAL_RELAYS_RAW
 
 const wallet = importWallet(BRIDGE_KEY, 'agent', 'personal-bridge');
 const encryptionKeyPair = generateKeyPair();
-const innerRelay = new InMemoryRelay();
+
+// Persistent storage by default (events survive restarts). Override
+// to a fresh path with BRIDGE_DATA_DIR, or set BRIDGE_PERSIST=0 to
+// fall back to the volatile InMemoryRelay (useful for tests).
+const BRIDGE_PERSIST = process.env['BRIDGE_PERSIST'] !== '0';
+const BRIDGE_DATA_DIR = process.env['BRIDGE_DATA_DIR']
+  ?? pathJoin(homedir(), '.interego-bridge');
+const eventsFile = pathJoin(BRIDGE_DATA_DIR, 'events.jsonl');
+
+const innerRelay: InMemoryRelay = BRIDGE_PERSIST
+  ? new FileBackedRelay(eventsFile, { log })
+  : new InMemoryRelay();
 
 // If external relays are configured, wrap the in-memory relay with
 // a WebSocketRelayMirror so events flow bidirectionally:
@@ -267,13 +281,16 @@ function bridgeStatus(): Record<string, unknown> {
     signingScheme: SIGNING_SCHEME,
     encryptionPubkey: encryptionKeyPair.publicKey,
     relayEventCount: innerRelay.size(),
+    persistence: BRIDGE_PERSIST
+      ? { mode: 'file-backed', path: eventsFile }
+      : { mode: 'in-memory', path: null },
     externalRelays: externalRelayUrls,
     externalRelayForwarding: externalRelayUrls.length === 0
       ? 'disabled (truly local-first)'
       : 'enabled (bidirectional WebSocket mirror, v1.1)',
     mirrorStatus: mirror ? mirror.status() : null,
     bind: `${BIND}:${PORT}`,
-    note: 'Add wss://... URLs to EXTERNAL_RELAYS env var to broadcast events beyond this bridge.',
+    note: 'Persistence: events survive restarts. Set BRIDGE_PERSIST=0 to use volatile in-memory storage. Add wss://... to EXTERNAL_RELAYS to broadcast events beyond this bridge.',
   };
 }
 
