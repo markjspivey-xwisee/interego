@@ -830,6 +830,7 @@ export {
   KIND_ENCRYPTED_SHARE,
   P2pClient,
   InMemoryRelay,
+  WebSocketRelayMirror,
   verifyEvent,
   detectSignatureScheme,
 } from './p2p/index.js';
@@ -845,6 +846,8 @@ export type {
   PublishDescriptorInput,
   PublishDirectoryInput,
   PublishEncryptedShareInput,
+  RelayConnectionStatus,
+  MirrorOptions,
 } from './p2p/index.js';
 
 // ── Operational events (SOC 2 evidence builders) ────────────

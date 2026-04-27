@@ -46,3 +46,8 @@ export type {
 } from './client.js';
 
 export { InMemoryRelay } from './relay.js';
+export { WebSocketRelayMirror } from './websocket-relay-mirror.js';
+export type {
+  RelayConnectionStatus,
+  MirrorOptions,
+} from './websocket-relay-mirror.js';

@@ -35,6 +35,23 @@ For dated detail see [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
+## Hosted vs self-hosted: which path is right for you
+
+Two complementary deployment paths. Both are open-source; both federate; pick by what you need.
+
+| Path | What it is | Best for |
+|---|---|---|
+| **Hosted reference** ([interego-relay.eastus...](https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io)) | Publicly-hosted Azure deployment. OAuth-gated MCP at `/mcp`, per-user pods, claude.ai custom-connector compatible. Operated by the maintainer as a reference instance. | **Onboarding + zero-setup.** Try Interego without running anything. Useful when you want to evaluate the protocol or do quick demos. Tier 3 substrate (self-hosted public pod). |
+| **Personal bridge** ([`examples/personal-bridge/`](examples/personal-bridge/)) | A small Node binary you run on your own infrastructure (laptop / Pi / NAS / Tailscale-exposed home server). Embedded relay, MCP at `/mcp`, REST + admin UI. | **Self-hosting + local-first.** Your data on your network; one URL all your devices; sharing is per-publish (`share_with`) or per-bridge (mirror to public Nostr relays via `EXTERNAL_RELAYS`). Tier 5 substrate. |
+
+**They federate when you need it.** A user on the hosted relay can share with a personal-bridge user via cross-pod E2EE share (Tier 4) or via a common public Nostr relay (Tier 5 with `WebSocketRelayMirror`). Identity stays the same — your wallet's secp256k1 key is your identity on every surface.
+
+**Recommendation:** start on the hosted instance to evaluate; graduate to the personal bridge when you want self-hosting; federate between them whenever it's useful. The hosted instance is *not* the recommended path for production — the personal bridge is. The hosted instance exists so the protocol is approachable; the bridge exists so it's owned.
+
+The hosted relay is intentionally not adding P2P endpoints. Re-centralizing what's deliberately decentralized would defeat the point. P2P lives in your bridge.
+
+---
+
 ## Features
 
 For runnable demos of the trust substrate (auditor, ERC-8004 T0-T2, x402, affordance bridge, federation health check) see [`examples/SEMANTIC-ALIGNMENT-README.md`](examples/SEMANTIC-ALIGNMENT-README.md).

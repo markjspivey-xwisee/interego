@@ -31,10 +31,13 @@ import { fileURLToPath } from 'node:url';
 import {
   InMemoryRelay,
   P2pClient,
+  WebSocketRelayMirror,
   importWallet,
   generateKeyPair,
   type EncryptedShare,
   type DescriptorAnnouncement,
+  type RelayConnectionStatus,
+  type P2pRelay,
 } from '@interego/core';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -75,7 +78,25 @@ const externalRelayUrls = EXTERNAL_RELAYS_RAW
 
 const wallet = importWallet(BRIDGE_KEY, 'agent', 'personal-bridge');
 const encryptionKeyPair = generateKeyPair();
-const relay = new InMemoryRelay();
+const innerRelay = new InMemoryRelay();
+
+// If external relays are configured, wrap the in-memory relay with
+// a WebSocketRelayMirror so events flow bidirectionally:
+//   - locally published events → broadcast to all external relays
+//   - events arriving from external relays → injected into the
+//     in-memory relay so local subscribers see them
+// With EXTERNAL_RELAYS empty, the bridge stays purely local —
+// nothing ever touches the network.
+let mirror: WebSocketRelayMirror | null = null;
+const relay: P2pRelay = externalRelayUrls.length === 0
+  ? innerRelay
+  : (mirror = new WebSocketRelayMirror(innerRelay, externalRelayUrls, {
+      onStatusChange: (s: RelayConnectionStatus) => {
+        broadcastSseEvent('mirror-status', s as unknown as Record<string, unknown>);
+        console.log(`[mirror] ${s.url} → ${s.state}${s.lastError ? ` (${s.lastError})` : ''}`);
+      },
+    }));
+
 const client = new P2pClient(relay, wallet, {
   signingScheme: SIGNING_SCHEME,
   encryptionKeyPair,
@@ -232,11 +253,12 @@ function bridgeStatus(): Record<string, unknown> {
     bridgePubkey: client.pubkey,
     signingScheme: SIGNING_SCHEME,
     encryptionPubkey: encryptionKeyPair.publicKey,
-    relayEventCount: relay.size(),
+    relayEventCount: innerRelay.size(),
     externalRelays: externalRelayUrls,
-    externalRelayForwarding: externalRelayUrls.length > 0
-      ? 'configured (forwarding adapter not implemented in this v1 — see README)'
-      : 'disabled (truly local-first)',
+    externalRelayForwarding: externalRelayUrls.length === 0
+      ? 'disabled (truly local-first)'
+      : 'enabled (bidirectional WebSocket mirror, v1.1)',
+    mirrorStatus: mirror ? mirror.status() : null,
     bind: `${BIND}:${PORT}`,
     note: 'Add wss://... URLs to EXTERNAL_RELAYS env var to broadcast events beyond this bridge.',
   };
@@ -391,16 +413,19 @@ app.post('/api/inbox', async (req, res) => {
 // spawning a real HTTP listener.
 
 if (process.env['NODE_ENV'] !== 'test') {
+  // Start the mirror (open WebSocket connections to external relays)
+  if (mirror) mirror.start();
+
   app.listen(PORT, BIND, () => {
-  console.log(`\n@interego/personal-bridge running`);
-  console.log(`  Bind:           http://${BIND}:${PORT}`);
-  console.log(`  Bridge pubkey:  ${client.pubkey}`);
-  console.log(`  Signing:        ${SIGNING_SCHEME}`);
-  console.log(`  Encryption pk:  ${encryptionKeyPair.publicKey}`);
-  console.log(`  External relays: ${externalRelayUrls.length === 0 ? '(none — fully local)' : externalRelayUrls.join(', ')}`);
-  console.log(`\nPoint your MCP clients at:`);
-  console.log(`  http://<your-host>:${PORT}/mcp`);
-  console.log(`\nAdmin UI:  http://<your-host>:${PORT}/`);
+    console.log(`\n@interego/personal-bridge running`);
+    console.log(`  Bind:           http://${BIND}:${PORT}`);
+    console.log(`  Bridge pubkey:  ${client.pubkey}`);
+    console.log(`  Signing:        ${SIGNING_SCHEME}`);
+    console.log(`  Encryption pk:  ${encryptionKeyPair.publicKey}`);
+    console.log(`  External relays: ${externalRelayUrls.length === 0 ? '(none — fully local)' : externalRelayUrls.join(', ')}`);
+    console.log(`\nPoint your MCP clients at:`);
+    console.log(`  http://<your-host>:${PORT}/mcp`);
+    console.log(`\nAdmin UI:  http://<your-host>:${PORT}/`);
     console.log(`Status:    http://<your-host>:${PORT}/status\n`);
   });
 }
