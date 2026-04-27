@@ -220,4 +220,16 @@ This is identical to the Tier 4 cross-pod share security model — only the tran
 
 Mobile + desktop interop with no central server you operate, using a wallet you already have, against a relay anyone can spin up. Same `P2pClient` API everywhere; only the transport adapter differs.
 
-The 10 passing tests in [`tests/p2p.test.ts`](../tests/p2p.test.ts) prove the protocol works between two independent agents through a shared relay. The cross-surface story is identical — only the relay implementation under the hood changes from `InMemoryRelay` to a WebSocket adapter pointed at any Nostr relay.
+The 16 passing tests in [`tests/p2p.test.ts`](../tests/p2p.test.ts) prove the protocol works between two independent agents through a shared relay (including dual-scheme signing and 1:N encrypted share). The cross-surface story is identical — only the relay implementation under the hood changes from `InMemoryRelay` to a WebSocket adapter pointed at any Nostr relay.
+
+## Ready-to-run reference: `@interego/personal-bridge`
+
+If you want a single Node process that **embodies the whole local-first story**, see [`examples/personal-bridge/`](../examples/personal-bridge/):
+
+- One `npx`-shaped binary (`node dist/server.js` for now).
+- Exposes `POST /mcp` (Streamable HTTP MCP), `/api/*` REST, `GET /` admin UI.
+- Embeds `InMemoryRelay` so no external relay is required.
+- Default behavior: **truly local** — `EXTERNAL_RELAYS` env var is empty, nothing leaves the bridge unless you opt in.
+- All your devices point at the same URL forever (Tailscale or LAN). Sharing is per-publish (`share_with`) or per-bridge (`EXTERNAL_RELAYS` for broadcast).
+
+This is the recommended Tier 5 deployment for a single user with multiple devices. To share with another person, both bridges add the same public Nostr relay (or a self-hosted one) to `EXTERNAL_RELAYS` and exchange recipient pubkeys.
