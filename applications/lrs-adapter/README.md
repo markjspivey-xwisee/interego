@@ -91,6 +91,8 @@ Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) ve
 
 The translation logic itself is verified; the network layer is a separate test concern.
 
+**Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) PUTs a real ingested LRS-Statement descriptor to the deployed Azure CSS and confirms the descriptor IRI + `Asserted` modal + LRS authority all survive the HTTP roundtrip.
+
 ## What this is NOT
 
 - **Not the protocol.** No L1/L2/L3 ontologies are extended.

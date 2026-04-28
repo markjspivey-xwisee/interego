@@ -220,14 +220,15 @@ node applications/learner-performer-companion/examples/companion-chat.mjs
 
 Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) verify against REAL code paths (run via `npx vitest run applications/learner-performer-companion`):
 
-| What's verified (real code paths) | What's still simulated (deferred) |
+| What's verified (real code paths) | What's still deferred |
 |---|---|
 | Real `ContextDescriptor` builder + Turtle + `validate()` for every lpc: class | No actual VC proof verification against a real Open Badges 3.0 issuer (Tier 5) |
 | Credential's `cg:TrustFacet` carries issuer + ThirdPartyAttested level | No actual xAPI Statement pulled from a real LRS (Tier 3) |
 | Performance record's `cg:ProvenanceFacet` attributes to manager (NOT user) | No real SCORM / cmi5 ingestion via `src/connectors/` (Tier 6) |
-| Development plan is `cg:Hypothetical` with `cg:Agent.onBehalfOf` set to user | No live SPARQL retrieval against published descriptors (Tier 2) |
+| Development plan is `cg:Hypothetical` with `cg:Agent.onBehalfOf` set to user | |
 | Cited responses asserted by assistant on behalf of user | |
 | `mintAtom` produces deterministic content-addressed IRIs | |
+| **Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) PUTs a real Open Badge 3.0 credential descriptor to the deployed Azure CSS and confirms `ThirdPartyAttested` Trust facet + issuer DID survive the HTTP roundtrip | |
 
 **Scope finding from testing**: VC proof blocks (the JSON Object holding the cryptographic signature) live as vertical-scoped `lpc:vcProof` literals in the described graph, NOT inside `cg:TrustFacet`. The L1 trust facet is structural metadata only; actual signature verification belongs to a Tier 5 test that invokes `src/compliance/` against a real signature.
 

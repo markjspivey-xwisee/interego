@@ -219,12 +219,13 @@ node applications/agent-development-practice/examples/probe-cycle.mjs
 
 Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) verify against REAL code paths (run via `npx vitest run applications/agent-development-practice`):
 
-| What's verified (real code paths) | What's still simulated (deferred) |
+| What's verified (real code paths) | What's still deferred |
 |---|---|
-| Real `ContextDescriptor` builder produces conforming shape for every adp: class | No actual publish to a network pod (Tier 2) |
-| Real `validate()` returns conforms=true for all 9+ descriptors in the cycle | Vertical content (`adp:coherentNarrative`, `adp:contextSignifier`, etc.) lives in the described graph, not in the descriptor metadata — graph-side content not yet validated end-to-end |
-| Real `toTurtle()` round-trip preserves descriptor IRIs | No federation across two pods (Tier 2) |
-| Modal discipline holds: probes + fragments + syntheses all `cg:Hypothetical`; operator evolution decisions `cg:Asserted` | No live signature verification chain after publish (Tier 1 deferred) |
+| Real `ContextDescriptor` builder produces conforming shape for every adp: class | Vertical content (`adp:coherentNarrative`, `adp:contextSignifier`, etc.) lives in the described graph, not in the descriptor metadata — graph-side content not yet validated end-to-end |
+| Real `validate()` returns conforms=true for all 9+ descriptors in the cycle | No live signature verification chain after publish (Tier 1 deferred) |
+| Real `toTurtle()` round-trip preserves descriptor IRIs | No external Nostr public-relay test (Tier 4) |
+| Modal discipline holds: probes + fragments + syntheses all `cg:Hypothetical`; operator evolution decisions `cg:Asserted` | |
+| **Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) PUTs a real probe descriptor to the deployed Azure CSS, GETs it back, and confirms `Hypothetical` modal status survives the HTTP roundtrip | |
 
 **Real finding from testing**: the L1 `cg:SemioticFacet` has no `content` field — content lives in the *described graph*, not in the descriptor metadata. The print-only example walks descriptor metadata; production usage requires emitting the graph turtle alongside.
 

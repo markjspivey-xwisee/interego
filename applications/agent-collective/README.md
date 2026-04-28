@@ -292,6 +292,8 @@ Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) ve
 
 The cross-bridge p2p path runs the same `P2pClient.publishEncryptedShare` / `queryEncryptedShares` / `decryptEncryptedShare` code as the production personal-bridge.
 
+**Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) exercises the production `publish()` function (same code path agents use to announce tools) against the deployed Azure CSS, including manifest registration + descriptor fetch-back via `parseManifest()`.
+
 ## What this is NOT
 
 - **Not the protocol.** No L1/L2/L3 ontologies are extended.
