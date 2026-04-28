@@ -102,6 +102,17 @@ The translation logic itself is verified; the network layer is a separate test c
 
 Skips automatically if Lrsql isn't running locally on `:8080`. Set `SKIP_LRSQL_TESTS=1` to skip in CI without Docker.
 
+**Tier 3b** — [`tests/tier3b-xapi-conformance.test.ts`](tests/tier3b-xapi-conformance.test.ts) deepens xAPI 2.0 conformance against the real Lrsql:
+- **cmi5 profile** — `launched` + `completed` Statements with cmi5 `contextActivities.category` (`https://w3id.org/xapi/cmi5/context/categories/cmi5` + `moveon`) + `sessionid` extension, accepted as a 2-Statement batch
+- **Sub-Statement** — Statement whose object is itself a `SubStatement` is accepted; LRS preserves nested object on roundtrip
+- **Voiding** (xAPI's mechanism for projected `cg:supersedes`) — POST original; POST `voided` Statement with `StatementRef` object; ordinary GET on the original returns 404 per xAPI 2.0 §4.2.1; `voidedStatementId=` parameter retrieves it; the void Statement itself is retrievable normally
+- **Batch POST** — 5 Statements in single request return 5 IDs in order
+- **Filtering** — GET `?verb=...&agent=...` returns only matching Statements
+- **Alternate request method** (POST with `?method=GET`, xAPI 2.0 §6.2) — handled gracefully whether LRS supports (200) or refuses cleanly (4xx); 5xx server-error would be the failure mode
+- **Version negotiation** — LRS reports both 2.0.0 and 1.0.3 in `/about`
+
+Cross-LRS gap (Watershed / SCORM Cloud / proprietary): testing against those services requires customer-side accounts and is out of scope for this test suite. The adapter targets xAPI 2.0 spec conformance, which is what those LRSes claim to support; deployment-time validation against the target LRS remains the consumer's responsibility.
+
 ## What this is NOT
 
 - **Not the protocol.** No L1/L2/L3 ontologies are extended.
