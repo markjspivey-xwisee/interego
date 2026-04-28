@@ -217,9 +217,41 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 
 Pick the path that matches who you are:
 
-### 🤖 I'm an AI coding agent (Claude Code, Cursor, Windsurf, Cline)
+### 🎯 I want to actually USE the system (chat with my training content, run a probe cycle, bridge xAPI, etc.)
 
-The fastest way to use Interego is via the **MCP server**, which exposes 28 tools (publish, discover, ingest, resolve, compose, ontology lookup, runtime eval, identity, federation) to any MCP-capable client.
+The production-grade path. Run a personal-bridge on your machine and any MCP client (Claude Desktop / Code / Cursor / ChatGPT app) gets **23 tools** for the four vertical applications: SCORM/cmi5 ingestion + W3C VC import + grounded chat (lpc.\*), Cynefin probe-cycles (adp.\*), xAPI ↔ Interego with version negotiation (lrs.\*), and cross-bridge agent collaboration (ac.\*).
+
+```bash
+# 1. Clone + build the bridge
+git clone https://github.com/markjspivey-xwisee/interego.git
+cd interego/examples/personal-bridge
+npm install && npm run build
+
+# 2. Configure the verticals you want (any subset; tools throw if pod URL unset)
+export BRIDGE_KEY=0x<your-wallet-private-key>
+export LPC_POD_URL=https://your-pod.example/me/   # learner-performer-companion
+export LPC_USER_DID=did:web:you.example
+export ADP_POD_URL=https://your-pod.example/me/   # agent-development-practice
+export ADP_OPERATOR_DID=did:web:you.example
+# ... LRS_*, AC_* if needed; see examples/personal-bridge/README.md
+
+# 3. Start the bridge
+PORT=5050 npm start
+```
+
+Then add `http://localhost:5050/mcp` as an MCP server in your client. Now you can say:
+
+- *"Ingest this SCORM zip into my pod"* → `lpc.ingest_training_content`
+- *"What did the customer-service training say about second-contact escalation?"* → `lpc.grounded_answer` (verbatim citation, honest no-data, tamper detection)
+- *"Define a capability space for tone-handling and record three parallel probes"* → `adp.define_capability` + `adp.record_probe`
+- *"Pull this xAPI Statement from our LRS into my pod"* → `lrs.ingest_statement` (auto-negotiates xAPI 2.0 / 1.0.3)
+- *"Author this tool, attest it, then bundle it as a teaching package for another agent"* → `ac.author_tool` → `ac.attest_tool` → `ac.bundle_teaching_package`
+
+Each vertical has Tier 8 integration tests against real Azure CSS + real Lrsql + real SCORM Cloud + public Nostr relay. See [`applications/README.md`](applications/README.md) for the per-vertical framing and [`examples/personal-bridge/README.md`](examples/personal-bridge/README.md) for the full tool reference.
+
+### 🤖 I'm an AI coding agent (Claude Code, Cursor, Windsurf, Cline) — protocol-level access
+
+The fastest way to use the **protocol layer** is via the stdio MCP server, which exposes 60+ tools (publish, discover, ingest, resolve, compose, ontology lookup, runtime eval, identity, federation) to any MCP-capable client.
 
 Add this to your MCP client config:
 
@@ -238,7 +270,7 @@ Add this to your MCP client config:
 
 Restart your client. You can now say things like *"publish this graph to my pod with high trust"*, *"what affordances does this lattice node have?"*, *"resolve this PGSL atom and show its containment chain"* — and the LLM will pick the right tool.
 
-[→ Full MCP server docs](mcp-server/README.md) · [→ All 28 tools](#mcp-server--28-tools-for-ai-agents)
+[→ Full MCP server docs](mcp-server/README.md)
 
 ### 🧑‍💻 I'm a developer building a TypeScript app
 
@@ -299,7 +331,7 @@ git clone https://github.com/markjspivey-xwisee/interego.git
 cd context-graphs
 npm install
 npm run build
-npm test  # 642 tests across 20 files
+npm test  # 1068+ tests across 60 files (3 env-gated tests skip when their creds are unset)
 
 # Build the MCP server too
 cd mcp-server
@@ -721,7 +753,7 @@ const anchor = await pinDescriptor(descriptorId, turtle, { provider: 'pinata', a
 
 ---
 
-## MCP Server — 24 Tools for AI Agents
+## MCP Server — 60+ Tools for AI Agents
 
 ### Setup
 
