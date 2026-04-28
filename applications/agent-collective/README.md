@@ -294,6 +294,8 @@ The cross-bridge p2p path runs the same `P2pClient.publishEncryptedShare` / `que
 
 **Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) exercises the production `publish()` function (same code path agents use to announce tools) against the deployed Azure CSS, including manifest registration + descriptor fetch-back via `parseManifest()`.
 
+**Tier 4** — [`tests/tier4-public-relay.test.ts`](tests/tier4-public-relay.test.ts) runs two `P2pClient` instances each connected via `WebSocketRelayMirror` to a real public Nostr relay (relay.damus.io by default). Mark publishes a tool descriptor announcement; David's bridge subscribes for Mark-authored events; the relay actually broadcasts cross-bridge. Schnorr-signed events Interego produces are accepted + redistributed by third-party infrastructure we don't control. Gated by `RUN_PUBLIC_RELAY=wss://relay.damus.io` env var (so CI doesn't hammer public relays).
+
 ## What this is NOT
 
 - **Not the protocol.** No L1/L2/L3 ontologies are extended.

@@ -226,6 +226,7 @@ Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) ve
 | Real `toTurtle()` round-trip preserves descriptor IRIs | No external Nostr public-relay test (Tier 4) |
 | Modal discipline holds: probes + fragments + syntheses all `cg:Hypothetical`; operator evolution decisions `cg:Asserted` | |
 | **Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) PUTs a real probe descriptor to the deployed Azure CSS, GETs it back, and confirms `Hypothetical` modal status survives the HTTP roundtrip | |
+| **Tier 5** (cross-vertical applicability) — [`learner-performer-companion/tests/tier5-vc-roundtrip.test.ts`](../learner-performer-companion/tests/tier5-vc-roundtrip.test.ts) verifies real ECDSA `signDescriptor` + `verifyDescriptorSignature` over descriptor turtle, with tamper-detection + forgery-detection. Same primitives apply to `adp:CapabilityEvolution` events — the `passport:LifeEvent` biographical record carries cryptographically committed humility-forward clauses. | |
 
 **Real finding from testing**: the L1 `cg:SemioticFacet` has no `content` field — content lives in the *described graph*, not in the descriptor metadata. The print-only example walks descriptor metadata; production usage requires emitting the graph turtle alongside.
 

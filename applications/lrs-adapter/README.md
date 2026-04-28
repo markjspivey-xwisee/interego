@@ -93,6 +93,15 @@ The translation logic itself is verified; the network layer is a separate test c
 
 **Tier 2** — [`_shared/tests/tier2-azure-css.test.ts`](../_shared/tests/tier2-azure-css.test.ts) PUTs a real ingested LRS-Statement descriptor to the deployed Azure CSS and confirms the descriptor IRI + `Asserted` modal + LRS authority all survive the HTTP roundtrip.
 
+**Tier 3** — [`tests/tier3-real-lrs.test.ts`](tests/tier3-real-lrs.test.ts) runs against a real Yet Analytics Lrsql LRS in Docker (`docker run yetanalytics/lrsql`). Verifies:
+- POST projected Asserted Statements → 200 OK + UUID returned
+- GET roundtrip preserves actor / verb / object / score
+- Multi-narrative lossy projection: `result.extensions["urn:cg:coherent-narratives"]` + `urn:cg:projection-lossy: true` + `urn:cg:modal-status: Hypothetical` all survive LRS persistence and round-trip back intact
+- LRS rejects malformed Statements (missing required `actor` field) with 400-class error — confirms the LRS is doing real xAPI 2.0 §4.1 validation
+- Non-existent statement IDs return 404 per xAPI 2.0 §4.2.1
+
+Skips automatically if Lrsql isn't running locally on `:8080`. Set `SKIP_LRSQL_TESTS=1` to skip in CI without Docker.
+
 ## What this is NOT
 
 - **Not the protocol.** No L1/L2/L3 ontologies are extended.
