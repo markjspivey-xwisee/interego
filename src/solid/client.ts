@@ -468,35 +468,75 @@ export async function publish(
     );
   }
 
-  // 3. Update the manifest
+  // 3. Update the manifest — CAS-safe via HTTP If-Match.
+  //
+  //    publish() can be called concurrently by multiple agents (or
+  //    multiple processes on the same agent's machine). The naive
+  //    GET-then-PUT pattern races: two clients read the same manifest,
+  //    each appends their own entry, the last PUT clobbers the other's
+  //    entry. We use HTTP optimistic concurrency:
+  //
+  //      1. GET manifest, capture ETag from response
+  //      2. PUT with `If-Match: <ETag>` (server rejects with 412 if
+  //         the manifest changed since our GET)
+  //      3. On 412, retry from step 1 with fresh ETag + fresh entries
+  //         (a few times with backoff; throw if persistent contention).
+  //
+  //    For the cold-start (no manifest yet), use `If-None-Match: *` so
+  //    the PUT succeeds only if no manifest exists — protects against
+  //    two cold-start clients clobbering each other.
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
   const newEntry = manifestEntryTurtle(descriptorUrl, descriptor);
+  const maxAttempts = 5;
+  let lastError: string | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let manifestBody: string;
+    let etag: string | null = null;
 
-  let manifestBody: string;
-  const existingResp = await fetchFn(manifestUrl, {
-    method: 'GET',
-    headers: { 'Accept': TURTLE_CONTENT_TYPE },
-  });
+    const existingResp = await fetchFn(manifestUrl, {
+      method: 'GET',
+      headers: { 'Accept': TURTLE_CONTENT_TYPE },
+    });
 
-  if (existingResp.ok) {
-    const existing = await existingResp.text();
-    if (existing.includes(`<${descriptorUrl}>`)) {
-      manifestBody = existing;
-    } else {
+    if (existingResp.ok) {
+      etag = existingResp.headers?.get('etag') ?? null;
+      const existing = await existingResp.text();
+      if (existing.includes(`<${descriptorUrl}>`)) {
+        // Already in manifest (idempotent re-publish); skip the PUT.
+        break;
+      }
       manifestBody = `${existing.trimEnd()}\n\n${newEntry}\n`;
+    } else {
+      manifestBody = `${turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod', 'dct'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
     }
-  } else {
-    manifestBody = `${turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod', 'dct'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
-  }
 
-  const manifestResp = await fetchFn(manifestUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': TURTLE_CONTENT_TYPE },
-    body: manifestBody,
-  });
-  if (!manifestResp.ok) {
+    const headers: Record<string, string> = { 'Content-Type': TURTLE_CONTENT_TYPE };
+    if (etag) headers['If-Match'] = etag;
+    else headers['If-None-Match'] = '*';   // cold-start: only PUT if no manifest exists
+
+    const manifestResp = await fetchFn(manifestUrl, {
+      method: 'PUT', headers, body: manifestBody,
+    });
+
+    if (manifestResp.ok) {
+      lastError = null;
+      break;
+    }
+    if (manifestResp.status === 412) {
+      // Precondition Failed: another writer beat us. Retry with fresh GET.
+      lastError = `412 (concurrent manifest update detected, attempt ${attempt}/${maxAttempts})`;
+      // Brief jittered backoff to spread retries
+      const backoff = 50 * attempt + Math.floor(Math.random() * 50);
+      await new Promise(r => setTimeout(r, backoff));
+      continue;
+    }
     throw new Error(
       `Failed to update manifest at ${manifestUrl}: ${manifestResp.status} ${manifestResp.statusText}`,
+    );
+  }
+  if (lastError) {
+    throw new Error(
+      `Failed to update manifest at ${manifestUrl} after ${maxAttempts} attempts: ${lastError}`,
     );
   }
 

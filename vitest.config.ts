@@ -7,6 +7,23 @@ export default defineConfig({
     typecheck: {
       enabled: true,
     },
+    // Pod-touching tests (Tier 2 + Tier 8 vertical tests) all hit the
+    // same shared Azure CSS pod. publish() is now CAS-safe via HTTP
+    // If-Match (see src/solid/client.ts), so concurrent writes don't
+    // clobber the manifest — but each retry is a network roundtrip,
+    // so serializing pod-touching tests is faster than retry-storms
+    // and gives more deterministic timing for CI gates.
+    poolOptions: {
+      threads: {
+        // Single-threaded pool eliminates cross-file parallelism without
+        // disabling within-file parallelism. ~10s slower in best case;
+        // dramatically more reliable for the pod-touching tests.
+        singleThread: true,
+      },
+      forks: {
+        singleFork: true,
+      },
+    },
     coverage: {
       // V8-native; no Babel transform, lower memory than istanbul.
       provider: 'v8',
