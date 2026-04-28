@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "outDir": "./dist",
+    "rootDir": "../../..",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false
+  },
+  "include": [
+    "server.ts",
+    "../affordances.ts",
+    "../src/**/*.ts",
+    "../../_shared/affordance-mcp/**/*.ts",
+    "../../_shared/vertical-bridge/**/*.ts",
+    "../../_shared/scorm/**/*.ts",
+    "../../_shared/vc-jwt/**/*.ts",
+    "../../../src/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

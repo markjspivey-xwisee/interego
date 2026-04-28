@@ -1,0 +1,11 @@
+{
+  "name": "@interego/lrs-bridge-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reference bridge for the lrs-adapter vertical (NOT first-party — example use case).",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": { "build": "tsc", "start": "node dist/server.js", "dev": "tsx server.ts" },
+  "dependencies": { "@interego/core": "file:../../../", "express": "^4.21.0" },
+  "devDependencies": { "@types/express": "^5.0.0", "@types/node": "^22.0.0", "tsx": "^4.0.0", "typescript": "^5.7.0" }
+}
