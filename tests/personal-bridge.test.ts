@@ -79,15 +79,25 @@ describe('personal-bridge — tool surface', () => {
     expect(result.instructions).toContain(client.pubkey);
   });
 
-  it('handleMcpRequest — tools/list → all 6 tools present with schemas', async () => {
+  it('handleMcpRequest — tools/list returns the core p2p tools + lpc:* tools', async () => {
     const r = await handleMcpRequest({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
     expect(r).not.toBeNull();
     const result = r!.result as { tools: { name: string; description: string; inputSchema: object }[] };
     const names = result.tools.map(t => t.name).sort();
-    expect(names).toEqual([
+    // Core p2p tools must be present
+    expect(names).toEqual(expect.arrayContaining([
       'bridge_status', 'decrypt_share', 'publish_p2p',
       'query_my_inbox', 'query_p2p', 'share_encrypted',
-    ]);
+    ]));
+    // LPC vertical tools must also be present
+    expect(names).toEqual(expect.arrayContaining([
+      'lpc.ingest_training_content',
+      'lpc.import_credential',
+      'lpc.record_performance_review',
+      'lpc.record_learning_experience',
+      'lpc.grounded_answer',
+      'lpc.list_wallet',
+    ]));
     for (const t of result.tools) {
       expect(t.description).toBeTruthy();
       expect(t.inputSchema).toBeDefined();

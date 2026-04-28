@@ -4,13 +4,19 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "outDir": "./dist",
-    "rootDir": ".",
+    "rootDir": "../..",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": false
   },
-  "include": ["server.ts"],
+  "include": [
+    "server.ts",
+    "lpc-tools.ts",
+    "../../applications/learner-performer-companion/src/**/*.ts",
+    "../../applications/_shared/scorm/**/*.ts",
+    "../../applications/_shared/vc-jwt/**/*.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

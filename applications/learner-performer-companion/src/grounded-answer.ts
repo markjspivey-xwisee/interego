@@ -231,8 +231,18 @@ export function groundedAnswer(question: string, wallet: UserWallet): CitedAnswe
   const wantsCredentials = questionAsksAboutCredentials(question);
 
   const citations: Citation[] = [];
-  const performanceCitations: CitedAnswer['performanceCitations'] = [];
-  const credentialCitations: CitedAnswer['credentialCitations'] = [];
+  const performanceCitations: Array<{
+    recordIri: IRI;
+    verbatimQuote: string;
+    attributedTo: IRI;
+    recordedAt: string;
+  }> = [];
+  const credentialCitations: Array<{
+    credentialIri: IRI;
+    achievementName: string;
+    issuer: IRI;
+    issuedAt: string;
+  }> = [];
 
   // Training content retrieval — only if the question seems content-shaped.
   // (Avoids returning lesson text for review/credential questions.)
