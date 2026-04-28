@@ -5,13 +5,23 @@
     "moduleResolution": "bundler",
     "lib": ["ES2022"],
     "outDir": "./dist",
-    "rootDir": ".",
+    "rootDir": "../..",
     "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["server.ts", "oauth-provider.ts"],
+  "include": [
+    "server.ts",
+    "oauth-provider.ts",
+    "vertical-tools.ts",
+    "../../applications/learner-performer-companion/src/**/*.ts",
+    "../../applications/agent-development-practice/src/**/*.ts",
+    "../../applications/lrs-adapter/src/**/*.ts",
+    "../../applications/agent-collective/src/**/*.ts",
+    "../../applications/_shared/scorm/**/*.ts",
+    "../../applications/_shared/vc-jwt/**/*.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

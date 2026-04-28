@@ -94,6 +94,7 @@ import type {
   ContextChangeEvent,
   ManifestEntry,
 } from '@interego/core';
+import { verticalTools } from './vertical-tools.js';
 
 // ── Config ──────────────────────────────────────────────────
 
@@ -933,6 +934,13 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   discover_directory: { description: 'Import pods from a directory graph', handler: handleDiscoverDirectory },
   publish_directory: { description: 'Publish pod registry as a directory', handler: handlePublishDirectory },
   resolve_webfinger: { description: 'Resolve WebFinger to find a pod', handler: handleResolveWebfinger },
+  // ── Vertical-application tools (lpc.* / adp.* / lrs.* / ac.*) ──
+  // 17 tools exposing the four production verticals to OAuth-gated
+  // mobile clients (claude.ai app, ChatGPT app) that can't run a
+  // local personal-bridge. Same publishers as personal-bridge —
+  // multi-tenant via per-call pod_name / pod_url / user_did args
+  // with sensible defaults from the authenticated user.
+  ...verticalTools(CSS_URL).tools,
 };
 
 // ── MCP Tool Schemas ────────────────────────────────────────
@@ -1136,6 +1144,8 @@ const TOOL_SCHEMAS = [
       required: ['resource'],
     },
   },
+  // ── Vertical-application tools (lpc.* / adp.* / lrs.* / ac.*) ──
+  ...verticalTools(CSS_URL).schemas,
 ] as const;
 
 // ── MCP discoverability: instructions, doc resources, prompts ──
