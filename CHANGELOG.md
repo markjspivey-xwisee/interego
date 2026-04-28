@@ -8,7 +8,62 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
-## 2026-04-28 — Four production-grade vertical applications + CAS-safe `publish()`
+## 2026-04-28 (later) — Layering correction: verticals out of generic deployments; affordance-first
+
+Earlier commits today bundled vertical-application MCP tools (`lpc.*` /
+`adp.*` / `lrs.*` / `ac.*`) into both `examples/personal-bridge/` AND
+`deploy/mcp-relay/`. That conflated the foundation layer (generic
+Interego protocol) with application-over-L3 emergent reifications.
+
+Reverted the bundling and restructured around the protocol's first
+principles:
+
+### Phase 1 — strip the violations
+  - examples/personal-bridge: back to 6 core p2p tools only
+  - deploy/mcp-relay: back to 15 protocol tools only (Azure deployment
+    redeploys via CI back to that baseline)
+  - tests/personal-bridge.test.ts: assertions back to 6-tool baseline
+
+### Phase 2 — affordance-first capability declarations
+  - applications/_shared/affordance-mcp/index.ts — typed Affordance
+    shape + affordanceToMcpToolSchema(a) + affordanceToTurtle(a, base) +
+    affordancesManifestTurtle(...)
+  - applications/<vertical>/affordances.ts — single source of truth
+    for each vertical's capabilities (LPC: 6, ADP: 8, LRS: 4, AC: 5)
+  - Action IRIs follow urn:cg:action:<vertical>:<verb> convention
+  - Both protocol-level (cg:Affordance) and ergonomic (MCP tool schema)
+    surfaces derive from the same affordance declarations
+
+### Phase 3 — per-vertical bridges as separate optional deployments
+  - applications/_shared/vertical-bridge/index.ts — createVerticalBridge()
+    framework: HTTP endpoints per affordance hydra:target +
+    /mcp with derived tool schemas + /affordances Turtle manifest
+  - applications/<vertical>/bridge/ — small standalone Express + MCP
+    servers (~100 lines each) on their own ports (6010 LPC / 6020 ADP /
+    6030 LRS / 6040 AC). Naming: @interego/<vertical>-bridge-EXAMPLE
+    — the suffix signals NOT first-party
+  - Each bridge has its own package.json (depends on @interego/core),
+    its own tsconfig.json, its own dist/
+
+### First-principles position now encoded
+  - Generic Interego deployments (mcp-server, personal-bridge,
+    deploy/mcp-relay) expose ONLY protocol-level tools
+  - Verticals are emergent applications, not protocol extensions
+  - Verticals are ALWAYS reachable via the protocol-level cg:Affordance
+    discovery path — no per-vertical client code required at the
+    consuming agent
+  - Per-vertical bridges are an optional convenience reification,
+    deployed independently per vertical (Path B); the protocol path
+    (Path A) always works regardless
+
+Generic Interego CI / tests / conformance suite are unaffected by any
+vertical's state. A vertical can fail to build without breaking the
+project; vertical bridges deploy independently per the verticals doc
+([applications/README.md](applications/README.md)).
+
+---
+
+## 2026-04-28 (earlier) — Four production-grade vertical applications + CAS-safe `publish()`
 
 Closes the gap between protocol substrate and end-user-facing applications.
 Each of the four verticals under [`applications/`](applications/) now ships

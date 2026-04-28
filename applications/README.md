@@ -32,13 +32,43 @@ The transplant test from [`spec/LAYERS.md`](../spec/LAYERS.md): "would this clai
 | [`lrs-adapter/`](lrs-adapter/) | **Boundary translator** (sibling of the two above, not a vertical with its own framework). Lossy two-way translation between xAPI Statements and Interego Context Descriptors. Skips Hypothetical / Counterfactual descriptors with audit notes; preserves multi-narrative + supersedes chains in `result.extensions` with explicit `lossy=true`. Used by `learner-performer-companion/` for ingest direction; available to `agent-development-practice/` for projection direction when employer-side dashboards require it. |
 | [`agent-collective/`](agent-collective/) | **Multi-agent federation.** Patterns for autonomous agents owned by different humans to author tools, teach each other, and coordinate across personal-bridges. Three workflow surfaces: (a) tool authorship with modal discipline (Hypothetical → Asserted via attestation threshold), `cg:supersedes` for cross-agent refinement, registry publication for discovery; (b) teaching packages that compose artifact + narratives + synthesis + constraints + capability evolution (using `agent-development-practice/` substrate); (c) inter-agent coordination — capability advertisements, request/response with thread IDs, chime-ins, recurring check-ins, and `ac:CrossAgentAuditEntry` audit logs in the human owner's pod. Permission-gated via `passport:DelegationCredential`; everything signed; `code:` + `pgsl:` + `amta:` + `registry:` + `abac:` + `passport:` + `olke:`. |
 
+## Two reachability paths per vertical
+
+Per first principles, a vertical is reachable two ways — and **the protocol-level path is primary**. The opinionated MCP-bridge path is just an ergonomic accelerant for clients that prefer named tools.
+
+### Path A — protocol-level (always works; no per-vertical client install)
+
+Each vertical declares its capabilities as `cg:Affordance` descriptors in [`<vertical>/affordances.ts`](learner-performer-companion/affordances.ts). A generic Interego agent (e.g., the [stdio MCP server](../mcp-server/) or any standard Solid client) can:
+
+1. `discover_context` against the vertical's pod / manifest URL
+2. Filter for `cg:Affordance` entries with the `cg:action` of interest
+3. Read `hydra:method` + `hydra:target` + `hydra:expects`
+4. POST to `hydra:target` with the typed inputs
+
+No vertical-specific client code needed at the consuming agent. The vertical's ENTIRE capability surface is protocol-native data — anyone can write a generic affordance-walker that handles new verticals with zero code changes.
+
+### Path B — per-vertical bridge (optional; opinionated; named MCP tools)
+
+For each vertical popular enough to warrant the convenience, a small standalone bridge under [`<vertical>/bridge/`](learner-performer-companion/bridge/) exposes the same capabilities as named MCP tools (`lpc.*`, `adp.*`, `lrs.*`, `ac.*`). The bridge:
+
+- Depends on `@interego/core`
+- Imports the vertical's affordance declarations
+- Derives MCP tool schemas from them (single source of truth — never hand-written)
+- Also serves the affordance manifest at `GET /affordances` for Path A consumers
+
+Run the bridge ON ITS OWN PORT (e.g., 6010 for LPC, 6020 for ADP). The generic [`personal-bridge`](../examples/personal-bridge/) is **separate** — it does NOT load these. Vertical bridges are independent deployments.
+
+Both paths invoke the same publishers under [`<vertical>/src/`](learner-performer-companion/src/) — the named-tool layer is just a derived projection.
+
 ## Adding a vertical
 
 1. Create a subdirectory under [`applications/`](.) named after the vertical.
 2. Inside, write a `README.md` that opens with the standard "vertical application — not protocol, not reference implementation" banner.
 3. Document the workflow patterns and how the vertical composes existing L1/L2/L3 primitives.
 4. If the vertical needs unique vocabulary, put it in `<vertical>/ontology/<prefix>.ttl` with the prefix clearly scoped to the vertical.
-5. Code examples go in `<vertical>/examples/`.
-6. Tests for the vertical's specific code (not for the underlying protocol) go in `<vertical>/tests/`.
+5. Capabilities go in `<vertical>/affordances.ts` (typed Affordance objects). The bridge framework derives MCP tool schemas + Hydra Turtle from these.
+6. Implementation under `<vertical>/src/` (publishers, loaders, etc.).
+7. Tier 1-8 tests under `<vertical>/tests/` for behavior + protocol-level shape verification.
+8. Optional: `<vertical>/bridge/` with a small server.ts using `createVerticalBridge()` from [`_shared/vertical-bridge/`](_shared/vertical-bridge/) — enables Path B for clients that want it.
 
 The protocol's CI (lints, conformance suite, core tests) is unaffected by anything in `applications/`. A vertical can fail to build without breaking the project.

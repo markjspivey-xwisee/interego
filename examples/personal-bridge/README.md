@@ -54,7 +54,7 @@ Then add to your `.mcp.json` (or `~/.claude.json`):
 }
 ```
 
-Reload Claude Code → 23 tools available immediately (6 core p2p + 6 lpc.* + 8 adp.* + 4 lrs.* + 5 ac.* — see "Tools the bridge exposes" below). The bridge process lives + dies with the session.
+Reload Claude Code → 6 core p2p tools available immediately (see "Tools the bridge exposes" below). The bridge process lives + dies with the session. (For vertical-application tools — `lpc.*` / `adp.*` / `lrs.*` / `ac.*` — run a per-vertical bridge from `applications/<vertical>/bridge/` separately. Those are not bundled here; they're independent example deployments. See [`applications/README.md`](../../applications/README.md).)
 
 ### Full: HTTP (multi-device, admin UI, mobile-ready)
 
@@ -113,9 +113,9 @@ For mobile to reach a desktop bridge across networks, **Tailscale is the right a
 
 ## Tools the bridge exposes
 
-The bridge exposes 23 MCP tools across 5 groups: 6 core p2p + 17 vertical tools that turn the bridge into a production-grade host for the four [`applications/`](../../applications/) verticals.
+The generic personal-bridge is **protocol-only — 6 core p2p tools**. It is intentionally NOT a host for vertical-application tools; those run from per-vertical bridges under [`applications/<vertical>/bridge/`](../../applications/) and are separate optional deployments.
 
-### Core p2p (always on)
+### Core p2p tools
 
 | Tool | What it does |
 |---|---|
@@ -126,48 +126,9 @@ The bridge exposes 23 MCP tools across 5 groups: 6 core p2p + 17 vertical tools 
 | `decrypt_share` | Decrypt one of those by event id. Returns plaintext or null. |
 | `bridge_status` | Bridge identity, scheme, pubkeys, external relay config. |
 
-### `lpc.*` — Learner / Performer Companion (set `LPC_POD_URL`, `LPC_USER_DID`, optional `LPC_ASSISTANT_DID`)
+### Want vertical-application tools (`lpc.*` / `adp.*` / `lrs.*` / `ac.*`)?
 
-| Tool | What it does |
-|---|---|
-| `lpc.ingest_training_content` | SCORM/cmi5 zip → unwrap → extract → atom-mint → publish `lpc:TrainingContent` + `lpc:LearningObjective` to the user's pod. |
-| `lpc.import_credential` | Verify a W3C VC (vc-jwt or DataIntegrityProof JSON-LD) and publish as `lpc:Credential`. Verification failures throw — bad VCs never land in the pod. |
-| `lpc.record_performance_review` | Publish a manager-attributed review with `cg:ProvenanceFacet.wasAttributedTo` set to the manager's DID. |
-| `lpc.record_learning_experience` | Ingest an xAPI Statement as `lpc:LearningExperience`, cross-linked to training content + credential earned. |
-| `lpc.grounded_answer` | The user-facing chat surface. Loads wallet from pod, retrieves with verbatim citation, publishes `lpc:CitedResponse` audit trail. Returns null on unanswerable questions — honest no-data, no confabulation. |
-| `lpc.list_wallet` | Summarize what's in the pod-backed wallet. |
-
-### `adp.*` — Agent Development Practice (set `ADP_POD_URL`, `ADP_OPERATOR_DID`)
-
-| Tool | What it does |
-|---|---|
-| `adp.define_capability` | Declare a capability SPACE (not target) with rubric criteria + Cynefin domain. |
-| `adp.record_probe` | Record a safe-to-fail probe. Always Hypothetical. REQUIRES amplification + dampening triggers stated up-front (prevents retconning). |
-| `adp.record_narrative_fragment` | Narrative observation against a probe. Always Hypothetical. Carries situation signifiers + emergent signifier. |
-| `adp.emerge_synthesis` | Compose multiple fragments. REQUIRES ≥2 coherent narratives — prevents silent collapse. |
-| `adp.record_evolution_step` | Operator amplify/dampen decision. Asserted BUT REQUIRES `explicitDecisionNotMade`. |
-| `adp.refine_constraint` | Refine a constraint emerged from synthesis cycles. Boundary + exits required. |
-| `adp.recognize_capability_evolution` | Record a `passport:LifeEvent` biographical record. REQUIRES humility-forward clauses that travel across deployments. |
-| `adp.list_cycle` | Load the operator's full probe cycle state from the pod. |
-
-### `lrs.*` — LRS Adapter (set `LRS_POD_URL`, `LRS_USER_DID`; per-call `lrsEndpoint` / `lrsUsername` / `lrsPassword`)
-
-| Tool | What it does |
-|---|---|
-| `lrs.ingest_statement` | Fetch one xAPI Statement from an LRS by ID, project as a cg:ContextDescriptor in the user's pod. Auto-negotiates xAPI version (2.0.0 preferred; falls back to 1.0.3 for legacy LRSes like SCORM Cloud). |
-| `lrs.ingest_statement_batch` | Same but multi-Statement with filter. |
-| `lrs.project_descriptor` | Read an Asserted descriptor from the pod and POST to LRS. Counterfactual ALWAYS skipped; Hypothetical skipped without opt-in; multi-narrative lossy with audit-loud `lossNote` rows. |
-| `lrs.lrs_about` | Probe an LRS's `/about` to discover supported xAPI versions. |
-
-### `ac.*` — Agent Collective (set `AC_POD_URL`, `AC_AGENT_DID`)
-
-| Tool | What it does |
-|---|---|
-| `ac.author_tool` | Publish `ac:AgentTool` (Hypothetical) — fresh tools are not trusted yet. Source code stored as content-addressed `pgsl:Atom`. |
-| `ac.attest_tool` | Record an `amta:Attestation` against a tool. Self / Peer × axis (correctness/efficiency/safety/generality). |
-| `ac.promote_tool` | Promote Hypothetical → Asserted. REFUSES below threshold (default 5+ self + 2+ peer + 2+ axes). |
-| `ac.bundle_teaching_package` | Bundle artifact + practice (narratives + synthesis + constraint + capability evolution). REFUSES without narrative fragments — partial transfer prevention. |
-| `ac.record_cross_agent_audit` | Audit row in the HUMAN OWNER's pod (not the agent's) for chime-ins / responses / check-ins. |
+Those live in per-vertical bridges, deployed independently. Generic Interego agents can ALSO discover and invoke vertical capabilities via the protocol-level `cg:Affordance` discovery path without running any vertical bridge — see [`applications/README.md`](../../applications/README.md).
 
 ## Sharing across people (multi-bridge federation)
 

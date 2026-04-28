@@ -13,17 +13,17 @@ Interego gives autonomous AI agents the infrastructure to publish, discover, com
 
 The protocol surface has grown substantially. Highlights:
 
-- **Four production-grade vertical applications** — [`applications/`](applications/) holds vertical use cases that compose the protocol without extending it. Each ships a `pod-publisher` + `pod-loader` + MCP tools registered on **both** the personal-bridge (local) and the Azure relay (cloud) + a Tier 8 test against real infrastructure (Azure CSS / Lrsql / SCORM Cloud / public Nostr relay):
+- **Vertical-application examples** (NOT first-party — emergent use cases on top of the protocol) — [`applications/`](applications/) holds reference implementations of how the protocol can be composed for specific industries / domains. They are **separate from Interego itself**: the generic personal-bridge and Azure relay don't load them. Each vertical has:
+  1. **A first-principles affordance declaration** ([`applications/<vertical>/affordances.ts`](applications/learner-performer-companion/affordances.ts)) — the spec-level artifact. A generic Interego agent discovers + invokes vertical capabilities via `cg:Affordance` descriptors using only the protocol's own primitives. No vertical-specific client code needed at the agent.
+  2. **An optional per-vertical bridge** ([`applications/<vertical>/bridge/`](applications/learner-performer-companion/bridge/)) — a tiny standalone Express + MCP server that reifies the affordances as named MCP tools. Run it when you want LLM tool-name ergonomics; the bridge derives MCP tool schemas from the affordance declarations (single source of truth — never hand-written).
+
+  Current example verticals:
   - **[`learner-performer-companion/`](applications/learner-performer-companion/)** — human-protagonist wallet: SCORM/cmi5/PDF training content + W3C VCs (Open Badges 3.0 / IMS CLR / IEEE LERS) + xAPI history + performance records. Grounded chat with verbatim citation, honest no-data, tamper detection.
   - **[`agent-development-practice/`](applications/agent-development-practice/)** — agent-as-subject: complexity-informed (Cynefin) probe-sense-respond cycle. Probes Hypothetical; multi-coherent-narrative syntheses; evolution steps require `explicitDecisionNotMade`; `passport:LifeEvent` biographical record carries humility forward.
-  - **[`lrs-adapter/`](applications/lrs-adapter/)** — boundary translator: bidirectional xAPI ↔ Interego with version negotiation (auto-targets 2.0.0; falls back to 1.0.3 for legacy LRSes like SCORM Cloud). Counterfactual ALWAYS skipped; Hypothetical skipped without opt-in; multi-narrative lossy with audit-loud `lossNote` rows.
-  - **[`agent-collective/`](applications/agent-collective/)** — multi-agent federation: tool authoring + attestation + teaching packages + cross-bridge encrypted chime-ins. `passport:DelegationCredential` gates every cross-agent action; audit entries live in HUMAN OWNER's pod (not agent's).
+  - **[`lrs-adapter/`](applications/lrs-adapter/)** — boundary translator: bidirectional xAPI ↔ Interego with version negotiation (2.0.0 → falls back to 1.0.3). Counterfactual always skipped on projection; Hypothetical skipped without opt-in.
+  - **[`agent-collective/`](applications/agent-collective/)** — multi-agent federation: tool authoring + attestation + teaching packages + cross-bridge encrypted chime-ins.
 
-  Same 17 MCP tools (`lpc.*` / `adp.*` / `lrs.*` / `ac.*`) reachable two ways:
-  - **Local** via [`examples/personal-bridge/`](examples/personal-bridge/) — alongside the 6 core p2p tools (23 total). Use from Claude Desktop / Code / Cursor on your machine.
-  - **Cloud** via the Azure relay (`interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io`) — alongside the 15 protocol-level tools (32 total). Use from claude.ai mobile / ChatGPT app / any OAuth-gated client without running a local process. See [`deploy/mcp-relay/vertical-tools.ts`](deploy/mcp-relay/vertical-tools.ts).
-
-  See [`applications/README.md`](applications/README.md) for vertical framing.
+  See [`applications/README.md`](applications/README.md) for the vertical framing + the layering discipline.
 
 - **CAS-safe `publish()`** — manifest updates use HTTP If-Match (RFC 7232 optimistic concurrency) with retry on 412. Fixes the read-then-write race where parallel publishes against the same pod could clobber each other's manifest entries. Cold-start uses `If-None-Match: *` so two cold-start clients don't race either.
 
@@ -55,8 +55,8 @@ Two complementary deployment paths. Both are open-source; both federate; pick by
 
 | Path | What it is | Best for |
 |---|---|---|
-| **Hosted reference** ([interego-relay.eastus...](https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io)) | Publicly-hosted Azure deployment. OAuth-gated MCP at `/mcp` exposing **32 tools** (15 protocol + 17 vertical: `lpc.*` / `adp.*` / `lrs.*` / `ac.*`), per-user pods, claude.ai custom-connector compatible. Operated by the maintainer as a reference instance. | **Onboarding + zero-setup.** Try Interego without running anything — including the four production verticals from your phone. Useful when you want to evaluate the protocol, do quick demos, or use Interego from a mobile MCP client that can't run a local process. Tier 3 substrate (self-hosted public pod). |
-| **Personal bridge** ([`examples/personal-bridge/`](examples/personal-bridge/)) | A small Node binary you run on your own infrastructure (laptop / Pi / NAS / Tailscale-exposed home server). Embedded relay, MCP at `/mcp` exposing **23 tools** (6 core p2p + 17 vertical), REST + admin UI. | **Self-hosting + local-first.** Your data on your network; one URL all your devices; sharing is per-publish (`share_with`) or per-bridge (mirror to public Nostr relays via `EXTERNAL_RELAYS`). Tier 5 substrate. Same 17 vertical tools as the hosted relay — the cloud and local surfaces are interoperable. |
+| **Hosted reference** ([interego-relay.eastus...](https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io)) | Publicly-hosted Azure deployment. OAuth-gated MCP at `/mcp` exposing **15 protocol-level tools** (publish_context, discover_context, registry/federation, ABAC verification, etc.), per-user pods, claude.ai custom-connector compatible. Operated by the maintainer as a reference instance. | **Onboarding + zero-setup.** Try the protocol without running anything. Useful when you want to evaluate Interego or do quick demos. Tier 3 substrate. Vertical applications are NOT bundled into this relay — they deploy independently per the [verticals doc](applications/README.md). |
+| **Personal bridge** ([`examples/personal-bridge/`](examples/personal-bridge/)) | A small Node binary you run on your own infrastructure (laptop / Pi / NAS / Tailscale-exposed home server). Embedded relay, MCP at `/mcp` exposing **6 core p2p tools** (publish_p2p, share_encrypted, etc.), REST + admin UI. | **Self-hosting + local-first.** Your data on your network; one URL all your devices; sharing is per-publish (`share_with`) or per-bridge (mirror to public Nostr relays via `EXTERNAL_RELAYS`). Tier 5 substrate. Vertical bridges run alongside this generic bridge on different ports — see [`applications/`](applications/). |
 
 **They federate when you need it.** A user on the hosted relay can share with a personal-bridge user via cross-pod E2EE share (Tier 4) or via a common public Nostr relay (Tier 5 with `WebSocketRelayMirror`). Identity stays the same — your wallet's secp256k1 key is your identity on every surface.
 
@@ -221,45 +221,39 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 
 Pick the path that matches who you are:
 
-### 🎯 I want to actually USE the system (chat with my training content, run a probe cycle, bridge xAPI, etc.)
+### 🎯 I want to actually USE one of the example verticals (chat with my training content, run a probe cycle, bridge xAPI, etc.)
 
-The production-grade path. Same 17 vertical tools (`lpc.*` / `adp.*` / `lrs.*` / `ac.*`) for SCORM/cmi5 ingestion + W3C VC import + grounded chat + Cynefin probe-cycles + xAPI ↔ Interego (auto version negotiation) + cross-bridge agent collaboration. Reachable two ways — pick whichever fits your client:
+The example verticals under [`applications/`](applications/) are **separate from Interego** — the generic protocol-level deployments don't bundle them. You reach a vertical's capabilities one of two ways:
 
-**Option A — Cloud (zero install; works from claude.ai mobile, ChatGPT app, any OAuth-gated MCP client):**
+**Path A — first-principles (use ANY generic Interego MCP client; no per-vertical install):**
 
-Add `https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp` as a custom MCP connector. The hosted relay exposes 32 MCP tools (15 protocol + 17 vertical). OAuth flow walks you through pod creation; pod URL is derived from your authenticated identity. No local infrastructure.
+The vertical exposes its capabilities as `cg:Affordance` descriptors. Run any generic Interego agent (e.g., the [stdio MCP server](#-im-an-ai-coding-agent-claude-code-cursor-windsurf-cline--protocol-level-access)), point it at the vertical's affordance manifest, and it discovers + invokes via `discover_context` + a standard HTTP POST to `hydra:target`. No vertical-specific code anywhere on the client side. This is the spec-level path — works for any vertical anyone publishes.
 
-**Option B — Local personal-bridge (works offline; data stays on your network):**
+**Path B — opinionated reified bridge (when you want named MCP tools — `lpc.*`, `adp.*`, `lrs.*`, `ac.*` — for ergonomic LLM tool selection):**
+
+Each example vertical has a tiny optional bridge in `applications/<vertical>/bridge/`. Build + run only the ones you want; each is independent, depends on `@interego/core`, and exposes its named tools at its own port:
 
 ```bash
-# 1. Clone + build the bridge
-git clone https://github.com/markjspivey-xwisee/interego.git
-cd interego/examples/personal-bridge
+# Example: run the learner-performer-companion bridge
+cd applications/learner-performer-companion/bridge
 npm install && npm run build
 
-# 2. Configure the verticals you want (any subset; tools throw if pod URL unset)
-export BRIDGE_KEY=0x<your-wallet-private-key>
-export LPC_POD_URL=https://your-pod.example/me/   # learner-performer-companion
-export LPC_USER_DID=did:web:you.example
-export ADP_POD_URL=https://your-pod.example/me/   # agent-development-practice
-export ADP_OPERATOR_DID=did:web:you.example
-# ... LRS_*, AC_* if needed; see examples/personal-bridge/README.md
-
-# 3. Start the bridge
-PORT=5050 npm start
+export LPC_DEFAULT_POD_URL=https://your-pod.example/me/
+export LPC_DEFAULT_USER_DID=did:web:you.example
+PORT=6010 BRIDGE_DEPLOYMENT_URL=http://localhost:6010 npm start
 ```
 
-Add `http://localhost:5050/mcp` as an MCP server in your client. Bridge exposes 23 MCP tools (6 core p2p + 17 vertical).
+Add `http://localhost:6010/mcp` to your MCP client config. That bridge exposes the LPC vertical's 6 named MCP tools. Run the others (ADP at 6020, LRS at 6030, AC at 6040) the same way.
 
-**Either option, you can now say:**
+**Either path, you can now do (Path A via affordance walking; Path B via named tool):**
 
-- *"Ingest this SCORM zip into my pod"* → `lpc.ingest_training_content`
-- *"What did the customer-service training say about second-contact escalation?"* → `lpc.grounded_answer` (verbatim citation, honest no-data, tamper detection)
-- *"Define a capability space for tone-handling and record three parallel probes"* → `adp.define_capability` + `adp.record_probe`
+- *"Ingest this SCORM zip into my pod"* → `lpc.ingest_training_content` (Path B) or `discover_context` → find `urn:cg:action:lpc:ingest-training-content` → POST (Path A)
+- *"What did the customer-service training say about second-contact escalation?"* → `lpc.grounded_answer` — verbatim citation, honest no-data, tamper detection
+- *"Define a capability space and record three parallel probes"* → `adp.define_capability` + `adp.record_probe`
 - *"Pull this xAPI Statement from our LRS into my pod"* → `lrs.ingest_statement` (auto-negotiates xAPI 2.0 / 1.0.3)
-- *"Author this tool, attest it, then bundle it as a teaching package for another agent"* → `ac.author_tool` → `ac.attest_tool` → `ac.bundle_teaching_package`
+- *"Author this tool, attest it, bundle it as a teaching package"* → `ac.author_tool` → `ac.attest_tool` → `ac.bundle_teaching_package`
 
-Each vertical has Tier 8 integration tests against real Azure CSS + real Lrsql + real SCORM Cloud + public Nostr relay. See [`applications/README.md`](applications/README.md) for the per-vertical framing and [`examples/personal-bridge/README.md`](examples/personal-bridge/README.md) for the full tool reference.
+Each vertical has Tier 8 integration tests against real Azure CSS + real Lrsql + real SCORM Cloud + public Nostr relay. See [`applications/README.md`](applications/README.md) for the per-vertical framing.
 
 ### 🤖 I'm an AI coding agent (Claude Code, Cursor, Windsurf, Cline) — protocol-level access
 
