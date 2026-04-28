@@ -27,7 +27,7 @@ The transplant test from [`spec/LAYERS.md`](../spec/LAYERS.md): "would this clai
 
 | Vertical | What it does |
 |---|---|
-| [`agent-hpt/`](agent-hpt/) | Human Performance Technology (Gilbert / Rummler-Brache / Mager) applied to AI agents. Treats agents as managed performers — capability registration, performance observation via xAPI, multi-axis attestation, intervention design, capability promotion / revocation, cross-org credential portability. Composes `passport:` + `amta:` + `olke:` + `hela:` + `cg:Affordance` + ABAC + compliance. |
+| [`agent-development-practice/`](agent-development-practice/) | Complexity-informed (Cynefin / Snowden) framing for managing AI agent development in genuinely Complex situations — open-ended capability spaces (not targets), parallel safe-to-fail probes, narrative observation with signifiers, sensemaking syntheses that preserve multiple coherent narratives, amplify+dampen evolution (not "fix"), constraint-based governance, and emergent-recognition capability evolution events with explicit-decision-not-made statements that travel with the agent. Composes `passport:` + `olke:` + `amta:` + `registry:` + `abac:`; xAPI is intentionally NOT used inside (an `applications/lrs-adapter/` would translate at the boundary if needed). |
 
 ## Adding a vertical
 
