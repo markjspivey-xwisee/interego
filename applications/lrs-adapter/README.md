@@ -111,7 +111,15 @@ Skips automatically if Lrsql isn't running locally on `:8080`. Set `SKIP_LRSQL_T
 - **Alternate request method** (POST with `?method=GET`, xAPI 2.0 §6.2) — handled gracefully whether LRS supports (200) or refuses cleanly (4xx); 5xx server-error would be the failure mode
 - **Version negotiation** — LRS reports both 2.0.0 and 1.0.3 in `/about`
 
-Cross-LRS gap (Watershed / SCORM Cloud / proprietary): testing against those services requires customer-side accounts and is out of scope for this test suite. The adapter targets xAPI 2.0 spec conformance, which is what those LRSes claim to support; deployment-time validation against the target LRS remains the consumer's responsibility.
+**Tier 3c** — [`tests/tier3c-scorm-cloud.test.ts`](tests/tier3c-scorm-cloud.test.ts) closes the proprietary-LRS gap by testing against **SCORM Cloud** (Rustici Software's commercial LRS, used widely in enterprise L&D). Gated by env vars (`SCORM_CLOUD_KEY`, `SCORM_CLOUD_SECRET`, `SCORM_CLOUD_ENDPOINT`); skips automatically when unset. Verifies:
+- `/about` reports xAPI 1.0.3 specifically — **NOT 2.0.0**. (Real-world finding: SCORM Cloud has not yet adopted xAPI 2.0.)
+- xAPI 2.0 client gets explicit 400 rejection (not silent acceptance), so an adapter that targets 2.0.0 against a 1.0.3-only LRS fails loudly
+- POST + GET roundtrip preserves Statement ID + verb + result.score
+- Lossy-projection extensions (`urn:cg:projection-lossy`, `urn:cg:coherent-narratives`, `urn:cg:modal-status`) survive SCORM Cloud roundtrip
+- Voiding semantics work the same (xAPI 1.0.3 §4.1.6.7): plain GET → 404; `voidedStatementId=` → retrievable. Cross-LRS-conformant with Lrsql.
+- Cross-LRS confirmation: same Statement shape works against both Lrsql AND SCORM Cloud → adapter is genuinely interoperable across open-source + proprietary LRS implementations
+
+**Implication for the lrs-adapter**: must do version negotiation against the LRS's `/about` endpoint, target 2.0.0 against modern LRSes (Lrsql) and fall back to 1.0.3 against legacy proprietary LRSes (SCORM Cloud). The xAPI 1.0.3-conformant subset of Statements is the safest projection target for cross-LRS deployment.
 
 ## What this is NOT
 
