@@ -14,7 +14,13 @@
   "include": [
     "server.ts",
     "lpc-tools.ts",
+    "adp-tools.ts",
+    "lrs-tools.ts",
+    "ac-tools.ts",
     "../../applications/learner-performer-companion/src/**/*.ts",
+    "../../applications/agent-development-practice/src/**/*.ts",
+    "../../applications/lrs-adapter/src/**/*.ts",
+    "../../applications/agent-collective/src/**/*.ts",
     "../../applications/_shared/scorm/**/*.ts",
     "../../applications/_shared/vc-jwt/**/*.ts"
   ],

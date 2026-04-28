@@ -73,11 +73,14 @@ async function fetchPool<T, R>(
 }
 
 async function fetchTurtle(url: string, timeoutMs: number): Promise<string | null> {
+  // Prefer trig over turtle so .trig graph files return BOTH default and
+  // named graph content; CSS may strip named graphs when serving as
+  // turtle, and named graphs are where domain-namespace triples live.
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const r = await fetch(url, {
-      headers: { Accept: 'text/turtle, application/ld+json, */*' },
+      headers: { Accept: 'application/trig, text/turtle;q=0.5, application/ld+json;q=0.3, */*;q=0.1' },
       signal: ac.signal,
     });
     if (!r.ok) return null;

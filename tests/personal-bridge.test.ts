@@ -98,6 +98,32 @@ describe('personal-bridge — tool surface', () => {
       'lpc.grounded_answer',
       'lpc.list_wallet',
     ]));
+    // ADP vertical tools must also be present
+    expect(names).toEqual(expect.arrayContaining([
+      'adp.define_capability',
+      'adp.record_probe',
+      'adp.record_narrative_fragment',
+      'adp.emerge_synthesis',
+      'adp.record_evolution_step',
+      'adp.refine_constraint',
+      'adp.recognize_capability_evolution',
+      'adp.list_cycle',
+    ]));
+    // LRS vertical tools must also be present
+    expect(names).toEqual(expect.arrayContaining([
+      'lrs.ingest_statement',
+      'lrs.ingest_statement_batch',
+      'lrs.project_descriptor',
+      'lrs.lrs_about',
+    ]));
+    // AC vertical tools must also be present
+    expect(names).toEqual(expect.arrayContaining([
+      'ac.author_tool',
+      'ac.attest_tool',
+      'ac.promote_tool',
+      'ac.bundle_teaching_package',
+      'ac.record_cross_agent_audit',
+    ]));
     for (const t of result.tools) {
       expect(t.description).toBeTruthy();
       expect(t.inputSchema).toBeDefined();
