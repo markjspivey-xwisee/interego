@@ -215,6 +215,19 @@ Instead: an `applications/lrs-adapter/` vertical (separate; not yet built) will 
 node applications/agent-development-practice/examples/probe-cycle.mjs
 ```
 
+## Tested against
+
+Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) verify against REAL code paths (run via `npx vitest run applications/agent-development-practice`):
+
+| What's verified (real code paths) | What's still simulated (deferred) |
+|---|---|
+| Real `ContextDescriptor` builder produces conforming shape for every adp: class | No actual publish to a network pod (Tier 2) |
+| Real `validate()` returns conforms=true for all 9+ descriptors in the cycle | Vertical content (`adp:coherentNarrative`, `adp:contextSignifier`, etc.) lives in the described graph, not in the descriptor metadata — graph-side content not yet validated end-to-end |
+| Real `toTurtle()` round-trip preserves descriptor IRIs | No federation across two pods (Tier 2) |
+| Modal discipline holds: probes + fragments + syntheses all `cg:Hypothetical`; operator evolution decisions `cg:Asserted` | No live signature verification chain after publish (Tier 1 deferred) |
+
+**Real finding from testing**: the L1 `cg:SemioticFacet` has no `content` field — content lives in the *described graph*, not in the descriptor metadata. The print-only example walks descriptor metadata; production usage requires emitting the graph turtle alongside.
+
 ## What this is NOT
 
 - **Not the protocol.** No L1/L2/L3 ontologies are extended.

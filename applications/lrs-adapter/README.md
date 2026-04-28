@@ -76,6 +76,21 @@ Minimal — the adapter only adds translation-tracking terms in [`ontology/lrs.t
 node applications/lrs-adapter/examples/translate.mjs
 ```
 
+## Tested against
+
+Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) verify the boundary translator's invariants against REAL code paths (run via `npx vitest run applications/lrs-adapter`):
+
+| What's verified (real code paths) | What's still simulated (deferred) |
+|---|---|
+| Ingest direction: synthetic xAPI Statement → conforming `cg:ContextDescriptor` with `cg:Asserted` modal + LRS Trust attribution | No actual GET against a real LRS endpoint (Tier 3 — Lrsql or Trax in Docker) |
+| Project Asserted: lossy=false, full Statement emitted | No actual POST to a real LRS endpoint |
+| Project Hypothetical: SKIPPED with explicit skip-reason audit row | No xAPI 2.0 conformance suite run end-to-end |
+| Project Counterfactual: ALWAYS skipped regardless of caller opt-in | No round-trip integrity check across a real LRS roundtrip |
+| Project multi-narrative: lossy=true with explicit `lossNote` rows for each dropped concern | |
+| Project Hypothetical with `allowHypothetical` opt-in: lossy=true with audit | |
+
+The translation logic itself is verified; the network layer is a separate test concern.
+
 ## What this is NOT
 
 - **Not the protocol.** No L1/L2/L3 ontologies are extended.

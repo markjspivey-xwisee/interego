@@ -276,6 +276,22 @@ Properties: `ac:authoredBy`, `ac:authoredTool`, `ac:toolSource`, `ac:attestedFro
 node applications/agent-collective/examples/collective-flow.mjs
 ```
 
+## Tested against
+
+Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) verify against REAL cross-bridge code paths — two `P2pClient` instances on a shared `InMemoryRelay`, the same code that runs in production minus the WebSocket IO layer (run via `npx vitest run applications/agent-collective`):
+
+| What's verified (real code paths) | What's still simulated (deferred) |
+|---|---|
+| Fresh tool authoring is `cg:Hypothetical`; modal flips to `cg:Asserted` via `cg:supersedes` | No external Nostr public relay (Tier 4 — but `WebSocketRelayMirror` is an IO swap of `InMemoryRelay`) |
+| `cg:supersedes` survives Turtle round-trip | No multi-machine deployment test (Tier 4) |
+| **Real cross-bridge p2p**: Mark publishes a descriptor announcement; David queries the relay and finds it (real ECDSA signing) | Permission delegation enforcement (`passport:DelegationCredential` ABAC rejection logic) is described in the README but not yet integration-tested as a code path |
+| **Real encrypted chime-in**: David sends an encrypted share; Mark decrypts the chime content via `decryptEncryptedShare` (real X25519 envelope, real NaCl) | Capability advertisement → capability-discovery handshake convention not yet exercised |
+| **Real bidirectional thread**: chime-in + reply on thread `t1`; both sides decrypt only what was addressed to them | iCal RRULE-based check-in scheduling not yet exercised in tests |
+| **End-to-end encryption invariant**: a "Eve" pubkey not in recipients gets zero inbox results AND cannot decrypt the envelope (no wrapped key for that pubkey) | |
+| Inbox query filters do NOT include sender's own outbound — sender cannot decrypt their own outbound (correct for the substrate's unidirectional address model) | |
+
+The cross-bridge p2p path runs the same `P2pClient.publishEncryptedShare` / `queryEncryptedShares` / `decryptEncryptedShare` code as the production personal-bridge.
+
 ## What this is NOT
 
 - **Not the protocol.** No L1/L2/L3 ontologies are extended.
