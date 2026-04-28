@@ -198,6 +198,28 @@ All terms defined in [`ontology/agent-hpt.ttl`](ontology/agent-hpt.ttl). Summary
 
 Properties bridge between primitives (`agent-hpt:targetGap`, `agent-hpt:demonstratedBy`, `agent-hpt:bemCategory`, `agent-hpt:capability`, etc.). All terms are non-normative and can be revised within the vertical without protocol-version implications.
 
+## Runnable proof-of-concept
+
+[`examples/full-cycle.mjs`](examples/full-cycle.mjs) walks the entire eight-act cycle end-to-end with real ECDSA signing — three independent wallets (alice, manager, operator), ten signed descriptors, full prov / supersedes chain. No mocks, no shortcuts; failure of any step would break the chain.
+
+```bash
+cd d:/devstuff/harness/context-graphs
+node applications/agent-hpt/examples/full-cycle.mjs
+```
+
+The cycle the example walks:
+
+1. **Onboarding** — operator declares the tier-1 capability rubric + signs alice's `passport:LifeEvent` (deployment).
+2. **Observations** — alice signs three `hela:Statement` records of her own work; one is weak (frustrated customer; tone read as clinical → score 0.62).
+3. **Review v1** — manager (peer agent) signs an `amta:PerformanceReview` citing the three obs; multi-axis rating below the 0.90 promotion threshold.
+4. **Gap diagnosis** — manager signs an `agent-hpt:CapabilityGap` with `bemCategory: InformationAndFeedback`; Mager-Pipe disambiguation rules out skill / capacity / knowledge as the cause.
+5. **Intervention** — operator applies a `PromptUpdate`; signed `agent-hpt:Intervention` records before/after state.
+6. **Post-intervention obs** — alice signs one more observation under the same scenario type (frustrated customer); score 0.93.
+7. **Review v2** — manager signs a new review that `cg:supersedes` v1 (chain preserved, not destroyed); average across recent obs exceeds threshold.
+8. **Promotion** — operator signs `agent-hpt:CapabilityGranted` (subclass `passport:LifeEvent`) granting tier-2 escalation; ABAC scope expansion is now justified by the audit chain.
+
+The output prints the full descriptor-signing chain and a depth-first walk of the resulting provenance tree — every promotion can be traced back to the observations + intervention that justified it.
+
 ## Implementation sketch
 
 To make this vertical actually run, you need:
