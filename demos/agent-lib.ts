@@ -39,7 +39,8 @@ export type VerticalName =
   | 'learner-performer-companion'
   | 'agent-development-practice'
   | 'lrs-adapter'
-  | 'agent-collective';
+  | 'agent-collective'
+  | 'organizational-working-memory';
 
 export interface BridgeHandle {
   readonly name: VerticalName;
@@ -54,6 +55,7 @@ const VERTICAL_PORTS: Record<VerticalName, number> = {
   'agent-development-practice': 6020,
   'lrs-adapter': 6030,
   'agent-collective': 6040,
+  'organizational-working-memory': 6060,
 };
 
 export interface BridgeSpawnOptions {
@@ -97,6 +99,10 @@ export async function spawnBridge(
     case 'agent-collective':
       env.AC_DEFAULT_POD_URL = options.podUrl;
       env.AC_DEFAULT_AGENT_DID = did;
+      break;
+    case 'organizational-working-memory':
+      env.OWM_DEFAULT_POD_URL = options.podUrl;
+      env.OWM_DEFAULT_ORG_DID = did;
       break;
   }
 
@@ -199,6 +205,7 @@ export function writeMcpConfig(
       'agent-development-practice': 'adp-bridge',
       'lrs-adapter': 'lrs-bridge',
       'agent-collective': 'ac-bridge',
+      'organizational-working-memory': 'owm-bridge',
     } as const)[b.name];
     servers[short] = { type: 'http', url: `${b.url}/mcp` };
   }

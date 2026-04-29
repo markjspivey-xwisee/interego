@@ -1,4 +1,4 @@
-# Interego demos — fourteen end-to-end scenarios
+# Interego demos — fifteen end-to-end scenarios
 
 Self-contained scenarios that drive **real Claude Code CLI agents**
 against **real per-vertical bridges**, a **real Solid pod** (Azure CSS),
@@ -87,6 +87,12 @@ CLAUDECODE= npx tsx demos/scenarios/14-zk-confidence-without-disclosure.ts
 | 09 | [Cryptographic citation chain refusal](scenarios/09-citation-chain-refusal.ts) | Bob refuses to amplify any cited claim whose secp256k1 signature does not verify against Alice's expected key. Catches both content tampering (claim mutated) and signature tampering (signature byte-flipped). No trust authority — pure cryptography + a recipient agent willing to refuse on bad inputs. |
 | 14 | [Knowledge-without-disclosure (commit + reveal)](scenarios/14-zk-confidence-without-disclosure.ts) | Alice publishes a hash commitment to a sensitive claim before disclosing it. Bob receives a selective reveal and verifies the commitment opens to the stated text. Carol receives a tampered reveal — same commitment, mutated claim — and `verifyCommitment` fails because H no longer matches. Auditable fingerprints + selective disclosure + tamper detection from L1 + crypto. |
 
+### Substrate as product (15)
+
+| # | Scenario | What it demonstrates |
+|---|----------|----------------------|
+| 15 | [Organizational working memory](scenarios/15-organizational-working-memory.ts) | A "company memory" surface (people, projects, decisions, follow-ups, content-addressed notes) recoverable from the substrate's primitives alone, plus a per-source navigation pattern that isolates external sources behind uniform `ls / cat / grep / recent` verbs. A Curator agent distills an external page into typed entities; a separate Surfacer agent — different process, no shared memory — recovers state from the org pod alone. |
+
 ### Identity & democracy (10, 12, 13)
 
 | # | Scenario | What it demonstrates |
@@ -107,6 +113,7 @@ CLAUDECODE= npx tsx demos/scenarios/14-zk-confidence-without-disclosure.ts
 | Agent Collective (`ac-bridge`)              | 03, 04, 12  | 6040 |
 | Bob's AC bridge (Demo 04)                   | 04          | 6041 |
 | Generic interego-bridge (`interego-bridge`) | 05, 06, 07, 09, 10, 11, 13, 14 | 6050–6053 |
+| Organizational Working Memory (`owm-bridge`) | 15         | 6060 |
 | Personal-bridge (Alice)                     | 04          | 5050 |
 | Personal-bridge (Bob)                       | 04          | 5051 |
 | Shared Nostr relay (Demo 04 only)           | 04          | 7080 |

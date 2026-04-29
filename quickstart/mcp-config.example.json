@@ -1,0 +1,13 @@
+{
+  "_comment": "Example MCP configuration for Claude Code, Claude Desktop, Cursor, or any MCP client. Copy the relevant entries into your client's mcp config and remove this comment block. Both bridges expose Streamable HTTP at POST /mcp.",
+  "mcpServers": {
+    "personal-bridge": {
+      "type": "http",
+      "url": "http://localhost:5050/mcp"
+    },
+    "owm-bridge": {
+      "type": "http",
+      "url": "http://localhost:6060/mcp"
+    }
+  }
+}

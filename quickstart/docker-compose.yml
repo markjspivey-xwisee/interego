@@ -1,0 +1,95 @@
+version: "3.9"
+
+# Interego quickstart — local-first substrate ready in under 10 minutes.
+#
+# Brings up:
+#   - personal-bridge        on :5050 (Tier 5 substrate, embedded relay,
+#                                       MCP at POST /mcp, REST + admin UI)
+#   - organizational-working-memory bridge on :6060 (reference vertical;
+#                                       people / projects / decisions /
+#                                       follow-ups + per-source navigation)
+#
+# Pod: by default the OWM bridge writes to whatever pod URL you set in
+# .env (OWM_POD_URL). If unset, the OWM service exits with a clear
+# message — pod selection is intentionally explicit, not implicit.
+#
+# Usage:
+#   cd quickstart
+#   cp .env.example .env       # then edit BRIDGE_KEY + OWM_POD_URL
+#   docker compose up --build
+#
+# After both services log "ready", point your Claude Code MCP config
+# (or any MCP client) at:
+#   - http://localhost:5050/mcp     (personal-bridge tools)
+#   - http://localhost:6060/mcp     (OWM tools)
+# See mcp-config.example.json in this directory.
+
+services:
+  personal-bridge:
+    image: node:22-alpine
+    container_name: interego-personal-bridge
+    working_dir: /app
+    volumes:
+      - ..:/app
+      - personal-bridge-deps:/app/examples/personal-bridge/node_modules
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        cd examples/personal-bridge
+        npm install --silent --no-audit --no-fund
+        echo "personal-bridge dependencies ready"
+        exec npx tsx server.ts
+    environment:
+      - PORT=5050
+      - BIND=0.0.0.0
+      - BRIDGE_KEY=${BRIDGE_KEY:-}
+      - BRIDGE_PERSIST=${BRIDGE_PERSIST:-1}
+      - EXTERNAL_RELAYS=${EXTERNAL_RELAYS:-}
+      - INBOUND_AUTHORS=${INBOUND_AUTHORS:-}
+      - NODE_NO_WARNINGS=1
+    ports:
+      - "5050:5050"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:5050/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+
+  owm-bridge:
+    image: node:22-alpine
+    container_name: interego-owm-bridge
+    working_dir: /app
+    volumes:
+      - ..:/app
+      - owm-bridge-deps:/app/applications/organizational-working-memory/bridge/node_modules
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        if [ -z "$$OWM_DEFAULT_POD_URL" ]; then
+          echo "ERROR: OWM_POD_URL must be set in .env so the bridge knows where to write." >&2
+          exit 1
+        fi
+        cd applications/organizational-working-memory/bridge
+        npm install --silent --no-audit --no-fund
+        echo "owm-bridge dependencies ready"
+        exec npx tsx server.ts
+    environment:
+      - PORT=6060
+      - BRIDGE_DEPLOYMENT_URL=http://localhost:6060
+      - OWM_DEFAULT_POD_URL=${OWM_POD_URL:-}
+      - OWM_DEFAULT_ORG_DID=${OWM_ORG_DID:-did:web:org.example}
+      - NODE_NO_WARNINGS=1
+    ports:
+      - "6060:6060"
+    depends_on:
+      personal-bridge:
+        condition: service_healthy
+
+volumes:
+  personal-bridge-deps:
+  owm-bridge-deps:

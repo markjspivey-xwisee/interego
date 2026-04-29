@@ -9,6 +9,20 @@ Interego gives autonomous AI agents the infrastructure to publish, discover, com
 
 ---
 
+## Substrate, not product
+
+Interego is **infrastructure for typed agent context** — a federated, cryptographically-verifiable substrate that *products* sit on top of. The protocol gives every product built on it five things at once:
+
+1. **Federation across organizations** — agent identity is wallet-rooted, descriptors carry signatures, cross-pod sharing is per-graph and cryptographically scoped. Single-tenant assumptions don't bind you.
+2. **Belief revision as a primitive** — `cg:modalStatus` (Asserted / Hypothetical / Counterfactual) and `cg:supersedes` chains make claim history and reversal first-class, not bolted on.
+3. **Composition on typed data** — the four algebraic operators (union, intersection, restriction, override) and PGSL meet/pullback give structural — not heuristic — answers to "what do these two views agree on."
+4. **Identity portability** — capability passports survive pod migrations, framework changes, and wallet rotations. Products do not own their users' identities.
+5. **Audit by construction** — every regulatory framework with an L3 mapping (`eu-ai-act:`, `nist-rmf:`, `soc2:`) queries the same descriptors with its own vocabulary. The substrate IS the audit trail.
+
+Products that try to add these after the fact rebuild parts of Interego — usually badly. The verticals under [`applications/`](applications/) are intentionally separate packages, each demonstrating a different shape of product riding the substrate. Most relevant if you're evaluating "should we build our company-context layer on Interego or roll our own": [`applications/organizational-working-memory/`](applications/organizational-working-memory/) is a reference vertical that turns the substrate into a typed people / projects / decisions / follow-ups surface, with per-source navigation isolated behind a uniform tool surface so the consuming agent's context never sees the per-source noise. The [10-minute quickstart](quickstart/README.md) brings it up via `docker compose`.
+
+---
+
 ## Recent additions
 
 The protocol surface has grown substantially. Highlights:
@@ -22,6 +36,7 @@ The protocol surface has grown substantially. Highlights:
   - **[`agent-development-practice/`](applications/agent-development-practice/)** — agent-as-subject: complexity-informed (Cynefin) probe-sense-respond cycle. Probes Hypothetical; multi-coherent-narrative syntheses; evolution steps require `explicitDecisionNotMade`; `passport:LifeEvent` biographical record carries humility forward.
   - **[`lrs-adapter/`](applications/lrs-adapter/)** — boundary translator: bidirectional xAPI ↔ Interego with version negotiation (2.0.0 → falls back to 1.0.3). Counterfactual always skipped on projection; Hypothetical skipped without opt-in.
   - **[`agent-collective/`](applications/agent-collective/)** — multi-agent federation: tool authoring + attestation + teaching packages + cross-bridge encrypted chime-ins.
+  - **[`organizational-working-memory/`](applications/organizational-working-memory/)** — federated organizational memory: typed people / projects / decisions / follow-ups / content-addressed notes on the org pod, plus a per-source navigation surface (uniform `ls / cat / grep / recent` verbs) that isolates each external source behind its own sub-handler so the main agent's context is never polluted by per-source tool noise. Demo 15 walks the closed loop: a Curator distills an external page into typed entities; a separate Surfacer agent — different process, no shared memory — recovers the state from the org pod alone.
 
   See [`applications/README.md`](applications/README.md) for the vertical framing + the layering discipline.
 
