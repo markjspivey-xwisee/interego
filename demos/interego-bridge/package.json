@@ -1,0 +1,22 @@
+{
+  "name": "@interego/demos-interego-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generic protocol-level Interego bridge used by the demo suite. Exposes publish/discover/get_descriptor/PGSL/ZK/constitutional as MCP tools over HTTP. Not part of the production deployment surface — the production generic surface is mcp-server/ (stdio).",
+  "type": "module",
+  "main": "server.ts",
+  "scripts": {
+    "dev": "tsx server.ts"
+  },
+  "dependencies": {
+    "@interego/core": "file:../../",
+    "ethers": "^6.16.0",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}

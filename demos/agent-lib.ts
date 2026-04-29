@@ -229,6 +229,8 @@ export async function runClaudeAgent(
   options: {
     readonly timeoutMs?: number;
     readonly maxTurns?: number;
+    /** Optional model alias or full ID. Aliases: "opus" / "sonnet" / "haiku". */
+    readonly model?: string;
   } = {},
 ): Promise<ClaudeRunResult> {
   return await new Promise((resolve) => {
@@ -248,6 +250,7 @@ export async function runClaudeAgent(
       '--dangerously-skip-permissions',
     ];
     if (options.maxTurns !== undefined) args.push('--max-turns', String(options.maxTurns));
+    if (options.model !== undefined) args.push('--model', options.model);
 
     // Defeat the nested-session check when this scenario is itself
     // executed from inside a Claude Code session. The check exists to

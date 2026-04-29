@@ -11,9 +11,12 @@
 #   - You're already authenticated with Claude Code (run `claude` once
 #     interactively if not). No API key needed.
 #   - Node 20+, the repo's `npm install` already done.
+#   - Demo bridges' deps installed:
+#       (cd demos/interego-bridge && npm install)
+#       (cd applications/<vertical>/bridge && npm install) for each vertical
 #
 # Usage:
-#   ./demos/run-all.sh                # run all four scenarios
+#   ./demos/run-all.sh                # run all scenarios
 #   ./demos/run-all.sh 02 04          # run only specific scenarios
 #   ./demos/run-all.sh --no-cleanup   # leave reports + temp configs
 
@@ -31,9 +34,19 @@ scenarios=(
   "02-path-b-named-tools"
   "03-cross-vertical-user-journey"
   "04-multi-agent-teaching-transfer"
+  "05-time-paradox-memory"
+  "06-pgsl-pullback-two-diaries"
+  "07-mind-merge-under-contention"
+  "08-adversarial-cynefin-science"
+  "09-citation-chain-refusal"
+  "10-migration-mid-conversation"
+  "11-three-regulators-one-pod"
+  "12-three-model-variant-relay"
+  "13-constitutional-democracy-live"
+  "14-zk-confidence-without-disclosure"
 )
 
-# Optional filter — accept positional args like "01" or "01 03"
+# Optional filter — accept positional args like "01" or "01 03 14"
 if [ "$#" -gt 0 ]; then
   filtered=()
   for arg in "$@"; do
