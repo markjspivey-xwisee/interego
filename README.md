@@ -1,25 +1,29 @@
 # @interego/core
 
-Reference implementation of **[Interego 1.0](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)** — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
+**Interego is the verifiable, federated substrate AI agents share** — typed context, signed provenance, and coordination across organizations, all on by default. Three pillars over one cryptographic root:
 
-Interego gives autonomous AI agents the infrastructure to publish, discover, compose, and reason over knowledge graphs with full provenance, trust, temporal validity, semiotic metadata, causal models, and cryptographic verification — federated across decentralized Solid pods with **per-agent end-to-end encryption** and **hypermedia-native data products**.
+- **Typed context** — typed Context Descriptors (seven facets), composition algebra, modal status, `cg:supersedes` chains, the PGSL content-addressed lattice. The L1 protocol underneath is [**Context Graphs 1.0**](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html).
+- **Verifiable identity** — wallet-rooted DIDs, capability passports that survive infrastructure migration, public agent-attestation registries, attribute-based access control over typed attributes.
+- **Coordination** — multi-axis attestation, self-amending constitutional policies, federated saga transactions, Nostr-style p2p relays, and a growing surface of vertical applications.
+
+Wrapped in real cryptography — NaCl envelopes, secp256k1 signatures, ZK commitments, IPFS anchoring — and federated across Solid pods by default. This repository is the reference implementation; `@interego/core` is the L1 library, `@interego/mcp` is the stdio MCP server, [`examples/personal-bridge/`](examples/personal-bridge/) is the local-first deployment, and [`applications/`](applications/) holds independent vertical packages that compose the substrate.
 
 **Author:** Mark Spivey
 **License:** MIT
 
 ---
 
-## Substrate, not product
+## What products inherit
 
-Interego is **infrastructure for typed agent context** — a federated, cryptographically-verifiable substrate that *products* sit on top of. The protocol gives every product built on it five things at once:
+Anything built on Interego inherits five properties without writing them itself:
 
-1. **Federation across organizations** — agent identity is wallet-rooted, descriptors carry signatures, cross-pod sharing is per-graph and cryptographically scoped. Single-tenant assumptions don't bind you.
-2. **Belief revision as a primitive** — `cg:modalStatus` (Asserted / Hypothetical / Counterfactual) and `cg:supersedes` chains make claim history and reversal first-class, not bolted on.
-3. **Composition on typed data** — the four algebraic operators (union, intersection, restriction, override) and PGSL meet/pullback give structural — not heuristic — answers to "what do these two views agree on."
-4. **Identity portability** — capability passports survive pod migrations, framework changes, and wallet rotations. Products do not own their users' identities.
+1. **Federation across organizations** — agent identity is wallet-rooted; cross-pod sharing is per-graph and cryptographically scoped. Single-tenant assumptions don't bind you.
+2. **Belief revision as a primitive** — `cg:modalStatus` (Asserted / Hypothetical / Counterfactual) plus `cg:supersedes` chains make claim history and reversal first-class.
+3. **Composition on typed data** — union / intersection / restriction / override operators on descriptors, plus PGSL meet/pullback at the atom layer, give structural — not heuristic — answers to "what do these views agree on."
+4. **Identity portability** — capability passports survive pod migrations, framework changes, and wallet rotations.
 5. **Audit by construction** — every regulatory framework with an L3 mapping (`eu-ai-act:`, `nist-rmf:`, `soc2:`) queries the same descriptors with its own vocabulary. The substrate IS the audit trail.
 
-Products that try to add these after the fact rebuild parts of Interego — usually badly. The verticals under [`applications/`](applications/) are intentionally separate packages, each demonstrating a different shape of product riding the substrate. Most relevant if you're evaluating "should we build our company-context layer on Interego or roll our own": [`applications/organizational-working-memory/`](applications/organizational-working-memory/) is a reference vertical that turns the substrate into a typed people / projects / decisions / follow-ups surface, with per-source navigation isolated behind a uniform tool surface so the consuming agent's context never sees the per-source noise. The [10-minute quickstart](quickstart/README.md) brings it up via `docker compose`.
+The verticals under [`applications/`](applications/) are intentionally separate packages, each demonstrating a different shape of product riding the substrate. The most product-shaped of the bunch — [`applications/organizational-working-memory/`](applications/organizational-working-memory/) — turns the substrate into a typed people / projects / decisions / follow-ups surface with per-source navigation isolated behind uniform verbs so the consuming agent's context never sees the per-source noise. The [10-minute quickstart](quickstart/README.md) brings it up via `docker compose`.
 
 ---
 

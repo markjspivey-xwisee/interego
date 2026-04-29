@@ -2,9 +2,15 @@
 
 ## What is this project?
 
-Reference implementation of **Interego 1.0**, a specification by Interego that defines a compositional framework for typed graph contexts over RDF 1.2 Named Graphs.
+Reference implementation of **Interego** — a verifiable, federated substrate for AI-agent context, identity, and coordination. Three pillars sit on one cryptographic root:
 
-**Spec:** `context-graphs-1.0-wd.html` (co-located or at https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)
+1. **Typed context.** The L1 protocol is **Context Graphs 1.0** — typed Context Descriptors over RDF 1.2 Named Graphs, with seven facets (Temporal / Provenance / Agent / AccessControl / Semiotic / Trust / Federation), the composition algebra (union / intersection / restriction / override), modal status (Asserted / Hypothetical / Counterfactual), `cg:supersedes` chains, and the PGSL content-addressed lattice.
+2. **Verifiable identity.** Wallet-rooted DIDs, capability passports that survive infrastructure migration, public attestation registries, ABAC over typed attributes.
+3. **Coordination.** Multi-axis attestation, self-amending constitutional policies, federated saga transactions, p2p relays, vertical applications.
+
+Verticals (LPC, ADP, LRS, AC, OWM) and quickstart deployments compose the substrate — they are NOT part of the protocol. When this document refers to "Interego," it means the system as a whole; when it refers to "Context Graphs" or "the L1 protocol" or `cg:`, it means the L1 spec specifically.
+
+**L1 Protocol Spec:** `context-graphs-1.0-wd.html` (co-located or at https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)
 
 ## Architecture
 
