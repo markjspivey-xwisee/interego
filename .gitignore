@@ -33,6 +33,10 @@ interego-core-*.tgz
 # vitest --coverage output (generated; HTML report ~12MB)
 coverage/
 
+# Demo run reports — regenerated each run; reports are per-invocation
+# artifacts, not source.
+demos/output/
+
 # Playwright test runner output
 deploy/mcp-relay/test-results/
 deploy/mcp-relay/playwright-report/
