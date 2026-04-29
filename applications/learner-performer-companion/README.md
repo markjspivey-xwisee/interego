@@ -237,20 +237,50 @@ Integration tests in [`tests/integration.test.ts`](tests/integration.test.ts) ve
 | **Tier 7** — [`tests/tier7-grounded-chat.test.ts`](tests/tier7-grounded-chat.test.ts) closes the **end-to-end user-facing claim** of this vertical: a human asks a question, an Interego-grounded agent retrieves matching content from the wallet, returns a verbatim citation with cross-links, OR honestly returns null when nothing in the wallet grounds the question. Builds a realistic wallet by piping a real SCORM zip through unwrap → extract → atom-mint, plus a real OB 3.0 credential, performance record, and learning experience. 12 tests verify: (a) verbatim citation (atom value quoted literally, never paraphrased), (b) cross-link integrity (claimed credentials actually exist in the wallet), (c) honest no-data on unanswerable questions, (d) tamper detection (corrupted atom = hash mismatch = silently skipped, not cited), (e) provenance honesty (review citations attribute to manager, not user), (f) multi-match (both atoms cited when both match — no silent collapse), (g) review/credential question routing, (h) empty-wallet cold-start. [`src/grounded-answer.ts`](src/grounded-answer.ts) provides the retrieval + citation surface. | |
 | **Tier 8** — [`tests/tier8-real-pod-end-to-end.test.ts`](tests/tier8-real-pod-end-to-end.test.ts) — **PRODUCTION END-TO-END** against the deployed Azure Community Solid Server. Real HTTP, real persistence, real wallet load by walking the real manifest, real grounded answer, real cited-response audit trail published back, real cleanup. The full production lifecycle: `ingestTrainingContent()` (real SCORM zip → real pod) → `importCredential()` (real W3C VC vc-jwt → real pod) → `recordPerformanceReview()` (real review with manager attribution → real pod) → `recordLearningExperience()` (real xAPI Statement → real pod) → `loadWalletFromPod()` (real manifest walk + descriptor + graph turtle parse) → `groundedAnswer()` (real retrieval) → `publishCitedResponse()` (real audit-trail publication). Each test uses a unique sub-container (e.g., `tier8-{timestamp}-{rand}/`) so manifest writes don't race with parallel test files. [`src/pod-wallet.ts`](src/pod-wallet.ts) + [`src/pod-publisher.ts`](src/pod-publisher.ts) are the production-grade pod-backed surface MCP tools call into. | Eventual consistency on the manifest is real (CSS does GET-then-PUT, not CAS) — the loader retries the wallet load up to 5 times with 1.5s backoff to tolerate transient inconsistency |
 
-## Personal-bridge MCP tools (production-grade)
+## Reaching this vertical's capabilities
 
-The vertical's runtime is exposed as MCP tools through [`examples/personal-bridge`](../../examples/personal-bridge/) so any MCP client (Claude Desktop, Claude Code, Cursor, ChatGPT app) can call:
+Per first principles, this vertical's capabilities are reachable two ways. The protocol-level path is primary; the named-MCP-tool path is an optional ergonomic reification. Same publishers underneath, single source of truth in [`affordances.ts`](affordances.ts).
+
+### Path A — protocol-level (any generic Interego agent)
+
+Each capability is declared as a `cg:Affordance` descriptor with `urn:cg:action:lpc:<verb>` action IRIs. A generic agent does:
+1. `discover_context` against the LPC bridge's `/affordances` manifest (or against the user's pod where the vertical's affordances are also published)
+2. Filter for the action IRI of interest
+3. Read `hydra:method` + `hydra:target` + `hydra:expects`
+4. POST typed inputs to `hydra:target`
+
+No LPC-specific client code at the agent. Action IRIs:
+- `urn:cg:action:lpc:ingest-training-content`
+- `urn:cg:action:lpc:import-credential`
+- `urn:cg:action:lpc:record-performance-review`
+- `urn:cg:action:lpc:record-learning-experience`
+- `urn:cg:action:lpc:grounded-answer`
+- `urn:cg:action:lpc:list-wallet`
+
+### Path B — opinionated bridge ([`bridge/`](bridge/))
+
+For named-MCP-tool ergonomics, run the LPC-specific bridge:
+
+```bash
+cd applications/learner-performer-companion/bridge
+npm install && npm run build
+LPC_DEFAULT_POD_URL=https://your-pod.example/me/ \
+LPC_DEFAULT_USER_DID=did:web:you.example \
+PORT=6010 npm start
+```
+
+Connect any MCP client to `http://localhost:6010/mcp` for 6 named tools:
 
 | Tool | What it does |
 |---|---|
-| `lpc.ingest_training_content` | SCORM/cmi5 zip → unwrap → extract → atom-mint → publish `lpc:TrainingContent` + `lpc:LearningObjective` to the user's pod. Returns descriptor IRIs. |
-| `lpc.import_credential` | Verify a W3C VC (vc-jwt or DataIntegrityProof JSON-LD); publish as `lpc:Credential`. Verification failures throw — bad VCs never land in the pod under credential IRIs. |
-| `lpc.record_performance_review` | Publish a manager-attributed review with `cg:ProvenanceFacet.wasAttributedTo` set to the manager's DID (not the user's). |
-| `lpc.record_learning_experience` | Ingest an xAPI Statement (any version) as `lpc:LearningExperience`, cross-linked to training content + (optionally) credential earned. |
-| `lpc.grounded_answer` | The user-facing chat surface. Loads wallet from pod, retrieves with verbatim citation, publishes the response back as `lpc:CitedResponse` (audit trail). Returns null for unanswerable questions — honest no-data, no confabulation. |
+| `lpc.ingest_training_content` | SCORM/cmi5 zip → unwrap → extract → atom-mint → publish `lpc:TrainingContent` + `lpc:LearningObjective` to the user's pod. |
+| `lpc.import_credential` | Verify a W3C VC (vc-jwt or DataIntegrityProof JSON-LD); publish as `lpc:Credential`. Verification failures throw. |
+| `lpc.record_performance_review` | Publish a manager-attributed review with `cg:ProvenanceFacet.wasAttributedTo` set to the manager's DID. |
+| `lpc.record_learning_experience` | Ingest an xAPI Statement (any version) as `lpc:LearningExperience`. |
+| `lpc.grounded_answer` | Loads wallet from pod, retrieves with verbatim citation, publishes the response back as `lpc:CitedResponse`. Returns null for unanswerable questions — honest no-data. |
 | `lpc.list_wallet` | Summarize what's in the pod-backed wallet. |
 
-Configuration via env vars: `LPC_POD_URL`, `LPC_USER_DID`, `LPC_ASSISTANT_DID`. Pod URL can also be passed per-call as a tool argument override.
+Tool schemas are derived from the [`affordances.ts`](affordances.ts) declarations — never hand-written. Bridge serves the affordance manifest at `GET /affordances` so Path A consumers can also reach this bridge's running endpoints.
 
 **Scope finding from testing**: VC proof blocks (the JSON Object holding the cryptographic signature) live as vertical-scoped `lpc:vcProof` literals in the described graph, NOT inside `cg:TrustFacet`. The L1 trust facet is structural metadata only; actual signature verification belongs to a Tier 5 test that invokes `src/compliance/` against a real signature.
 
