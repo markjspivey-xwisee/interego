@@ -366,16 +366,16 @@ function main() {
       console.log(`  Ours: ${result.answer.slice(0, 80)}`);
       console.log(`  Strategy: ${result.strategy.strategy} | Computation: ${result.strategy.computationType ?? 'none'}`);
       console.log(`  PGSL: ${result.pgslAtoms} atoms, ${result.pgslFragments} fragments`);
-      console.log(`\n  Score: ${correct}/${total} (${(100 * correct / total).toFixed(1)}%)`);
-      console.log(`  Methods: structural=${structural} hybrid=${hybrid} llm=${llmOnly}`);
-      console.log(`  Resume: npx tsx benchmarks/run-agentic-system.ts ${MODEL} ${qi + 1}`);
-      break;
     }
 
-    if (total % 20 === 0) {
+    if (total % 20 === 0 || !isCorrect) {
       console.log(`  Score: ${correct}/${total} (${(100 * correct / total).toFixed(1)}%) | struct=${structural} hybrid=${hybrid} llm=${llmOnly}`);
     }
   }
+
+  console.log(`\n=== FINAL RESULTS ===`);
+  console.log(`Score: ${correct}/${total} (${(100 * correct / total).toFixed(1)}%)`);
+  console.log(`Methods: structural=${structural} hybrid=${hybrid} llm=${llmOnly}`);
 }
 
 main();

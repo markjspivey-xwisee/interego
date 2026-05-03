@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Benchmark harness for Context Graphs against LongMemEval and LoCoMo.
+ * Benchmark harness for Interego against LongMemEval and LoCoMo.
  *
  * Measures:
  *   - Retrieval accuracy: does our system find the right context?
@@ -72,7 +72,7 @@ if (USE_LLM_FALLBACK) {
   }
 }
 
-console.log(`\n=== Context Graphs Benchmark Suite ===`);
+console.log(`\n=== Interego Benchmark Suite ===`);
 console.log(`LongMemEval: ${runLongMemEval ? 'YES' : 'skip'}`);
 console.log(`LoCoMo: ${runLoCoMo ? 'YES' : 'skip'}`);
 console.log(`Limit: ${LIMIT} questions per benchmark`);
@@ -747,8 +747,8 @@ async function fairEvalLongMemEval(): Promise<void> {
   }
 
   console.log(`\n  Comparison:`);
-  console.log(`    Context Graphs (fair eval):    ${(100 * correct / totalQuestions).toFixed(1)}%`);
-  console.log(`    Context Graphs (structural):   95.8% (word-overlap matching, not LLM-judged)`);
+  console.log(`    Interego (fair eval):    ${(100 * correct / totalQuestions).toFixed(1)}%`);
+  console.log(`    Interego (structural):   95.8% (word-overlap matching, not LLM-judged)`);
   console.log(`    Supermemory (production):       85.2%`);
   console.log(`    Supermemory ASMR (experimental): ~99% (18+ LLM calls/question)`);
   console.log(`\n  Our LLM calls: ${totalLlmCalls} total (${(totalLlmCalls / totalQuestions).toFixed(1)}/question — generate + judge)`);

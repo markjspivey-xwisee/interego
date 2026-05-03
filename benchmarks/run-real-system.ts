@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * REAL SYSTEM PIPELINE — everything goes through Context Graphs.
+ * REAL SYSTEM PIPELINE — everything goes through Interego.
  *
  * This is NOT "send text to LLM." This is:
  *   1. INGEST all conversations into PGSL lattice

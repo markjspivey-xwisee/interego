@@ -3,11 +3,10 @@ Does the generated answer convey the same core information as the gold?
 - Yes/no must agree
 - Key facts must match
 - For preferences: same general theme = correct
-- "information not provided/not enough" counts as matching if gold also says that
 
 Just "yes" or "no".
 
 Q: How much will I save by taking the bus from the airport to my hotel instead of a taxi?
-Gen: $40 to $50
+Gen: $40 to $50. In Session 2, the taxi was quoted at around $60 and the airport bus at around $10-$20.
 Gold: The information provided is not enough. You did not mention how much will the bus take.
 Correct?
