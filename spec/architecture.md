@@ -69,6 +69,35 @@ The system is grounded in Peircean triadic semiotics:
 - **Usage-based semantics:** Paradigm sets are NOT declared top-down by an
   ontologist. They emerge from the lattice through patterns of use.
 
+### 1.3 Holonic Hypergraphic Structure (informative)
+
+Across all layers, the protocol's structural shape is a **holonic
+hypergraph** rather than a tree. Each typed entity — a PGSL atom, a
+PGSL fragment, a Context Descriptor, an `cgh:Affordance`, a
+`cg:Constitutional` amendment — is simultaneously a *whole* over its
+constituents and a *part* in containing structures (Koestler's
+Janus-faced holon). Containment is many-to-many: the same atom can
+participate in multiple fragments; the same descriptor can appear in
+multiple compositions; the same person-resource can be a participant
+in a project hyperedge AND a voter in an amendment hyperedge AND an
+attestor in a trust chain — without rewriting the resource.
+
+This generalizes classical holonics by replacing the strict
+parent-child tree with hypergraph connectivity. The Janus property
+(autonomy at one's own level, integration into the level above)
+becomes the restriction/extension adjunction in the presheaf
+interpretation. n-ary relations are first-class hyperedges, not
+reified binary edges, which is what lets `cgh:Affordance` natively
+encode Peircean Thirdness as a single 3-ary structure over (sign,
+target, mediating inputs).
+
+The interpretation is informative — implementations need not refer to
+"holons" or "hypergraphs" in their code. But the substrate is
+designed so that this reading is natural and consistent. For the
+formal account — categorical structure, the four invariants, the
+Peircean correspondence — see
+[`docs/ARCHITECTURAL-FOUNDATIONS.md`](../docs/ARCHITECTURAL-FOUNDATIONS.md).
+
 ---
 
 ## 2. Design Principles
@@ -326,6 +355,41 @@ triples unless overridden.
 **Key module:** `model/composition.ts` (260 lines). Exports: `union`,
 `intersection`, `restriction`, `override`, `effectiveContext`,
 `resetComposedIdCounter`.
+
+#### 3.3.1 Two directions of composition (informative)
+
+The protocol's composition has two formally distinct directions, both
+of which a conforming implementation already supports through the
+combination of Layer 1 (PGSL) and Layer 3 (Operators):
+
+- **Horizontal composition** is intra-level — the four operators act
+  on Context Descriptors at a single granularity, producing another
+  Context Descriptor at the same granularity. Operadically: an
+  operator of arity *n* takes *n* descriptors and returns one.
+- **Vertical composition** is granularity-shifting — PGSL pullbacks
+  promote a level-*(k-1)* fragment into a level-*k* apex; the dual
+  decomposition projects an apex back to its constituent fragments.
+  Operadically: a unary functor `γ: H_n → H_{n+1}` whose Cartesian
+  property is the pullback square of [`src/pgsl/category.ts`](../src/pgsl/category.ts)
+  `pullbackSquare`.
+
+The two directions form a **double category** of holons: horizontal
+arrows are intra-level composition; vertical arrows are granularity
+shifts. The coherence condition is that horizontal-then-vertical
+equals vertical-then-horizontal up to natural isomorphism — the same
+underlying invariant as `verifyAdjunction` in `src/index.ts`.
+
+In practice, this means: an agent that composes two descriptors with
+`union` and then promotes the result with PGSL is guaranteed to get
+the same result as one that promotes each descriptor separately and
+then unions the apexes. The double-category coherence law makes the
+order of operations between the two directions immaterial to the
+final state.
+
+For the formal account — including the polygranular fibration and
+the presheaf interpretation — see
+[`docs/ARCHITECTURAL-FOUNDATIONS.md`](../docs/ARCHITECTURAL-FOUNDATIONS.md)
+§3 (PGSL as Grothendieck fibration) and §4 (HELA as topos).
 
 ### 3.4 Layer 4: Coherence Verification
 
