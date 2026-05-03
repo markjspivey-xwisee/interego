@@ -1093,3 +1093,70 @@ cgh:ratifiedBy a owl:ObjectProperty ;
     rdfs:range cg:ContextDescriptor ;
     rdfs:comment "IRI of the constitutional amendment that ratified this constraint, for audit-trail integrity. The chain (Amendment → PromotionConstraint → enforced refusal) lets an auditor walk from a refused promotion back to the vote that produced the rule." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Self-bootstrapping protocol emergence (cgh:Protocol + WorkflowApp)
+# ══════════════════════════════════════════════════════════════
+#
+#  These three terms close the substrate's self-bootstrapping loop:
+#  agents propose typed cg:Affordance descriptors, others attest +
+#  promote them, the promoted set is ratified as a versioned
+#  cgh:Protocol, an agent assembles a cgh:WorkflowApp composing
+#  affordances from the protocol, and consumers operate the app
+#  under cgh:protocolConformance to a specific protocol version.
+#  The same app URL renders different behavior as the protocol
+#  evolves underneath it; cgh:protocolConformance pins the
+#  authoring intent for audit.
+#
+#  Companion to docs/ARCHITECTURAL-FOUNDATIONS.md §11 (the fifth
+#  named loop: socio-construction of an emergent protocol-and-app)
+#  and the agent-collective vertical's tool-promotion machinery
+#  (which this generalizes from "tools" to "affordances" and from
+#  "teaching packages" to "apps").
+
+cgh:Protocol a owl:Class ;
+    rdfs:label "Protocol" ;
+    rdfs:comment "A versioned grouping of cg:Affordance descriptors that have been collectively attested and promoted by a community of agents. The protocol IS the current set of Asserted affordances at a versioning boundary; supersedes-chain to evolve. Apps reference a specific protocol version via cgh:protocolConformance for audit-trail integrity. Subtype of cg:ContextDescriptor; modal status SHOULD be Asserted once ratified." ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:bundlesAffordance a owl:ObjectProperty ;
+    rdfs:label "bundles affordance" ;
+    rdfs:domain cgh:Protocol ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "Lists an affordance descriptor included in this protocol version. Multiple cardinality permitted — every affordance the protocol guarantees is referenced exactly once." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:protocolVersion a owl:DatatypeProperty ;
+    rdfs:label "protocol version" ;
+    rdfs:domain cgh:Protocol ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Human-readable version string (e.g., \"v1.0.0\"). The IRI itself is the canonical version handle; this datatype is for display." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:WorkflowApp a owl:Class ;
+    rdfs:label "Workflow App" ;
+    rdfs:comment "An ordered composition of affordances + narrative + intended user flow that constitutes a usable application built on top of a cgh:Protocol. More general than ac:TeachingPackage (which is AC-vertical scoped). A consumer agent dereferences a WorkflowApp, walks the composed affordances in order, and operates within the protocol's typed surface. Subtype of cg:ContextDescriptor." ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:composes a owl:ObjectProperty ;
+    rdfs:label "composes" ;
+    rdfs:domain cgh:WorkflowApp ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "Affordances the app composes, in calling order. Use rdf:Seq or an RDF list when order matters; multiple cardinality otherwise. The same affordance may appear multiple times if the app calls it more than once." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:protocolConformance a owl:ObjectProperty ;
+    rdfs:label "protocol conformance" ;
+    rdfs:domain cgh:WorkflowApp ;
+    rdfs:range cgh:Protocol ;
+    rdfs:comment "Links an app to the protocol version it was authored against. Lets an auditor answer \"was this app's behavior consistent with the protocol that was in force when it ran?\" — the same app URL renders different behavior as the protocol evolves underneath, but cgh:protocolConformance pins the authoring intent. Required for any cgh:WorkflowApp that operates under a ratified regime." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:appNarrative a owl:DatatypeProperty ;
+    rdfs:label "app narrative" ;
+    rdfs:domain cgh:WorkflowApp ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Human-readable description of what the app does and how to use it — equivalent in role to a README. Renders alongside the typed structure for human reviewers; the typed structure is what consumer agents walk." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.

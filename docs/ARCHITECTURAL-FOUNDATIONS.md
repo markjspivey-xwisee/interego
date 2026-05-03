@@ -15,6 +15,7 @@ Interego is, mathematically, a **fibered presheaf of typed hypergraphs over a po
 - **HELA is the topos.** The presheaf `F: H^op → Set` over the category of holons-as-hyperedges; sections over a hyperedge are whole-level data; restriction maps to sub-hyperedges give the part-level view. The Janus property is the restriction/extension adjunction. ([§4](#4-the-presheaf-interpretation-hela-as-topos))
 - **Four invariants** govern the construction: identity-by-reference, level-shift functoriality, restriction/extension adjunction, hyperedge composition as colimit. ([§5](#5-the-four-invariants))
 - **Peircean correspondence** is encoded in the `sat:` ontology and made operational by `cgh:Affordance`: representation = Firstness, dereference act = Secondness, link relation (Hydra control) = Thirdness. ([§6](#6-the-peircean-correspondence))
+- **Fifth named loop** — agents propose typed affordances → others attest → promoted set is ratified as a versioned `cgh:Protocol` → an agent assembles a `cgh:WorkflowApp` composing the protocol → consumer agents discover + operate the app under typed `cgh:protocolConformance`. The substrate bootstraps its own application surface from agent activity alone. ([§10](#10-the-fifth-named-loop--socio-construction-of-an-emergent-protocol-and-app))
 
 The rest of the document spells out each correspondence and points at the file paths where the construction is realized in code or ontology.
 
@@ -188,7 +189,31 @@ The first revision of this document listed four constructions the substrate supp
 
 Items 2 and 3 are ontology declarations; runtime adoption (a SPARQL pattern library, a code generator that emits `cts:Position` resources for any tuple, a CTS-aware indexer) is the natural next-build candidate but isn't required for the protocol's expressivity — the new terms are constructions on existing primitives, validated by being expressible in pure RDF.
 
-## 10. Related work
+## 10. The fifth named loop — socio-construction of an emergent protocol-and-app
+
+The four invariants in §5 govern static structure: identity-by-reference, level-shift functoriality, restriction/extension adjunction, hyperedge composition as colimit. They describe what the substrate IS at any moment. There is a fifth pattern that governs how the substrate's *application surface* itself comes into being — a self-bootstrapping loop in which agents propose, attest, ratify, compose, and operate, with each layer recovering the previous from the same pod.
+
+**Phase A — Proposal.** Agents publish typed `cg:Affordance` descriptors that name new actions: action IRI, `hydra:expects` typed inputs, `rdfs:comment` describing intent. Modal status: Hypothetical. The substrate accepts arbitrary affordance descriptors via the standard publish flow; nothing in the protocol distinguishes a proposed affordance from any other Hypothetical claim.
+
+**Phase B — Cross-attestation.** Other agents attest the proposed affordances via `amta:` axes. Aggregate trust scores emerge from arithmetic on the per-attestation ratings, exactly as Demo 16 demonstrates for tools.
+
+**Phase C — Promotion.** Affordances meeting structural thresholds (≥N peer attestations across ≥M axes, aggregate score ≥T) are promoted Hypothetical → Asserted via `cg:supersedes`. The "protocol" at any given moment is *the set of currently-Asserted `cg:Affordance` descriptors on the shared pod*.
+
+**Phase D — Constitutional binding.** A constitutional amendment ratifies the protocol as a versioned `cgh:Protocol` descriptor (added in `docs/ns/harness.ttl`). The protocol bundles the promoted affordances via `cgh:bundlesAffordance`. A `cgh:PromotionConstraint` may further restrict what counts as a valid future addition — substrate-enforced governance for the protocol's ongoing evolution (Demo 19's pattern).
+
+**Phase E — App composition.** A `cgh:WorkflowApp` descriptor composes affordances from the protocol via `cgh:composes`, in calling order, with a human-readable `cgh:appNarrative`. The app pins its `cgh:protocolConformance` to a specific protocol version IRI — the audit-trail integrity guarantee that lets a future reviewer answer "was this app's behavior consistent with the protocol that was in force when it ran?"
+
+**Phase F — Operation under governance.** A consumer agent — different process, no shared memory — discovers the app via standard `discover_descriptors`, dereferences it, walks the composed affordances, and operates each. Operations conform to the affordance shapes; the constitutional layer can refuse promotions or operations that violate active constraints.
+
+**Loop closure.** Operations produce new observations. Cross-attestations shift trust scores. New amendments propose protocol revisions. The protocol updates via `cg:supersedes`. The same app URL renders different behavior because the affordances it composes have evolved underneath — but `cgh:protocolConformance` pins what the app was authored against, so audit remains coherent across versions.
+
+**Demo 20** ([`scenarios/20-socio-constructed-protocol-and-app.ts`](../demos/scenarios/20-socio-constructed-protocol-and-app.ts)) traverses the full loop with eight claude processes plus harness aggregation. It is the most architecturally load-bearing demonstration in the suite, because it shows the substrate doing what no individual demo previously did: bootstrapping its own application surface from agent activity, with governance derived from the constitutional layer over the same artifacts.
+
+**Why this is a distinct loop, not a special case of §5.** The four invariants of §5 are *intra-substrate* — they hold for any sequence of operations on the existing primitives. The fifth loop is *constitutive* — it shows that the substrate's primitive set is itself reachable as an emergent property of agent activity, given a small generative seed (the publish + discover + attest + supersedes operations). The protocol is not a fixed point above the operations; it is the head of a supersedes chain over `cgh:Protocol` descriptors that the operations themselves produce. The loop closes back through itself.
+
+This is the operational answer to the deepest question the substrate raises: *can a community of agents construct, ratify, and live under their own protocol-and-app stack without any external coordinator?* On the evidence of Demo 20, yes. The substrate is sufficient.
+
+## 11. Related work
 
 The construction draws on (without depending on):
 

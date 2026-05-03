@@ -49,6 +49,7 @@ scenarios=(
   "17-regime-change-upward-downward-causation"
   "18-weak-signals-dispositional-shift"
   "19-substrate-enforced-regime-change"
+  "20-socio-constructed-protocol-and-app"
 )
 
 # Optional filter — accept positional args like "01" or "01 03 14"
