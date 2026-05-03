@@ -1,0 +1,122 @@
+@prefix wks:  <https://markjspivey-xwisee.github.io/interego/ns/wks#> .
+@prefix cg:   <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix sat:  <https://markjspivey-xwisee.github.io/interego/ns/sat#> .
+@prefix cgh:  <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix amta: <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix vann: <http://purl.org/vocab/vann/> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
+# ══════════════════════════════════════════════════════════════
+#  WKS — Weak-Signal vocabulary
+# ══════════════════════════════════════════════════════════════
+#
+#  Snowden-informed: weak signals are subtle observations that, on
+#  their own, don't justify a strong claim — but in aggregate across
+#  multiple independent observers, surface a latent disposition the
+#  network would otherwise miss until it actualized. This namespace
+#  gives weak signals a typed shape so cross-pod aggregation becomes
+#  a structural query rather than an analytical exercise.
+#
+#  Design commitments:
+#   - Weak signals are ALWAYS Hypothetical (the observer is not
+#     claiming the signal means what it might mean — only that it
+#     was observed).
+#   - Reinforcement is structural, not negotiated. Two observers
+#     publishing wks:WeakSignal descriptors that share a wks:about
+#     subject are reinforcing each other automatically — the
+#     aggregation is a SPARQL count, not an LLM judgment.
+#   - Weak signals link to dispositions (sat:hasDisposition) but do
+#     NOT prove them. The disposition is the candidate explanation;
+#     the signal is the candidate evidence.
+#
+#  Companion to docs/ARCHITECTURAL-FOUNDATIONS.md §9 ("rate of
+#  re-alignment + adjacent possible + weak signals + dispositional
+#  patterns") and the Snowden-informed framing in the agent-
+#  development-practice (ADP) vertical.
+
+<https://markjspivey-xwisee.github.io/interego/ns/wks>
+    a owl:Ontology ;
+    dct:title "WKS — Weak-Signal vocabulary" ;
+    dct:description "Typed weak signals for complexity-aware sensemaking. Aggregation is structural (SPARQL through wks:about); reinforcement is automatic; dispositions are candidate explanations, not proofs." ;
+    vann:preferredNamespacePrefix "wks" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/ns/wks#" ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/sat> .
+
+# ── Classes ───────────────────────────────────────────────────
+
+wks:WeakSignal a owl:Class ;
+    rdfs:label "Weak Signal" ;
+    rdfs:comment "A subtle observation that, on its own, does not justify a strong claim — but in aggregate across multiple independent observers, surfaces a latent disposition. Always Hypothetical (the observer asserts WAS-OBSERVED, not WHAT-IT-MEANS). Subtype of cg:ContextDescriptor; the descriptor's modal status MUST be Hypothetical." ;
+    rdfs:subClassOf cg:ContextDescriptor .
+
+wks:NarrativeEvidence a owl:Class ;
+    rdfs:label "Narrative Evidence" ;
+    rdfs:comment "A free-form micro-narrative that anchors a wks:WeakSignal. Not a fact-claim — a description of what was observed in observer's own words. Stored as content-addressed pgsl:Atom so two observers producing identical narratives collide on IRI (structural reinforcement at the description layer)." .
+
+wks:Reinforcement a owl:Class ;
+    rdfs:label "Reinforcement" ;
+    rdfs:comment "A computed measure of how many independent observers have published wks:WeakSignal descriptors with the same wks:about subject. A summary descriptor that supersedes-chains older counts as new signals arrive. NOT an aggregation of opinions — a count of independent observations." .
+
+# ── Properties ────────────────────────────────────────────────
+
+wks:about a owl:ObjectProperty ;
+    rdfs:label "about" ;
+    rdfs:domain wks:WeakSignal ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "The phenomenon, system, situation, or other descriptor the weak signal points at. The structural matching key for cross-observer reinforcement: two wks:WeakSignal descriptors with the same wks:about value count as independent observations of the same potential disposition." .
+
+wks:hasNarrativeEvidence a owl:ObjectProperty ;
+    rdfs:label "has narrative evidence" ;
+    rdfs:domain wks:WeakSignal ;
+    rdfs:range wks:NarrativeEvidence ;
+    rdfs:comment "Links the weak signal to one or more micro-narratives that motivate it. Multiple cardinality permitted — an observer may anchor a single signal in several distinct observations." .
+
+wks:observedBy a owl:ObjectProperty ;
+    rdfs:label "observed by" ;
+    rdfs:domain wks:WeakSignal ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "The agent or human who observed the signal. Required for cross-observer reinforcement counting (multiple signals from one observer count as one)." .
+
+wks:candidateDisposition a owl:ObjectProperty ;
+    rdfs:label "candidate disposition" ;
+    rdfs:domain wks:WeakSignal ;
+    rdfs:range sat:Disposition ;
+    rdfs:comment "Optional link to a sat:Disposition that, if the signal is real, the system might be exhibiting. NOT a claim that the disposition is present — a candidate explanation worth probing. Pair with cg:modalStatus = Hypothetical." .
+
+wks:reinforces a owl:ObjectProperty ;
+    rdfs:label "reinforces" ;
+    rdfs:domain wks:WeakSignal ;
+    rdfs:range wks:WeakSignal ;
+    rdfs:comment "Optional explicit link from one weak signal to another it reinforces. Usually unnecessary — two signals with the same wks:about subject reinforce each other structurally. Use only when an observer wants to attribute interpretation lineage." .
+
+wks:reinforcementCount a owl:DatatypeProperty ;
+    rdfs:label "reinforcement count" ;
+    rdfs:domain wks:Reinforcement ;
+    rdfs:range xsd:positiveInteger ;
+    rdfs:comment "Number of independent observers (distinct wks:observedBy values) who published wks:WeakSignal descriptors with the same wks:about. A reinforcement of 1 is just an observation; ≥2 is a candidate weak signal worth probing; ≥N (per the slice's Cynefin domain) may justify amplification." .
+
+wks:reinforcesAbout a owl:ObjectProperty ;
+    rdfs:label "reinforces about" ;
+    rdfs:domain wks:Reinforcement ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "The wks:about subject this reinforcement count was computed for." .
+
+wks:reinforcementWindow a owl:DatatypeProperty ;
+    rdfs:label "reinforcement window" ;
+    rdfs:domain wks:Reinforcement ;
+    rdfs:range xsd:duration ;
+    rdfs:comment "ISO-8601 duration over which the reinforcement count was computed. Required to interpret the count: 5 observers in an hour means something different from 5 in a year." .
+
+# ── Alignments ────────────────────────────────────────────────
+
+wks:WeakSignal rdfs:seeAlso sat:Disposition ;
+    rdfs:comment "Weak signals SURFACE dispositions; dispositions EXPLAIN weak signals. They are dual concepts. A weak signal without a candidate disposition is observation noise; a disposition without weak-signal evidence is speculation." .
+
+wks:Reinforcement rdfs:seeAlso cgh:RealignmentMeasure ;
+    rdfs:comment "Reinforcement is to weak signals what realignment rate is to descriptors generally — a structural measure of cross-observer dynamics. Both supersedes-chain older values as new evidence arrives." .

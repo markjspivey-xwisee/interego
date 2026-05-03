@@ -105,3 +105,53 @@ sat:SemioticFieldFunctor owl:equivalentClass cg:SemioticFacet ;
 
 sat:Semiosis rdfs:seeAlso ie:Interrogative ;
     rdfs:comment "The interrogatives (who/what/where/when/why/how/which/...) are the typed entry-points into semiosis — each interrogative prompts a distinct class of interpretant." .
+
+# ══════════════════════════════════════════════════════════════
+#  Dispositional vocabulary (Snowden-informed)
+# ══════════════════════════════════════════════════════════════
+#
+#  Predictive modeling asks "what is true?" Dispositional modeling
+#  asks "what is this system disposed to do next under these
+#  constraints?" — the more honest question for complex domains
+#  where deterministic prediction fails. Dispositions are inherently
+#  semiotic: a disposition is what a system is disposed to *interpret
+#  as* a trigger. Hence they live in sat:.
+#
+#  Companion to docs/ARCHITECTURAL-FOUNDATIONS.md §6 (Peircean
+#  correspondence) and the Snowden-informed framing referenced in
+#  the agent-development-practice (ADP) vertical.
+
+sat:Disposition a owl:Class ;
+    rdfs:label "Disposition" ;
+    rdfs:comment "A typed tendency — what a system is currently disposed to do under its present constraints. Distinct from a prediction: a disposition is a structured affordance for next-state action that may or may not actualize. Subject to sat:weakSignal (what surfaces it early), sat:shiftedBy (what alters it), and sat:dampedBy (what suppresses it)." ;
+    rdfs:subClassOf cg:SemioticFacet .
+
+sat:hasDisposition a owl:ObjectProperty ;
+    rdfs:label "has disposition" ;
+    rdfs:domain cg:ContextDescriptor ;
+    rdfs:range sat:Disposition ;
+    rdfs:comment "Attaches a typed disposition to the situation a descriptor describes. A descriptor may carry multiple sat:hasDisposition values — they are not mutually exclusive (a system can be disposed to multiple courses simultaneously, with different probabilities or under different sub-conditions)." .
+
+sat:weakSignal a owl:ObjectProperty ;
+    rdfs:label "weak signal" ;
+    rdfs:domain sat:Disposition ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "Links a disposition to a descriptor that, if observed, would surface the disposition early — before it actualizes. Snowden's 'dispositional shift' detection mechanism. The signal need not be predictive on its own — its semiotic work is to make a latent tendency legible." .
+
+sat:shiftedBy a owl:ObjectProperty ;
+    rdfs:label "shifted by" ;
+    rdfs:domain sat:Disposition ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "Identifies an intervention type that, if applied, would alter the disposition. Distinct from a 'fix': the disposition isn't broken; it can be redirected. Used for amplify/dampen routing in Cynefin-Complex domains." .
+
+sat:dampedBy a owl:ObjectProperty ;
+    rdfs:label "damped by" ;
+    rdfs:domain sat:Disposition ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "Identifies an intervention type that, if applied, would suppress the disposition's actualization without claiming to address its underlying conditions. The honest framing: damping buys time, not resolution." .
+
+sat:dispositionalConfidence a owl:DatatypeProperty ;
+    rdfs:label "dispositional confidence" ;
+    rdfs:domain sat:Disposition ;
+    rdfs:range xsd:decimal ;
+    rdfs:comment "Confidence in [0.0, 1.0] that the system is currently disposed as claimed. NOT a probability of actualization; a confidence in the disposition's existence. Pair with cg:modalStatus = Hypothetical for honest semiotics: dispositions are assertions about latent tendency, not about future state." .

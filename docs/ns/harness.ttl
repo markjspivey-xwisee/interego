@@ -976,3 +976,63 @@ cgh:presence a owl:ObjectProperty , owl:FunctionalProperty ;
     rdfs:domain cgh:PersonalBroker ;
     rdfs:range cgh:PresenceStatus ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+# ══════════════════════════════════════════════════════════════
+#  Adjacent-possible reachability + realignment dynamics
+#  (Snowden- / complexity-aware extensions)
+# ══════════════════════════════════════════════════════════════
+#
+#  Two terms close the foundations §9 gap on "rate of re-alignment"
+#  and "adjacent possible." Both are about the metabolism of the
+#  substrate — the dynamics by which meaning re-coheres after a
+#  sign event destabilizes it. They are NOT about prediction.
+#
+#  Companion to docs/ARCHITECTURAL-FOUNDATIONS.md §9 + sat:Disposition
+#  / sat:weakSignal in docs/ns/sat.ttl.
+
+cgh:isAdjacentPossibleTo a owl:ObjectProperty ;
+    rdfs:label "is adjacent possible to" ;
+    rdfs:domain cg:ContextDescriptor ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "Asserts that the source descriptor's situation could plausibly transition to the target descriptor's situation under known constraints, without claiming the transition will happen. The honest framing for complex domains: hold the space of next-move possibilities open without committing to a prediction. Use cgh:reachabilityRationale to record why the transition is reachable; cg:modalStatus on the descriptor carrying this property SHOULD be Hypothetical." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:reachabilityRationale a owl:DatatypeProperty ;
+    rdfs:label "reachability rationale" ;
+    rdfs:domain cg:ContextDescriptor ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Free-text explanation of why the cgh:isAdjacentPossibleTo target is reachable from this descriptor's situation. NOT a probability. A short narrative anchored in observed constraints / affordances / weak signals." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:RealignmentMeasure a owl:Class ;
+    rdfs:label "Realignment Measure" ;
+    rdfs:comment "A computed measure of how fast a federation slice re-coheres after a sign event destabilizes it. Carries cgh:realignmentRate, cgh:rateWindow, and cgh:eventCount. NOT a state of alignment; a temporal derivative of it. Re-computed periodically over a moving window; older values supersedes-chained as audit." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:realignmentRate a owl:DatatypeProperty ;
+    rdfs:label "realignment rate" ;
+    rdfs:domain cgh:RealignmentMeasure ;
+    rdfs:range xsd:decimal ;
+    rdfs:comment "Events per unit window — the structural metric for how quickly the slice's interpretive surface absorbs revisions. Computed as: (count of cg:supersedes events + count of new descriptors with cg:modalStatus = Asserted superseding Hypothetical predecessors) / window-duration. A rate of 0 means the slice has frozen; a high sustained rate means the slice is in active sense-making. Neither is intrinsically good or bad — the rate's interpretation depends on the slice's Cynefin domain." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:rateWindow a owl:DatatypeProperty ;
+    rdfs:label "rate window" ;
+    rdfs:domain cgh:RealignmentMeasure ;
+    rdfs:range xsd:duration ;
+    rdfs:comment "ISO-8601 duration over which the rate was computed (e.g., PT1H for one hour, P1D for one day). Required to interpret cgh:realignmentRate." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:eventCount a owl:DatatypeProperty ;
+    rdfs:label "event count" ;
+    rdfs:domain cgh:RealignmentMeasure ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:comment "Number of revision events observed in the window (numerator of the rate)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:measuresFederationSlice a owl:ObjectProperty ;
+    rdfs:label "measures federation slice" ;
+    rdfs:domain cgh:RealignmentMeasure ;
+    rdfs:range cg:ContextDescriptor ;
+    rdfs:comment "The cg:Federation slice (or descriptor identifying the slice) being measured. Lets multiple realignment measures coexist for different slices of the same pod." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
