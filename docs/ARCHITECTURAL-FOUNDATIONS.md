@@ -177,14 +177,16 @@ This is *constructible* from existing primitives but not currently pre-built as 
 - **Compliance audits compose.** Every regulatory framework with an L3 mapping queries the same descriptors with its own vocabulary; a single pod presents three different audit-ready views (Demo 11).
 - **Self-amending governance is constructible.** Constitutional amendments are typed descriptors; ratification is a deterministic function of the vote set; the regime emerging from votes shapes future agent behavior through the same dereferencing chain that delivered the regime (Demo 17).
 
-## 9. What we gesture at but don't yet expose explicitly
+## 9. Constructions that were previously gestured at and are now exposed explicitly
 
-These are constructible from the existing primitives but worth surfacing as first-class artifacts in a future revision:
+The first revision of this document listed four constructions the substrate supported implicitly. Each has since been added to either the spec or the ontology:
 
-1. **Double-category formalism.** The horizontal (intra-level composition) and vertical (granularity shift) compositions exist; the coherence law between them holds; nothing in the spec currently states it. A normative paragraph in `spec/architecture.md` documenting the double-category structure would close the formalization gap.
-2. **Per-occurrence position holons** as Hydra-controlled resources. PGSL fragments encode order through the pullback span; making position a first-class typed resource with `next` / `prev` link relations would let agents do typed link-walks at character / token / fragment granularity.
-3. **N-gram sharing as a CTS table.** A canonical table layout for `char` / `ngram` / `occurs_in` would make sub-token reuse a turnkey SPARQL query.
-4. **Holonic hypergraphic interpretation as a documented term.** This document is the first place the architecture's holonic-hypergraphic structure is named explicitly. Updating `spec/architecture.md` to reference it would make the framing canonical.
+1. **Double-category formalism.** Documented at [`spec/architecture.md`](../spec/architecture.md) §3.3.1 ("Two directions of composition"). Names the two directions (horizontal = intra-level, vertical = granularity shift), the operadic shape of each, and the coherence law (H-then-V = V-then-H up to natural iso). Cross-references this document for the full categorical account.
+2. **Per-occurrence position holons** as Hydra-controlled typed resources. Added to [`docs/ns/cts.ttl`](ns/cts.ttl): `cts:Position` is now promotable to a first-class resource carrying `cts:next` / `cts:previous` link relations and a `cts:withinTuple` parent-pointer. A worked example in the ontology shows the token `mark` decomposed into four `cts:Position` resources; an affordance-walking agent can traverse positions via Hydra controls instead of numerical indexing.
+3. **N-gram sharing as a CTS construction.** Added to [`docs/ns/cts.ttl`](ns/cts.ttl) as `cts:CharacterAtom` / `cts:NGram` / `cts:Occurrence` with `cts:ngram` / `cts:within` / `cts:offset` / `cts:length` properties. The worked example demonstrates that the bigram `ma` shared between `mark` and `human` is one IRI with two `cts:Occurrence` morphisms; a SPARQL join through `cts:Occurrence` returns shared-substructure tokens for free, with no canonicalization step. This is the BPE-as-colimit construction made explicit in the ontology.
+4. **Holonic hypergraphic interpretation as a documented term.** Added as [`spec/architecture.md`](../spec/architecture.md) §1.3 "Holonic Hypergraphic Structure" — the framing is canonical at the spec level, with this document referenced as the rigorous formal account.
+
+Items 2 and 3 are ontology declarations; runtime adoption (a SPARQL pattern library, a code generator that emits `cts:Position` resources for any tuple, a CTS-aware indexer) is the natural next-build candidate but isn't required for the protocol's expressivity — the new terms are constructions on existing primitives, validated by being expressible in pure RDF.
 
 ## 10. Related work
 

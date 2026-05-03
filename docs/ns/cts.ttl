@@ -111,3 +111,135 @@ cts:Tuple rdfs:seeAlso pgsl:Fragment ;
 
 cts:Pattern owl:equivalentClass cg:SyntagmaticPattern ;
     rdfs:comment "CTS patterns and cg:SyntagmaticPattern are the same concept at two different abstraction layers — CTS at the raw usage layer, cg: at the typed-context layer. Explicit equivalence lets tooling navigate freely between them." .
+
+# ══════════════════════════════════════════════════════════════
+#  Sub-token compositional reuse (n-gram canonicalization)
+# ══════════════════════════════════════════════════════════════
+#
+#  Make substructure sharing explicit at the character / n-gram
+#  layer: a single n-gram type is canonical (one IRI); occurrences
+#  in containing tuples are typed morphisms with offset and length.
+#  This realizes the BPE-as-colimit pattern — the n-gram vocabulary
+#  is a generating set of typed holons; tokens compose them via
+#  inclusion morphisms; substructure sharing falls out of IRI
+#  equality at the n-gram layer with no canonicalization step.
+#
+#  Companion to docs/ARCHITECTURAL-FOUNDATIONS.md §5 invariant 4
+#  (hyperedge composition as colimit) and §7 (CTS as the tuple-store
+#  realization).
+
+cts:CharacterAtom a owl:Class ;
+    rdfs:label "Character Atom" ;
+    rdfs:comment "An atomic glyph holon — a single character at the smallest granularity. Identity is content-addressed (urn:pgsl:atom:<sha256-of-character>). Two distinct occurrences of 'm' across all tuples share one CharacterAtom IRI." ;
+    rdfs:subClassOf pgsl:Atom .
+
+cts:NGram a owl:Class ;
+    rdfs:label "N-gram" ;
+    rdfs:comment "A canonical, deduplicated sequence of CharacterAtoms (or higher-level fillers). Identity is content-addressed: two tuples containing the same bigram literally share the NGram IRI. The vocabulary of NGrams is the generating set of the BPE-as-colimit construction." ;
+    rdfs:subClassOf cts:Tuple .
+
+cts:Occurrence a owl:Class ;
+    rdfs:label "N-gram Occurrence" ;
+    rdfs:comment "A typed morphism recording that a specific NGram appears in a specific containing tuple at a specific offset. Conceptually a hyperedge (NGram, ContainingTuple, offset, length). Querying 'what tokens share substructure with X' is a SPARQL join through this class — substructure sharing is graph topology, not algorithm." .
+
+cts:ngram a owl:ObjectProperty ;
+    rdfs:label "ngram" ;
+    rdfs:domain cts:Occurrence ;
+    rdfs:range cts:NGram ;
+    rdfs:comment "The canonical n-gram resource being instantiated by this occurrence. Multiple Occurrences across different containing tuples may share the same cts:ngram value — that is the substructure-sharing relation made explicit." .
+
+cts:within a owl:ObjectProperty ;
+    rdfs:label "within" ;
+    rdfs:domain cts:Occurrence ;
+    rdfs:range cts:Tuple ;
+    rdfs:comment "The tuple this occurrence lives inside. Structurally: a parent in the holon hierarchy. The Janus-flip is observable here — the NGram is a whole over its CharacterAtoms AND a part within this containing tuple via the Occurrence." .
+
+cts:offset a owl:DatatypeProperty ;
+    rdfs:label "offset" ;
+    rdfs:domain cts:Occurrence ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:comment "Zero-based starting position of the n-gram within the containing tuple." .
+
+cts:length a owl:DatatypeProperty ;
+    rdfs:label "length" ;
+    rdfs:domain cts:Occurrence ;
+    rdfs:range xsd:positiveInteger ;
+    rdfs:comment "Number of constituent atoms / characters in the occurrence. Together with cts:offset uniquely locates the inclusion morphism within the containing tuple." .
+
+# ══════════════════════════════════════════════════════════════
+#  Position-as-resource (Hydra controls)
+# ══════════════════════════════════════════════════════════════
+#
+#  Promote cts:Position from an implicit ordering coordinate to a
+#  first-class typed resource with hypermedia link relations. Lets
+#  agents do typed link-walks at character / token / fragment
+#  granularity without parsing content — what you walk are positions
+#  with cts:next links, not strings with index arithmetic.
+#
+#  The pattern: each cts:Tuple has cts:Position resources for each
+#  of its slots; positions carry cts:next / cts:previous so a generic
+#  affordance-walking agent (Path A in the demos) can traverse them
+#  via Hydra controls, just as it would walk any other typed graph.
+
+cts:next a owl:ObjectProperty ;
+    rdfs:label "next" ;
+    rdfs:domain cts:Position ;
+    rdfs:range cts:Position ;
+    rdfs:comment "Hydra-style link relation pointing to the immediately-following position in the same tuple. Absent on the last position. Lets an agent walk a tuple's positions without numerical indexing — the same pattern as following a paginated collection." .
+
+cts:previous a owl:ObjectProperty ;
+    owl:inverseOf cts:next ;
+    rdfs:label "previous" ;
+    rdfs:domain cts:Position ;
+    rdfs:range cts:Position ;
+    rdfs:comment "Inverse of cts:next; absent on the first position." .
+
+cts:withinTuple a owl:ObjectProperty ;
+    rdfs:label "within tuple" ;
+    rdfs:domain cts:Position ;
+    rdfs:range cts:Tuple ;
+    rdfs:comment "The tuple this position belongs to. Structurally: the parent in the holon hierarchy. Inverse of cts:hasPosition." .
+
+# ══════════════════════════════════════════════════════════════
+#  Worked example (informative)
+# ══════════════════════════════════════════════════════════════
+#
+#  The token 'mark' decomposes into four CharacterAtoms via four
+#  cts:Position resources, with two NGram inclusions (the bigram
+#  'ma' shared with 'human', and the 4-gram 'mark' itself):
+#
+#    <urn:cts:token:mark> a cts:Tuple ;
+#      cts:hasPosition <urn:cts:pos:mark:0>, <urn:cts:pos:mark:1>,
+#                      <urn:cts:pos:mark:2>, <urn:cts:pos:mark:3> .
+#
+#    <urn:cts:pos:mark:0> a cts:Position ;
+#      cts:hasFiller <urn:char:m> ;
+#      cts:withinTuple <urn:cts:token:mark> ;
+#      cts:next <urn:cts:pos:mark:1> .
+#    # ... positions 1, 2, 3 similarly ...
+#
+#    <urn:cts:occurrence:ma-in-mark-at-0> a cts:Occurrence ;
+#      cts:ngram <urn:cts:ngram:ma> ;
+#      cts:within <urn:cts:token:mark> ;
+#      cts:offset 0 ;
+#      cts:length 2 .
+#
+#    <urn:cts:occurrence:ma-in-human-at-2> a cts:Occurrence ;
+#      cts:ngram <urn:cts:ngram:ma> ;       # <-- same IRI!
+#      cts:within <urn:cts:token:human> ;
+#      cts:offset 2 ;
+#      cts:length 2 .
+#
+#  The n-gram 'ma' is one resource. Both occurrences point at it.
+#  Querying "what tokens share substructure with 'mark'?" via SPARQL:
+#
+#    SELECT DISTINCT ?other WHERE {
+#      ?occ_a cts:within <urn:cts:token:mark> ; cts:ngram ?ng .
+#      ?occ_b cts:within ?other ; cts:ngram ?ng .
+#      FILTER(?other != <urn:cts:token:mark>)
+#    }
+#
+#  Returns 'human' for free, with no canonicalization or detection
+#  step — the sharing relation is graph topology. This is the
+#  practical realization of foundations §5 invariant 4 (hyperedge
+#  composition as colimit).
