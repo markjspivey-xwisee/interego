@@ -1116,7 +1116,7 @@ cgh:ratifiedBy a owl:ObjectProperty ;
 
 cgh:Protocol a owl:Class ;
     rdfs:label "Protocol" ;
-    rdfs:comment "A versioned grouping of cg:Affordance descriptors that have been collectively attested and promoted by a community of agents. The protocol IS the current set of Asserted affordances at a versioning boundary; supersedes-chain to evolve. Apps reference a specific protocol version via cgh:protocolConformance for audit-trail integrity. Subtype of cg:ContextDescriptor; modal status SHOULD be Asserted once ratified." ;
+    rdfs:comment "A versioned grouping of cg:Affordance descriptors that have been collectively attested and promoted by a community of agents. The protocol IS the current set of Asserted affordances at a versioning boundary; supersedes-chain to evolve. Apps reference a specific protocol version via cgh:protocolConformance for audit-trail integrity. Subtype of cg:ContextDescriptor; modal status SHOULD be Asserted once ratified. Evolution mechanics: a successor protocol descriptor declares cg:supersedes pointing at the prior version's IRI; readers MUST treat the superseded version as historical (its constraints still apply to artifacts that pinned to it via cgh:protocolConformance, but new conformance MUST target the head of the chain)." ;
     rdfs:subClassOf cg:ContextDescriptor ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
 
@@ -1151,7 +1151,7 @@ cgh:protocolConformance a owl:ObjectProperty ;
     rdfs:label "protocol conformance" ;
     rdfs:domain cgh:WorkflowApp ;
     rdfs:range cgh:Protocol ;
-    rdfs:comment "Links an app to the protocol version it was authored against. Lets an auditor answer \"was this app's behavior consistent with the protocol that was in force when it ran?\" — the same app URL renders different behavior as the protocol evolves underneath, but cgh:protocolConformance pins the authoring intent. Required for any cgh:WorkflowApp that operates under a ratified regime." ;
+    rdfs:comment "Links an app to the protocol version it was authored against. Lets an auditor answer \"was this app's behavior consistent with the protocol that was in force when it ran?\" — the same app URL renders different behavior as the protocol evolves underneath, but cgh:protocolConformance pins the authoring intent. Required for any cgh:WorkflowApp that operates under a ratified regime. Matching is by exact protocol-IRI: pinning to v1.0.0 does not implicitly conform to v1.0.1, even when v1.0.1 declares cg:supersedes back to v1.0.0. If you want range-style conformance (\"any version that supersedes-chains back to v1.x\"), encode that as a separate descriptor or extension; this property is intentionally strict so authoring intent stays auditable." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
 
 cgh:appNarrative a owl:DatatypeProperty ;
@@ -1160,3 +1160,57 @@ cgh:appNarrative a owl:DatatypeProperty ;
     rdfs:range xsd:string ;
     rdfs:comment "Human-readable description of what the app does and how to use it — equivalent in role to a README. Renders alongside the typed structure for human reviewers; the typed structure is what consumer agents walk." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+
+# ────────────────────────────────────────────────────────────────────
+#  Agent-runtime integration vocabulary
+# ────────────────────────────────────────────────────────────────────
+#
+#  Two classes + four datatype properties that the integrations layer
+#  uses for substrate-pattern typing of agent-side records (memory
+#  entries, tool-call audit events). Designed to sit alongside the
+#  existing prov:Entity / prov:Activity / dct: vocab — these add only
+#  what neither has a clean analog for: a SPARQL filter handle on the
+#  pattern type, plus runtime-specific operational fields (outcome,
+#  duration, session correlation, JSON-encoded args).
+
+cgh:AgentMemory a owl:Class ;
+    rdfs:label "Agent Memory" ;
+    rdfs:comment "A typed memory entry persisted by an agent into a pod. Subject of the descriptor; complements (does not replace) prov:Entity. Used by the integrations layer (e.g. @interego/openclaw-memory) so SPARQL queries can filter the pod's descriptor pool down to the memory subset without inspecting URN prefixes. The kind (fact / preference / decision / entity / observation) is recorded via dct:type; tags via dct:subject; body via dct:description." ;
+    rdfs:subClassOf <http://www.w3.org/ns/prov#Entity> ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:AgentAction a owl:Class ;
+    rdfs:label "Agent Action" ;
+    rdfs:comment "A typed audit record for a tool call an agent runtime emitted on behalf of an owner. Subject of the descriptor; complements (does not replace) prov:Activity. Used by the integrations layer (e.g. @interego/compliance-overlay) so SPARQL queries can filter down to agent-action audit entries. The cited regulatory controls go via dct:conformsTo into the framework ontologies (eu-ai-act:, nist-rmf:, soc2:) — no new compliance vocab is minted here." ;
+    rdfs:subClassOf <http://www.w3.org/ns/prov#Activity> ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:outcome a owl:DatatypeProperty ;
+    rdfs:label "outcome" ;
+    rdfs:domain cgh:AgentAction ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Machine-readable outcome label — 'success' / 'partial' / 'failure'. The descriptor's modal status (Asserted / Hypothetical / Counterfactual) maps from this; this property preserves the runtime's exact label for audit-grade queries that care about the original distinction." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:durationMs a owl:DatatypeProperty ;
+    rdfs:label "duration ms" ;
+    rdfs:domain cgh:AgentAction ;
+    rdfs:range xsd:integer ;
+    rdfs:comment "Action wall-clock duration in milliseconds. Useful for SLA / latency audit queries; finer-grained than prov:startedAtTime / prov:endedAtTime when sub-second resolution matters and clock skew across pods would otherwise mislead." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:sessionId a owl:DatatypeProperty ;
+    rdfs:label "session id" ;
+    rdfs:domain cgh:AgentAction ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Free-form session identifier the runtime tracks. Lets auditors group all agent actions performed under a single conversation / job / scheduled run without modeling the session as a first-class entity." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+
+cgh:toolArgs a owl:DatatypeProperty ;
+    rdfs:label "tool args" ;
+    rdfs:domain cgh:AgentAction ;
+    rdfs:range xsd:string ;
+    rdfs:comment "Canonical JSON serialization of the tool's input arguments. Stored as-is for audit recovery. Producers MUST run a sensitivity preflight (see src/privacy/) before publishing — the substrate's pre-publish screen halts on detected secrets, but it is not a substitute for the runtime opting out of recording sensitive args via the overlay's recordArgs:false toggle." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/harness#>.
+

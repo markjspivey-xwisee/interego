@@ -1,0 +1,45 @@
+{
+  "id": "interego-memory",
+  "name": "Interego Memory",
+  "description": "Pod-rooted typed memory backed by the Interego substrate. Every store becomes a signed cg:ContextDescriptor with proper modal status, supersedes-chains, and (optionally) E2EE cross-pod sharing.",
+  "version": "0.1.0",
+  "providers": [],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["podUrl", "agentDid"],
+    "properties": {
+      "podUrl": {
+        "type": "string",
+        "description": "Solid-style pod URL where memories will be persisted (e.g. https://your-pod.example/agent/)."
+      },
+      "agentDid": {
+        "type": "string",
+        "description": "DID of the agent doing the writing. Sets PROV provenance and signs each descriptor (e.g. did:web:your-pod.example)."
+      },
+      "onBehalfOf": {
+        "type": "string",
+        "description": "Optional DID of the human / org owner the agent is acting on behalf of. If set, descriptors are wasAttributedTo this owner; the agent appears as wasAssociatedWith."
+      },
+      "shareWith": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Optional default delegates (DIDs) — every memory write is wrapped in an E2EE envelope for these recipients."
+      },
+      "autoCapture": {
+        "type": "boolean",
+        "default": true,
+        "description": "When true, the plugin subscribes to OpenClaw's after-assistant-response hook and stores extracted facts automatically."
+      },
+      "autoRecall": {
+        "type": "boolean",
+        "default": true,
+        "description": "When true, the plugin subscribes to OpenClaw's before-prompt-build hook and surfaces relevant memories on each turn."
+      }
+    }
+  },
+  "uiHints": {
+    "podUrl": { "label": "Pod URL", "placeholder": "https://your-pod.example/agent/" },
+    "agentDid": { "label": "Agent DID", "placeholder": "did:web:your-pod.example" }
+  }
+}

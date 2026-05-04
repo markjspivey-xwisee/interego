@@ -1,0 +1,15 @@
+{
+  "name": "@interego/compliance-overlay",
+  "version": "0.1.0",
+  "description": "Generic agent-action → compliance-grade Interego descriptor translator. Layers EU AI Act / NIST RMF / SOC 2 citations onto every tool call the runtime emits.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "scripts": { "build": "tsc", "test": "vitest run" },
+  "dependencies": { "@interego/core": "*" },
+  "devDependencies": { "typescript": "^5.5.0", "vitest": "^3.2.4" },
+  "license": "Apache-2.0"
+}

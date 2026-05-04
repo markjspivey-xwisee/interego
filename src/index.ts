@@ -208,8 +208,23 @@ export {
   withRdf12VersionDirective,
   detectRdf12Features,
   RDF12_VERSION_DIRECTIVE,
+  // TriG / Turtle subject-extraction parser
+  parseTrig,
+  findSubjectsOfType,
+  readStringValue,
+  readStringValues,
+  readIntegerValue,
+  readIriValue,
 } from './rdf/index.js';
-export type { BaseDirection } from './rdf/index.js';
+export type {
+  BaseDirection,
+  ParsedDocument,
+  ParsedSubject,
+  ParsedTerm,
+  ParsedLiteral,
+  ParsedIri,
+  ParsedBNode,
+} from './rdf/index.js';
 
 // ── Namespaces ───────────────────────────────────────────────
 export {
@@ -932,3 +947,21 @@ export type {
   PolicyRegistry,
   DecisionCache,
 } from './abac/index.js';
+
+// ── Skills (agentskills.io ↔ cg:Affordance translator) ─────────────
+export {
+  parseSkillMd,
+  emitSkillMd,
+  skillBundleToDescriptor,
+  descriptorGraphToSkillBundle,
+  descriptorGraphToSkillMd,
+} from './skills/index.js';
+export type {
+  SkillFrontmatter,
+  SkillDocument,
+  SkillParseResult,
+  SkillValidationError,
+  SkillBundle,
+  SkillToDescriptorOptions,
+  DescriptorBundle as SkillDescriptorBundle,
+} from './skills/index.js';
