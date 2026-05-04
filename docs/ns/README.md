@@ -16,9 +16,9 @@ Not every ontology here has the same normative weight. They sit on three distinc
 
 Every namespace below is tagged with its current layer. The transplant test (§2 of [`LAYERS.md`](../../spec/LAYERS.md)) is the discriminator: if an ontology's terms only make sense in a specific domain or stack, it belongs in Layer 3, not Layer 1.
 
-## Nineteen ontologies, nineteen prefixes
+## Twenty ontologies, twenty prefixes
 
-Interego is a five-core-layer system (substrate → typed context → interrogatives → agent harness → cross-layer alignment) plus five Layer-2 federation pattern ontologies plus eight Layer-3 adjacent / domain / regulatory mapping ontologies that model how Interego composes with the wider world.
+Interego is a five-core-layer system (substrate → typed context → interrogatives → agent harness → cross-layer alignment) plus five Layer-2 federation pattern ontologies plus eight Layer-3 adjacent / domain / regulatory mapping ontologies plus two Layer-3 complexity-aware vocabularies (sat:Disposition vocab in `sat.ttl` + `wks:` weak-signal ns) that model how Interego composes with the wider world.
 
 ### Core layers (Layer 1 — Protocol, normative)
 
@@ -30,7 +30,7 @@ These ontologies define terms that conforming implementations MUST honor. Terms 
 | [`cg.ttl`](cg.ttl) | `cg:` | OWL | 284 | **Typed-context.** ContextDescriptor with seven facet types + Causal + Projection, composition operators, federation, data products (cg:DataProduct), affordances (cg:Affordance + individuals canPublish/canDiscover/canSubscribe/canFetchPayload/canDecrypt), encryption classes (EncryptedGraphEnvelope, EncryptedValue, GraphPayload), auth-methods (AuthMethods, WebAuthnCredential, DIDKey, EthereumWallet), coherence (CoherenceCertificate + enum Equal/Divergent/Subset/Intersect/Union/Exclude), paradigm / persistence / causal / pod-catalog / session-log types. |
 | [`interego.ttl`](interego.ttl) | `ie:` | OWL | 34 | **Interrogatives.** User-facing grammar of eleven canonical interrogatives (Who/What/Where/When/Why/How/Which/WhatKind/HowMuch/Whose/Whether) with typed cross-layer mapping. |
 | [`harness.ttl`](harness.ttl) | `cgh:` | OWL | 138 | **Agent harness.** Abstract Agent Types (AAT), ODRL policy engine, PROV traces, runtime evaluation with confidence scoring, decision functor, affordance decorators. `cgh:Affordance rdfs:subClassOf hydra:Operation`. |
-| [`alignment.ttl`](alignment.ttl) | `align:` | OWL | 22 | **Cross-layer glue.** Equivalences, SKOS matches, and W3C vocabulary alignments (Hydra, ODRL, ACL, VC 2.0, DCAT, DPROD, OWL-Time) across all nineteen namespaces. |
+| [`alignment.ttl`](alignment.ttl) | `align:` | OWL | 22 | **Cross-layer glue.** Equivalences, SKOS matches, and W3C vocabulary alignments (Hydra, ODRL, ACL, VC 2.0, DCAT, DPROD, OWL-Time) across all twenty namespaces. |
 
 ### Federation mesh ontologies (Layer 2 — Architecture, informative)
 
@@ -61,6 +61,7 @@ These ontologies live here for convenience while the project is early, but they 
 | [`eu-ai-act.ttl`](eu-ai-act.ttl) | `eu-ai-act:` | 17 | **EU AI Act mapping.** Articles 6, 9, 10, 12, 13, 14, 15, 50. Lets compliance teams query an Interego pod using the regulation's own vocabulary. |
 | [`nist-rmf.ttl`](nist-rmf.ttl) | `nist-rmf:` | 20 | **NIST AI Risk Management Framework.** Govern / Map / Measure / Manage four-function model. Used together with `compliance: true` publishes for L4 conformance. |
 | [`soc2.ttl`](soc2.ttl) | `soc2:` | 63 | **AICPA SOC 2 Trust Services Criteria.** Common Criteria + Availability + Processing Integrity + Confidentiality + Privacy. Operational event subtypes (DeployEvent, AccessChangeEvent, KeyRotationEvent, IncidentEvent, QuarterlyReviewEvent) emitted by [`src/ops/`](../../src/ops/) — Interego eats its own dog food as the SOC 2 evidence substrate. |
+| [`wks.ttl`](wks.ttl) | `wks:` | 11 | **Weak-Signal vocabulary.** Snowden-informed sensemaking. `wks:WeakSignal` (subclass of `cg:ContextDescriptor`, always Hypothetical), `wks:Reinforcement` (cross-observer aggregation count), `wks:NarrativeEvidence` (anchoring micro-narrative). Reinforcement is structural — two observers minting the same `wks:about` subject reinforce each other automatically via SPARQL. Used in Demo 18 + Demo 21. |
 
 ### SHACL shape files
 
@@ -174,6 +175,7 @@ The canonical URLs resolve to this directory via GitHub Pages:
 - `https://markjspivey-xwisee.github.io/interego/ns/cts.ttl`
 - `https://markjspivey-xwisee.github.io/interego/ns/olke.ttl`
 - `https://markjspivey-xwisee.github.io/interego/ns/amta.ttl`
+- `https://markjspivey-xwisee.github.io/interego/ns/wks.ttl`
 
 Each ontology's `vann:preferredNamespaceUri` matches the hashed namespace URI in its `owl:Ontology` declaration.
 
