@@ -75,7 +75,7 @@ const handlers = {
 };
 
 const PORT = parseInt(process.env.PORT ?? '6030', 10);
-const app = createVerticalBridge({ verticalName: 'lrs-adapter', affordances: lrsAffordances, handlers });
+const app = createVerticalBridge({ verticalName: 'lrs-adapter', affordances: lrsAffordances, handlers, defaultPodUrl: process.env.LRS_DEFAULT_POD_URL });
 app.listen(PORT, () => {
   console.log(`lrs-adapter bridge on http://localhost:${PORT}`);
   console.log(`  MCP: http://localhost:${PORT}/mcp  |  Manifest: http://localhost:${PORT}/affordances`);

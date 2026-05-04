@@ -77,7 +77,7 @@ const handlers = {
 };
 
 const PORT = parseInt(process.env.PORT ?? '6040', 10);
-const app = createVerticalBridge({ verticalName: 'agent-collective', affordances: acAffordances, handlers });
+const app = createVerticalBridge({ verticalName: 'agent-collective', affordances: acAffordances, handlers, defaultPodUrl: process.env.AC_DEFAULT_POD_URL });
 app.listen(PORT, () => {
   console.log(`agent-collective bridge on http://localhost:${PORT}`);
   console.log(`  MCP: http://localhost:${PORT}/mcp  |  Manifest: http://localhost:${PORT}/affordances`);

@@ -15,7 +15,7 @@
  * scenario's expected behavior is documented.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -121,14 +121,35 @@ export async function spawnBridge(
   proc.stdout?.on('data', (b: Buffer) => stdoutChunks.push(b.toString()));
   proc.stderr?.on('data', (b: Buffer) => stderrChunks.push(b.toString()));
 
-  // Wait up to 30s for /affordances to respond
+  // Wait up to 30s for the bridge to be ready AND to identify itself
+  // as the bridge we just configured.
+  //
+  // Probe order:
+  //   1. GET /  — verify the reported `pod` field equals options.podUrl.
+  //      This catches a stale bridge from a prior run still holding the
+  //      port; that bridge would respond OK to /affordances but report
+  //      a different pod URL. (Discovered during Demo 19's first dry-run.)
+  //   2. If the bridge doesn't yet implement the `pod` field on /,
+  //      fall back to /affordances — strictly weaker, but preserves
+  //      back-compat with bridges that haven't been rebuilt yet.
   const deadline = Date.now() + 30000;
+  let staleBridgeWarning: string | undefined;
   while (Date.now() < deadline) {
     try {
-      const r = await fetch(`${url}/affordances`, {
-        signal: AbortSignal.timeout(2000),
-      });
-      if (r.ok) return { name, port, url, process: proc, podUrl: options.podUrl };
+      const r = await fetch(`${url}/`, { signal: AbortSignal.timeout(2000) });
+      if (r.ok) {
+        const body = await r.json() as { pod?: string };
+        if (body.pod === options.podUrl) {
+          return { name, port, url, process: proc, podUrl: options.podUrl };
+        }
+        if (body.pod === undefined) {
+          // Older bridge — accept once /affordances also responds.
+          const r2 = await fetch(`${url}/affordances`, { signal: AbortSignal.timeout(2000) });
+          if (r2.ok) return { name, port, url, process: proc, podUrl: options.podUrl };
+        } else {
+          staleBridgeWarning = `port ${port} is held by a different bridge (pod=${body.pod}); waiting for it to release`;
+        }
+      }
     } catch { /* retry */ }
     await new Promise(r => setTimeout(r, 500));
   }
@@ -136,8 +157,9 @@ export async function spawnBridge(
   // Bridge didn't come up — surface diagnostics
   const stdout = stdoutChunks.join('');
   const stderr = stderrChunks.join('');
-  proc.kill('SIGTERM');
-  throw new Error(`bridge ${name} failed to start within 30s.\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
+  treeKill(proc, 'SIGTERM');
+  const hint = staleBridgeWarning ? `\nHint: ${staleBridgeWarning} — kill the stale process (taskkill /F /PID <pid> on Windows).` : '';
+  throw new Error(`bridge ${name} failed to start within 30s.${hint}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
 }
 
 /**
@@ -152,30 +174,41 @@ export async function spawnBridge(
  *
  * Strategy:
  *   - Windows: `taskkill /T /F /PID <pid>` (T = tree, F = force).
- *     Synchronous via execFileSync; surfaces no stderr to the demo
- *     output unless DEBUG_TREE_KILL is set.
+ *     Synchronous via execFileSync; surfaces stderr to the demo
+ *     output unless DEBUG_TREE_KILL is unset.
  *   - POSIX: signal the negative process-group ID, which delivers to
  *     every descendant of the spawned shell. Caller MUST have spawned
  *     with detached: true (we don't, by default), so we fall back to
  *     plain kill if PGID isn't available — which is fine because
  *     POSIX node properly inherits SIGTERM down the chain in most
  *     shells.
+ *
+ * Performance bound (Windows): execFileSync blocks the event loop
+ * until taskkill returns. For typical demo trees (≤10 child processes)
+ * this is sub-second. If you spawn dozens of bridges in one teardown,
+ * either parallelize the kills via spawn() instead of execFileSync,
+ * or accept the brief stall. We don't optimize for that case because
+ * no current scenario hits it.
  */
 export function treeKill(proc: ChildProcess, signal: 'SIGTERM' | 'SIGKILL' = 'SIGTERM'): void {
   if (proc.pid === undefined || proc.killed) return;
   if (process.platform === 'win32') {
     try {
-      // execFileSync is synchronous; cheap; lets us batch many
-      // teardowns deterministically. /T = include child processes.
-      // /F = force (no graceful shutdown — fine for demo bridges
-      // that have no persistent state to flush).
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { execFileSync } = require('node:child_process') as typeof import('node:child_process');
+      // /T = include child processes. /F = force (no graceful
+      // shutdown — fine for demo bridges that have no persistent
+      // state to flush).
       execFileSync('taskkill', ['/T', '/F', '/PID', String(proc.pid)], {
         stdio: process.env['DEBUG_TREE_KILL'] ? 'inherit' : 'ignore',
       });
-    } catch {
-      // Fall back to single-process kill — better than nothing.
+    } catch (err) {
+      // Always log the taskkill failure — silent fallback to
+      // proc.kill is exactly the failure mode this helper exists
+      // to prevent (the inner node process holds the port open
+      // and the next bridge readiness probe binds to the stale
+      // listener). The fallback runs anyway, but the operator
+      // needs to see that it happened.
+      const code = (err as { status?: number; signal?: string }).status;
+      console.error(`[treeKill] taskkill /T /F /PID ${proc.pid} failed (exit=${code ?? 'n/a'}); falling back to proc.kill — port may stay held.`);
       try { proc.kill(signal); } catch { /* already gone */ }
     }
   } else {

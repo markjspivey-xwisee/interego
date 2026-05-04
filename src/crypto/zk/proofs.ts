@@ -47,6 +47,14 @@ export interface Commitment {
  * at the public threshold. The full chain is included in `chain` so
  * the verifier can walk it without knowing the value.
  *
+ * Granularity: this scheme is hard-coded for confidence values in
+ * [0, 1] discretized to 1/100 steps (i.e., `Math.round(x * 100)`).
+ * Both prover and verifier scale by 100. If you need a different
+ * range or granularity, do not reuse this API — copy and re-fix the
+ * scaling factor or factor it into the proof type. We expose only
+ * `proveConfidenceAboveThreshold` rather than a generic
+ * `proveValueAboveThreshold` so this assumption stays visible.
+ *
  * Honest scoping: this scheme reveals (value − threshold) — the chain
  * length leaks how far above the threshold the value lies. For full
  * zero-knowledge that hides the gap as well, use a Bulletproofs-style
@@ -137,6 +145,24 @@ export function verifyCommitment(commitment: Commitment, value: string, blinding
 // ═════════════════════════════════════════════════════════════
 
 /**
+ * Maximum legitimate chain length for a confidence range proof.
+ *
+ * Confidence values live in [0, 1] discretized to 1/100, so
+ * `value * 100 ∈ [0, 100]`, threshold ∈ [0, 100], and chain length
+ * is `(value - threshold + 1) ∈ [1, 101]`. A chain longer than that
+ * indicates one of:
+ *   (a) the prover used the API with a value outside [0, 1]
+ *   (b) the proof was constructed against a different granularity
+ *   (c) malicious padding intended to obscure the leaked gap
+ *
+ * In all three cases the proof's confidentiality / correctness
+ * guarantees do not match what the type claims, so verification
+ * refuses. Producers that legitimately need wider ranges should
+ * fork the proof type rather than expanding this bound.
+ */
+const RANGE_PROOF_MAX_CHAIN = 101;
+
+/**
  * Prove that a confidence value exceeds a threshold.
  *
  * Method: Hash-chain range proof.
@@ -210,6 +236,12 @@ export function verifyConfidenceProof(proof: RangeProof): boolean {
   if (!proof || proof.type !== 'hash-range') return false;
   const chain = proof.chain;
   if (!chain || chain.length === 0) return false;
+  // Reject chains that imply a value outside the [0, 1] domain this
+  // proof type is defined for. See RANGE_PROOF_MAX_CHAIN above.
+  if (chain.length > RANGE_PROOF_MAX_CHAIN) return false;
+  // Threshold must also lie in [0, 1].
+  if (typeof proof.threshold !== 'number' || !Number.isFinite(proof.threshold)) return false;
+  if (proof.threshold < 0 || proof.threshold > 1) return false;
 
   // Leaf must equal the commitment.
   if (chain[chain.length - 1] !== proof.commitment) return false;

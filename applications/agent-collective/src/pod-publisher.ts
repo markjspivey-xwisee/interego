@@ -17,8 +17,17 @@
 import { ContextDescriptor, publish, discover } from '../../../src/index.js';
 import { createHash } from 'node:crypto';
 import type { IRI } from '../../../src/index.js';
+import {
+  parseTrig,
+  findSubjectsOfType,
+  readStringValues,
+  readIntegerValue,
+  readIriValue,
+} from '../../../src/rdf/turtle-parser.js';
 
 const AC_NS = 'https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#';
+const CGH_NS = 'https://markjspivey-xwisee.github.io/interego/ns/harness#';
+const CGH = (local: string): IRI => `${CGH_NS}${local}` as IRI;
 
 function nowIso(): string { return new Date().toISOString(); }
 function sha16(s: string): string { return createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 16); }
@@ -183,12 +192,23 @@ interface PromotionConstraint {
 /**
  * Discover active promotion constraints on the configured pod.
  * "Active" = the constraint descriptor is Asserted and not superseded
- * by a later descriptor describing the same graph.
+ * by a later descriptor.
  *
  * Constraints are typed cgh:PromotionConstraint descriptors. Each
  * declares a set of required attestation axes and (optionally)
  * minimum self/peer attestation counts that promote_tool must
  * satisfy in addition to its default threshold policy.
+ *
+ * Parser note: uses the project's TriG parser, which handles long-form
+ * IRIs, datatyped/lang-tagged literals, comments, and string escapes.
+ * Predicates are matched by full IRI (CGH_NS + local) — the input file's
+ * choice of prefix label does not matter.
+ *
+ * Supersession is computed from the supersedes-edges across the
+ * discovered set: if any descriptor's supersedes list names a target,
+ * that target is excluded. The discover() result is the closed set we
+ * compute against — multi-step chains (A ← B ← C) are handled because
+ * both A and B will be named as supersedes-targets within the set.
  */
 async function discoverPromotionConstraints(podUrl: string): Promise<PromotionConstraint[]> {
   const debug = process.env['DEBUG_PROMOTION_CONSTRAINTS'] === '1';
@@ -202,6 +222,12 @@ async function discoverPromotionConstraints(podUrl: string): Promise<PromotionCo
   if (debug) console.error(`[constraint-discover] discover returned ${entries.length} entries from ${podUrl}`);
   const supersededIris = new Set<string>();
   for (const e of entries) for (const s of (e.supersedes ?? [])) supersededIris.add(s);
+
+  const PROMOTION_CONSTRAINT = CGH('PromotionConstraint');
+  const REQUIRES_AXIS = CGH('requiresAttestationAxis');
+  const REQUIRES_MIN_PEER = CGH('requiresMinimumPeerAttestations');
+  const REQUIRES_MIN_SELF = CGH('requiresMinimumSelfAttestations');
+  const RATIFIED_BY = CGH('ratifiedBy');
 
   const out: PromotionConstraint[] = [];
   for (const entry of entries) {
@@ -218,20 +244,30 @@ async function discoverPromotionConstraints(podUrl: string): Promise<PromotionCo
       if (debug) console.error(`[constraint-discover]   graph fetch error: ${(err as Error).message}`);
       continue;
     }
-    if (debug) console.error(`[constraint-discover]   trig length=${trig.length}, includes PromotionConstraint=${trig.includes('cgh:PromotionConstraint')}`);
-    if (!trig.includes('cgh:PromotionConstraint')) continue;
 
-    const requiredAxes = Array.from(trig.matchAll(/cgh:requiresAttestationAxis\s+"([^"]+)"/g), m => m[1]!);
-    const minPeerMatch = trig.match(/cgh:requiresMinimumPeerAttestations\s+"?(\d+)"?/);
-    const minSelfMatch = trig.match(/cgh:requiresMinimumSelfAttestations\s+"?(\d+)"?/);
-    const ratifiedByMatch = trig.match(/cgh:ratifiedBy\s+<([^>]+)>/);
-    out.push({
-      iri: (entry.describes[0] ?? entry.descriptorUrl) as IRI,
-      requiredAxes,
-      minimumPeerAttestations: minPeerMatch ? parseInt(minPeerMatch[1]!, 10) : undefined,
-      minimumSelfAttestations: minSelfMatch ? parseInt(minSelfMatch[1]!, 10) : undefined,
-      ratifiedBy: ratifiedByMatch ? (ratifiedByMatch[1] as IRI) : undefined,
-    });
+    let doc;
+    try {
+      doc = parseTrig(trig);
+    } catch (err) {
+      if (debug) console.error(`[constraint-discover]   parse error: ${(err as Error).message}`);
+      continue;
+    }
+    const constraints = findSubjectsOfType(doc, PROMOTION_CONSTRAINT);
+    if (debug) console.error(`[constraint-discover]   parsed; PromotionConstraint subjects=${constraints.length}`);
+    if (constraints.length === 0) continue;
+
+    for (const subj of constraints) {
+      const subjectIri = typeof subj.subject === 'string'
+        ? subj.subject
+        : (entry.describes[0] ?? entry.descriptorUrl) as IRI;
+      out.push({
+        iri: subjectIri as IRI,
+        requiredAxes: readStringValues(subj, REQUIRES_AXIS),
+        minimumPeerAttestations: readIntegerValue(subj, REQUIRES_MIN_PEER),
+        minimumSelfAttestations: readIntegerValue(subj, REQUIRES_MIN_SELF),
+        ratifiedBy: readIriValue(subj, RATIFIED_BY),
+      });
+    }
   }
   return out;
 }

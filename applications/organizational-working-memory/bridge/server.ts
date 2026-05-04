@@ -108,6 +108,7 @@ const app = createVerticalBridge({
   verticalName: 'organizational-working-memory',
   affordances: owmAffordances,
   handlers,
+  defaultPodUrl: process.env['OWM_DEFAULT_POD_URL'],
 });
 
 app.listen(PORT, () => {

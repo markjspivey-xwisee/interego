@@ -1,5 +1,19 @@
 export * from './namespaces.js';
 export { toTurtle, toTurtleDocument, toTripleAnnotationTurtle, toTripleAnnotationDocument, type SerializerOptions } from './serializer.js';
+export {
+  parseTrig,
+  findSubjectsOfType,
+  readStringValue,
+  readStringValues,
+  readIntegerValue,
+  readIriValue,
+  type ParsedDocument,
+  type ParsedSubject,
+  type ParsedTerm,
+  type ParsedLiteral,
+  type ParsedIri,
+  type ParsedBNode,
+} from './turtle-parser.js';
 // RDF 1.2 helpers (version directive, directional language tags)
 export {
   langString,

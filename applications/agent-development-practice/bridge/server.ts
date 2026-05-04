@@ -95,7 +95,7 @@ const handlers = {
 };
 
 const PORT = parseInt(process.env.PORT ?? '6020', 10);
-const app = createVerticalBridge({ verticalName: 'agent-development-practice', affordances: adpAffordances, handlers });
+const app = createVerticalBridge({ verticalName: 'agent-development-practice', affordances: adpAffordances, handlers, defaultPodUrl: process.env.ADP_DEFAULT_POD_URL });
 app.listen(PORT, () => {
   console.log(`agent-development-practice bridge on http://localhost:${PORT}`);
   console.log(`  MCP: http://localhost:${PORT}/mcp  |  Manifest: http://localhost:${PORT}/affordances`);

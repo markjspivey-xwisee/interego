@@ -518,7 +518,20 @@ Do NOT abbreviate IRIs. Rate honestly — vary by hypothesis quality on YOUR axi
     if (verifyOut.ok) {
       fail('substrate FAILED to detect the forged signature (verify returned ok=true)');
     }
-    ok(`Forged attestation detected: ${verifyOut.reason ?? 'signature did not verify'}`);
+    // Specificity: the rejection MUST cite a signature / verification
+    // failure, not some unrelated 4xx. A regression where the bridge
+    // started returning a generic "bad request" would otherwise pass
+    // this phase silently.
+    const reason = (verifyOut.reason ?? '').toLowerCase();
+    const reasonLooksLikeSigFailure =
+      reason.includes('signature') ||
+      reason.includes('verify') ||
+      reason.includes('signer') ||
+      reason.includes('trust');
+    if (!reasonLooksLikeSigFailure) {
+      fail(`substrate detected the forgery but the reason "${verifyOut.reason}" doesn't reference signature/verify/signer/trust — possible regression in the Trust-facet rejection path`);
+    }
+    ok(`Forged attestation detected (Trust facet): ${verifyOut.reason ?? 'signature did not verify'}`);
 
     // ── PHASE E — Antifragile + strange-loop amendment ──────
     step(6, 'PHASE E — Community ratifies amendment WITH a meta-clause (strange loop)');
@@ -735,8 +748,11 @@ Output ONLY: {"resurrector":"${RESURRECTOR.id}","resurrected_iri":"${resurrected
     // (dependency graph + boost-on-parent-promotion); whether it
     // FIRES in any given run is sensitive to rating drift. We
     // verify the dynamic exists, not that it always fires.
+    const avalancheStatus = cascadeSize > 0
+      ? `FIRED (${cascadeSize} cascade promotions following ${firstPass} direct)`
+      : `STRUCTURAL (dependency graph + parent-boost wired; no avalanche this run because direct promotions absorbed candidates)`;
     if (cascadeSize === 0) info('Cascade size 0 — direct promotions absorbed all candidate cascades this run. Dynamic in place; emergence varies run-to-run.');
-    ok(`Avalanche dynamics in place: ${firstPass} direct + ${cascadeSize} cascade = ${finalPromoted.length} total promotions`);
+    ok(`Avalanche dynamics: ${avalancheStatus}. Total promotions: ${finalPromoted.length}.`);
 
     if (verifyOut.ok) fail('Antifragility precondition: forged attestation should have been rejected, but was accepted');
     ok('Antifragility: forged attestation rejected by substrate signature verification');
@@ -761,7 +777,7 @@ Output ONLY: {"resurrector":"${RESURRECTOR.id}","resurrected_iri":"${resurrected
       `| # | Tradition | Evidence on the pod |`,
       `|---|---|---|`,
       `| 1 | Stigmergy + Schelling sorting | ${attestations.length} peer attestations published as typed descriptors; axis distribution = ${JSON.stringify(axisAttests)} |`,
-      `| 2 | Self-organized criticality / avalanche | ${firstPass} direct + ${cascadeSize} cascade = ${finalPromoted.length} total promotions |`,
+      `| 2 | Self-organized criticality / avalanche | ${cascadeSize > 0 ? `FIRED — ${firstPass} direct + ${cascadeSize} cascade = ${finalPromoted.length} total` : `STRUCTURAL — dependency graph + parent-boost wired; no cascade fired this run (${firstPass} direct = ${finalPromoted.length} total). Dynamic exists; emergence varies run-to-run.`} |`,
       `| 3 | Antifragility under stress | Forged attestation rejected (\`${verifyOut.reason ?? 'signature mismatch'}\`); rule set strictly larger after amendment |`,
       `| 4 | Self-reference / strange loop | Meta-amendment ratified (\`${ratify.status}\`) including a clause about FUTURE amendment rules |`,
       `| 5 | Niche construction | ${admittedCount}/${ENTRANTS.length} entrants admitted; ${ENTRANTS.length - admittedCount} filtered by substrate-enforced PromotionConstraint |`,

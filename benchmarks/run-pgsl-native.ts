@@ -11,6 +11,30 @@
  *   3. Route by question type
  *   4. ONE focused LLM call per type
  *   5. ONE verification pass for structural answers only
+ *
+ * ─────────────────────────────────────────────────────────────────
+ * COLD-START RULE — read before editing prompts in this file
+ * ─────────────────────────────────────────────────────────────────
+ * Every benchmark question MUST be answered by an agent that has
+ * never seen it before. The prompts in this file MUST NOT contain:
+ *   - example outputs lifted from the test set ("the woman selling
+ *     jam", "Adobe Premiere Pro", specific Q-numbers, etc.)
+ *   - carve-outs shaped to a known failure (Q60 returns/replacements,
+ *     Q61 personal projects, Q77 multiples — historically present
+ *     and stripped 2026-05-03)
+ *   - few-shot examples whose phrasing matches gold answers
+ *
+ * If a question fails, the response is to investigate whether the
+ * SUBSTRATE or the GENERIC AGENT PIPELINE is missing a capability
+ * — never to add the failing question's specific entities, names,
+ * or pattern as a guidance line. A tweak that wouldn't ship in
+ * production memory-agent code that has never seen these
+ * benchmarks doesn't belong here either.
+ *
+ * See benchmarks/README.md "Integrity stance — no cross-run
+ * learning" for the full audit history and the cleanCriteria flag
+ * convention used in eval-history.json.
+ * ─────────────────────────────────────────────────────────────────
  */
 
 import { readFileSync, writeFileSync, unlinkSync } from 'fs';

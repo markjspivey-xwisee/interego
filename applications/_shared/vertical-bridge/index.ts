@@ -52,6 +52,11 @@ export interface VerticalBridgeOptions {
    *  `{base}` in affordance targetTemplates when serving the manifest.
    *  Defaults to env BRIDGE_DEPLOYMENT_URL or http://localhost:<PORT>. */
   readonly deploymentUrl?: string;
+  /** Optional: the pod this bridge is configured to write to, surfaced
+   *  in `GET /` so a readiness probe can verify it's talking to the
+   *  bridge it just spawned (rather than a stale bridge from a prior
+   *  run that happens to be holding the same port). */
+  readonly defaultPodUrl?: string;
   /** Optional: additional Express middleware to install (e.g., auth). */
   readonly middleware?: (app: Express) => void;
 }
@@ -177,6 +182,10 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
       })),
       mcpEndpoint: `${deploymentUrl}/mcp`,
       manifestEndpoint: `${deploymentUrl}/affordances`,
+      // `pod` is what the readiness probe (demos/agent-lib.ts) checks
+      // against the URL it spawned the bridge with — guards against
+      // succeeding-against-a-stale-bridge.
+      pod: opts.defaultPodUrl,
     });
   });
 

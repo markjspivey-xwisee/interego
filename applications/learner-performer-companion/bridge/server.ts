@@ -123,6 +123,7 @@ const app = createVerticalBridge({
   verticalName: 'learner-performer-companion',
   affordances: lpcAffordances,
   handlers,
+  defaultPodUrl: process.env.LPC_DEFAULT_POD_URL,
 });
 
 app.listen(PORT, () => {

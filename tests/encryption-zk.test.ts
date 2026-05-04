@@ -29,6 +29,7 @@ import {
   verifyFragmentMembership,
   createSelectiveDisclosure,
 } from '../src/index.js';
+import { sha256 } from '../src/crypto/ipfs.js';
 
 // ═════════════════════════════════════════════════════════════
 //  E2E Encryption (NaCl / tweetnacl)
@@ -300,6 +301,33 @@ describe('Range Proofs (confidence threshold)', () => {
     // This is the documented privacy tradeoff vs Bulletproofs.
     const { proof } = proveConfidenceAboveThreshold(0.95, 0.80);
     expect(proof.chain?.length).toBe(16);
+  });
+
+  it('rejects a proof whose anchor field is set to a hash that is not chain[0]', () => {
+    // The .proof field is the anchor and MUST equal chain[0]. A
+    // dishonest prover that swaps in a different sha256 hash there
+    // (without rebuilding the chain) must be caught.
+    const { proof } = proveConfidenceAboveThreshold(0.91, 0.8);
+    const swappedAnchor = sha256('not-the-real-anchor');
+    expect(swappedAnchor.length).toBe(64);
+    const tampered = { ...proof, proof: swappedAnchor };
+    expect(verifyConfidenceProof(tampered)).toBe(false);
+  });
+
+  it('rejects a chain padded beyond the [0,1] domain (length > 101)', () => {
+    // A legitimate confidence-proof chain has length ≤ 101 (since
+    // value*100 ∈ [0,100] and threshold*100 ∈ [0,100]). Padding
+    // the chain to obscure the leaked gap is rejected.
+    const { proof } = proveConfidenceAboveThreshold(0.91, 0.8);
+    const padded = { ...proof, chain: [...(proof.chain ?? []), ...Array(110).fill(sha256('pad'))] };
+    expect(verifyConfidenceProof(padded)).toBe(false);
+  });
+
+  it('rejects a proof whose threshold lies outside [0, 1]', () => {
+    const { proof } = proveConfidenceAboveThreshold(0.91, 0.8);
+    // threshold field directly mutated; chain content is unchanged
+    expect(verifyConfidenceProof({ ...proof, threshold: 1.5 })).toBe(false);
+    expect(verifyConfidenceProof({ ...proof, threshold: -0.1 })).toBe(false);
   });
 });
 

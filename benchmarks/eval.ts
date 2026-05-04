@@ -126,10 +126,48 @@ async function runQuestion(qi: number): Promise<{ correct: boolean; method: stri
 
 // ── Main ──
 
+// Cutoff: every entry written after this date is expected to carry the
+// `cleanCriteria: true` flag. Older entries pre-date the 2026-05-03
+// study-notes cleanup and are intentionally unflagged so the historical
+// record stays distinguishable from cleaned baselines. See
+// benchmarks/README.md "Integrity stance — no cross-run learning".
+const CLEAN_CRITERIA_CUTOFF_ISO = '2026-05-03T00:00:00Z';
+
+function auditHistoryIntegrity(): void {
+  if (!existsSync(EVAL_RESULTS_FILE)) return;
+  let history: unknown;
+  try { history = JSON.parse(readFileSync(EVAL_RESULTS_FILE, 'utf-8')); }
+  catch { return; }
+  if (!Array.isArray(history)) return;
+  const cutoffMs = new Date(CLEAN_CRITERIA_CUTOFF_ISO).getTime();
+  const offenders: string[] = [];
+  for (const entry of history) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const ts = (entry as { timestamp?: string }).timestamp;
+    if (!ts) continue;
+    const t = new Date(ts).getTime();
+    if (Number.isFinite(t) && t >= cutoffMs && (entry as { cleanCriteria?: boolean }).cleanCriteria !== true) {
+      offenders.push(ts);
+    }
+  }
+  if (offenders.length > 0) {
+    console.warn('');
+    console.warn('⚠ WARNING — eval-history.json integrity check');
+    console.warn(`  ${offenders.length} entry/entries written after the ${CLEAN_CRITERIA_CUTOFF_ISO} cold-start cutoff`);
+    console.warn(`  are missing "cleanCriteria: true". This means either (a) the entry was`);
+    console.warn(`  written by an older version of eval.ts (rerun with the current pipeline) or`);
+    console.warn(`  (b) the file was edited by hand and the flag was dropped. Double-check before`);
+    console.warn(`  comparing those entries against cleaned baselines.`);
+    console.warn(`  Offending timestamps: ${offenders.slice(0, 5).join(', ')}${offenders.length > 5 ? ', …' : ''}`);
+    console.warn('');
+  }
+}
+
 async function main() {
   console.log(`=== EVAL SUITE ===`);
   console.log(`Model: ${MODEL} | Runs: ${RUNS} | Questions: ${EVAL_SET.length}`);
   console.log('');
+  auditHistoryIntegrity();
 
   const results: Array<{
     qi: number;
