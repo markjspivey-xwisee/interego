@@ -295,18 +295,39 @@ export function verifyConfidenceProofByReveal(
 /**
  * Build a Merkle tree from a list of values.
  * Returns the root hash and all layers.
+ *
+ * Security: prepends a layer-tag byte (`0x00` for leaves, `0x01` for
+ * internal nodes) to each hash input. This is the BIP-98 / RFC 6962
+ * convention — without it, an attacker can craft a leaf whose hash
+ * equals an internal-node hash from a different tree, forging a
+ * membership proof. With the tag bytes, leaf-vs-internal hash spaces
+ * are disjoint by construction. Same security argument as
+ * length-extension defenses in HMAC.
+ *
+ * The tag string is prepended to the sha256 input, not to the output:
+ *   leaf:     sha256('\x00' + value)
+ *   internal: sha256('\x01' + left + right)
+ *
+ * Trees built before this change have a different root for the same
+ * input set; proofs do not cross-verify between old and new
+ * implementations. Acceptable for this codebase (all callers compute
+ * + verify with the same buildMerkleTree pair).
  */
+const MERKLE_LEAF_TAG = '\x00';
+const MERKLE_INTERNAL_TAG = '\x01';
+
 export function buildMerkleTree(values: readonly string[]): {
   root: string;
   layers: string[][];
   leaves: string[];
 } {
   if (values.length === 0) {
-    return { root: sha256('empty'), layers: [], leaves: [] };
+    return { root: sha256(MERKLE_LEAF_TAG + 'empty'), layers: [], leaves: [] };
   }
 
-  // Hash all leaves
-  const leaves = values.map(v => sha256(v));
+  // Hash all leaves with the leaf tag — prevents a leaf hash from ever
+  // collide-being-equal to an internal-node hash (BIP-98 / RFC 6962).
+  const leaves = values.map(v => sha256(MERKLE_LEAF_TAG + v));
   const layers: string[][] = [leaves];
 
   // Build tree bottom-up
@@ -315,7 +336,10 @@ export function buildMerkleTree(values: readonly string[]): {
     const next: string[] = [];
     for (let i = 0; i < current.length; i += 2) {
       if (i + 1 < current.length) {
-        next.push(sha256(current[i]! + current[i + 1]!));
+        // Internal node: tag + left + right. The tag distinguishes
+        // internal nodes from leaves so an attacker can't pass off
+        // a crafted leaf as a parent of a different subtree.
+        next.push(sha256(MERKLE_INTERNAL_TAG + current[i]! + current[i + 1]!));
       } else {
         next.push(current[i]!); // odd element promoted
       }
@@ -335,7 +359,9 @@ export function generateMerkleProof(
   values: readonly string[],
 ): MerkleProof | null {
   const { root, layers, leaves } = buildMerkleTree(values);
-  const leafHash = sha256(value);
+  // Tag the leaf input the same way buildMerkleTree does, so the
+  // computed hash matches what's in `leaves`.
+  const leafHash = sha256(MERKLE_LEAF_TAG + value);
   let index = leaves.indexOf(leafHash);
 
   if (index === -1) return null; // not in the tree
@@ -367,10 +393,14 @@ export function verifyMerkleProof(proof: MerkleProof): boolean {
   let current = proof.leaf;
 
   for (const element of proof.path) {
+    // (See buildMerkleTree for the rationale: internal nodes are
+    // tagged with MERKLE_INTERNAL_TAG so they can't be confused with
+    // a tagged leaf hash. Verify path applies the same tag.)
+    void 0;
     if (element.position === 'right') {
-      current = sha256(current + element.hash);
+      current = sha256(MERKLE_INTERNAL_TAG + current + element.hash);
     } else {
-      current = sha256(element.hash + current);
+      current = sha256(MERKLE_INTERNAL_TAG + element.hash + current);
     }
   }
 
