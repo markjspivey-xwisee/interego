@@ -1,4 +1,7 @@
-FROM node:20-slim
+# NODE_BASE: Docker Hub by default (local builds), ACR-imported copy in
+# CI via --build-arg — see deploy-azure.yml / Dockerfile.identity.
+ARG NODE_BASE=node:20-slim
+FROM ${NODE_BASE}
 
 WORKDIR /app
 

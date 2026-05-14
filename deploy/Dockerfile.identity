@@ -1,7 +1,11 @@
 # ────────────────────────────────────────────────────────────
 #  Build stage: compile server.ts with tsc
 # ────────────────────────────────────────────────────────────
-FROM node:20-slim AS build
+# NODE_BASE defaults to Docker Hub so local `docker build` works
+# anonymously; CI overrides it to the ACR-imported copy (--build-arg)
+# to dodge Docker Hub's anonymous pull rate limit. See deploy-azure.yml.
+ARG NODE_BASE=node:20-slim
+FROM ${NODE_BASE} AS build
 
 WORKDIR /app
 

@@ -1,7 +1,10 @@
 # ────────────────────────────────────────────────────────────
 #  Build stage: compile the @interego/core library + dashboard
 # ────────────────────────────────────────────────────────────
-FROM node:20-slim AS build
+# NODE_BASE: Docker Hub by default (local builds), ACR-imported copy in
+# CI via --build-arg — see deploy-azure.yml / Dockerfile.identity.
+ARG NODE_BASE=node:20-slim
+FROM ${NODE_BASE} AS build
 
 # Skip onnxruntime-node CUDA binary (no GPU in containerapp, CPU
 # backend is sufficient, GitHub release binary has flaky 504s).

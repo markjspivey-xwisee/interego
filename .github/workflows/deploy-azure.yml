@@ -108,10 +108,53 @@ jobs:
               - 'examples/multi-agent/css-config.json'
               - '.github/workflows/deploy-azure.yml'
 
+  # Pull the Docker Hub build-stage base image into our own ACR once,
+  # up front — so each per-image build `FROM`s it there (an
+  # authenticated pull from contextgraphsacr.azurecr.io, which the ACR
+  # build agent is already logged into) instead of pulling node:20-slim
+  # from Docker Hub anonymously. Docker Hub rate-limits unauthenticated
+  # pulls per egress IP, and ACR build agents share egress IPs — the
+  # root cause of the intermittent `FROM node:20-slim → toomanyrequests`
+  # build failures. One import here insulates the whole build matrix.
+  # The Dockerfiles default `ARG NODE_BASE=node:20-slim`, so a local
+  # `docker build` (no --build-arg) still pulls from Docker Hub normally;
+  # only CI is redirected to the ACR copy.
+  prime-base-images:
+    name: Prime ACR with build-stage base image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Import node:20-slim into the ACR
+        run: |
+          # `--force` overwrites the tag if present → idempotent across
+          # runs. Retry: the import itself does one anonymous Docker Hub
+          # pull, which can occasionally rate-limit; a retry on a fresh
+          # runner clears it. One import here vs. five parallel anonymous
+          # pulls across the build matrix.
+          for attempt in 1 2 3; do
+            if az acr import \
+                 --name "${{ env.AZURE_ACR_NAME }}" \
+                 --source docker.io/library/node:20-slim \
+                 --image node:20-slim \
+                 --force; then
+              echo "imported node:20-slim into ${{ env.AZURE_ACR_NAME }} on attempt $attempt"
+              exit 0
+            fi
+            echo "::warning::az acr import attempt $attempt failed; retrying in 90s..."
+            sleep 90
+          done
+          echo "::error::az acr import failed after 3 attempts"
+          exit 1
+
   build-and-deploy:
     name: Build & deploy ${{ matrix.image }}
     runs-on: ubuntu-latest
-    needs: changes
+    needs: [changes, prime-base-images]
 
     strategy:
       # Don't let one image's failure abort the others. Each container
@@ -189,16 +232,12 @@ jobs:
           # Actions log (you only get a generic "RunStatus.FAILED"). The
           # full build log is worth the extra output.
           #
-          # Retry loop — the build-stage base image (`node:20-slim`) is
-          # pulled from Docker Hub anonymously, and Docker Hub rate-limits
-          # unauthenticated pulls per egress IP, which ACR build agents
-          # share. The symptom is an intermittent `Step 1/N : FROM
-          # node:20-slim → toomanyrequests` failure (4 s into the build).
-          # Each `az acr build` invocation gets a fresh agent — often a
-          # different egress IP — so a retry usually clears it. If this
-          # proves insufficient under heavier load, the durable fix is to
-          # `az acr import` the base image into this ACR and `FROM` it
-          # there (an authenticated pull, no Docker Hub limit).
+          # Base image: the `prime-base-images` job imported node:20-slim
+          # into this ACR, so we build `FROM` it there via the NODE_BASE
+          # build-arg — an authenticated pull, no Docker Hub rate limit.
+          # The retry loop below is kept as defense-in-depth (it also
+          # covers the gcr.io distroless runtime-stage pull and any ACR
+          # transient). Each `az acr build` invocation gets a fresh agent.
           # `set -e` does not abort on a failure inside an `if` condition,
           # so the loop is safe under the shell's default `-e`.
           for attempt in 1 2 3; do
@@ -207,11 +246,12 @@ jobs:
                  --image "${{ matrix.image }}:${{ github.sha }}" \
                  --image "${{ matrix.image }}:latest" \
                  --file "${{ matrix.dockerfile }}" \
+                 --build-arg "NODE_BASE=${{ env.AZURE_ACR_NAME }}.azurecr.io/node:20-slim" \
                  .; then
               echo "ACR build succeeded on attempt $attempt"
               exit 0
             fi
-            echo "::warning::ACR build attempt $attempt failed (likely Docker Hub rate limit); retrying in 120s..."
+            echo "::warning::ACR build attempt $attempt failed; retrying in 120s..."
             sleep 120
           done
           echo "::error::ACR build failed after 3 attempts"

@@ -5,7 +5,10 @@
 #  first-class federated agent" pattern. See spec/LAYERS.md.
 #  Not deployed to the Azure matrix until its rules are wired.
 # ────────────────────────────────────────────────────────────
-FROM node:20-slim AS build
+# NODE_BASE: Docker Hub by default (local builds), ACR-imported copy in
+# CI via --build-arg — see deploy-azure.yml / Dockerfile.identity.
+ARG NODE_BASE=node:20-slim
+FROM ${NODE_BASE} AS build
 
 WORKDIR /app
 
