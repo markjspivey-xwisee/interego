@@ -32,7 +32,12 @@ const CGH = (local: string): IRI => `${CGH_NS}${local}` as IRI;
 function nowIso(): string { return new Date().toISOString(); }
 function sha16(s: string): string { return createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 16); }
 function escapeLit(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
-function escapeMulti(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"'); }
+// Escape every `"` (not just the `"""` substring) so a value ending in
+// one or two quotes can't collide with the closing `"""` of the
+// triple-quoted literal. Over-escapes verbose content but always
+// round-trips. See tests/skills.test.ts adversarial section for the
+// contract this fix locks down.
+function escapeMulti(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
 
 export interface PublishConfig {
   readonly podUrl: string;

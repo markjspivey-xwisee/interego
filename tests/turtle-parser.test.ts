@@ -173,4 +173,21 @@ describe('TriG parser — adversarial / edge cases', () => {
     const doc = parseTrig(trig);
     expect(findSubjectsOfType(doc, CGH('PromotionConstraint'))).toEqual([]);
   });
+
+  it('rejects pathologically nested blank-node input before stack overflow', () => {
+    // Pre-stack-overflow protection: 1000 nested `[ a foaf:X ` blocks
+    // would blow the JS recursion limit. The parser caps at
+    // MAX_NESTING_DEPTH (256) and throws a ParseError instead.
+    const open = '@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .\n<urn:cg:c:1> cgh:nested ' + '[ cgh:nested '.repeat(1000);
+    const close = ']'.repeat(1000) + ' .';
+    const trig = open + close;
+    expect(() => parseTrig(trig)).toThrow(/maximum nesting depth/);
+  });
+
+  it('handles legitimately nested blank-node input up to a reasonable depth', () => {
+    // 10 nested layers is well within the cap.
+    const open = '@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .\n<urn:cg:c:1> cgh:nested ' + '[ cgh:nested '.repeat(10);
+    const close = '"leaf"' + ']'.repeat(10) + ' .';
+    expect(() => parseTrig(open + close)).not.toThrow();
+  });
 });

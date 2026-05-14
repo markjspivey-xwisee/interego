@@ -98,6 +98,17 @@ export interface PublishOptions {
     /** Sender's X25519 keypair (typically the publishing agent's). */
     readonly senderKeyPair: import('../crypto/encryption.js').EncryptionKeyPair;
   };
+
+  /**
+   * Maximum permitted graph payload size in bytes. Default 4 MiB.
+   * publish() throws before serialization if the named-graph content
+   * exceeds this — keeps pathological inputs (multi-GB serialization,
+   * descriptor bombs) from driving the process OOM and from hitting
+   * pod-server upload limits with no diagnostic. For payloads larger
+   * than the cap, content-address into PGSL and reference atoms via
+   * pgsl:contains / dct:hasPart instead of inlining.
+   */
+  readonly maxGraphBytes?: number;
 }
 
 /** Options for the discover function. */

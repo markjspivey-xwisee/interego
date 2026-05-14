@@ -415,5 +415,8 @@ function escapeLit(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 function escapeMulti(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
+  // Escape every `"`, not just `"""`. A value ending in one or two
+  // quotes would otherwise collide with the closing `"""` and truncate
+  // the literal content. See tests/skills.test.ts adversarial section.
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }

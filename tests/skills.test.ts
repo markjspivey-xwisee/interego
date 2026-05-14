@@ -121,6 +121,65 @@ describe('parseSkillMd — validation failures', () => {
   });
 });
 
+describe('skillBundleToDescriptor — adversarial literal escaping', () => {
+  // The pgsl:Atom payload is embedded as a Turtle triple-quoted literal
+  // (`"""..."""`). Any combination of quotes in the input that would
+  // create three consecutive quotes in the output — including a
+  // string that ENDS in one or two quotes (which collides with the
+  // closing `"""`) — must be escaped, not just the substring `"""`.
+  // These tests lock the round-trip contract.
+
+  it('round-trips a SKILL.md that ENDS in a single double-quote', () => {
+    const skillMd = `---\nname: trailing-one-quote\ndescription: edge case\n---\nbody ending in one quote"`;
+    const bundle: SkillBundle = { skillMd, files: new Map() };
+    const out = skillBundleToDescriptor(bundle, { authoringAgentDid: AUTHOR });
+    const recovered = descriptorGraphToSkillBundle(out.graphContent);
+    expect(recovered.skillMd).toBe(skillMd);
+  });
+
+  it('round-trips a SKILL.md that ENDS in two double-quotes', () => {
+    const skillMd = `---\nname: trailing-two-quotes\ndescription: edge case\n---\nbody ending in""`;
+    const bundle: SkillBundle = { skillMd, files: new Map() };
+    const out = skillBundleToDescriptor(bundle, { authoringAgentDid: AUTHOR });
+    const recovered = descriptorGraphToSkillBundle(out.graphContent);
+    expect(recovered.skillMd).toBe(skillMd);
+  });
+
+  it('round-trips a SKILL.md containing literal triple-quotes (e.g. Python docstrings)', () => {
+    const skillMd = `---\nname: python-skill\ndescription: a python doc\n---\n\`\`\`python\ndef hello():\n    """docstring"""\n    return 42\n\`\`\``;
+    const bundle: SkillBundle = { skillMd, files: new Map() };
+    const out = skillBundleToDescriptor(bundle, { authoringAgentDid: AUTHOR });
+    const recovered = descriptorGraphToSkillBundle(out.graphContent);
+    expect(recovered.skillMd).toBe(skillMd);
+  });
+
+  it('round-trips a script body that ENDS in a double-quote', () => {
+    const files = new Map<string, string>();
+    files.set('scripts/say.py', `print("ok")"`);
+    const bundle: SkillBundle = { skillMd: MIN_SKILL_MD, files };
+    const out = skillBundleToDescriptor(bundle, { authoringAgentDid: AUTHOR });
+    const recovered = descriptorGraphToSkillBundle(out.graphContent);
+    expect(recovered.files.get('scripts/say.py')).toBe(`print("ok")"`);
+  });
+
+  it('round-trips a script body containing literal triple-quotes', () => {
+    const files = new Map<string, string>();
+    files.set('scripts/say.py', `def f():\n    """hello"""\n    return 1`);
+    const bundle: SkillBundle = { skillMd: MIN_SKILL_MD, files };
+    const out = skillBundleToDescriptor(bundle, { authoringAgentDid: AUTHOR });
+    const recovered = descriptorGraphToSkillBundle(out.graphContent);
+    expect(recovered.files.get('scripts/say.py')).toBe(`def f():\n    """hello"""\n    return 1`);
+  });
+
+  it('round-trips a SKILL.md containing backslash sequences', () => {
+    const skillMd = `---\nname: backslash-skill\ndescription: edge\n---\nWindows path: C:\\\\foo\\\\bar`;
+    const bundle: SkillBundle = { skillMd, files: new Map() };
+    const out = skillBundleToDescriptor(bundle, { authoringAgentDid: AUTHOR });
+    const recovered = descriptorGraphToSkillBundle(out.graphContent);
+    expect(recovered.skillMd).toBe(skillMd);
+  });
+});
+
 describe('skillBundleToDescriptor — substrate translation', () => {
   it('produces a typed Hypothetical descriptor by default', () => {
     const bundle: SkillBundle = { skillMd: MIN_SKILL_MD, files: new Map() };

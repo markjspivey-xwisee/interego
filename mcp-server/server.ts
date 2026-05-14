@@ -241,14 +241,26 @@ const agentKeyPair: EncryptionKeyPair = (() => {
 // with `compliance: true`. Loaded lazily on first compliance publish.
 const COMPLIANCE_WALLET_PATH = process.env['CG_COMPLIANCE_WALLET_PATH']
   ?? AGENT_KEY_PATH.replace(/\.json$/, '-ecdsa.json');
-let _complianceWallet: PersistedComplianceWallet | null = null;
+// Cache the PROMISE, not the resolved wallet. Two concurrent
+// compliance publishes that both arrive during cold-start would
+// otherwise each call loadOrCreateComplianceWallet, which would either
+// race to create the same file (whichever rename loses corrupts a
+// freshly-generated key the other one wrote) or load it twice with
+// different in-memory states. Caching the promise serializes all
+// callers behind a single load.
+let _complianceWalletPromise: Promise<PersistedComplianceWallet> | null = null;
 async function ensureComplianceWallet(): Promise<PersistedComplianceWallet> {
-  if (_complianceWallet) return _complianceWallet;
-  _complianceWallet = await loadOrCreateComplianceWallet(
+  if (_complianceWalletPromise) return _complianceWalletPromise;
+  _complianceWalletPromise = loadOrCreateComplianceWallet(
     COMPLIANCE_WALLET_PATH,
     `compliance-signer-${MY_AGENT_ID}`,
-  );
-  return _complianceWallet;
+  ).catch((err) => {
+    // On failure, clear the cache so the next caller retries fresh
+    // rather than seeing the same rejected promise forever.
+    _complianceWalletPromise = null;
+    throw err;
+  });
+  return _complianceWalletPromise;
 }
 
 // PGSL state — the lattice persists across tool calls
@@ -302,10 +314,13 @@ async function ensureCSS(): Promise<void> {
   const homePod = podRegistry.getHome()!;
   const homeUrl = new URL(homePod.url);
 
-  // Check if CSS is already running
+  // Check if CSS is already running. Bound the probe with a 5s
+  // timeout — without this, a hung CSS instance (slow DNS, half-open
+  // socket, slow remote pod URL) blocks the entire MCP server's
+  // initialization indefinitely.
   let probeError: unknown = null;
   try {
-    const resp = await fetch(homePod.url);
+    const resp = await fetch(homePod.url, { signal: AbortSignal.timeout(5000) });
     if (resp.ok || resp.status < 500) {
       cssReady = true;
       log(`CSS reachable at ${homePod.url}`);
@@ -353,7 +368,7 @@ async function ensureCSS(): Promise<void> {
     const poll = setInterval(async () => {
       if (started) { clearInterval(poll); return; }
       try {
-        const resp = await fetch(homePod.url);
+        const resp = await fetch(homePod.url, { signal: AbortSignal.timeout(2000) });
         if (resp.ok || resp.status < 500) {
           clearInterval(poll);
           started = true;
@@ -623,6 +638,22 @@ async function toolPublishContext(args: {
   // agent registry and union their agents' encryption keys into recipients.
   // This graph then becomes decryptable by those other people's agents too —
   // per-graph opt-in, no pod-level ACL change needed, fully federated.
+  //
+  // We cap the share_with array at SHARE_WITH_MAX entries. Without a cap,
+  // a caller (or LLM with too much enthusiasm) could pass thousands of
+  // handles — each triggers a pod-resolution fetch + key extraction; the
+  // request would O(N) the relay's network budget and inflate the envelope
+  // to N wrapped keys. 50 is generous for legitimate cross-pod sharing
+  // (family / small team) and refuses pathological inputs early with a
+  // clear error rather than silently degrading.
+  const SHARE_WITH_MAX = 50;
+  if (args.share_with && args.share_with.length > SHARE_WITH_MAX) {
+    throw new Error(
+      `share_with cap exceeded: ${args.share_with.length} handles supplied, max ${SHARE_WITH_MAX}. ` +
+      `For larger groups, publish via a group-list descriptor and have recipients subscribe — ` +
+      `per-publish sharing is designed for small numbers of direct recipients.`,
+    );
+  }
   const shareResolved: { handle: string; podUrl: string; agentCount: number }[] = [];
   if (args.share_with && args.share_with.length > 0) {
     const resolved = await resolveRecipients(args.share_with, { fetch: solidFetch });

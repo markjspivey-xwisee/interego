@@ -22,7 +22,11 @@ const OWM_NS = 'https://markjspivey-xwisee.github.io/interego/applications/organ
 function nowIso(): string { return new Date().toISOString(); }
 function sha16(s: string): string { return createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 16); }
 function escapeLit(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n'); }
-function escapeMulti(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"'); }
+// Escape every `"` (not just the `"""` substring) — a value ending in
+// one or two quotes would otherwise collide with the closing `"""` of
+// the triple-quoted literal and truncate content. See
+// tests/skills.test.ts adversarial section.
+function escapeMulti(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
 
 export interface PodCtx {
   readonly podUrl: string;

@@ -156,7 +156,11 @@ function escapeLit(s: string): string {
 }
 
 function escapeMulti(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
+  // See skills/agentskills-bridge.ts for rationale: escape every `"`,
+  // not just the substring `"""`. A memory text ending in one or two
+  // quotes (e.g. an LLM transcription that wraps quoted speech) would
+  // otherwise prematurely close the Turtle triple-quoted literal.
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 function nowIso(): string { return new Date().toISOString(); }

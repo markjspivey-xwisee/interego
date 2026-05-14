@@ -210,6 +210,45 @@ describe('publish', () => {
     ).rejects.toThrow('Failed to write graph');
   });
 
+  it('refuses graph payloads exceeding the size cap before any HTTP write', async () => {
+    let calls = 0;
+    const mockFetch = vi.fn(async () => {
+      calls++;
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+    const desc = testDescriptor();
+    // 1 KiB cap, 2 KiB payload — should fail synchronously before fetch.
+    await expect(
+      publish(desc, 'x'.repeat(2048), 'https://alice.pod/', { fetch: mockFetch, maxGraphBytes: 1024 }),
+    ).rejects.toThrow(/graph payload is \d+ bytes; max permitted is 1024 bytes/);
+    expect(calls).toBe(0);
+  });
+
+  it('uses the default 4 MiB cap when maxGraphBytes is unset', async () => {
+    let calls = 0;
+    const mockFetch = vi.fn(async () => {
+      calls++;
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+    const desc = testDescriptor();
+    // 5 MiB payload, no override → blocked by default cap.
+    await expect(
+      publish(desc, 'x'.repeat(5 * 1024 * 1024), 'https://alice.pod/', { fetch: mockFetch }),
+    ).rejects.toThrow(/max permitted is 4194304 bytes/);
+    expect(calls).toBe(0);
+  });
+
+  it('counts byte length (not char length) so multibyte UTF-8 counts correctly', async () => {
+    const mockFetch = vi.fn(async () => mockResponse('', { status: 201 })) as unknown as typeof globalThis.fetch;
+    const desc = testDescriptor();
+    // 600 emoji chars × 4 bytes each = 2400 bytes — over a 2 KiB cap
+    // even though it's only 600 chars.
+    const payload = '🎉'.repeat(600);
+    await expect(
+      publish(desc, payload, 'https://alice.pod/', { fetch: mockFetch, maxGraphBytes: 2048 }),
+    ).rejects.toThrow(/graph payload is 2400 bytes/);
+  });
+
   it('uses custom container path', async () => {
     const urls: string[] = [];
     const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {

@@ -103,7 +103,14 @@ function escapeLit(s: string): string {
 }
 
 function escapeMulti(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"');
+  // Escape ALL double-quotes, not just the substring `"""`. A string
+  // ending in one or two quotes would otherwise collide with the
+  // closing `"""` of the literal and the parser would close the
+  // literal prematurely (with content truncated).
+  // Over-escaping (`"x"` → `\"x\"`) is verbose but always valid;
+  // under-escaping is a correctness bug. See tests/skills.test.ts
+  // "adversarial literal escaping" for the round-trip contract.
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
 /**

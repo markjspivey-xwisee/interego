@@ -19,18 +19,24 @@ export type SensitivityKind =
   | 'api-key-anthropic'
   | 'api-key-openai'
   | 'api-key-aws'
+  | 'aws-secret-access-key'
   | 'api-key-github'
   | 'api-key-stripe'
+  | 'api-key-gcp'
+  | 'azure-sas-token'
+  | 'slack-token'
+  | 'oauth-refresh-google'
+  | 'postgres-connection-string'
   | 'api-key-generic'
   | 'jwt'
   | 'private-key-pem'
   | 'ssh-private-key'
   | 'credit-card'
   | 'ssn-us'
+  | 'iban'
   | 'email'
   | 'phone-number'
-  | 'ipv4'
-  | 'aws-secret-access-key';
+  | 'ipv4';
 
 export interface SensitivityFlag {
   readonly kind: SensitivityKind;
@@ -91,6 +97,37 @@ const DETECTORS: readonly Detector[] = [
     severity: 'high',
   },
   {
+    kind: 'api-key-gcp',
+    description: 'Google Cloud / Firebase API key (AIza…)',
+    // Google API keys: literal "AIza" + 35-40 base64url chars (real-world
+    // tokens cluster at 35 but tests + variations seen up to 40).
+    pattern: /\bAIza[A-Za-z0-9_-]{30,45}\b/g,
+    severity: 'high',
+  },
+  {
+    kind: 'azure-sas-token',
+    description: 'Azure SAS token (sv=YYYY-MM-DD…&sig=…)',
+    // The signature parameter is the load-bearing secret in an Azure SAS URL.
+    // Match the full sig=...  segment with base64-url body.
+    pattern: /\bsv=20\d{2}-\d{2}-\d{2}[^"\s&]*&[^"\s]*sig=[A-Za-z0-9%/+=_-]{20,}/g,
+    severity: 'high',
+  },
+  {
+    kind: 'slack-token',
+    description: 'Slack token (xoxb-/xoxp-/xoxa-/xoxr-/xoxs-…)',
+    pattern: /\bxox[bpaors]-[A-Za-z0-9-]{10,}\b/g,
+    severity: 'high',
+  },
+  {
+    kind: 'oauth-refresh-google',
+    description: 'Google OAuth refresh / access token (ya29…, 1//…)',
+    // Two common Google OAuth shapes — short-lived (ya29.) and refresh (1//).
+    // Lengths vary by issuance source; the load-bearing signal is the
+    // distinctive prefix, so we require only ≥20 chars of payload.
+    pattern: /\b(?:ya29\.[A-Za-z0-9_-]{20,}|1\/\/[A-Za-z0-9_-]{20,})\b/g,
+    severity: 'high',
+  },
+  {
     kind: 'jwt',
     description: 'JWT (three base64-url segments)',
     pattern: /\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
@@ -107,6 +144,20 @@ const DETECTORS: readonly Detector[] = [
     description: 'SSH private key (OPENSSH format)',
     pattern: /-----BEGIN OPENSSH PRIVATE KEY-----[\s\S]+?-----END OPENSSH PRIVATE KEY-----/g,
     severity: 'high',
+  },
+  {
+    kind: 'postgres-connection-string',
+    description: 'DB connection URI with embedded credentials (postgres / mysql / mongodb / redis)',
+    pattern: /\b(?:postgres|postgresql|mysql|mongodb|redis)(?:\+[a-z]+)?:\/\/[^:\s]+:[^@\s]+@[^/\s]+/gi,
+    severity: 'high',
+  },
+  // ── Medium severity: financial identifiers (legitimate use is common
+  // but exposure in shared contexts often warrants surfacing) ──
+  {
+    kind: 'iban',
+    description: 'International Bank Account Number (IBAN)',
+    pattern: /\b[A-Z]{2}\d{2}[A-Z0-9]{4,30}\b/g,
+    severity: 'medium',
   },
   // ── Medium severity: financial PII ──
   {
@@ -204,17 +255,29 @@ export function screenForSensitiveContent(content: string): readonly Sensitivity
     }
   }
 
-  // Deduplicate overlapping matches: keep the highest-severity one per region.
-  flags.sort((a, b) => a.position - b.position || (severityRank(b.severity) - severityRank(a.severity)));
+  // Deduplicate overlapping matches: keep the highest-severity one
+  // per region. We sort by SEVERITY first (high → medium → low) so
+  // specific high-severity detectors (e.g. api-key-gcp) take priority
+  // over the generic medium-severity api-key-generic when both match
+  // the same region. Within a severity tier, sort by position so the
+  // emitted flag list stays left-to-right for readability.
+  flags.sort((a, b) =>
+    severityRank(b.severity) - severityRank(a.severity)
+    || a.position - b.position
+  );
   const deduped: SensitivityFlag[] = [];
   for (const flag of flags) {
-    const lastFlag = deduped[deduped.length - 1];
-    const overlapsWithPrior = lastFlag !== undefined &&
-      flag.position < lastFlag.position + lastFlag.length;
+    const overlapsWithPrior = deduped.some(d =>
+      flag.position < d.position + d.length &&
+      d.position < flag.position + flag.length
+    );
     if (!overlapsWithPrior) {
       deduped.push(flag);
     }
   }
+  // Final pass: sort the kept flags by position so caller sees them
+  // in source order (independent of severity-based dedup ordering).
+  deduped.sort((a, b) => a.position - b.position);
   return deduped;
 }
 
