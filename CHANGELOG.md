@@ -138,16 +138,23 @@ generic `RunStatus.FAILED` and no detail.
   retry with 120 s backoff. Each invocation gets a fresh build agent
   (often a different egress IP), so a retry clears the intermittent
   limit. Kept as defense-in-depth.
-- **Durable fix — base image via the ACR** (`cd043f0`) — a new
-  `prime-base-images` job `az acr import`s `node:20-slim` into our own
-  ACR once, up front; the build matrix `needs` it. All six Dockerfiles
-  take `ARG NODE_BASE=node:20-slim` and `FROM ${NODE_BASE}` — the
-  default keeps local `docker build` pulling from Docker Hub
-  anonymously, while CI passes `--build-arg NODE_BASE=…azurecr.io/
-  node:20-slim` so the build agent pulls the base image from the ACR
-  it is already authenticated to — no Docker Hub limit. If the prime
-  job fails after retries the build matrix is *skipped*, not
-  half-applied: a safe failure mode that leaves running containers up.
+- **Durable fix — base image via the ACR** (`cd043f0`, `32e94d8`) — a
+  new `prime-base-images` job `az acr import`s `node:20-slim` into our
+  own ACR up front; all six Dockerfiles take `ARG NODE_BASE=node:20-slim`
+  and `FROM ${NODE_BASE}`, so a local `docker build` still pulls from
+  Docker Hub while CI redirects the base-image pull to the ACR copy the
+  build agent is already authenticated to — no Docker Hub limit.
+  `cd043f0`'s first cut made `build-and-deploy` strictly `needs:` the
+  prime job — a single point of failure: `az acr import` itself does one
+  anonymous Docker Hub pull, that pull rate-limited (`429
+  TOOMANYREQUESTS`), the job hard-failed, and the *entire* build matrix
+  skipped — zero deploy. `32e94d8` makes the prime job **best-effort**:
+  it exposes a `node_base` job output and always exits 0 — the ACR copy
+  when the import succeeds, plain `node:20-slim` when it doesn't — and
+  the matrix passes that through as `--build-arg NODE_BASE`. When primed,
+  builds do an authenticated ACR pull; when not, they fall back to the
+  retry-loop-protected Docker Hub path. The prime job can no longer
+  block a deploy.
 - **Reproducible installs** (`44df8cc`, `303c277`) — `Dockerfile.identity`
   and `Dockerfile.validator` copied only `package.json` and ran
   `npm install`, re-resolving caret ranges on every build. Both now copy
