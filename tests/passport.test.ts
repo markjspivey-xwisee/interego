@@ -12,6 +12,7 @@ import {
   migrateInfrastructure,
   demonstratedCapabilities,
   activeValues,
+  detectValueDrift,
   passportToDescriptor,
   passportSummary,
   type LifeEvent,
@@ -85,6 +86,60 @@ describe('passport — values', () => {
     expect(activeValues(p, '2026-04-24T14:00:00Z')).toHaveLength(0);
     // Before retraction, it was active
     expect(activeValues(p, '2026-04-24T12:30:00Z')).toHaveLength(1);
+  });
+});
+
+describe('passport — value drift', () => {
+  it('flags categorical-value conduct with no vocabulary overlap', () => {
+    let p = createPassport({ agentIdentity: ALICE, currentPod: POD });
+    p = stateValue(p, { statement: 'always cite sources', assertedAt: '2026-04-24T12:00:00Z' });
+    p = recordLifeEvent(p, {
+      id: 'urn:e:drift' as IRI, kind: 'milestone',
+      at: '2026-04-25T12:00:00Z', description: 'shipped an uncredited summary',
+      evidence: ['urn:d:1' as IRI],
+    });
+    const drift = detectValueDrift(p);
+    expect(drift).toHaveLength(1);
+    expect(drift[0]?.event.id).toBe('urn:e:drift');
+    expect(drift[0]?.possibleViolation.statement).toBe('always cite sources');
+  });
+
+  it('does not flag conduct that shares the value vocabulary', () => {
+    let p = createPassport({ agentIdentity: ALICE, currentPod: POD });
+    p = stateValue(p, { statement: 'always cite sources', assertedAt: '2026-04-24T12:00:00Z' });
+    p = recordLifeEvent(p, {
+      id: 'urn:e:ok' as IRI, kind: 'milestone',
+      at: '2026-04-25T12:00:00Z', description: 'published a report and cited all sources',
+      evidence: ['urn:d:2' as IRI],
+    });
+    expect(detectValueDrift(p)).toHaveLength(0);
+  });
+
+  it('ignores non-conduct events and non-categorical values', () => {
+    let p = createPassport({ agentIdentity: ALICE, currentPod: POD });
+    p = stateValue(p, { statement: 'prefer concise prose', assertedAt: '2026-04-24T12:00:00Z' });
+    p = recordLifeEvent(p, {
+      id: 'urn:e:mig' as IRI, kind: 'infrastructure-migration',
+      at: '2026-04-25T12:00:00Z', description: 'moved pods',
+      evidence: ['urn:d:3' as IRI],
+    });
+    // non-categorical value → no flag; non-conduct kind → no flag
+    expect(detectValueDrift(p)).toHaveLength(0);
+  });
+
+  it('does not flag against retracted values', () => {
+    let p = createPassport({ agentIdentity: ALICE, currentPod: POD });
+    p = stateValue(p, {
+      statement: 'never escalate',
+      assertedAt: '2026-04-24T12:00:00Z',
+      retractedAt: '2026-04-24T13:00:00Z',
+    });
+    p = recordLifeEvent(p, {
+      id: 'urn:e:esc' as IRI, kind: 'milestone',
+      at: '2026-04-25T12:00:00Z', description: 'handled a routine request',
+      evidence: ['urn:d:4' as IRI],
+    });
+    expect(detectValueDrift(p)).toHaveLength(0);
   });
 });
 

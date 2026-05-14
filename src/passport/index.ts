@@ -158,28 +158,34 @@ export function activeValues(passport: Passport, now?: string): readonly StatedV
   return passport.statedValues.filter(v => !v.retractedAt || v.retractedAt > t);
 }
 
-/** Detect potential value violations: actions in the agent's
- *  history that contradict its stated values. Returns flagged events
+/** Detect potential value violations: conduct in the agent's history
+ *  that may contradict its stated values. Returns flagged events paired
  *  with the value they may have violated. The actual judgment is
- *  semantic; this function is a heuristic surface — checks if the
- *  event's description contains terms that contradict any active
- *  value's statement. Production deployments would use a stronger
- *  judge (LLM, classifier, formal predicate). */
+ *  semantic; this function is a heuristic surface — a production
+ *  deployment plugs a stronger judge (LLM, classifier, formal
+ *  predicate) in where the categorical-vocabulary check sits. */
 export function detectValueDrift(passport: Passport): readonly { event: LifeEvent; possibleViolation: StatedValue }[] {
   const out: { event: LifeEvent; possibleViolation: StatedValue }[] = [];
   const values = activeValues(passport);
+  // Only conduct-bearing events can contradict a value. Lifecycle and
+  // administrative events (birth, attestations, registrations,
+  // migrations) and the value statements themselves are out of scope —
+  // restricting to these kinds is what keeps the heuristic from flagging
+  // every unrelated event in the biography.
+  const CONDUCT_KINDS: ReadonlySet<LifeEventKind> = new Set(['milestone', 'capability-acquisition']);
   for (const e of passport.lifeEvents) {
+    if (!CONDUCT_KINDS.has(e.kind)) continue;
+    const eventWords = new Set(e.description.toLowerCase().split(/\W+/));
     for (const v of values) {
-      // Naive heuristic: flag if value mentions "refuse" or "always"
-      // and the event description doesn't acknowledge the constraint.
+      // Heuristic: a categorical value (refuse/never/always/must) whose
+      // substantive vocabulary is entirely absent from a conduct event's
+      // description is worth a human look — the action neither honors nor
+      // acknowledges the constraint.
+      if (!/refuse|never|always|must/.test(v.statement.toLowerCase())) continue;
       const valueWords = new Set(v.statement.toLowerCase().split(/\W+/).filter(w => w.length > 3));
-      const eventWords = new Set(e.description.toLowerCase().split(/\W+/));
-      const overlap = [...valueWords].filter(w => eventWords.has(w));
-      if (overlap.length === 0 && /refuse|never|always|must/.test(v.statement.toLowerCase())) {
-        // No overlap + categorical value → worth a human look
-        // (only flag a small fraction to avoid noise; this is a stub
-        //  for production systems to plug in real semantic judges).
-      }
+      if (valueWords.size === 0) continue; // no substantive vocabulary to compare against
+      const overlaps = [...valueWords].some(w => eventWords.has(w));
+      if (!overlaps) out.push({ event: e, possibleViolation: v });
     }
   }
   return out;
