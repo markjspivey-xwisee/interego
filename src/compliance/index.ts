@@ -429,6 +429,48 @@ export function listValidSignerAddresses(path: string): readonly string[] {
   return [store.active.address, ...store.history.map(h => h.address)];
 }
 
+/**
+ * Return the set of addresses that were ACTIVE at a given point in
+ * time — used for stricter verification when the signedAt timestamp
+ * is known and the verifier wants to refuse signatures from wallets
+ * that were not yet active (or had already been retired) at that
+ * moment.
+ *
+ * Closes audit Sec #6: previously `listValidSignerAddresses` returned
+ * every wallet in history as forever-valid, so a wallet compromised
+ * *after* signing some descriptor (and later found in history) could
+ * be retroactively used to forge "signed at time T" claims. The
+ * time-bounded variant lets the verifier enforce the wallet's
+ * lifecycle window:
+ *
+ *   active iff   createdAt ≤ signedAt   AND   (retiredAt ≥ signedAt
+ *                                              OR retiredAt absent
+ *                                                 = still active)
+ *
+ * Callers that already trust the broader pool (e.g. an internal audit
+ * tool walking lineage) can continue to use the unbounded
+ * listValidSignerAddresses. External-auditor / regulator-grade
+ * verifications should prefer this variant.
+ */
+export function listValidSignerAddressesAt(path: string, signedAt: Date): readonly string[] {
+  const store = readStore(path);
+  if (!store) return [];
+  const t = signedAt.getTime();
+  const validAt = (e: ComplianceWalletEntry): boolean => {
+    const createdMs = new Date(e.createdAt).getTime();
+    if (!Number.isFinite(createdMs) || createdMs > t) return false;
+    if (e.retiredAt) {
+      const retiredMs = new Date(e.retiredAt).getTime();
+      if (Number.isFinite(retiredMs) && retiredMs < t) return false;
+    }
+    return true;
+  };
+  const valid: string[] = [];
+  if (validAt(store.active)) valid.push(store.active.address);
+  for (const h of store.history) if (validAt(h)) valid.push(h.address);
+  return valid;
+}
+
 // ── Lineage walk ─────────────────────────────────────────────
 
 /**
