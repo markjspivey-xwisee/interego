@@ -8,11 +8,13 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
-## 2026-05-14 — Production hardening, Hermes integration, HATEOAS runtime surface, hosted onboarding
+## 2026-05-14 — Production hardening, Hermes integration, HATEOAS surface, hosted onboarding, name service
 
 A multi-part pass: harden the substrate, land the Hermes Agent
 integration, give both memory plugins a bloat-free HATEOAS tool surface,
-and make the hosted deployment a retail-grade front door.
+make the hosted deployment a retail-grade front door (with origin-aware
+WebAuthn so `/connect` passkey enrollment works), and ship the Interego
+name service — attestation-based, federated, no central registrar.
 
 ### Production hardening — real bugs + coverage on untested public API
 
@@ -85,6 +87,47 @@ passkey enrollment (Touch ID / Windows Hello / security key) **and**
 Ethereum-wallet enrollment — no password, no email, no account
 database; DID + pod minted from the credential. The relay landing page
 cross-links the identity front door so neither hosted surface dead-ends.
+
+### Origin-aware WebAuthn RP — fixes the `/connect` passkey rpID mismatch
+
+`deploy/identity/server.ts` (`dc9a9d4`) — the new `/connect` page ran the
+passkey ceremony on the identity server's own domain, but the server
+returned a single static `WEBAUTHN_RP_ID` (pinned to the relay's domain,
+which the relay's OAuth flow needs) — so the ceremony failed with an
+rpID mismatch. The ceremony is now origin-aware: `resolveRp(req)` derives
+the relying party from the browser-sent `Origin` against a
+`WEBAUTHN_RP_ORIGINS` allowlist; the resolved `{rpId, origin}` is stashed
+on the challenge so `/register` + `/authenticate` verify against the
+origin the ceremony actually used. Falls back to the static RP for
+unrecognized origins — single-origin deployments unaffected.
+`deploy-azure.yml` also gained the missing "Wire identity env vars" step
+(the workflow wired the dashboard's env but never the identity server's).
+
+### Interego name service — attestation-based naming
+
+`docs/NAME-SERVICE.md` (`17169fe`) + `src/naming/` (`a07a81c`) — a name
+is a **verifiable attestation**, not a claimed registration:
+`<did> foaf:nick "alice"` inside an ordinary Context Descriptor with
+Trust + Provenance facets and `cg:supersedes` chains. Resolution is
+federated discovery + a pluggable trust policy — conflicts resolve by
+the resolver's policy, never first-come-first-served. No central
+registrar, no root, no namespace governance; the honest cost is no
+global-uniqueness guarantee (the correct trade for a federated,
+verifiable substrate — ENS-style global uniqueness is available as an
+opt-in resolution tier, not the root). Shipped:
+`buildNameAttestation` / `attestName` / `resolveName` (forward,
+trust-ranked) / `namesFor` (reverse) / `defaultNameTrustPolicy`
+(pluggable), all with an injectable `fetch`. 14 tests. **No new L1/L2
+ontology terms** — `foaf:nick` is W3C FOAF; L2 pattern, sibling of
+`registry:` / `passport:`.
+
+### Fixes
+
+- **Relay hostname** (`a0ec397`) — the Hermes plugin + the identity
+  server's `RELAY_URL` default were written against a non-existent
+  `interego-mcp-relay` host (an invented `mcp-` segment); the real
+  Azure Container App is `interego-relay`. Corrected — left as-is the
+  Hermes provider would have failed out of the box.
 
 ## 2026-05-13 — Production hardening, batches 1–4
 
