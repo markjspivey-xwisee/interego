@@ -69,12 +69,33 @@ export function liftToDescriptor(
  * The content is tokenized into a sequence and fed to Ingest.
  * The descriptor's provenance is used as the PGSL node provenance.
  */
+/**
+ * Maximum content size (in bytes of UTF-8) accepted by embedInPGSL.
+ * Without this cap, a single ingest call can build a lattice with
+ * billions of fragments and consume all available memory (the
+ * pair-lattice construction grows roughly O(N²) in token count).
+ * 2 MiB is enough for any reasonable typed-graph content; producers
+ * that need to ingest larger artifacts should chunk them at the
+ * application level and mint per-chunk fragments.
+ */
+const EMBED_MAX_BYTES = 2 * 1024 * 1024;
+
 export function embedInPGSL(
   pgsl: PGSLInstance,
   content: string,
   descriptor?: ContextDescriptorData,
   granularity?: import('./types.js').TokenGranularity,
 ): IRI {
+  // Size guard — reject before tokenization so a pathological input
+  // can't drive the process OOM. Byte length, not char length, so
+  // multibyte UTF-8 doesn't slip past.
+  const byteLength = Buffer.byteLength(content, 'utf8');
+  if (byteLength > EMBED_MAX_BYTES) {
+    throw new Error(
+      `embedInPGSL: content is ${byteLength} bytes; max permitted is ${EMBED_MAX_BYTES} bytes. For larger artifacts, chunk at the application level and mint per-chunk fragments.`,
+    );
+  }
+
   // Extract provenance from descriptor if available
   let provenance: NodeProvenance = pgsl.defaultProvenance;
   if (descriptor) {

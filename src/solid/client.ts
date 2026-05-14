@@ -565,8 +565,15 @@ export async function publish(
     if (manifestResp.status === 412) {
       // Precondition Failed: another writer beat us. Retry with fresh GET.
       lastError = `412 (concurrent manifest update detected, attempt ${attempt}/${maxAttempts})`;
-      // Brief jittered backoff to spread retries
-      const backoff = 50 * attempt + Math.floor(Math.random() * 50);
+      // Exponential backoff with jitter, capped at 1.5s per attempt.
+      // Linear backoff retry-storms under heavy contention because the
+      // re-attempt window doesn't grow fast enough to spread writers.
+      // Exponential (50ms, 100ms, 200ms, 400ms, 800ms) plus 0-50ms
+      // jitter scatters retries effectively while keeping the worst-
+      // case total wait under 2 seconds.
+      const exponentialBase = 50 * Math.pow(2, attempt - 1);
+      const jitter = Math.floor(Math.random() * 50);
+      const backoff = Math.min(exponentialBase + jitter, 1500);
       await new Promise(r => setTimeout(r, backoff));
       continue;
     }
