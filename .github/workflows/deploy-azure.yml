@@ -184,12 +184,15 @@ jobs:
       - name: Build image in ACR from current checkout
         if: steps.decide.outputs.build == 'true'
         run: |
+          # NOTE: do not re-add `--no-logs`. It suppresses the ACR build
+          # output, which makes a failing build undiagnosable from the
+          # Actions log (you only get a generic "RunStatus.FAILED"). The
+          # full build log is worth the extra output.
           az acr build \
             --registry "${{ env.AZURE_ACR_NAME }}" \
             --image "${{ matrix.image }}:${{ github.sha }}" \
             --image "${{ matrix.image }}:latest" \
             --file "${{ matrix.dockerfile }}" \
-            --no-logs \
             .
 
       - name: Update container app to new revision

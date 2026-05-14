@@ -5,8 +5,12 @@ FROM node:20-slim AS build
 
 WORKDIR /app
 
-COPY deploy/identity/package.json ./
-RUN npm install
+# Copy the lockfile too and use `npm ci` — a reproducible install
+# pinned to package-lock.json. `npm install` without the lockfile
+# re-resolves caret ranges on every build, which makes the image
+# non-deterministic and "works locally / fails in CI" possible.
+COPY deploy/identity/package.json deploy/identity/package-lock.json ./
+RUN npm ci
 
 COPY deploy/identity/tsconfig.json ./
 COPY deploy/identity/server.ts ./
