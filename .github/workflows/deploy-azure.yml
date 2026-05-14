@@ -188,12 +188,34 @@ jobs:
           # output, which makes a failing build undiagnosable from the
           # Actions log (you only get a generic "RunStatus.FAILED"). The
           # full build log is worth the extra output.
-          az acr build \
-            --registry "${{ env.AZURE_ACR_NAME }}" \
-            --image "${{ matrix.image }}:${{ github.sha }}" \
-            --image "${{ matrix.image }}:latest" \
-            --file "${{ matrix.dockerfile }}" \
-            .
+          #
+          # Retry loop — the build-stage base image (`node:20-slim`) is
+          # pulled from Docker Hub anonymously, and Docker Hub rate-limits
+          # unauthenticated pulls per egress IP, which ACR build agents
+          # share. The symptom is an intermittent `Step 1/N : FROM
+          # node:20-slim → toomanyrequests` failure (4 s into the build).
+          # Each `az acr build` invocation gets a fresh agent — often a
+          # different egress IP — so a retry usually clears it. If this
+          # proves insufficient under heavier load, the durable fix is to
+          # `az acr import` the base image into this ACR and `FROM` it
+          # there (an authenticated pull, no Docker Hub limit).
+          # `set -e` does not abort on a failure inside an `if` condition,
+          # so the loop is safe under the shell's default `-e`.
+          for attempt in 1 2 3; do
+            if az acr build \
+                 --registry "${{ env.AZURE_ACR_NAME }}" \
+                 --image "${{ matrix.image }}:${{ github.sha }}" \
+                 --image "${{ matrix.image }}:latest" \
+                 --file "${{ matrix.dockerfile }}" \
+                 .; then
+              echo "ACR build succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "::warning::ACR build attempt $attempt failed (likely Docker Hub rate limit); retrying in 120s..."
+            sleep 120
+          done
+          echo "::error::ACR build failed after 3 attempts"
+          exit 1
 
       - name: Update container app to new revision
         if: steps.decide.outputs.build == 'true'
