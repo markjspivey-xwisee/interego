@@ -1,0 +1,15 @@
+name: interego
+version: 0.1.0
+description: >-
+  Pod-rooted, verifiable, federated memory for Hermes Agent. Every memory
+  becomes a signed, provenance-attributed record on an Interego pod —
+  portable across machines and Hermes backends, shareable with other
+  agents, and audit-walkable. Hermes' built-in MEMORY.md / state.db keep
+  working; this runs alongside them.
+hooks:
+  - prefetch
+  - queue_prefetch
+  - sync_turn
+  - on_memory_write
+  - on_pre_compress
+  - on_session_end

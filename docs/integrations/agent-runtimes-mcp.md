@@ -1,6 +1,6 @@
 # Interego under any MCP-speaking agent runtime
 
-> Path 1 of the four integration paths laid out in
+> Path 1 of the five integration paths laid out in
 > [agent-runtime-integration.md](agent-runtime-integration.md). This page
 > shows how to plug Interego into an existing agent runtime via MCP — no
 > new code, no new types, no specialized integration shim.
@@ -218,10 +218,12 @@ ergonomic** — is the point.
 ## See also
 
 * [agent-runtime-integration.md](agent-runtime-integration.md) — the
-  four-path integration map
+  five-path integration map
 * [path-2-openclaw-memory-plugin.md](path-2-openclaw-memory-plugin.md)
   — when MCP is too loose; deeper coupling at OpenClaw's memory-engine
   slot
+* [path-5-hermes-memory-provider.md](path-5-hermes-memory-provider.md)
+  — the same, against Hermes Agent's memory-provider interface
 * [path-3-skills-as-affordances.md](path-3-skills-as-affordances.md)
   — agentskills.io SKILL.md ↔ `cg:Affordance` translator; emergent
   attestation, promotion, federation

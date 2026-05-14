@@ -14,9 +14,11 @@ file, an audit event) onto the substrate's existing primitives
 | Integration | Runtime | What it bridges |
 |---|---|---|
 | [`openclaw-memory/`](openclaw-memory/) | OpenClaw | OpenClaw memory-engine slot ↔ Interego pod-rooted typed memory |
+| [`hermes-memory/`](hermes-memory/) | Hermes Agent | Hermes `MemoryProvider` plugin ↔ Interego pod-rooted typed memory (same `cgh:AgentMemory` shape as the OpenClaw provider) |
+| [`compliance-overlay/`](compliance-overlay/) | any runtime | agent-action event ↔ compliance-grade signed descriptor |
 
-(More may land — Hermes memory shim, Codex skill federator, etc. The
-shape is the same: a thin glue file calling substrate primitives.)
+(More may land — Codex skill federator, etc. The shape is the same: a
+thin glue file calling substrate primitives.)
 
 ## Why integrations live here, not under `applications/`
 
@@ -37,6 +39,7 @@ non-normative L3 *adjacent to* it.
 ## See also
 
 * [docs/integrations/agent-runtime-integration.md](../docs/integrations/agent-runtime-integration.md)
-  — the four integration paths (MCP / memory plugin / skills / compliance)
+  — the five integration paths (MCP / OpenClaw memory / skills /
+  compliance / Hermes memory)
 * [applications/README.md](../applications/README.md) — how verticals
   differ from integrations

@@ -76,12 +76,16 @@ integrations/
   openclaw-memory/      Path 2 — OpenClaw memory-engine plugin backed by
                         Interego pods. Substrate-pure bridge.ts +
                         OpenClaw glue plugin.ts. Bridge importable from
-                        any other runtime (Hermes, Codex, Cursor).
+                        any other runtime (Codex, Cursor).
+  hermes-memory/        Path 5 — Hermes Agent MemoryProvider plugin
+                        (stdlib-only Python) backed by Interego pods over
+                        the MCP relay's REST surface. Same cgh:AgentMemory
+                        shape as the OpenClaw provider.
   compliance-overlay/   Path 4 — generic agent-action → compliance-grade
                         descriptor translator. Cites EU AI Act / NIST RMF /
                         SOC 2 controls via dct:conformsTo into the existing
                         FRAMEWORK_CONTROLS table. No new compliance vocab.
-docs/integrations/      Path-1-to-4 integration map for OpenClaw / Hermes /
+docs/integrations/      Path-1-to-5 integration map for OpenClaw / Hermes /
                         Codex / Cursor / Claude Code etc.
 docs/ns/       Twenty OWL ontologies + three SHACL shape files (~880 terms — see docs/ns/README.md)
 tools/

@@ -1,4 +1,4 @@
-# Agent-runtime integration — four paths
+# Agent-runtime integration — five paths
 
 The agent-runtime ecosystem (OpenClaw, Hermes Agent, Codex, Cursor,
 Copilot, Claude Code, …) has converged on a common shape:
@@ -34,9 +34,10 @@ primitives — what changes is how tightly the runtime wraps them.
                        │  4 paths from ergonomic → substrate
                        ▼
     ┌─ Path 1 ─ MCP server (config-only)        ── L1 primitives
-    │  Path 2 ─ Memory-engine plugin            ── L2 patterns
+    │  Path 2 ─ OpenClaw memory-engine plugin   ── L2 patterns
     │  Path 3 ─ SKILL.md as cg:Affordance       ── L1 primitives
-    └─ Path 4 ─ Compliance overlay              ── L3 mappings
+    │  Path 4 ─ Compliance overlay              ── L3 mappings
+    └─ Path 5 ─ Hermes memory provider          ── L2 patterns
                        │
                        ▼
     Interego substrate (Context Graphs 1.0):
@@ -84,9 +85,10 @@ substrate's `publish_context` / `discover_context` /
 
 **Read:** [path-2-openclaw-memory-plugin.md](path-2-openclaw-memory-plugin.md)
 
-**Trade-off:** OpenClaw-specific. Same shape works for Hermes if/when
-it exposes a memory-plugin slot; for runtimes that don't, fall back to
-Path 1.
+**Trade-off:** OpenClaw-specific. Hermes Agent now exposes its own
+external-memory-provider interface — that is **Path 5** below, the same
+shape against Hermes' contract. For runtimes with no memory-plugin slot,
+fall back to Path 1.
 
 ---
 
@@ -145,19 +147,44 @@ auditor's behalf" needs the full provenance trail.
 
 ---
 
+## Path 5 — Hermes Agent memory provider
+
+**Effort:** small plugin (4 files, stdlib-only Python). **What you
+gain:** Hermes Agent — the most-used agent runtime — gains pod-rooted,
+verifiable, federated, *portable* memory. Hermes ships an external
+memory-provider plugin interface (8 third-party providers already
+exist); Interego is the ninth, and the only one that makes the bot's
+memory and identity something the user owns and can take anywhere —
+across machines, across Hermes backends, even off Hermes entirely.
+
+It is Path 2's shape against Hermes' contract: `sync_turn` →
+`publish_context`, `prefetch` → `discover_context`, `on_memory_write`
+mirrors `MEMORY.md` / `USER.md` edits. The memory-graph shape is
+identical to the OpenClaw provider's (`cgh:AgentMemory`) — Hermes bots
+and OpenClaw agents on one pod read each other's memories. No substrate
+code is duplicated; the MCP relay does the descriptor work.
+
+**Read:** [path-5-hermes-memory-provider.md](path-5-hermes-memory-provider.md)
+
+**Trade-off:** Hermes-specific glue (the bridge logic is shared). For
+runtimes with no memory-provider slot, fall back to Path 1.
+
+---
+
 ## Picking a starting point
 
 | You want… | Start with |
 |---|---|
 | The agent to be able to remember + recall across sessions, with provenance | Path 1 |
-| Every memory write to flow through the substrate without LLM discretion | Path 2 |
+| Every memory write to flow through the substrate without LLM discretion | Path 2 (OpenClaw) / Path 5 (Hermes) |
 | Agents to share, attest, and govern skills across users | Path 3 |
 | The agent's actions to be EU AI Act / NIST RMF / SOC 2 audit-grade | Path 4 |
-| All four | Adopt 1 first (5 minutes), then 2, 3, 4 in any order |
+| A new Hermes bot to use pod-rooted memory from `hermes memory setup` | Path 5 |
+| All of them | Adopt 1 first (5 minutes), then the rest in any order |
 
-Adopting all four does NOT require touching the substrate, the
-ontologies, or the L1 spec. They are four flavors of translator,
-plugged into the same primitives, by design.
+Adopting any of them does NOT require touching the substrate, the
+ontologies, or the L1 spec. They are flavors of translator, plugged
+into the same primitives, by design.
 
 ---
 
