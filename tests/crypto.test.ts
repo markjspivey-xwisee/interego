@@ -9,6 +9,10 @@ import {
   createWallet,
   importWallet,
   exportPrivateKey,
+  getNostrPubkey,
+  schnorrSign,
+  schnorrVerify,
+  sha256Hex,
   createDelegation,
   verifyDelegationSignature,
   signDescriptor,
@@ -344,5 +348,62 @@ describe('SIWE (real crypto)', () => {
     const result = await verifySiweSignature(expired, signature);
     expect(result.valid).toBe(false);
     expect(result.error).toContain('expired');
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
+//  BIP-340 Schnorr (real crypto — @noble/curves) — Nostr interop
+// ═════════════════════════════════════════════════════════════
+
+describe('Schnorr (BIP-340)', () => {
+  it('derives a 32-byte x-only pubkey from a wallet private key', async () => {
+    const wallet = await createWallet('agent', 'Nostr Signer');
+    const sk = exportPrivateKey(wallet.address);
+    const pubkey = getNostrPubkey(sk);
+    expect(pubkey).toMatch(/^[0-9a-f]{64}$/); // 32 bytes, no prefix
+  });
+
+  it('sign → verify round-trips on a 32-byte digest', async () => {
+    const wallet = await createWallet('agent', 'Roundtrip');
+    const sk = exportPrivateKey(wallet.address);
+    const pubkey = getNostrPubkey(sk);
+    const digest = sha256Hex('a canonical nostr event');
+    const sig = schnorrSign(digest, sk);
+    expect(sig).toMatch(/^[0-9a-f]{128}$/); // 64-byte signature
+    expect(schnorrVerify(sig, digest, pubkey)).toBe(true);
+  });
+
+  it('rejects a tampered signature, message, or pubkey', async () => {
+    const wallet = await createWallet('agent', 'Tamper');
+    const sk = exportPrivateKey(wallet.address);
+    const pubkey = getNostrPubkey(sk);
+    const digest = sha256Hex('original event');
+    const sig = schnorrSign(digest, sk);
+
+    const flipped = (sig[0] === '0' ? '1' : '0') + sig.slice(1);
+    expect(schnorrVerify(flipped, digest, pubkey)).toBe(false);
+    expect(schnorrVerify(sig, sha256Hex('different event'), pubkey)).toBe(false);
+
+    const other = await createWallet('agent', 'Other');
+    const otherPubkey = getNostrPubkey(exportPrivateKey(other.address));
+    expect(schnorrVerify(sig, digest, otherPubkey)).toBe(false);
+  });
+
+  it('schnorrSign rejects a message that is not a 32-byte digest', async () => {
+    const wallet = await createWallet('agent', 'Bad Digest');
+    const sk = exportPrivateKey(wallet.address);
+    expect(() => schnorrSign('abcd', sk)).toThrow(/32-byte/);
+  });
+
+  it('schnorrVerify returns false (does not throw) on malformed input', () => {
+    expect(schnorrVerify('not-hex', 'not-hex', 'not-hex')).toBe(false);
+  });
+
+  it('sha256Hex is deterministic and 64 hex chars', () => {
+    const a = sha256Hex('hello');
+    const b = sha256Hex('hello');
+    expect(a).toBe(b);
+    expect(a).toMatch(/^[0-9a-f]{64}$/);
+    expect(sha256Hex('hello')).not.toBe(sha256Hex('world'));
   });
 });

@@ -638,6 +638,7 @@ export {
   getNostrPubkey,
   schnorrSign,
   schnorrVerify,
+  sha256Hex,
   createDelegation,
   verifyDelegationSignature,
   signDescriptor,
