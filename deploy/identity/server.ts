@@ -467,6 +467,13 @@ interface Challenge {
   // Display name captured at options-time so /register doesn't have to
   // re-accept (and potentially be coerced to echo) a different one.
   displayName?: string;
+  // WebAuthn rpID / origin chosen for THIS ceremony, resolved from the
+  // request Origin at options/challenge time. /register and
+  // /authenticate verify against these — not the static RP_ID — so a
+  // ceremony run on the identity server's own domain and one run on the
+  // relay's domain both verify against the origin they actually used.
+  rpId?: string;
+  rpOrigin?: string;
 }
 
 const challenges = new Map<string, Challenge>();
@@ -503,6 +510,47 @@ function consumeChallenge(nonce: string, purpose?: Challenge['purpose']): Challe
 const RP_ID = process.env['WEBAUTHN_RP_ID'] ?? new URL(BASE_URL).hostname;
 const RP_NAME = process.env['WEBAUTHN_RP_NAME'] ?? 'Interego';
 const RP_ORIGIN = process.env['WEBAUTHN_RP_ORIGIN'] ?? BASE_URL;
+
+// A WebAuthn ceremony's rpID MUST match the origin the browser ran it
+// on. This server is reachable on more than one origin — its own FQDN
+// (the /connect enrollment page) AND the relay's FQDN (the relay's
+// OAuth /authorize page POSTs its ceremonies here). A single static
+// RP_ID can only satisfy one of those. So we resolve the relying party
+// per-request from the browser-sent Origin header, validated against
+// an allowlist.
+//
+// WEBAUTHN_RP_ORIGINS: comma-separated origins where ceremonies may
+// legitimately run. Defaults to RP_ORIGIN + BASE_URL. Each entry's
+// hostname becomes the rpID for ceremonies originating there. An Origin
+// not on the list falls back to the static RP_ID / RP_ORIGIN — so
+// existing single-origin deployments keep working unchanged.
+const RP_ALLOWLIST: ReadonlyMap<string, { rpId: string; origin: string }> = (() => {
+  const raw = process.env['WEBAUTHN_RP_ORIGINS'] ?? `${RP_ORIGIN},${BASE_URL}`;
+  const m = new Map<string, { rpId: string; origin: string }>();
+  for (const entry of raw.split(',').map(s => s.trim()).filter(Boolean)) {
+    try {
+      const u = new URL(entry);
+      m.set(u.origin, { rpId: u.hostname, origin: u.origin });
+    } catch { /* skip malformed allowlist entries */ }
+  }
+  return m;
+})();
+
+/**
+ * Resolve the WebAuthn relying party for this request. Uses the
+ * browser-sent Origin header when it is on the allowlist; otherwise
+ * falls back to the static RP_ID / RP_ORIGIN. The browser independently
+ * enforces rpID↔origin during the ceremony; the allowlist is the
+ * server-side guard against honoring an attacker-chosen Origin.
+ */
+function resolveRp(req: { headers: { origin?: string } }): { rpId: string; origin: string } {
+  const origin = req.headers.origin;
+  if (origin) {
+    const hit = RP_ALLOWLIST.get(origin);
+    if (hit) return hit;
+  }
+  return { rpId: RP_ID, origin: RP_ORIGIN };
+}
 
 // ── Token Management ────────────────────────────────────────
 
@@ -883,6 +931,16 @@ app.post('/register', (_req, res) => {
 app.post('/challenges', challengeLimiter, async (req, res) => {
   const { purpose, userId } = req.body as { purpose?: Challenge['purpose']; userId?: string };
   const ch = issueChallenge(purpose, userId);
+  // Pin the relying party for WebAuthn-authenticate ceremonies to the
+  // origin this challenge was requested from — so /authenticate later
+  // verifies against the same origin the browser ran the ceremony on.
+  // (issueChallenge returns the stored object reference; consumeChallenge
+  // hands the same object back.)
+  if (purpose === 'webauthn-authenticate') {
+    const rp = resolveRp(req);
+    ch.rpId = rp.rpId;
+    ch.rpOrigin = rp.origin;
+  }
   const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
   if (purpose === 'webauthn-authenticate' && userId) {
     // Read credentials from the user's pod (stale-while-revalidate cache)
@@ -1143,9 +1201,14 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     }));
   }
 
+  // Resolve the relying party from the request Origin — the rpID must
+  // match the origin the browser will run the ceremony on (the /connect
+  // page on this server's own domain, or the relay's /authorize page).
+  const rp = resolveRp(req);
+
   const options = await generateRegistrationOptions({
     rpName: RP_NAME,
-    rpID: RP_ID,
+    rpID: rp.rpId,
     userName: sessionUserId,
     userDisplayName,
     attestationType: 'none',
@@ -1166,6 +1229,9 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     ch.bootstrapInvite = bootstrapInvite;
   }
   ch.displayName = userDisplayName;
+  // /register verifies against the rp this ceremony actually used.
+  ch.rpId = rp.rpId;
+  ch.rpOrigin = rp.origin;
   challenges.set(options.challenge, ch);
   res.json(options);
 });
@@ -1207,8 +1273,11 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     verification = await verifyRegistrationResponse({
       response,
       expectedChallenge,
-      expectedOrigin: RP_ORIGIN,
-      expectedRPID: RP_ID,
+      // Verify against the rp this ceremony actually ran on (resolved
+      // from the Origin at options-time, stashed on the challenge).
+      // Falls back to the static RP_* for pre-existing challenges.
+      expectedOrigin: ch.rpOrigin ?? RP_ORIGIN,
+      expectedRPID: ch.rpId ?? RP_ID,
     });
   } catch (err) {
     res.status(401).json({ error: `WebAuthn registration verification failed: ${(err as Error).message}` });
@@ -1347,8 +1416,11 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
     verification = await verifyAuthenticationResponse({
       response,
       expectedChallenge,
-      expectedOrigin: RP_ORIGIN,
-      expectedRPID: RP_ID,
+      // Verify against the rp pinned on the challenge at /challenges
+      // time (resolved from the Origin); static RP_* fallback for
+      // challenges issued before this was tracked.
+      expectedOrigin: ch.rpOrigin ?? RP_ORIGIN,
+      expectedRPID: ch.rpId ?? RP_ID,
       credential: {
         id: cred.id,
         publicKey: Buffer.from(cred.publicKey, 'base64url'),
@@ -2901,7 +2973,7 @@ app.listen(PORT, () => {
   log(`Interego Identity Server v2 started on port ${PORT}`);
   log(`Base URL: ${BASE_URL}`);
   log(`CSS URL: ${CSS_URL}`);
-  log(`WebAuthn RP: id=${RP_ID} origin=${RP_ORIGIN}`);
+  log(`WebAuthn RP: static id=${RP_ID} origin=${RP_ORIGIN}; per-request allowlist=[${[...RP_ALLOWLIST.keys()].join(', ') || '(none)'}]`);
   log(`Auth: decentralized — user credentials stored per-pod at <pod>/auth-methods.jsonld`);
   log(`Bootstrap invites: ${BOOTSTRAP_INVITES.size} configured${BOOTSTRAP_INVITES.size > 0 ? ' (' + [...BOOTSTRAP_INVITES.keys()].join(', ') + ')' : ''}`);
   log(`Endpoints:`);
