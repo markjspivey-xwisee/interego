@@ -13,6 +13,23 @@ Wrapped in real cryptography — NaCl envelopes, secp256k1 signatures, ZK commit
 
 ---
 
+## Quick start — pick the path that matches what you're doing
+
+| If you want to… | Go here |
+|---|---|
+| Use Interego from an AI coding agent right now (Claude Code / Cursor / Windsurf / Cline) | [Recipe: add the MCP server](#-im-an-ai-coding-agent-claude-code-cursor-windsurf-cline--protocol-level-access) |
+| Try the hosted reference deployment without running anything | [The deployed Azure surfaces](#hosted-vs-self-hosted-which-path-is-right-for-you) |
+| Mount Interego under an OpenClaw / Hermes / Codex runtime | [Agent-runtime integration paths](docs/integrations/agent-runtime-integration.md) — pick Path 1 (MCP), 2 (memory plugin), 3 (skills), or 4 (compliance overlay) |
+| Build a TypeScript app on top of the substrate | [Developer entry point](#-im-a-developer-building-a-typescript-app) |
+| Build a vertical (LRS adapter, agent collective, organizational memory) | [Vertical applications](applications/README.md) |
+| Run a live demo of multi-agent emergent coordination | [`demos/`](demos/README.md) — 23 end-to-end scenarios |
+| Understand the spec / category-theoretic foundations | [`spec/architecture.md`](spec/architecture.md) + [`docs/ARCHITECTURAL-FOUNDATIONS.md`](docs/ARCHITECTURAL-FOUNDATIONS.md) |
+| Run a SOC 2 / EU AI Act / NIST RMF audit against an Interego pod | [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) |
+| Set up Interego for a non-technical friend or family member | [Onboarding flow](docs/integrations/agent-runtimes-mcp.md) — they enroll via passkey through their MCP client's first call; no command line |
+| Browse the protocol primitives via web UI | [Dashboard](https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io) + [PGSL Browser](https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io) |
+
+---
+
 ## What products inherit
 
 Anything built on Interego inherits five properties without writing them itself:

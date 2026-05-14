@@ -310,6 +310,14 @@ describe('Geometric Morphism', () => {
     expect(pgslResolve(pgsl, uri)).toBe('hello world from PGSL');
   });
 
+  it('refuses content exceeding the size cap (memory-bomb defense)', () => {
+    // 3 MiB > the 2 MiB cap. The pair-lattice construction is roughly
+    // O(N²) in token count, so unbounded ingest is a denial-of-service
+    // surface — caught at the boundary, not via OOM crash.
+    const huge = 'x '.repeat(3 * 1024 * 1024);
+    expect(() => embedInPGSL(pgsl, huge)).toThrow(/max permitted is \d+ bytes/);
+  });
+
   it('lifts PGSL fragment to Context Descriptor (direct image f_*)', () => {
     const fragmentUri = ingest(pgsl, ['A', 'B', 'C']);
     const desc = liftToDescriptor(

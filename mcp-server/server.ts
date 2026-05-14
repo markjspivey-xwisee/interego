@@ -1200,8 +1200,16 @@ async function toolDiscoverAll(args: {
   }));
 
   const totalEntries = allResults.reduce((sum, r) => sum + r.entries.length, 0);
+  const failed = allResults.filter(r => r.error).length;
+  // Surface partial-failure prominently in the summary line. Used to
+  // be "Discovered N descriptor(s) across M pod(s)" with no signal
+  // about how many pods errored — operators would miss that half the
+  // federation didn't respond. Per-pod errors are still listed below.
+  const summary = failed > 0
+    ? `Discovered ${totalEntries} descriptor(s) across ${pods.length - failed}/${pods.length} pod(s) — ⚠ ${failed} pod(s) failed (see per-pod errors below):`
+    : `Discovered ${totalEntries} descriptor(s) across ${pods.length} pod(s):`;
   const lines: string[] = [
-    `Discovered ${totalEntries} descriptor(s) across ${pods.length} pod(s):`,
+    summary,
     '',
   ];
 

@@ -377,8 +377,18 @@ export class WebSocketRelayMirror implements P2pRelay {
         conn.ws.send(wire);
         conn.eventsOut++;
       } catch (err) {
+        // Send failure on a state='connected' socket means the
+        // connection is silently half-dead — close events haven't
+        // fired yet (or got lost). Without explicit handling we'd
+        // keep marking the same conn 'connected' and accumulating
+        // failed sends with no recovery. Mark it errored, close the
+        // underlying ws (best-effort), and schedule reconnect.
         conn.lastError = `Send failed: ${(err as Error).message}`;
+        conn.state = 'errored';
+        try { conn.ws?.close(); } catch { /* already gone */ }
+        conn.ws = null;
         this.fireStatus(conn);
+        if (!this.stopped) this.scheduleReconnect(conn);
       }
     }
   }
