@@ -188,13 +188,15 @@ generic `RunStatus.FAILED` and no detail.
   `interego-mcp-relay` host (an invented `mcp-` segment); the real
   Azure Container App is `interego-relay`. Corrected — left as-is the
   Hermes provider would have failed out of the box.
-- **CI: Actions off the deprecated Node 20 runtime** (`c93f003`) — the
-  deploy logs flagged `actions/checkout@v4` (+ same-class
-  `setup-node@v4`, `upload-artifact@v4`) running on Node 20, which
-  GitHub force-migrates 2026-06-02 and removes 2026-09-16. Bumped
+- **CI: Actions off the deprecated Node 20 runtime** (`c93f003`,
+  `ccee717`) — the deploy logs flagged `actions/checkout@v4` (+
+  same-class `setup-node@v4`, `upload-artifact@v4`) running on Node 20,
+  which GitHub force-migrates 2026-06-02 and removes 2026-09-16. Bumped
   across all four workflows to the current majors (`checkout@v6`,
-  `setup-node@v6`, `upload-artifact@v7`) — verified via the releases
-  API; zero breaking-change surface (the inputs in use are stable).
+  `setup-node@v6`, `upload-artifact@v7`); a follow-up pass caught
+  `azure/login@v2` in the same deprecation class and bumped it to `@v3`.
+  Verified via the releases API; zero breaking-change surface (the
+  inputs in use are stable).
 
 ## 2026-05-13 — Production hardening, batches 1–4
 
