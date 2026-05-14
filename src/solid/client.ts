@@ -399,6 +399,19 @@ function matchesFilter(entry: ManifestEntry, filter: DiscoverFilter): boolean {
  * @param options - Optional configuration.
  * @returns URLs of the published resources.
  */
+/**
+ * Maximum permitted size of a descriptor's named-graph payload in bytes.
+ * Producers that genuinely need to publish larger artifacts should split
+ * the payload across multiple atoms in the PGSL lattice and reference
+ * them via pgsl:contains / dct:hasPart from the descriptor — the descriptor
+ * itself stays small, the bulk content is content-addressed and
+ * deduplicated at the atom layer. Default 4 MiB is generous for
+ * descriptor metadata + reasonable inline payloads but caps memory
+ * bombs and aborts pathological inputs (multi-GB serialization) before
+ * they hit the network. Override via PublishOptions.maxGraphBytes.
+ */
+const DEFAULT_MAX_GRAPH_BYTES = 4 * 1024 * 1024;
+
 export async function publish(
   descriptor: ContextDescriptorData,
   graphContent: string,
@@ -413,6 +426,17 @@ export async function publish(
 
   const slug = options.descriptorSlug ?? slugFromIri(descriptor.id);
   const graphSlug = options.graphSlug ?? `${slug}-graph`;
+
+  // Size guard — reject before serialization so an oversized publish
+  // can't drive the process OOM. Byte-length, not char-length, to
+  // account for multibyte UTF-8 content.
+  const maxBytes = options.maxGraphBytes ?? DEFAULT_MAX_GRAPH_BYTES;
+  const graphBytes = Buffer.byteLength(graphContent, 'utf8');
+  if (graphBytes > maxBytes) {
+    throw new Error(
+      `publish: graph payload is ${graphBytes} bytes; max permitted is ${maxBytes} bytes (override via PublishOptions.maxGraphBytes). For payloads larger than this, content-address into the PGSL lattice and reference atoms via pgsl:contains / dct:hasPart instead of inlining.`,
+    );
+  }
 
   const descriptorTurtle = toTurtle(descriptor);
   const primaryGraph = descriptor.describes[0]!;

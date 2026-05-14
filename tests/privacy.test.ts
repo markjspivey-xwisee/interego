@@ -60,6 +60,65 @@ MIIBOQIBAAJAYV/BBI...redacted...
     const flags = screenForSensitiveContent(`config: ${pem}`);
     expect(flags.some(f => f.kind === 'private-key-pem')).toBe(true);
   });
+
+  // ── Cloud provider tokens (added 2026-05-04 per security audit) ──
+
+  it('flags a Google Cloud / Firebase API key', () => {
+    // Synthetic placeholder shaped like AIza + 35 base64url chars; not a
+    // real key. (Constructed via concatenation so the literal in source
+    // never matches GitHub's secret-scanning fingerprints.)
+    const fake = 'AIza' + 'X'.repeat(35);
+    const flags = screenForSensitiveContent(`config { apiKey: "${fake}" }`);
+    expect(flags.some(f => f.kind === 'api-key-gcp')).toBe(true);
+  });
+
+  it('flags an Azure SAS token', () => {
+    const sas = 'sv=2021-06-08&sr=b&sp=racwd&se=2030-01-01T00:00:00Z&sig=Abc123XyzDef456%2BGhi789%3D';
+    const flags = screenForSensitiveContent(`url=https://account.blob.core.windows.net/path?${sas}`);
+    expect(flags.some(f => f.kind === 'azure-sas-token')).toBe(true);
+  });
+
+  it('flags a Google OAuth refresh token', () => {
+    // Synthetic placeholder; matches `1//[A-Za-z0-9_-]{40,}` but is
+    // clearly not real and is constructed via concatenation.
+    const fake = '1//' + 'PLACEHOLDER-NOT-A-REAL-REFRESH-TOKEN-XYZ'.padEnd(45, 'X');
+    const flags = screenForSensitiveContent(`refresh_token=${fake}`);
+    expect(flags.some(f => f.kind === 'oauth-refresh-google')).toBe(true);
+  });
+
+  it('flags a Google OAuth access token (ya29.…)', () => {
+    // Synthetic placeholder — concatenated so the literal isn't fingerprintable
+    const fake = 'ya29.' + 'PLACEHOLDER_NOT_A_REAL_TOKEN_X'.padEnd(30, 'X');
+    const flags = screenForSensitiveContent(`Authorization: Bearer ${fake}`);
+    expect(flags.some(f => f.kind === 'oauth-refresh-google')).toBe(true);
+  });
+
+  it('flags a PostgreSQL connection string with embedded password', () => {
+    // Placeholder credentials; clearly not a real production string.
+    const fake = 'postgres://' + 'EXAMPLE' + ':' + 'PLACEHOLDER' + '@db.example.com:5432/myapp';
+    const flags = screenForSensitiveContent(`DATABASE_URL=${fake}`);
+    expect(flags.some(f => f.kind === 'postgres-connection-string')).toBe(true);
+  });
+
+  it('flags a MySQL connection string with embedded password', () => {
+    const fake = 'mysql://' + 'EXAMPLE' + ':' + 'PLACEHOLDER' + '@127.0.0.1:3306/prod';
+    const flags = screenForSensitiveContent(`uri = "${fake}"`);
+    expect(flags.some(f => f.kind === 'postgres-connection-string')).toBe(true);
+  });
+
+  it('flags a MongoDB connection string with embedded password', () => {
+    const fake = 'mongodb+srv://' + 'EXAMPLE' + ':' + 'PLACEHOLDER' + '@cluster0.mongodb.net/myapp';
+    const flags = screenForSensitiveContent(`connect("${fake}")`);
+    expect(flags.some(f => f.kind === 'postgres-connection-string')).toBe(true);
+  });
+
+  it('flags a Slack token', () => {
+    // Synthetic placeholder; constructed so the literal in source
+    // doesn't match GitHub's secret-scanning fingerprints.
+    const fake = 'xoxb-' + 'PLACEHOLDER-NOT-A-REAL-TOKEN-XYZ'.padEnd(35, 'X');
+    const flags = screenForSensitiveContent(`SLACK_TOKEN=${fake}`);
+    expect(flags.some(f => f.kind === 'slack-token')).toBe(true);
+  });
 });
 
 describe('screenForSensitiveContent — medium severity (financial)', () => {

@@ -32,6 +32,9 @@ import {
   publish,
   sha256,
   FRAMEWORK_CONTROLS,
+  screenForSensitiveContent,
+  shouldBlockOnSensitivity,
+  formatSensitivityWarning,
   type IRI,
   type ComplianceFramework,
 } from '../../../src/index.js';
@@ -82,6 +85,15 @@ export interface BuildEventResult {
   readonly contentHash: string;
   /** Resolved control IRIs (after defaulting). */
   readonly cited: readonly IRI[];
+  /**
+   * Sensitivity flags surfaced by the pre-construction privacy
+   * preflight. Empty array means no secrets / PII detected. Present
+   * whenever args / result / error were screened (see
+   * `onSensitiveArgs` on OverlayConfig). With `onSensitiveArgs:
+   * 'block'` (the default), construction throws on HIGH flags
+   * rather than returning them here.
+   */
+  readonly sensitivityFlags?: readonly import('../../../src/index.js').SensitivityFlag[];
 }
 
 export interface OverlayConfig {
@@ -93,9 +105,19 @@ export interface OverlayConfig {
   /**
    * Default true: include the full args object in the descriptor's
    * body. Set false for runtimes that may pass sensitive content as
-   * args; the privacy preflight in src/privacy/ also runs at publish.
+   * args; the privacy preflight in src/privacy/ runs at publish time
+   * AND at construction time (see `onSensitiveArgs` below).
    */
   readonly recordArgs?: boolean;
+  /**
+   * Policy for handling sensitive content detected in args / result /
+   * error fields. Default 'block' — refuse to construct the descriptor
+   * if HIGH-severity flags are present (API keys, JWTs, private keys).
+   * 'warn' allows construction but exposes flags on the result so the
+   * caller can decide. 'allow' skips the preflight entirely (only use
+   * for trusted-input pipelines that have screened earlier).
+   */
+  readonly onSensitiveArgs?: 'block' | 'warn' | 'allow';
 }
 
 // ── Substrate construction ──────────────────────────────────────────
@@ -116,7 +138,13 @@ const XSD_NS = 'http://www.w3.org/2001/XMLSchema#';
 const ACTION_TYPE = `${CGH_NS}AgentAction` as IRI;
 
 function escapeLit(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
-function escapeMulti(s: string): string { return s.replace(/\\/g, '\\\\').replace(/"""/g, '\\"\\"\\"'); }
+function escapeMulti(s: string): string {
+  // Escape every double-quote (not just `"""` substrings) so a value
+  // ending in 1 or 2 quotes can't collide with the closing `"""` of
+  // the Turtle triple-quoted literal. Over-escapes a bit; always
+  // round-trips. See tests/skills.test.ts adversarial section.
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
 function nowIso(): string { return new Date().toISOString(); }
 
 function resolveControls(citation: ComplianceCitation): readonly IRI[] {
@@ -128,19 +156,50 @@ function resolveControls(citation: ComplianceCitation): readonly IRI[] {
  * Substrate-pure construction: takes an agent action event + citation
  * and produces a typed descriptor + named-graph TriG block. Pure
  * synchronous; testable without a pod. Caller publishes the result.
+ *
+ * Privacy preflight: when `onSensitiveArgs` is 'block' (default) or
+ * 'warn', screens the canonical JSON of args, the result summary, and
+ * the error message via the substrate's screenForSensitiveContent.
+ * 'block' refuses to construct on HIGH severity (API keys, JWTs,
+ * private keys); 'warn' returns the flags on the result so the caller
+ * can decide; 'allow' skips screening (use only for already-screened
+ * pipelines). Stops the most common leak shape — a runtime forwarding
+ * its tool args to compliance recording with secrets inside.
  */
 export function buildAgentActionDescriptor(
   event: AgentActionEvent,
   citation: ComplianceCitation,
-  options?: { recordArgs?: boolean },
+  options?: { recordArgs?: boolean; onSensitiveArgs?: 'block' | 'warn' | 'allow' },
 ): BuildEventResult {
   const recordArgs = options?.recordArgs ?? true;
+  const onSensitive = options?.onSensitiveArgs ?? 'block';
 
   // Stable content hash combines tool name + args + outcome + agent.
   // Same action by same agent → same IRI (de-duplicated audit entry).
   const argsCanonical = recordArgs
     ? canonicalJson(event.args)
     : '<args:redacted>';
+
+  // ── Privacy preflight ──────────────────────────────────────────
+  // Screen everything that lands in the descriptor body. The runtime
+  // may forward user-controlled strings (transcripts, tool args, error
+  // messages) — these are the most common shapes for a secrets-in-
+  // audit-log leak.
+  let sensitivityFlags: readonly import('../../../src/index.js').SensitivityFlag[] = [];
+  if (onSensitive !== 'allow') {
+    const screenInput = [
+      recordArgs ? argsCanonical : '',
+      event.resultSummary ?? '',
+      event.errorMessage ?? '',
+    ].filter(s => s.length > 0).join('\n');
+    if (screenInput.length > 0) {
+      sensitivityFlags = screenForSensitiveContent(screenInput);
+      if (onSensitive === 'block' && shouldBlockOnSensitivity(sensitivityFlags)) {
+        const warning = formatSensitivityWarning(sensitivityFlags);
+        throw new Error(`compliance-overlay refused to construct descriptor: detected high-severity sensitive content. ${warning}. Pass onSensitiveArgs: 'warn' to surface flags without blocking, or 'allow' to skip screening entirely.`);
+      }
+    }
+  }
   const fingerprint = [
     event.toolName,
     argsCanonical,
@@ -216,7 +275,15 @@ ${argsBlock}${descriptionTriple}${durationTriple}${sessionTriple}${conformsTail}
     <${PROV_NS}wasAssociatedWith> <${event.agentDid}> .
 `;
 
-  return { descriptor, graphIri, graphContent, eventIri, contentHash, cited };
+  return {
+    descriptor,
+    graphIri,
+    graphContent,
+    eventIri,
+    contentHash,
+    cited,
+    ...(sensitivityFlags.length > 0 ? { sensitivityFlags } : {}),
+  };
 }
 
 // ── Async write through the substrate ───────────────────────────────
@@ -246,7 +313,10 @@ export async function recordAgentAction(
   citation?: ComplianceCitation,
 ): Promise<RecordAgentActionResult> {
   const cite = citation ?? config.defaultCitation;
-  const built = buildAgentActionDescriptor(event, cite, { recordArgs: config.recordArgs });
+  const built = buildAgentActionDescriptor(event, cite, {
+    recordArgs: config.recordArgs,
+    onSensitiveArgs: config.onSensitiveArgs,
+  });
   const publishOpts = config.defaultShareWith && config.defaultShareWith.length > 0
     ? { shareWith: config.defaultShareWith }
     : undefined;

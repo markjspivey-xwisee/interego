@@ -161,3 +161,79 @@ describe('buildAgentActionDescriptor — substrate construction', () => {
     expect(out.graphContent).toContain(out.contentHash);
   });
 });
+
+describe('buildAgentActionDescriptor — privacy preflight (onSensitiveArgs)', () => {
+  // The compliance overlay is on the most common "secrets leaking into
+  // audit logs" path: a runtime forwards tool args / result summary /
+  // error message into a descriptor that gets signed + published. The
+  // preflight stops the leak before the descriptor exists.
+
+  it('blocks construction when args contain an API key (default policy)', () => {
+    expect(() =>
+      buildAgentActionDescriptor(
+        baseEvent({ args: { authHeader: 'Bearer sk-ant-' + 'PLACEHOLDER_NOT_A_REAL_KEY_XYZ'.padEnd(30, 'X') } }),
+        { framework: 'eu-ai-act' },
+      ),
+    ).toThrow(/sensitive content/i);
+  });
+
+  it('blocks construction when resultSummary contains a JWT', () => {
+    // Synthetic JWT-shaped placeholder; matches `eyJ.eyJ.X+` but is
+    // clearly not a real token (no real claim payload).
+    const jwt = 'eyJ' + 'X'.repeat(30) + '.eyJ' + 'X'.repeat(30) + '.' + 'X'.repeat(40);
+    expect(() =>
+      buildAgentActionDescriptor(
+        baseEvent({ resultSummary: `Got token back: ${jwt}` }),
+        { framework: 'eu-ai-act' },
+      ),
+    ).toThrow(/sensitive content/i);
+  });
+
+  it('blocks construction when errorMessage contains a private key marker', () => {
+    expect(() =>
+      buildAgentActionDescriptor(
+        baseEvent({ outcome: 'failure', errorMessage: '-----BEGIN PRIVATE KEY-----\nMIIEvQI...\n-----END PRIVATE KEY-----' }),
+        { framework: 'eu-ai-act' },
+      ),
+    ).toThrow(/sensitive content/i);
+  });
+
+  it("'warn' policy surfaces flags on the result without throwing", () => {
+    const out = buildAgentActionDescriptor(
+      baseEvent({ args: { authHeader: 'Bearer sk-ant-' + 'PLACEHOLDER_NOT_A_REAL_KEY_XYZ'.padEnd(30, 'X') } }),
+      { framework: 'eu-ai-act' },
+      { onSensitiveArgs: 'warn' },
+    );
+    expect(out.sensitivityFlags).toBeDefined();
+    expect(out.sensitivityFlags!.length).toBeGreaterThan(0);
+    expect(out.sensitivityFlags!.some(f => f.severity === 'high')).toBe(true);
+  });
+
+  it("'allow' policy skips screening entirely (use only for pre-screened inputs)", () => {
+    const out = buildAgentActionDescriptor(
+      baseEvent({ args: { authHeader: 'Bearer sk-ant-' + 'PLACEHOLDER_NOT_A_REAL_KEY_XYZ'.padEnd(30, 'X') } }),
+      { framework: 'eu-ai-act' },
+      { onSensitiveArgs: 'allow' },
+    );
+    // Construction succeeds even with HIGH content
+    expect(out.eventIri).toBeDefined();
+    // sensitivityFlags is undefined when screening is skipped
+    expect(out.sensitivityFlags).toBeUndefined();
+  });
+
+  it('benign args do not trigger any flags', () => {
+    const out = buildAgentActionDescriptor(baseEvent(), { framework: 'eu-ai-act' });
+    expect(out.sensitivityFlags).toBeUndefined();
+  });
+
+  it('recordArgs: false suppresses screening of args specifically (but still screens result/error)', () => {
+    // Args have a secret but won't be recorded → don't screen them
+    expect(() =>
+      buildAgentActionDescriptor(
+        baseEvent({ args: { authHeader: 'Bearer sk-ant-' + 'PLACEHOLDER_NOT_A_REAL_KEY_XYZ'.padEnd(30, 'X') } }),
+        { framework: 'eu-ai-act' },
+        { recordArgs: false },
+      ),
+    ).not.toThrow();
+  });
+});

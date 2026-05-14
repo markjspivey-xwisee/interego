@@ -268,7 +268,20 @@ interface ParserState {
   readonly subjects: Map<string, Map<IRI, ParsedTerm[]>>;
   readonly bnodeProperties: Map<string, Map<IRI, ParsedTerm[]>>;
   bnodeCounter: number;
+  /**
+   * Current recursive nesting depth across inline blank-node property
+   * lists ( `[ ... ]` ). Incremented every time parsePropertyList
+   * enters a nested blank-node context, decremented on exit. Bounded
+   * by MAX_NESTING_DEPTH below so a pathological input like
+   * `[ a [ a [ a ... ] ] ]` thousands of levels deep can't blow the
+   * JS stack — instead we throw a ParseError before the stack
+   * overflows. Real-world Turtle never approaches the bound; setting
+   * it generously (256) leaves room for unusual but legitimate input.
+   */
+  depth: number;
 }
+
+const MAX_NESTING_DEPTH = 256;
 
 function peek(s: ParserState, offset = 0): Tok | undefined { return s.tokens[s.index + offset]; }
 function consume(s: ParserState): Tok | undefined { return s.tokens[s.index++]; }
@@ -326,10 +339,15 @@ function parseTermAsTerm(s: ParserState): ParsedTerm {
   if (t.type === 'punct' && t.value === '[') {
     // Inline blank node: collect its property list, then return a bnode reference
     consume(s);
+    if (s.depth >= MAX_NESTING_DEPTH) {
+      throw new ParseError(`maximum nesting depth (${MAX_NESTING_DEPTH}) exceeded — refusing deeply-nested blank-node input that would otherwise blow the JS stack`, t.pos);
+    }
+    s.depth++;
     const id = `_anon${s.bnodeCounter++}`;
     const props = new Map<IRI, ParsedTerm[]>();
     s.bnodeProperties.set(id, props);
     parsePropertyList(s, props);
+    s.depth--;
     expectPunct(s, ']');
     return { kind: 'bnode', id };
   }
@@ -368,11 +386,16 @@ function parseSubject(s: ParserState): { key: string; props: Map<IRI, ParsedTerm
   }
   if (t.type === 'punct' && t.value === '[') {
     consume(s);
+    if (s.depth >= MAX_NESTING_DEPTH) {
+      throw new ParseError(`maximum nesting depth (${MAX_NESTING_DEPTH}) exceeded — refusing deeply-nested blank-node input that would otherwise blow the JS stack`, t.pos);
+    }
+    s.depth++;
     const id = `_anon${s.bnodeCounter++}`;
     const key = `_:${id}`;
     const props = new Map<IRI, ParsedTerm[]>();
     s.subjects.set(key, props);
     parsePropertyList(s, props);
+    s.depth--;
     expectPunct(s, ']');
     return { key, props };
   }
@@ -425,6 +448,7 @@ export function parseTrig(src: string): ParsedDocument {
     subjects: new Map(),
     bnodeProperties: new Map(),
     bnodeCounter: 0,
+    depth: 0,
   };
 
   while (state.index < tokens.length) {
