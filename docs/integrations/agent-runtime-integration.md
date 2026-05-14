@@ -164,7 +164,15 @@ identical to the OpenClaw provider's (`cgh:AgentMemory`) — Hermes bots
 and OpenClaw agents on one pod read each other's memories. No substrate
 code is duplicated; the MCP relay does the descriptor work.
 
+The provider's `get_tool_schemas()` hook exposes a **fixed 3-tool
+HATEOAS surface** (`interego_recall` / `interego_discover` /
+`interego_act`): results are decorated with `affordances`, and the agent
+follows them — so it reaches *all* of Interego through three schemas
+instead of ~60 flat tools bloating its context. See
+[hermes-full-substrate.md](hermes-full-substrate.md).
+
 **Read:** [path-5-hermes-memory-provider.md](path-5-hermes-memory-provider.md)
+· [hermes-full-substrate.md](hermes-full-substrate.md)
 
 **Trade-off:** Hermes-specific glue (the bridge logic is shared). For
 runtimes with no memory-provider slot, fall back to Path 1.

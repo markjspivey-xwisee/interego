@@ -52,10 +52,22 @@ memories.
 | Hermes `MemoryProvider` hook | → Interego primitive |
 |---|---|
 | `sync_turn(user, assistant)` | `publish_context` — the turn as a typed memory graph, modal `Asserted` (non-blocking daemon thread, per the contract) |
-| `prefetch(query)` + the `interego_recall` tool | `discover_context` — structural recall; Hermes' FTS5 / vector layer ranks on top |
+| `prefetch(query)` | `discover_context` — structural recall, each line affordance-decorated; Hermes' FTS5 / vector layer ranks on top |
 | `on_memory_write(action, target, content)` | mirrors `MEMORY.md` / `USER.md` edits — `add`/`replace` → `publish_context`; `remove` → Counterfactual retraction |
-| `system_prompt_block()` | tells the agent its memory is verifiable + portable |
-| `get_config_schema()` / `save_config()` | `relay_url`, `pod_url`, `agent_bearer` (secret) |
+| `get_tool_schemas()` | the fixed 3-tool HATEOAS surface (`interego_recall` / `interego_discover` / `interego_act`) — see below |
+| `system_prompt_block()` | tells the agent its memory is verifiable + portable, and how the 3-tool / affordance model works |
+| `get_config_schema()` / `save_config()` | `relay_url`, `pod_url`, `agent_bearer` (secret), `scope` |
+
+## Reaching the whole substrate without tool bloat
+
+`get_tool_schemas()` deliberately exposes **three** tools, not the ~15
+relay tools (or ~60 MCP tools) flat. Every result from `interego_recall`
+/ `interego_discover` is decorated with an `affordances` list — the
+actions available on that item — and `interego_act` follows any one of
+them. Capability travels as data, not as preloaded tool schemas: the
+agent reaches *all of Interego* through three schemas. This is the
+HATEOAS shape; the full rationale is in
+[hermes-full-substrate.md](hermes-full-substrate.md).
 
 ## What it gains over Path 1
 
@@ -104,6 +116,8 @@ hermes interego status     # verify config + relay reachability
 
 ## See also
 
+* [hermes-full-substrate.md](hermes-full-substrate.md) — reaching *all*
+  of Interego from Hermes via the 3-tool HATEOAS surface
 * [`integrations/hermes-memory/`](../../integrations/hermes-memory/) —
   the plugin itself
 * [Path 2 — OpenClaw memory plugin](path-2-openclaw-memory-plugin.md) —
