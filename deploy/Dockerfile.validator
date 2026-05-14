@@ -9,8 +9,10 @@ FROM node:20-slim AS build
 
 WORKDIR /app
 
-COPY deploy/validator/package.json ./
-RUN npm install
+# Copy the lockfile too and use `npm ci` — a reproducible install
+# pinned to package-lock.json (same rationale as Dockerfile.identity).
+COPY deploy/validator/package.json deploy/validator/package-lock.json ./
+RUN npm ci
 
 COPY deploy/validator/tsconfig.json ./
 COPY deploy/validator/server.ts ./
