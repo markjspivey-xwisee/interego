@@ -19,13 +19,13 @@ Wrapped in real cryptography — NaCl envelopes, secp256k1 signatures, ZK commit
 |---|---|
 | Use Interego from an AI coding agent right now (Claude Code / Cursor / Windsurf / Cline) | [Recipe: add the MCP server](#-im-an-ai-coding-agent-claude-code-cursor-windsurf-cline--protocol-level-access) |
 | Try the hosted reference deployment without running anything | [The deployed Azure surfaces](#hosted-vs-self-hosted-which-path-is-right-for-you) |
-| Mount Interego under an OpenClaw / Hermes / Codex runtime | [Agent-runtime integration paths](docs/integrations/agent-runtime-integration.md) — pick Path 1 (MCP), 2 (memory plugin), 3 (skills), or 4 (compliance overlay) |
+| Mount Interego under an OpenClaw / Hermes / Codex runtime | [Agent-runtime integration paths](docs/integrations/agent-runtime-integration.md) — pick Path 1 (MCP), 2 (OpenClaw memory plugin), 3 (skills), 4 (compliance overlay), or 5 (Hermes memory provider) |
 | Build a TypeScript app on top of the substrate | [Developer entry point](#-im-a-developer-building-a-typescript-app) |
 | Build a vertical (LRS adapter, agent collective, organizational memory) | [Vertical applications](applications/README.md) |
 | Run a live demo of multi-agent emergent coordination | [`demos/`](demos/README.md) — 23 end-to-end scenarios |
 | Understand the spec / category-theoretic foundations | [`spec/architecture.md`](spec/architecture.md) + [`docs/ARCHITECTURAL-FOUNDATIONS.md`](docs/ARCHITECTURAL-FOUNDATIONS.md) |
 | Run a SOC 2 / EU AI Act / NIST RMF audit against an Interego pod | [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) |
-| Set up Interego for a non-technical friend or family member | [Onboarding flow](docs/integrations/agent-runtimes-mcp.md) — they enroll via passkey through their MCP client's first call; no command line |
+| Set up Interego for a non-technical friend or family member | [The hosted front door](https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/) — they enroll a passkey or wallet directly (~30s, no command line), or their MCP client drives it on first call |
 | Browse the protocol primitives via web UI | [Dashboard](https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io) + [PGSL Browser](https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io) |
 
 ---
@@ -83,7 +83,7 @@ The protocol surface has grown substantially. Highlights:
 
 - **Twenty-three end-to-end demo scenarios** in [`demos/scenarios/`](demos/scenarios/) — autonomous multi-agent runs against the real Claude Code CLI, including Demo 22 (two agents design + ratify + play a commit-reveal RPS game) and Demo 23 (four agents emerge a federated zero-copy semantic layer over heterogeneous data sources via `hyprcat:`/`align:`/`amta:` composition). See [`demos/README.md`](demos/README.md).
 
-- **Agent-runtime integration paths** — [`docs/integrations/agent-runtime-integration.md`](docs/integrations/agent-runtime-integration.md) maps four ways an OpenClaw / Hermes Agent / Codex / Cursor / Claude Code runtime can mount Interego: (1) MCP server (config-only — every substrate primitive becomes an LLM tool), (2) [OpenClaw memory plugin](integrations/openclaw-memory/) (pod-rooted typed memory replacing the local SQLite), (3) [agentskills.io SKILL.md as `cg:Affordance`](docs/integrations/path-3-skills-as-affordances.md) (skills become federated, attestable, governable via existing primitives), (4) [compliance overlay](integrations/compliance-overlay/) (every agent action becomes a signed, framework-cited descriptor). All four are translators, not extensions — no protocol surface added.
+- **Agent-runtime integration paths** — [`docs/integrations/agent-runtime-integration.md`](docs/integrations/agent-runtime-integration.md) maps five ways an OpenClaw / Hermes Agent / Codex / Cursor / Claude Code runtime can mount Interego: (1) MCP server (config-only — every substrate primitive becomes an LLM tool), (2) [OpenClaw memory plugin](integrations/openclaw-memory/) (pod-rooted typed memory replacing the local SQLite, with a fixed 5-tool HATEOAS surface that reaches the whole substrate), (3) [agentskills.io SKILL.md as `cg:Affordance`](docs/integrations/path-3-skills-as-affordances.md) (skills become federated, attestable, governable via existing primitives), (4) [compliance overlay](integrations/compliance-overlay/) (every agent action becomes a signed, framework-cited descriptor), (5) [Hermes memory provider](integrations/hermes-memory/) (a `MemoryProvider` plugin for Nous Research's Hermes Agent — same pod-rooted memory + HATEOAS shape). All five are translators, not extensions — no protocol surface added. [`hermes-full-substrate.md`](docs/integrations/hermes-full-substrate.md) / [`openclaw-full-substrate.md`](docs/integrations/openclaw-full-substrate.md) explain how a runtime reaches *all* of Interego without tool-list bloat.
 
 For dated detail see [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -246,7 +246,8 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 │                     CRDT-OFFLINE-MERGE, AGGREGATE-PRIVACY, proofs/ (TLA+)
 ├── benchmarks/       LongMemEval (89.2% agentic, 92.4% raw) evaluation suite
 ├── integrations/     Path 2 (OpenClaw memory plugin) + Path 4 (compliance overlay)
-└── tests/            ~1119 tests across ~65 files
+│                     + Path 5 (Hermes memory provider) — all HATEOAS-shaped
+└── tests/            1200+ tests across ~70 files
 ```
 
 ### Design Principles

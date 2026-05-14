@@ -125,7 +125,7 @@ Each of these composes from the same substrate primitive — `publish_context` �
 |---|---|
 | Understand how the substrate composes from L1 primitives | [`spec/architecture.md`](../spec/architecture.md) |
 | See multi-agent autonomous coordination in action | [`demos/scenarios/22-game-design-build-play.ts`](../demos/scenarios/22-game-design-build-play.ts) (autonomous game) or `23-zero-copy-semantic-layer.ts` (federated semantic layer) |
-| Integrate Interego with an existing app | [`docs/integrations/agent-runtime-integration.md`](integrations/agent-runtime-integration.md) — the four paths |
+| Integrate Interego with an existing app | [`docs/integrations/agent-runtime-integration.md`](integrations/agent-runtime-integration.md) — the five paths (MCP / OpenClaw memory / skills / compliance / Hermes memory) |
 | Set up Interego for compliance / audit purposes | [`spec/SOC2-PREPARATION.md`](../spec/SOC2-PREPARATION.md) + [`integrations/compliance-overlay/`](../integrations/compliance-overlay/) |
 | Lose a credential / migrate pod / rotate a key | [`docs/RECOVERY-FLOWS.md`](RECOVERY-FLOWS.md) |
 | Use Interego from mobile | [`docs/MOBILE-PARITY.md`](MOBILE-PARITY.md) |
