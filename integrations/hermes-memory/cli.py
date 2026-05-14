@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-_DEFAULT_RELAY = "https://interego-mcp-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io"
+_DEFAULT_RELAY = "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io"
 
 
 def _load_config() -> dict[str, Any]:

@@ -43,7 +43,7 @@ const BASE_URL = process.env['BASE_URL'] ?? `http://localhost:${PORT}`;
 const CSS_URL = process.env['CSS_URL'] ?? 'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/';
 // The sibling MCP relay — surfaced on the landing page so agent
 // operators can copy it into their MCP client without hunting.
-const RELAY_URL = (process.env['RELAY_URL'] ?? 'https://interego-mcp-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+const RELAY_URL = (process.env['RELAY_URL'] ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
 const REPO_URL = process.env['REPO_URL'] ?? 'https://github.com/markjspivey-xwisee/interego';
 const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
 const TOKEN_TTL_SECONDS = 86400; // 24 hours
