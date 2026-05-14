@@ -35,6 +35,8 @@ import type { FetchFn } from './types.js';
 import { getDefaultFetch } from './client.js';
 import { resolveDidWeb, findStorageEndpoint } from './did.js';
 import { resolveWebFinger } from './webfinger.js';
+import { resolveName } from '../naming/index.js';
+import type { NameCandidate, NamingConfig } from '../naming/index.js';
 
 const TURTLE_CONTENT_TYPE = 'text/turtle';
 const JSONLD_CONTENT_TYPE = 'application/ld+json';
@@ -48,7 +50,7 @@ export interface DiscoveryResult {
   /** The identifier that was resolved. */
   readonly identifier: string;
   /** Kind of identifier detected. */
-  readonly kind: 'did' | 'acct' | 'url' | 'unknown';
+  readonly kind: 'did' | 'acct' | 'url' | 'name' | 'unknown';
   /** Resolved WebID, if found via any tier. */
   readonly webId?: string;
   /** Resolved pod URL, if found. */
@@ -57,13 +59,24 @@ export interface DiscoveryResult {
   readonly agentsCatalogUrl?: string;
   /** Agents listed in the catalog (T3). */
   readonly agents?: readonly AgentCatalogEntry[];
+  /**
+   * Name-attestation candidates, when the identifier resolved as a name
+   * via the TN tier (opt-in: requires `options.naming`). A name is
+   * trust-relative — this is a RANKED set, not a single answer; the top
+   * candidate's `subject` is also mirrored into `webId` for callers
+   * that just want a single best answer.
+   */
+  readonly nameCandidates?: readonly NameCandidate[];
   /** Tiers that produced signal for this identifier. */
   readonly tiersHit: readonly DiscoveryTier[];
   /** Raw diagnostic details per tier. */
   readonly trace?: Record<DiscoveryTier, string>;
 }
 
-export type DiscoveryTier = 'T0' | 'T1' | 'T2' | 'T3' | 'T4' | 'T5' | 'T6';
+// T0–T6 are the progressive-opt-in discovery tiers (how a principal
+// makes themselves findable). TN is the orthogonal name-service tier —
+// resolving a human name to its principal(s); opt-in via options.naming.
+export type DiscoveryTier = 'T0' | 'T1' | 'T2' | 'T3' | 'T4' | 'T5' | 'T6' | 'TN';
 
 export interface AgentCatalogEntry {
   readonly agentId: string;
@@ -251,9 +264,19 @@ function detectKind(id: string): DiscoveryResult['kind'] {
  */
 export async function resolveIdentifier(
   id: string,
-  options: { fetch?: FetchFn; maxDepth?: number } = {},
+  options: {
+    fetch?: FetchFn;
+    maxDepth?: number;
+    /**
+     * Opt-in name resolution. A bare human name ("alice") is
+     * syntactically indistinguishable from any other unknown string,
+     * so it can't be auto-detected — pass `naming` and the resolver
+     * tries the TN (name) tier for an otherwise-unknown id.
+     */
+    naming?: { config: NamingConfig; pods?: readonly string[] };
+  } = {},
 ): Promise<DiscoveryResult> {
-  const kind = detectKind(id);
+  let kind = detectKind(id);
   const trace: Partial<Record<DiscoveryTier, string>> = {};
   const tiersHit: DiscoveryTier[] = [];
   let webId: string | undefined;
@@ -373,6 +396,36 @@ export async function resolveIdentifier(
     } catch { /* ignore */ }
   }
 
+  // TN — Name service (opt-in via options.naming).
+  //
+  // A bare name has no syntax to detect, so this only runs when the
+  // caller explicitly supplies `naming` AND no structured kind matched.
+  // A name is trust-relative — `resolveName` returns a RANKED set; the
+  // top candidate's `subject` is mirrored into `webId` for callers that
+  // just want a single best answer, while `nameCandidates` carries the
+  // full set so callers can see (and adjudicate) the ambiguity.
+  let nameCandidates: readonly NameCandidate[] | undefined;
+  if (options.naming && kind === 'unknown') {
+    try {
+      const hits = await resolveName(id, options.naming.config, {
+        pods: options.naming.pods,
+        fetch: options.fetch,
+      });
+      if (hits.length > 0) {
+        kind = 'name';
+        nameCandidates = hits;
+        tiersHit.push('TN');
+        const top = hits[0]!;
+        trace.TN = `name resolved: ${hits.length} candidate(s), top=${top.subject} (${top.trustLevel})`;
+        if (!webId) webId = top.subject;
+      } else {
+        trace.TN = 'name service: no candidates';
+      }
+    } catch (e) {
+      trace.TN = `name resolve failed: ${(e as Error).message}`;
+    }
+  }
+
   return {
     identifier: id,
     kind,
@@ -380,6 +433,7 @@ export async function resolveIdentifier(
     podUrl,
     agentsCatalogUrl,
     agents,
+    nameCandidates,
     tiersHit,
     trace: trace as Record<DiscoveryTier, string>,
   };

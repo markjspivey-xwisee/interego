@@ -208,7 +208,9 @@ opt into a `did:web` or ENS tier.
 
 ## Build status
 
-**Shipped** ([`src/naming/index.ts`](../src/naming/index.ts), 14 tests):
+**Shipped** ([`src/naming/index.ts`](../src/naming/index.ts) +
+[`src/solid/discovery.ts`](../src/solid/discovery.ts); 18 tests, plus a
+runnable demo at [`examples/demo-name-service.mjs`](../../examples/demo-name-service.mjs)):
 
 - ✅ `buildNameAttestation` — pure builder (content-addressed on
   `(subject, name)`; idempotent re-attestation).
@@ -219,6 +221,16 @@ opt into a `did:web` or ENS tier.
 - ✅ `defaultNameTrustPolicy` — pluggable; drops retracted/superseded,
   ranks by trust level + recency.
 - ✅ Injectable `fetch` on every resolver.
+- ✅ **`resolveIdentifier` TN tier** — `resolveIdentifier(id, { naming })`
+  surfaces `resolveName` as a tier of the unified resolver. A bare name
+  is syntactically indistinguishable from any other unknown string, so
+  it can't be auto-detected — the `naming` option is opt-in, and the
+  tier only runs for an otherwise-`unknown` id. It populates a new
+  `kind: 'name'` + `nameCandidates` (the full ranked set, because a name
+  is trust-relative) and mirrors the top candidate's `subject` into
+  `webId` for single-answer callers. (`naming/index.ts` imports from
+  source modules, not the `../index.js` barrel, to keep the
+  `discovery → naming` edge cycle-free.)
 
 **Not yet built (optional, deferred):**
 
@@ -226,12 +238,10 @@ opt into a `did:web` or ENS tier.
    federated resolution doesn't have to walk every pod. (The index is a
    cache/hint, re-derivable from the attestation descriptors — not an
    authority.)
-2. Surface `resolveName` as a tier inside `resolveIdentifier`, so a bare
-   name is just another entry into the existing tiered resolver.
-3. A host-free convenience namespace (`@alice`) resolved via the
+2. A host-free convenience namespace (`@alice`) resolved via the
    federation index — explicitly a convenience view over a trust-ranked
    set, not a uniqueness guarantee.
-4. A `docs/ns/naming.ttl` *only if* typed shapes are ever needed — the
+3. A `docs/ns/naming.ttl` *only if* typed shapes are ever needed — the
    binding itself stays plain `foaf:nick`, so likely never.
 
 ## See also

@@ -29,19 +29,22 @@
  *   defaultNameTrustPolicy              → NameTrustPolicy   (pluggable)
  */
 
-import {
-  ContextDescriptor,
-  publish,
-  discover,
-  parseTrig,
-  sha256,
-  type IRI,
-  type TrustLevel,
-  type ModalStatus,
-  type ContextDescriptorData,
-  type ManifestEntry,
-  type FetchFn,
-} from '../index.js';
+// Import from source modules, NOT the `../index.js` barrel: `discovery.ts`
+// imports this module (to surface resolveName as a resolver tier), and a
+// barrel import here would close a `discovery → naming → barrel →
+// solid → discovery` cycle. Pointing at the leaf modules keeps the
+// dependency graph a clean DAG.
+import { ContextDescriptor } from '../model/descriptor.js';
+import { publish, discover } from '../solid/client.js';
+import { parseTrig } from '../rdf/turtle-parser.js';
+import { sha256 } from '../crypto/ipfs.js';
+import type {
+  IRI,
+  TrustLevel,
+  ModalStatus,
+  ContextDescriptorData,
+} from '../model/types.js';
+import type { ManifestEntry, FetchFn } from '../solid/types.js';
 
 // W3C FOAF — the name binding predicate. No new vocabulary.
 const FOAF_NICK = 'http://xmlns.com/foaf/0.1/nick' as IRI;

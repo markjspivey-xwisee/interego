@@ -14,6 +14,7 @@ import {
   resolveName,
   namesFor,
   defaultNameTrustPolicy,
+  resolveIdentifier,
 } from '../src/index.js';
 import type { IRI, NamingConfig, NameCandidate, FetchFn } from '../src/index.js';
 
@@ -244,5 +245,48 @@ describe('namesFor', () => {
     const names = await namesFor(ALICE_DID, CONFIG, { fetch });
     expect(names.map(n => n.name).sort()).toEqual(['a.spivey', 'alice']);
     expect(names.every(n => n.subject === ALICE_DID)).toBe(true);
+  });
+});
+
+// ── resolveIdentifier TN tier (the name service as a resolver tier) ──
+
+describe('resolveIdentifier — TN name tier (opt-in)', () => {
+  it('resolves a bare name when options.naming is supplied', async () => {
+    const fetch = mockPod(CONFIG.podUrl, [
+      { descriptorUrl: 'https://pod.example/cg/n1.ttl', subject: ALICE_DID, name: 'alice',
+        trustLevel: 'CryptographicallyVerified' },
+    ]);
+    const r = await resolveIdentifier('alice', { fetch, naming: { config: CONFIG } });
+    expect(r.kind).toBe('name');
+    expect(r.tiersHit).toContain('TN');
+    expect(r.nameCandidates).toHaveLength(1);
+    expect(r.nameCandidates?.[0]?.subject).toBe(ALICE_DID);
+    // the top candidate's subject is mirrored into webId for single-answer callers
+    expect(r.webId).toBe(ALICE_DID);
+  });
+
+  it('leaves a bare name as kind=unknown when naming is NOT supplied (opt-in)', async () => {
+    const r = await resolveIdentifier('alice', {});
+    expect(r.kind).toBe('unknown');
+    expect(r.tiersHit).not.toContain('TN');
+    expect(r.nameCandidates).toBeUndefined();
+  });
+
+  it('does not run the name tier for a structured identifier (did:)', async () => {
+    const fetch = mockPod(CONFIG.podUrl, [
+      { descriptorUrl: 'https://pod.example/cg/n1.ttl', subject: ALICE_DID, name: 'alice' },
+    ]);
+    const r = await resolveIdentifier('did:web:somewhere.example:users:x', {
+      fetch, naming: { config: CONFIG },
+    });
+    expect(r.kind).toBe('did'); // structured kind — TN only runs for kind=unknown
+    expect(r.tiersHit).not.toContain('TN');
+  });
+
+  it('traces "no candidates" when naming is supplied but the name is unknown', async () => {
+    const fetch = mockPod(CONFIG.podUrl, []);
+    const r = await resolveIdentifier('ghost', { fetch, naming: { config: CONFIG } });
+    expect(r.kind).toBe('unknown'); // no candidates → stays unknown
+    expect(r.trace?.TN).toMatch(/no candidates/);
   });
 });
