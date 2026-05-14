@@ -108,20 +108,29 @@ jobs:
               - 'examples/multi-agent/css-config.json'
               - '.github/workflows/deploy-azure.yml'
 
-  # Pull the Docker Hub build-stage base image into our own ACR once,
-  # up front — so each per-image build `FROM`s it there (an
+  # Best-effort: try to pull the Docker Hub build-stage base image into
+  # our own ACR up front, so the build matrix can `FROM` it there (an
   # authenticated pull from contextgraphsacr.azurecr.io, which the ACR
   # build agent is already logged into) instead of pulling node:20-slim
-  # from Docker Hub anonymously. Docker Hub rate-limits unauthenticated
-  # pulls per egress IP, and ACR build agents share egress IPs — the
-  # root cause of the intermittent `FROM node:20-slim → toomanyrequests`
-  # build failures. One import here insulates the whole build matrix.
-  # The Dockerfiles default `ARG NODE_BASE=node:20-slim`, so a local
-  # `docker build` (no --build-arg) still pulls from Docker Hub normally;
-  # only CI is redirected to the ACR copy.
+  # from Docker Hub anonymously — Docker Hub rate-limits unauthenticated
+  # pulls per egress IP, and ACR build agents share egress IPs.
+  #
+  # CRITICAL: this job is BEST-EFFORT and MUST NOT fail the deploy. The
+  # `az acr import` itself does ONE anonymous Docker Hub pull, which can
+  # ITSELF hit the rate limit — and if this job hard-failed, every
+  # `build-and-deploy` matrix job (which `needs:` it) would skip, taking
+  # down the whole deploy over a base-image cache miss (this is exactly
+  # what happened on the first run of the import-based fix). So: on
+  # success it outputs the ACR copy as `node_base`; on failure it
+  # outputs plain `node:20-slim` and still exits 0, and the build matrix
+  # falls back to a direct, retry-loop-protected Docker Hub pull. The
+  # Dockerfiles default `ARG NODE_BASE=node:20-slim`, so a local
+  # `docker build` (no --build-arg) works against Docker Hub regardless.
   prime-base-images:
-    name: Prime ACR with build-stage base image
+    name: Prime ACR with build-stage base image (best-effort)
     runs-on: ubuntu-latest
+    outputs:
+      node_base: ${{ steps.prime.outputs.node_base }}
     steps:
       - name: Azure login (OIDC)
         uses: azure/login@v2
@@ -130,26 +139,29 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       - name: Import node:20-slim into the ACR
+        id: prime
         run: |
           # `--force` overwrites the tag if present → idempotent across
-          # runs. Retry: the import itself does one anonymous Docker Hub
-          # pull, which can occasionally rate-limit; a retry on a fresh
-          # runner clears it. One import here vs. five parallel anonymous
-          # pulls across the build matrix.
+          # runs. Retry: a fresh runner sometimes clears Docker Hub's
+          # rate limit. On exhaustion, fall back — NEVER fail the deploy.
           for attempt in 1 2 3; do
             if az acr import \
                  --name "${{ env.AZURE_ACR_NAME }}" \
                  --source docker.io/library/node:20-slim \
                  --image node:20-slim \
                  --force; then
-              echo "imported node:20-slim into ${{ env.AZURE_ACR_NAME }} on attempt $attempt"
+              echo "node_base=${{ env.AZURE_ACR_NAME }}.azurecr.io/node:20-slim" >> "$GITHUB_OUTPUT"
+              echo "imported node:20-slim into ${{ env.AZURE_ACR_NAME }} on attempt $attempt — build matrix will FROM the ACR copy"
               exit 0
             fi
             echo "::warning::az acr import attempt $attempt failed; retrying in 90s..."
             sleep 90
           done
-          echo "::error::az acr import failed after 3 attempts"
-          exit 1
+          # Retries exhausted — fall back to Docker Hub for the matrix.
+          # The build step's own retry loop covers that path.
+          echo "node_base=node:20-slim" >> "$GITHUB_OUTPUT"
+          echo "::warning::az acr import failed after 3 attempts — build matrix falls back to a direct Docker Hub pull (retry-loop protected); deploy continues"
+          exit 0
 
   build-and-deploy:
     name: Build & deploy ${{ matrix.image }}
@@ -232,12 +244,14 @@ jobs:
           # Actions log (you only get a generic "RunStatus.FAILED"). The
           # full build log is worth the extra output.
           #
-          # Base image: the `prime-base-images` job imported node:20-slim
-          # into this ACR, so we build `FROM` it there via the NODE_BASE
-          # build-arg — an authenticated pull, no Docker Hub rate limit.
-          # The retry loop below is kept as defense-in-depth (it also
-          # covers the gcr.io distroless runtime-stage pull and any ACR
-          # transient). Each `az acr build` invocation gets a fresh agent.
+          # Base image: the `prime-base-images` job tries to import
+          # node:20-slim into this ACR and outputs `node_base` — the ACR
+          # copy on success, plain `node:20-slim` on failure. Either way
+          # we pass it as the NODE_BASE build-arg: an authenticated ACR
+          # pull when primed, a direct Docker Hub pull otherwise. The
+          # retry loop is defense-in-depth — it covers the Docker Hub
+          # fallback path, the gcr.io distroless runtime-stage pull, and
+          # any ACR transient. Each `az acr build` gets a fresh agent.
           # `set -e` does not abort on a failure inside an `if` condition,
           # so the loop is safe under the shell's default `-e`.
           for attempt in 1 2 3; do
@@ -246,7 +260,7 @@ jobs:
                  --image "${{ matrix.image }}:${{ github.sha }}" \
                  --image "${{ matrix.image }}:latest" \
                  --file "${{ matrix.dockerfile }}" \
-                 --build-arg "NODE_BASE=${{ env.AZURE_ACR_NAME }}.azurecr.io/node:20-slim" \
+                 --build-arg "NODE_BASE=${{ needs.prime-base-images.outputs.node_base || 'node:20-slim' }}" \
                  .; then
               echo "ACR build succeeded on attempt $attempt"
               exit 0
