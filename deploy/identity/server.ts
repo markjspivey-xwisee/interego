@@ -223,11 +223,28 @@ const credentialIndex: Map<string, string> = new Map();
 // did → userId
 const didIndex: Map<string, string> = new Map();
 
-// Per-user auth-methods cache with 60s TTL. Stale-while-revalidate:
+// Per-user auth-methods cache with a short TTL. Stale-while-revalidate:
 // a cache miss or expired entry triggers a pod fetch but returns the
 // stale value in the meantime on non-critical reads.
+//
+// TTL reasoning (security audit Sec #13): the previous 60s TTL opened
+// a window where a passkey/wallet revoked DIRECTLY on the pod
+// (operator SSH-ing in, or a parallel identity-server replica writing
+// to the same pod) wouldn't be reflected here for up to 60 seconds —
+// an attacker holding a recently-revoked credential could still
+// authenticate during that window. Writes THROUGH this server's
+// endpoints update the cache + indexes synchronously
+// (see putPodAuthMethods), so the TTL only matters for out-of-band
+// updates.
+//
+// Reduced to 10s — still gives meaningful cache hit ratio (the
+// typical auth flow does multiple reads in close succession) without
+// the long stale-credential window. Pair this with the existing
+// putPodAuthMethods cache invalidation for the in-server write case,
+// and any caller worried about TOCTOU on an extremely sensitive
+// check can pass allowStale=false to skip the cache entirely.
 const authMethodsCache: Map<string, { value: AuthMethods; fetchedAt: number }> = new Map();
-const AUTH_METHODS_TTL_MS = 60 * 1000;
+const AUTH_METHODS_TTL_MS = 10 * 1000;
 
 function podAuthMethodsUrl(userId: string): string {
   return `${CSS_URL}${userId}/auth-methods.jsonld`;
@@ -736,12 +753,15 @@ const LANDING_HTML = `<!doctype html>
 <h2>Why this is an API server, not a sign-up page</h2>
 <p>Your private keys stay on your device. This server only verifies signatures and issues tokens — it has no password to set, no email to confirm, no account database. The OAuth flow on the relay is the visible front door; this server runs the cryptography behind the scenes.</p>
 
+<h2>Already enrolled?</h2>
+<p>Visit your <a href="/dashboard">dashboard</a> to see your DID, manage credentials, and view recent descriptors on your pod. (Requires a valid bearer token — typically issued via the OAuth flow your MCP client triggers, or appended as <code>?token=...</code> by the auth callback.)</p>
+
 <h2>For developers / auditors</h2>
 <ul>
   <li><a href="/.well-known/did.json">/.well-known/did.json</a> — this server's DID document</li>
   <li><a href="/health">/health</a> — server health + counts</li>
   <li>Auth methods (POST): <code>/auth/webauthn/register-options</code>, <code>/auth/webauthn/register</code>, <code>/auth/webauthn/authenticate</code>, <code>/auth/siwe</code>, <code>/auth/did</code>, <code>/challenges</code>, <code>/tokens</code>, <code>/tokens/verify</code></li>
-  <li>Per-user (after enrollment): <code>/users/:id/did.json</code>, <code>/users/:id/profile</code>, <code>/auth-methods/me</code></li>
+  <li>Per-user (after enrollment): <code>/me</code> (summary), <code>/dashboard</code> (browser UI), <code>/users/:id/did.json</code>, <code>/users/:id/profile</code>, <code>/auth-methods/me</code></li>
   <li>Federation: <code>/.well-known/webfinger</code></li>
 </ul>
 
@@ -2306,6 +2326,316 @@ app.get('/wallet/status/:userId', async (req, res) => {
 });
 
 // ── Wallet Connect Web Page ─────────────────────────────────
+
+/**
+ * GET /dashboard — consumer-facing browser dashboard.
+ *
+ * Renders a single-page UI that shows the bearer-authenticated user's:
+ *   - canonical DID + WebID + pod URL (with copy buttons — closes UX#5)
+ *   - inbox (recent descriptors on their pod via relay /inbox — UX#10)
+ *   - registered credentials (passkeys / wallets / DIDs from
+ *     /auth-methods/me — UX#5 admin surface)
+ *   - sign-out-everywhere action (token revocation)
+ *
+ * Single static HTML document, no build step, no external resources.
+ * Token resolution order:
+ *   1. ?token= query param (set by OAuth callback redirect)
+ *   2. sessionStorage 'cg.token' (persisted across reloads in this tab)
+ * If neither, the page prompts to authenticate via the landing flow.
+ *
+ * Closes the audit's biggest cluster: "I enrolled — now what?" The
+ * dashboard answers it with the four surfaces a non-developer
+ * actually needs.
+ */
+app.get('/dashboard', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  const relayBase = BASE_URL.replace('-identity.', '-relay.').replace(/\/$/, '');
+  const identityBase = BASE_URL.replace(/\/$/, '');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Interego Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #0a0a0f; color: #e0e0e8; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; }
+  body { padding: 24px 16px; max-width: 920px; margin: 0 auto; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #2a2a3a; }
+  .topbar h1 { font-size: 1.3rem; font-weight: 600; }
+  .topbar .greeting { color: #9090a0; font-size: 0.85rem; margin-top: 2px; }
+  .signout { background: transparent; color: #f87171; border: 1px solid #f87171; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+  .signout:hover { background: #f87171; color: white; }
+  .grid { display: grid; gap: 18px; grid-template-columns: 1fr; }
+  @media (min-width: 700px) { .grid { grid-template-columns: 1fr 1fr; } }
+  .card { background: #12121a; border: 1px solid #2a2a3a; border-radius: 12px; padding: 20px; }
+  .card.full { grid-column: 1 / -1; }
+  .card h2 { font-size: 1rem; margin-bottom: 14px; color: #a78bfa; display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; color: #888; font-size: 0.78rem; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .field-row { display: flex; gap: 8px; align-items: center; }
+  .field-row code { flex: 1; background: #0a0a0f; padding: 8px 12px; border-radius: 6px; font-size: 0.82rem; color: #c0c0c8; overflow-x: auto; white-space: nowrap; }
+  .copy { background: #2a2a3a; border: none; color: #e0e0e8; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; white-space: nowrap; }
+  .copy:hover { background: #3a3a4a; }
+  .copy.copied { background: #10b981; color: white; }
+  .inbox-item { padding: 12px 0; border-bottom: 1px solid #1a1a26; font-size: 0.85rem; }
+  .inbox-item:last-child { border-bottom: none; }
+  .inbox-item .url { color: #c0c0c8; word-break: break-all; }
+  .inbox-item .meta { color: #888; font-size: 0.76rem; margin-top: 3px; }
+  .inbox-item .pill { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.7rem; margin-right: 4px; }
+  .pill-asserted { background: #1f3a26; color: #10b981; }
+  .pill-hypothetical { background: #2a2a3a; color: #a78bfa; }
+  .pill-counterfactual { background: #3a1f1f; color: #f87171; }
+  .cred-item { padding: 10px 0; border-bottom: 1px solid #1a1a26; font-size: 0.84rem; display: flex; justify-content: space-between; align-items: center; }
+  .cred-item:last-child { border-bottom: none; }
+  .cred-item .kind { color: #a78bfa; font-weight: 600; margin-right: 8px; }
+  .cred-item .val { color: #c0c0c8; word-break: break-all; }
+  .empty { color: #888; font-size: 0.85rem; padding: 8px 0; font-style: italic; }
+  .err { color: #f87171; font-size: 0.85rem; padding: 8px 0; }
+  .auth-required { text-align: center; padding: 40px 20px; color: #9090a0; }
+  .auth-required a { color: #a78bfa; text-decoration: none; font-weight: 600; }
+  .auth-required a:hover { text-decoration: underline; }
+  .footer { color: #555; font-size: 0.76rem; text-align: center; margin-top: 32px; padding-top: 16px; border-top: 1px solid #1a1a26; }
+  .hint { color: #888; font-size: 0.8rem; margin-top: 6px; line-height: 1.4; }
+  .hint code { background: #0a0a0f; padding: 1px 4px; border-radius: 3px; color: #a78bfa; }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+<script>
+  const IDENTITY_BASE = ${JSON.stringify(identityBase)};
+  const RELAY_BASE = ${JSON.stringify(relayBase)};
+
+  // Token resolution: query param → sessionStorage → unauthenticated.
+  function getToken() {
+    const url = new URL(location.href);
+    const fromUrl = url.searchParams.get('token');
+    if (fromUrl) {
+      sessionStorage.setItem('cg.token', fromUrl);
+      // Strip the token from the URL so it isn't logged in shared bookmarks
+      url.searchParams.delete('token');
+      history.replaceState({}, '', url.toString());
+      return fromUrl;
+    }
+    return sessionStorage.getItem('cg.token');
+  }
+  function clearToken() {
+    sessionStorage.removeItem('cg.token');
+  }
+
+  async function api(base, path, opts) {
+    const token = getToken();
+    const headers = Object.assign({}, (opts && opts.headers) || {}, token ? { Authorization: 'Bearer ' + token } : {});
+    const resp = await fetch(base + path, Object.assign({}, opts, { headers }));
+    if (!resp.ok) {
+      let detail = '';
+      try { const j = await resp.json(); detail = j.detail || j.title || j.error || JSON.stringify(j); }
+      catch { detail = await resp.text(); }
+      throw new Error(detail || ('HTTP ' + resp.status));
+    }
+    return resp.json();
+  }
+
+  function copyButton(text) {
+    const btn = document.createElement('button');
+    btn.className = 'copy';
+    btn.textContent = 'Copy';
+    btn.onclick = function () {
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+      });
+    };
+    return btn;
+  }
+
+  function field(label, value) {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+    const lab = document.createElement('label');
+    lab.textContent = label;
+    const row = document.createElement('div');
+    row.className = 'field-row';
+    const c = document.createElement('code');
+    c.textContent = value || '—';
+    row.appendChild(c);
+    if (value) row.appendChild(copyButton(value));
+    wrap.appendChild(lab);
+    wrap.appendChild(row);
+    return wrap;
+  }
+
+  function renderAuthRequired() {
+    const app = document.getElementById('app');
+    app.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = 'auth-required';
+    div.innerHTML = '<h2 style="font-size:1.2rem;margin-bottom:12px;color:#e0e0e8">Sign in to see your dashboard</h2>' +
+      '<p style="margin-bottom:16px;font-size:0.9rem">Enroll a passkey, wallet, or DID first.</p>' +
+      '<p><a href="/">Go to the landing page →</a></p>';
+    app.appendChild(div);
+  }
+
+  async function renderDashboard() {
+    const app = document.getElementById('app');
+    app.innerHTML = '';
+
+    // Top bar
+    const top = document.createElement('div');
+    top.className = 'topbar';
+    top.innerHTML = '<div><h1>Interego</h1><div class="greeting" id="greeting">…</div></div>';
+    const so = document.createElement('button');
+    so.className = 'signout';
+    so.textContent = 'Sign out everywhere';
+    so.onclick = signOutEverywhere;
+    top.appendChild(so);
+    app.appendChild(top);
+
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    app.appendChild(grid);
+
+    // ── Identity card ──
+    const idCard = document.createElement('div');
+    idCard.className = 'card';
+    idCard.innerHTML = '<h2>🆔 Your Identity</h2>';
+    grid.appendChild(idCard);
+
+    // ── Credentials card ──
+    const credCard = document.createElement('div');
+    credCard.className = 'card';
+    credCard.innerHTML = '<h2>🔐 Registered Credentials</h2><div class="empty">Loading…</div>';
+    grid.appendChild(credCard);
+
+    // ── Inbox card (full-width) ──
+    const inboxCard = document.createElement('div');
+    inboxCard.className = 'card full';
+    inboxCard.innerHTML = '<h2>📬 Inbox <span style="color:#888;font-weight:400;font-size:0.85rem">(recent descriptors on your pod, last 7 days)</span></h2><div class="empty">Loading…</div>';
+    grid.appendChild(inboxCard);
+
+    // Fetch /me
+    let meData;
+    try {
+      meData = await api(IDENTITY_BASE, '/me');
+    } catch (e) {
+      idCard.innerHTML = '<h2>🆔 Your Identity</h2><div class="err">Could not load identity: ' + e.message + '</div>';
+      credCard.innerHTML = '<h2>🔐 Registered Credentials</h2><div class="err">' + e.message + '</div>';
+      inboxCard.innerHTML = '<h2>📬 Inbox</h2><div class="err">' + e.message + '</div>';
+      document.getElementById('greeting').textContent = 'Not signed in';
+      return;
+    }
+    document.getElementById('greeting').textContent = 'Hi ' + (meData.displayName || meData.userId);
+
+    // Populate identity card
+    idCard.appendChild(field('Display name', meData.displayName));
+    idCard.appendChild(field('Your DID (share with a friend so they can send you context)', meData.did));
+    idCard.appendChild(field('WebID', meData.webId));
+    idCard.appendChild(field('Pod URL', meData.podHint));
+    if (meData.primaryAgentDid) idCard.appendChild(field('Primary agent DID', meData.primaryAgentDid));
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.innerHTML = 'To receive shared descriptors from another user, send them your <strong>DID</strong>. They publish with <code>share_with: ["' + (meData.did.slice(0, 40) + '…') + '"]</code> and the descriptor lands on your pod, encrypted to your key.';
+    idCard.appendChild(hint);
+
+    // Fetch /auth-methods/me
+    try {
+      const am = await api(IDENTITY_BASE, '/auth-methods/me');
+      credCard.innerHTML = '<h2>🔐 Registered Credentials</h2>';
+      const list = document.createElement('div');
+      const total = am.walletAddresses.length + am.webAuthnCredentials.length + am.didKeys.length;
+      if (total === 0) {
+        list.innerHTML = '<div class="empty">No credentials registered yet.</div>';
+      }
+      for (const w of am.walletAddresses) {
+        const row = document.createElement('div');
+        row.className = 'cred-item';
+        row.innerHTML = '<div><span class="kind">Wallet</span><span class="val">' + w + '</span></div>';
+        list.appendChild(row);
+      }
+      for (const p of am.webAuthnCredentials) {
+        const row = document.createElement('div');
+        row.className = 'cred-item';
+        row.innerHTML = '<div><span class="kind">Passkey</span><span class="val">' + p.id.slice(0, 20) + '…</span></div><div style="color:#888;font-size:0.78rem">' + (p.createdAt || '').slice(0, 10) + '</div>';
+        list.appendChild(row);
+      }
+      for (const d of am.didKeys) {
+        const row = document.createElement('div');
+        row.className = 'cred-item';
+        row.innerHTML = '<div><span class="kind">DID</span><span class="val">' + d.did.slice(0, 60) + (d.did.length > 60 ? '…' : '') + '</span></div>';
+        list.appendChild(row);
+      }
+      credCard.appendChild(list);
+      const addHint = document.createElement('div');
+      addHint.className = 'hint';
+      addHint.innerHTML = 'Add another device by visiting <a href="/" style="color:#a78bfa">/</a> with this tab\\'s token, or revoke a credential via <code>DELETE /auth-methods/me/...</code>.';
+      credCard.appendChild(addHint);
+    } catch (e) {
+      credCard.innerHTML = '<h2>🔐 Registered Credentials</h2><div class="err">' + e.message + '</div>';
+    }
+
+    // Fetch /inbox?pod=podUrl from relay
+    try {
+      const inbox = await api(RELAY_BASE, '/inbox?pod=' + encodeURIComponent(meData.podHint) + '&limit=20');
+      inboxCard.innerHTML = '<h2>📬 Inbox <span style="color:#888;font-weight:400;font-size:0.85rem">(' + inbox.count + ' / ' + inbox.totalOnPod + ' in last 7 days)</span></h2>';
+      if (inbox.count === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = inbox.hint || 'Nothing in the last 7 days.';
+        inboxCard.appendChild(empty);
+      } else {
+        for (const ev of inbox.events) {
+          const it = document.createElement('div');
+          it.className = 'inbox-item';
+          const pillClass = ev.modalStatus ? 'pill-' + ev.modalStatus.toLowerCase() : '';
+          it.innerHTML =
+            '<div>' + (pillClass ? '<span class="pill ' + pillClass + '">' + ev.modalStatus + '</span>' : '') +
+            '<span class="url">' + ev.descriptorUrl + '</span></div>' +
+            '<div class="meta">' + (ev.validFrom || 'no validFrom') + (ev.trustLevel ? ' · ' + ev.trustLevel : '') + '</div>';
+          inboxCard.appendChild(it);
+        }
+      }
+    } catch (e) {
+      inboxCard.innerHTML = '<h2>📬 Inbox</h2><div class="err">Could not load inbox: ' + e.message + '</div>';
+    }
+
+    // Footer
+    const foot = document.createElement('div');
+    foot.className = 'footer';
+    foot.innerHTML = 'Add the relay to your MCP client: <code style="color:#a78bfa">' + RELAY_BASE + '/sse</code>';
+    app.appendChild(foot);
+  }
+
+  async function signOutEverywhere() {
+    if (!confirm('Sign out everywhere? All your active tokens will be revoked.')) return;
+    try {
+      await api(IDENTITY_BASE, '/tokens/me/sign-out-everywhere', { method: 'POST' });
+    } catch (e) {
+      alert('Sign-out failed: ' + e.message);
+      return;
+    }
+    clearToken();
+    renderAuthRequired();
+  }
+
+  // Boot
+  if (!getToken()) {
+    renderAuthRequired();
+  } else {
+    renderDashboard().catch(function (e) {
+      console.error(e);
+      // Token might be stale — give the user a path forward
+      if (e.message && (e.message.indexOf('Invalid bearer') >= 0 || e.message.indexOf('expired') >= 0)) {
+        clearToken();
+        renderAuthRequired();
+      }
+    });
+  }
+</script>
+</body>
+</html>`);
+});
 
 /**
  * GET /connect — Web page for connecting an existing Ethereum wallet.

@@ -426,6 +426,16 @@ function buildOverlappingPair(
  * Satisfies the right identity law: Ingest of a single MintAtom = that atom
  * Satisfies associativity: Ingest(Ingest(A) ++ Ingest(B)) = Ingest(A ++ B)
  *   (up to canonical URI equivalence)
+ *
+ * Concurrency: this function is entirely synchronous — no awaits in
+ * any of the call paths (mintAtom, ensureLevel1, the iterative
+ * level-build loop). JS's single-threaded event loop guarantees that
+ * two ingest calls from the same PGSLInstance run serially: one
+ * completes before the other starts. No explicit lock needed in the
+ * in-process case. The audit's "concurrent PGSL ingest without
+ * locking" concern (Rel #18) applies only if PGSL state were shared
+ * across worker threads or processes — which is not a deployment
+ * shape we support. The single-threaded execution model IS the lock.
  */
 export function ingest(
   pgsl: PGSLInstance,
