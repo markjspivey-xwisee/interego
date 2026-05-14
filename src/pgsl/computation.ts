@@ -10,6 +10,9 @@
  * unlike LLM-generated arithmetic which is probabilistic.
  */
 
+import { embedInPGSL } from './geometric.js';
+import { isSubFragment } from './category.js';
+
 // ═════════════════════════════════════════════════════════════
 //  Date Arithmetic (structural, not LLM)
 // ═════════════════════════════════════════════════════════════
@@ -172,18 +175,21 @@ export function countUniquePGSL(
   unique: string[];
   duplicates: string[];
 } {
-  const { embedInPGSL } = require('./geometric.js');
-  const { isSubFragment } = require('./category.js');
-
-  // Ingest each item and get its URI
+  // Ingest each item and get its URI. An item that can't be embedded
+  // into the lattice can't participate in structural dedup — it falls
+  // back to exact-string identity below rather than being silently
+  // dropped, which would make `count` undercount.
   const itemUris: Array<{ text: string; uri: import('../model/types.js').IRI }> = [];
+  const unembeddable: string[] = [];
   for (const item of items) {
     const trimmed = item.trim();
     if (trimmed.length === 0) continue;
     try {
       const uri = embedInPGSL(pgsl, trimmed);
       itemUris.push({ text: trimmed, uri });
-    } catch {}
+    } catch {
+      unembeddable.push(trimmed);
+    }
   }
 
   // Dedup: if item A is a sub-fragment of item B, they're the same thing
@@ -211,9 +217,22 @@ export function countUniquePGSL(
     if (!isDup) unique.push(item);
   }
 
+  // Fold unembeddable items in by exact-string identity — the most
+  // conservative dedup available without a lattice URI to compare on.
+  const uniqueTexts = unique.map(u => u.text);
+  const seen = new Set(uniqueTexts);
+  for (const text of unembeddable) {
+    if (seen.has(text)) {
+      duplicates.push(text);
+    } else {
+      seen.add(text);
+      uniqueTexts.push(text);
+    }
+  }
+
   return {
-    count: unique.length,
-    unique: unique.map(u => u.text),
+    count: uniqueTexts.length,
+    unique: uniqueTexts,
     duplicates,
   };
 }

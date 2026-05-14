@@ -437,6 +437,7 @@ export {
   dateDifference,
   orderChronologically,
   countUnique,
+  countUniquePGSL,
   sumValues,
   averageValues,
   extractNumbers,

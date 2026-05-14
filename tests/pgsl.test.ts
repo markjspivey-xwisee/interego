@@ -37,6 +37,7 @@ import {
   embedInPGSL,
   verifyIntersectionCoherence,
   verifyProvenanceNaturality,
+  countUniquePGSL,
   ContextDescriptor,
 } from '../src/index.js';
 import type { IRI, PGSLInstance, NodeProvenance } from '../src/index.js';
@@ -378,5 +379,24 @@ describe('Spec Example: "A B C" then "B C D"', () => {
     // Verify resolve
     expect(pgslResolve(pgsl, abc)).toBe('A B C');
     expect(pgslResolve(pgsl, bcd)).toBe('B C D');
+  });
+});
+
+describe('countUniquePGSL — structural dedup', () => {
+  it('treats a phrase structurally contained in a longer phrase as a duplicate', () => {
+    const result = countUniquePGSL(
+      ['banana bread', 'banana bread for neighbors', 'sourdough loaf'],
+      pgsl,
+    );
+    expect(result.count).toBe(2);
+    expect(result.unique).toContain('banana bread for neighbors');
+    expect(result.unique).toContain('sourdough loaf');
+    expect(result.duplicates).toContain('banana bread');
+  });
+
+  it('skips blank items and keeps count === unique.length', () => {
+    const result = countUniquePGSL(['  ', 'red car', 'blue sky'], pgsl);
+    expect(result.count).toBe(result.unique.length);
+    expect(result.count).toBe(2);
   });
 });
