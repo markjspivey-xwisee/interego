@@ -90,6 +90,12 @@ dependencies, matching Interego's zero-runtime-deps ethos.
   descriptor graphs). Semantic / vector ranking is Hermes' job — it
   already has FTS5 and pluggable vector layers; this returns the
   candidate pool.
+* Recall resolves a descriptor's graph URL by the default filename
+  convention (`<desc>.ttl` → `<desc>-graph.trig`). The substrate-correct
+  path is to follow the descriptor's `dcat:distribution` / `hydra:target`
+  link; until that is wired, recall degrades to empty (it never errors)
+  when the convention does not hold. The write path does not depend on
+  this — every turn is still published and signed.
 * `on_memory_write` `remove` is a **retraction, not a delete**. The
   original descriptor + graph stay on the pod (audit-walkable via
   `cg:supersedes`). For data-subject erasure, delete at the pod's

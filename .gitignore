@@ -47,3 +47,7 @@ scripts/agent-*.bat
 scripts/agent-*.json
 scripts/mcp-config-*.json
 scripts/run-mcp-multiagent-test.bat
+
+# Python bytecode (integrations/*-memory plugins)
+__pycache__/
+*.pyc
