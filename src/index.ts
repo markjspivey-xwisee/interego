@@ -806,6 +806,7 @@ export {
   rotateComplianceWallet,
   importComplianceWallet,
   listValidSignerAddresses,
+  listValidSignerAddressesAt,
 } from './compliance/index.js';
 export type {
   ComplianceFramework,
