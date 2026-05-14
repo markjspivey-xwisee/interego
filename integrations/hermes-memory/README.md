@@ -66,9 +66,10 @@ stable REST surface (`POST /tool/publish_context`,
 | Hermes hook | → Interego |
 |---|---|
 | `sync_turn(user, assistant)` | `publish_context` — the turn as a `cgh:AgentMemory` graph, modal `Asserted` (non-blocking, daemon thread, per Hermes' contract) |
-| `prefetch(query)` / `interego_recall` tool | `discover_context` — structural recall over the pod's memory descriptors; Hermes' own FTS5 / vector layer ranks on top |
+| `prefetch(query)` | `discover_context` — structural recall over the pod's memory descriptors, each line decorated with its affordances; Hermes' own FTS5 / vector layer ranks on top |
 | `on_memory_write(action, target, content)` | mirrors `MEMORY.md` / `USER.md` edits: `add`/`replace` → `publish_context` (the relay's auto-supersede links the prior record); `remove` → a Counterfactual retraction |
-| `system_prompt_block()` | tells the agent its memory is verifiable + portable, so it uses it well |
+| `get_tool_schemas()` | the fixed 3-tool HATEOAS surface — see below |
+| `system_prompt_block()` | tells the agent its memory is verifiable + portable, and how the 3-tool / affordance model works |
 
 No Interego substrate code is duplicated here — the relay (running
 `@interego/core`) does descriptor construction, signing, and
@@ -79,6 +80,32 @@ pod read each other's memories.
 
 Stdlib-only Python (`urllib`, `json`, `threading`) — no pip
 dependencies, matching Interego's zero-runtime-deps ethos.
+
+## Reaching the whole substrate without tool bloat (HATEOAS)
+
+Interego has ~15 relay tools (~60 in the full MCP server). Surfacing
+them flat would crowd the agent's context with an API reference it
+mostly ignores. So this provider gives the agent **exactly three tool
+schemas, forever**:
+
+* `interego_recall(query)` — recall pod memories, each decorated with
+  its `affordances`
+* `interego_discover(query, federated?)` — discover descriptors on the
+  pod or across the federation, each decorated with its `affordances`
+* `interego_act(affordance, content?, params?)` — **follow** an
+  affordance: the single substrate-acting path
+
+Every result carries an `affordances` list — self-describing
+`{action, tool, args}` records, gated by the agent's delegation
+`scope`, naming exactly what it can do with that item. The agent acts
+by passing one to `interego_act`. This is HATEOAS: capability **travels
+with the data**, not as preloaded tools. New substrate capability shows
+up as a new affordance verb in a result — never a new tool schema, never
+extra context cost. Entry-point affordances (`register_agent`,
+`verify_agent`, `discover_all`) are listed in `system_prompt_block()`,
+so identity and federation are reachable through the same one tool.
+
+Full rationale: [`docs/integrations/hermes-full-substrate.md`](../../docs/integrations/hermes-full-substrate.md).
 
 ## Honest scoping
 
@@ -106,6 +133,8 @@ dependencies, matching Interego's zero-runtime-deps ethos.
 
 ## See also
 
+* [`docs/integrations/hermes-full-substrate.md`](../../docs/integrations/hermes-full-substrate.md)
+  — reaching all of Interego from Hermes via HATEOAS, in full
 * [`docs/integrations/path-5-hermes-memory-provider.md`](../../docs/integrations/path-5-hermes-memory-provider.md)
   — the integration path in full
 * [`docs/integrations/agent-runtime-integration.md`](../../docs/integrations/agent-runtime-integration.md)
