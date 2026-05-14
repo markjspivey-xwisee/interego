@@ -117,9 +117,26 @@ verifiable substrate — ENS-style global uniqueness is available as an
 opt-in resolution tier, not the root). Shipped:
 `buildNameAttestation` / `attestName` / `resolveName` (forward,
 trust-ranked) / `namesFor` (reverse) / `defaultNameTrustPolicy`
-(pluggable), all with an injectable `fetch`. 14 tests. **No new L1/L2
-ontology terms** — `foaf:nick` is W3C FOAF; L2 pattern, sibling of
-`registry:` / `passport:`.
+(pluggable), all with an injectable `fetch`; a runnable offline demo
+(`examples/demo-name-service.mjs`); and two follow-on pieces —
+
+- **`resolveIdentifier` TN tier** (`5fac93d`) — `resolveName` is now a
+  tier of the unified identifier resolver. `resolveIdentifier(id,
+  { naming })` populates `kind: 'name'` + `nameCandidates` (the full
+  ranked set — a name is trust-relative) and mirrors the top
+  candidate's `subject` into `webId` for single-answer callers.
+  `naming/index.ts` imports from source modules (not the barrel) to
+  keep the new `discovery → naming` edge cycle-free.
+- **`@alice` host-free form** (`f2475aa`) — a leading `@` is a
+  syntactic marker, like `did:` / `acct:`: `detectKind` recognizes
+  `@alice` as `kind: 'name'`, so `resolveIdentifier` auto-runs the TN
+  tier for it (a *bare* `alice` stays `unknown` and needs the opt-in
+  `naming` flag). `resolveName` strips a leading `@`.
+
+21 tests. **No new L1/L2 ontology terms** — `foaf:nick` is W3C FOAF;
+L2 pattern, sibling of `registry:` / `passport:`. One item stays
+deliberately deferred (a pod-directory `name → did` index — it carries
+a real schema-design decision; see `docs/NAME-SERVICE.md`).
 
 ### Deploy reliability — diagnosable + reproducible + rate-limit-resilient ACR builds
 
@@ -171,6 +188,13 @@ generic `RunStatus.FAILED` and no detail.
   `interego-mcp-relay` host (an invented `mcp-` segment); the real
   Azure Container App is `interego-relay`. Corrected — left as-is the
   Hermes provider would have failed out of the box.
+- **CI: Actions off the deprecated Node 20 runtime** (`c93f003`) — the
+  deploy logs flagged `actions/checkout@v4` (+ same-class
+  `setup-node@v4`, `upload-artifact@v4`) running on Node 20, which
+  GitHub force-migrates 2026-06-02 and removes 2026-09-16. Bumped
+  across all four workflows to the current majors (`checkout@v6`,
+  `setup-node@v6`, `upload-artifact@v7`) — verified via the releases
+  API; zero breaking-change surface (the inputs in use are stable).
 
 ## 2026-05-13 — Production hardening, batches 1–4
 
