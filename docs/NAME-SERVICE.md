@@ -209,7 +209,7 @@ opt into a `did:web` or ENS tier.
 ## Build status
 
 **Shipped** ([`src/naming/index.ts`](../src/naming/index.ts) +
-[`src/solid/discovery.ts`](../src/solid/discovery.ts); 18 tests, plus a
+[`src/solid/discovery.ts`](../src/solid/discovery.ts); 21 tests, plus a
 runnable demo at [`examples/demo-name-service.mjs`](../../examples/demo-name-service.mjs)):
 
 - ✅ `buildNameAttestation` — pure builder (content-addressed on
@@ -231,17 +231,23 @@ runnable demo at [`examples/demo-name-service.mjs`](../../examples/demo-name-ser
   `webId` for single-answer callers. (`naming/index.ts` imports from
   source modules, not the `../index.js` barrel, to keep the
   `discovery → naming` edge cycle-free.)
+- ✅ **Host-free `@alice` form** — a single leading `@` is a syntactic
+  marker (like `did:` / `acct:`): `detectKind` recognizes `@alice` as
+  `kind: 'name'`, so `resolveIdentifier` auto-runs the TN tier for it
+  (a *bare* name still can't be detected and stays opt-in). `resolveName`
+  strips a leading `@`, so `@alice` and `alice` resolve identically.
+  No new ontology term — `@` is purely a presentation convention.
 
 **Not yet built (optional, deferred):**
 
 1. Extend the pod directory with an optional `name → did` index, so
    federated resolution doesn't have to walk every pod. (The index is a
    cache/hint, re-derivable from the attestation descriptors — not an
-   authority.)
-2. A host-free convenience namespace (`@alice`) resolved via the
-   federation index — explicitly a convenience view over a trust-ranked
-   set, not a uniqueness guarantee.
-3. A `docs/ns/naming.ttl` *only if* typed shapes are ever needed — the
+   authority. This is the one remaining item with a real schema-design
+   decision — it needs either a new directory predicate or a reuse of an
+   existing W3C term — so it is left for deliberate scoping rather than
+   momentum.)
+2. A `docs/ns/naming.ttl` *only if* typed shapes are ever needed — the
    binding itself stays plain `foaf:nick`, so likely never.
 
 ## See also

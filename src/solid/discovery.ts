@@ -251,6 +251,11 @@ function detectKind(id: string): DiscoveryResult['kind'] {
   if (id.startsWith('did:')) return 'did';
   if (id.startsWith('acct:')) return 'acct';
   if (id.startsWith('http://') || id.startsWith('https://')) return 'url';
+  // A leading '@' is the host-free name form (`@alice`) — a syntactic
+  // marker, like `did:` / `acct:`, that makes a name auto-detectable.
+  // A bare name without it stays 'unknown' (indistinguishable from any
+  // other string) and only resolves via the opt-in `naming` option.
+  if (id.startsWith('@') && id.length > 1) return 'name';
   return 'unknown';
 }
 
@@ -396,33 +401,47 @@ export async function resolveIdentifier(
     } catch { /* ignore */ }
   }
 
-  // TN — Name service (opt-in via options.naming).
+  // TN — Name service.
   //
-  // A bare name has no syntax to detect, so this only runs when the
-  // caller explicitly supplies `naming` AND no structured kind matched.
-  // A name is trust-relative — `resolveName` returns a RANKED set; the
-  // top candidate's `subject` is mirrored into `webId` for callers that
-  // just want a single best answer, while `nameCandidates` carries the
-  // full set so callers can see (and adjudicate) the ambiguity.
+  // Runs for two cases:
+  //   - kind === 'name'    — the id is `@alice` (auto-detected by the
+  //                          '@' syntactic marker).
+  //   - kind === 'unknown' — a bare name ("alice") that can't be
+  //                          syntactically detected; the caller opts in
+  //                          by supplying `options.naming`.
+  // Either way the actual resolution still needs `options.naming` (for
+  // the pod list). A name is trust-relative — `resolveName` returns a
+  // RANKED set; the top candidate's `subject` is mirrored into `webId`
+  // for callers that just want a single best answer, while
+  // `nameCandidates` carries the full set so callers can adjudicate.
   let nameCandidates: readonly NameCandidate[] | undefined;
-  if (options.naming && kind === 'unknown') {
-    try {
-      const hits = await resolveName(id, options.naming.config, {
-        pods: options.naming.pods,
-        fetch: options.fetch,
-      });
-      if (hits.length > 0) {
-        kind = 'name';
-        nameCandidates = hits;
-        tiersHit.push('TN');
-        const top = hits[0]!;
-        trace.TN = `name resolved: ${hits.length} candidate(s), top=${top.subject} (${top.trustLevel})`;
-        if (!webId) webId = top.subject;
-      } else {
-        trace.TN = 'name service: no candidates';
+  if (kind === 'name' || kind === 'unknown') {
+    if (!options.naming) {
+      // `@alice` was clearly a name but we can't resolve it without a
+      // pod list — tell the caller how. (Bare-`unknown` ids get no
+      // trace: they may simply not be names.)
+      if (kind === 'name') {
+        trace.TN = 'name identifier — pass options.naming to resolve it';
       }
-    } catch (e) {
-      trace.TN = `name resolve failed: ${(e as Error).message}`;
+    } else {
+      try {
+        const hits = await resolveName(id, options.naming.config, {
+          pods: options.naming.pods,
+          fetch: options.fetch,
+        });
+        if (hits.length > 0) {
+          kind = 'name';
+          nameCandidates = hits;
+          tiersHit.push('TN');
+          const top = hits[0]!;
+          trace.TN = `name resolved: ${hits.length} candidate(s), top=${top.subject} (${top.trustLevel})`;
+          if (!webId) webId = top.subject;
+        } else {
+          trace.TN = 'name service: no candidates';
+        }
+      } catch (e) {
+        trace.TN = `name resolve failed: ${(e as Error).message}`;
+      }
     }
   }
 

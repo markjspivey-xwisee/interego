@@ -355,7 +355,8 @@ async function gatherCandidates(
  * Resolve a human-friendly name to its principal(s). Returns a
  * trust-RANKED candidate set, NOT a single guaranteed answer — a name
  * is trust-relative. The caller (or its agent) picks, or supplies a
- * stricter `trustPolicy`. Search is case-insensitive on the name.
+ * stricter `trustPolicy`. Search is case-insensitive, and a single
+ * leading `@` (the host-free `@alice` form) is stripped.
  *
  * By default it searches only `config.podUrl`; pass `options.pods` (own
  * pod + subscribed pods + pod-directory entries) to resolve federated.
@@ -365,7 +366,12 @@ export async function resolveName(
   config: NamingConfig,
   options: ResolveOptions = {},
 ): Promise<readonly NameCandidate[]> {
-  const target = name.trim().toLowerCase();
+  // A single leading '@' is a presentation convention — the host-free
+  // name form (`@alice`). The stored `foaf:nick` literal is the bare
+  // name, so `resolveName('@alice')` and `resolveName('alice')` are
+  // equivalent. (The `@` prefix also lets resolveIdentifier auto-detect
+  // a name — see its `detectKind`.)
+  const target = name.trim().replace(/^@/, '').toLowerCase();
   if (target.length === 0) return [];
   const pods = options.pods && options.pods.length > 0 ? options.pods : [config.podUrl];
   const candidates = await gatherCandidates(

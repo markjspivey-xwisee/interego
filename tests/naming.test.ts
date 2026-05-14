@@ -289,4 +289,35 @@ describe('resolveIdentifier — TN name tier (opt-in)', () => {
     expect(r.kind).toBe('unknown'); // no candidates → stays unknown
     expect(r.trace?.TN).toMatch(/no candidates/);
   });
+
+  it('auto-detects the @-prefixed host-free name form', async () => {
+    const fetch = mockPod(CONFIG.podUrl, [
+      { descriptorUrl: 'https://pod.example/cg/n1.ttl', subject: ALICE_DID, name: 'alice' },
+    ]);
+    // @alice is syntactically a name — detected even without relying on
+    // the kind being 'unknown'.
+    const r = await resolveIdentifier('@alice', { fetch, naming: { config: CONFIG } });
+    expect(r.kind).toBe('name');
+    expect(r.tiersHit).toContain('TN');
+    expect(r.nameCandidates?.[0]?.subject).toBe(ALICE_DID);
+  });
+
+  it('marks @-names as kind=name even without a naming config, with a helpful trace', async () => {
+    const r = await resolveIdentifier('@alice', {});
+    expect(r.kind).toBe('name'); // the @ marker is enough to detect the KIND
+    expect(r.tiersHit).not.toContain('TN'); // ...but resolution needs options.naming
+    expect(r.trace?.TN).toMatch(/pass options\.naming/);
+  });
+});
+
+describe('resolveName — @-prefix', () => {
+  it('strips a single leading @ — resolveName("@alice") === resolveName("alice")', async () => {
+    const fetch = mockPod(CONFIG.podUrl, [
+      { descriptorUrl: 'https://pod.example/cg/n1.ttl', subject: ALICE_DID, name: 'alice' },
+    ]);
+    const withAt = await resolveName('@alice', CONFIG, { fetch });
+    const without = await resolveName('alice', CONFIG, { fetch });
+    expect(withAt).toHaveLength(1);
+    expect(withAt[0]?.subject).toBe(without[0]?.subject);
+  });
 });
