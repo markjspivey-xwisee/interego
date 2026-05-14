@@ -75,12 +75,17 @@ deploy/
 integrations/
   openclaw-memory/      Path 2 — OpenClaw memory-engine plugin backed by
                         Interego pods. Substrate-pure bridge.ts +
-                        OpenClaw glue plugin.ts. Bridge importable from
-                        any other runtime (Codex, Cursor).
+                        OpenClaw glue plugin.ts. Fixed 5-tool HATEOAS
+                        surface (3 memory-slot tools + interego_discover
+                        + interego_act): results decorated with
+                        affordances, followed via followAffordance —
+                        reaches the whole substrate without tool bloat.
+                        Bridge importable from any runtime (Codex, Cursor).
   hermes-memory/        Path 5 — Hermes Agent MemoryProvider plugin
                         (stdlib-only Python) backed by Interego pods over
                         the MCP relay's REST surface. Same cgh:AgentMemory
-                        shape as the OpenClaw provider.
+                        shape + HATEOAS affordance navigation as the
+                        OpenClaw provider.
   compliance-overlay/   Path 4 — generic agent-action → compliance-grade
                         descriptor translator. Cites EU AI Act / NIST RMF /
                         SOC 2 controls via dct:conformsTo into the existing

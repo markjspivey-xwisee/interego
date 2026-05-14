@@ -79,16 +79,24 @@ signed `cg:ContextDescriptor` with proper modal status.
 
 The plugin claims OpenClaw's exclusive `plugins.slots.memory` slot.
 It does not introduce any Interego concept OpenClaw doesn't already
-have a place for; it just rebinds the same three operations to the
-substrate's `publish_context` / `discover_context` /
-`supersede-with-Counterfactual` primitives.
+have a place for; it rebinds the slot's operations to the substrate's
+`publish_context` / `discover_context` / `supersede-with-Counterfactual`
+primitives.
+
+It also exposes a **fixed 5-tool HATEOAS surface** (the 3 memory-slot
+tools + `interego_discover` / `interego_act`): results are decorated
+with `affordances`, and the agent follows them — so it reaches *all* of
+Interego through five schemas instead of a flat substrate tool list
+bloating its context. See
+[openclaw-full-substrate.md](openclaw-full-substrate.md).
 
 **Read:** [path-2-openclaw-memory-plugin.md](path-2-openclaw-memory-plugin.md)
+· [openclaw-full-substrate.md](openclaw-full-substrate.md)
 
-**Trade-off:** OpenClaw-specific. Hermes Agent now exposes its own
+**Trade-off:** OpenClaw-specific. Hermes Agent exposes its own
 external-memory-provider interface — that is **Path 5** below, the same
-shape against Hermes' contract. For runtimes with no memory-plugin slot,
-fall back to Path 1.
+HATEOAS shape against Hermes' contract. For runtimes with no
+memory-plugin slot, fall back to Path 1.
 
 ---
 

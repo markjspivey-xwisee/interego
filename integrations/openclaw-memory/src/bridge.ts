@@ -36,6 +36,14 @@ import {
 
 // ── Types ────────────────────────────────────────────────────────────
 
+/**
+ * Delegation scope — gates which affordances are offered on a
+ * discovered descriptor. Mirrors the substrate's DelegationScope
+ * (src/model/types.ts) and the affordance engine's SCOPE_PERMISSIONS
+ * (src/affordance/compute.ts).
+ */
+export type DelegationScope = 'ReadWrite' | 'ReadOnly' | 'PublishOnly' | 'DiscoverOnly';
+
 export interface BridgeConfig {
   /** Pod URL where memories are stored (e.g. https://your-pod.example/agent/). */
   readonly podUrl: string;
@@ -52,6 +60,12 @@ export interface BridgeConfig {
    * with E2EE envelopes for these DIDs (existing share_with semantics).
    */
   readonly defaultShareWith?: readonly IRI[];
+  /**
+   * The agent's delegation scope — gates which affordances are offered
+   * on discovered descriptors / recalled memories. Default 'ReadWrite'.
+   * The agent is only ever handed actions its scope actually permits.
+   */
+  readonly scope?: DelegationScope;
 }
 
 /**
@@ -79,9 +93,10 @@ export interface StoreMemoryArgs {
   /**
    * Initial modal status. Default: 'Asserted' — the agent is committing
    * to remember this as ground-truth-on-the-record. Use 'Hypothetical'
-   * for inferred-but-unconfirmed observations.
+   * for inferred-but-unconfirmed observations, 'Counterfactual' for a
+   * known-false / retracted / rejected claim.
    */
-  readonly modalStatus?: 'Hypothetical' | 'Asserted';
+  readonly modalStatus?: 'Hypothetical' | 'Asserted' | 'Counterfactual';
   /** Initial confidence; default 0.85 for Asserted, 0.5 for Hypothetical. */
   readonly confidence?: number;
   /** Override per-call recipients. */
@@ -123,10 +138,16 @@ export interface MemoryHit {
   readonly text: string;
   readonly kind: MemoryKind;
   readonly tags: readonly string[];
-  readonly modalStatus: 'Hypothetical' | 'Asserted';
+  readonly modalStatus: 'Hypothetical' | 'Asserted' | 'Counterfactual';
   readonly confidence: number;
   readonly recordedAt: string;
   readonly attributedTo: IRI;
+  /**
+   * HATEOAS: the actions available on this memory, gated by the
+   * agent's delegation scope. The agent follows one via
+   * {@link followAffordance} rather than reaching for a flat tool list.
+   */
+  readonly affordances: readonly BridgeAffordance[];
 }
 
 export interface ForgetMemoryArgs {
@@ -204,7 +225,12 @@ export function buildMemoryDescriptor(args: StoreMemoryArgs, config: BridgeConfi
     .temporal({ validFrom: nowIso() });
 
   if (modal === 'Asserted') builder.asserted(confidence);
-  else builder.hypothetical(confidence);
+  else if (modal === 'Counterfactual') {
+    // Semiotic modal Counterfactual — a known-false / retracted claim.
+    // (Distinct from the builder's causal-counterfactual method; see
+    // the descriptor builder's hypothetical() docstring.)
+    builder.semiotic({ modalStatus: 'Counterfactual', groundTruth: false, epistemicConfidence: confidence });
+  } else builder.hypothetical(confidence);
 
   if (args.supersedes && args.supersedes.length > 0) {
     builder.supersedes(...args.supersedes);
@@ -230,16 +256,23 @@ ${tagTriples}    <${DCT_NS}description> """${escapeMulti(text)}""" ;
 /**
  * Persist a memory write through the substrate. The descriptor is
  * signed (Trust facet self-asserted; the pod's identity layer further
- * adds wallet-rooted signature on save), provenance-attributed,
- * temporally bounded, and (optionally) E2EE-shared with delegates.
+ * adds wallet-rooted signature on save), provenance-attributed, and
+ * temporally bounded.
+ *
+ * Cross-pod E2EE share — `args.shareWith` / `config.defaultShareWith` —
+ * is intentionally NOT applied here: `publish()`'s encryption path needs
+ * a sender X25519 keypair, which this substrate-pure bridge does not
+ * hold. Runtimes that need encrypted share route it through the relay's
+ * `publish_context` `share_with` argument (the relay holds the keypair).
+ * The `shareWith` fields stay in the bridge's API for that relay path
+ * and forward-compatibility; this direct publish writes plaintext to the
+ * pod, where the pod's own ACLs still apply.
+ * (Previously this passed an unsupported `{ shareWith }` option that
+ * `publish()` silently ignored — a no-op that looked like a feature.)
  */
 export async function storeMemory(args: StoreMemoryArgs, config: BridgeConfig): Promise<StoreMemoryResult> {
   const built = buildMemoryDescriptor(args, config);
-  const recipients = args.shareWith ?? config.defaultShareWith;
-  const publishOpts = recipients && recipients.length > 0
-    ? { shareWith: recipients }
-    : undefined;
-  const r = await publish(built.descriptor, built.graphContent, config.podUrl, publishOpts);
+  const r = await publish(built.descriptor, built.graphContent, config.podUrl);
   return {
     memoryIri: built.memoryIri,
     descriptorUrl: r.descriptorUrl,
@@ -291,17 +324,24 @@ export async function recallMemories(args: RecallMemoriesArgs, config: BridgeCon
       }
     }
 
+    const memoryIri = (entry.describes[0] ?? entry.descriptorUrl) as IRI;
     hits.push({
-      memoryIri: (entry.describes[0] ?? entry.descriptorUrl) as IRI,
+      memoryIri,
       descriptorUrl: entry.descriptorUrl,
       graphUrl,
       text: parsed.text,
       kind: parsed.kind,
       tags: parsed.tags,
-      modalStatus: entry.modalStatus as 'Hypothetical' | 'Asserted',
-      confidence: entry.confidence ?? 0.5,
+      modalStatus: entry.modalStatus as 'Hypothetical' | 'Asserted' | 'Counterfactual',
+      // Manifest entries don't carry epistemic confidence — that lives in
+      // the descriptor's Semiotic facet, not the discovery manifest.
+      // Recall surfaces the structural default; a caller that needs the
+      // exact value reads it from the descriptor itself.
+      confidence: 0.5,
       recordedAt: entry.validFrom ?? '',
       attributedTo: parsed.attributedTo ?? config.authoringAgentDid,
+      // HATEOAS: hand the agent the actions it can take on this memory.
+      affordances: affordancesFor(memoryIri, entry.descriptorUrl, config.scope),
     });
     if (hits.length >= limit) break;
   }
@@ -325,7 +365,11 @@ export async function forgetMemory(args: ForgetMemoryArgs, config: BridgeConfig)
     {
       text: `[FORGET] ${args.iri}: ${reason}`,
       kind: 'observation',
-      modalStatus: 'Hypothetical',
+      // A forget is a retraction, not a tentative claim — the modal
+      // status is Counterfactual (known-no-longer-valid), matching this
+      // module's header contract. Recall excludes it by default; an
+      // auditor walking cg:supersedes still reaches it.
+      modalStatus: 'Counterfactual',
       confidence: 0.5,
       supersedes: [args.iri],
     },
@@ -338,7 +382,6 @@ export async function forgetMemory(args: ForgetMemoryArgs, config: BridgeConfig)
 interface DiscoverEntry {
   readonly descriptorUrl: string;
   readonly modalStatus?: string;
-  readonly confidence?: number;
   readonly validFrom?: string;
   readonly describes: readonly string[];
 }
@@ -371,4 +414,216 @@ function parseMemoryGraph(trig: string): ParsedMemoryGraph | null {
   const attributedTo = readIriValue(subj, `${PROV_NS}wasAttributedTo` as IRI);
   if (!text || !kind) return null;
   return { text, kind, tags, attributedTo };
+}
+
+// ── HATEOAS: distributed affordances ─────────────────────────────────
+//
+// The OpenClaw plugin gives the agent a small, FIXED tool surface — the
+// three memory-slot tools plus interego_discover / interego_act for
+// navigation. The substrate's capability surface is unbounded, and it
+// travels as DATA: every memory or descriptor the agent receives is
+// decorated with `affordances` — self-describing records naming what it
+// can do with that item. To act, it follows one through
+// followAffordance. New substrate capability = a new affordance verb in
+// a result, never a new tool schema, never extra context cost. This is
+// HATEOAS — the substrate hands the client its next moves.
+//
+// Mirrors src/affordance/: the verbs are a subset of the canonical
+// AffordanceAction set; SCOPE_VERBS narrows by delegation scope exactly
+// as src/affordance/compute.ts SCOPE_PERMISSIONS does.
+
+/**
+ * Affordance verbs this bridge can follow — the subset of the
+ * substrate's AffordanceAction set that composes cleanly with the
+ * bridge's publish / discover / forget primitives in one shot.
+ * (`subscribe` is intentionally absent — it is a long-lived operation,
+ * driven through OpenClaw's own hook mechanism, not a one-shot act.)
+ */
+export type AffordanceVerb =
+  | 'read'      // fetch + perceive the target's graph
+  | 'derive'    // publish a successor that supersedes the target
+  | 'retract'   // mark the target no-longer-valid (Counterfactual + supersedes)
+  | 'challenge' // publish an independent Counterfactual counter-descriptor
+  | 'annotate'  // attach a Hypothetical note referencing the target
+  | 'forward';  // re-publish, E2EE-shared to additional recipients
+
+/**
+ * Delegation scope → permitted verbs. Mirrors SCOPE_PERMISSIONS in
+ * src/affordance/compute.ts, narrowed to AffordanceVerb.
+ */
+const SCOPE_VERBS: Record<DelegationScope, readonly AffordanceVerb[]> = {
+  ReadWrite: ['read', 'derive', 'retract', 'challenge', 'annotate', 'forward'],
+  ReadOnly: ['read'],
+  PublishOnly: ['read', 'derive', 'annotate'],
+  DiscoverOnly: ['read'],
+};
+
+const VERB_HINTS: Record<AffordanceVerb, string> = {
+  read: "fetch this item's graph",
+  derive: 'publish a successor (supersedes this) — pass `content`',
+  retract: 'mark this no-longer-valid — pass `content` as the reason',
+  challenge: 'publish an independent counter-claim — pass `content`',
+  annotate: 'attach a Hypothetical note to this — pass `content`',
+  forward: 're-share this to others — pass `params.recipients`',
+};
+
+/** A self-describing affordance handed to the agent on a result. */
+export interface BridgeAffordance {
+  readonly action: AffordanceVerb;
+  /** The descriptor / memory IRI this affordance acts on. */
+  readonly target: IRI;
+  /** Where to fetch the target — followAffordance('read') needs this. */
+  readonly descriptorUrl: string;
+  /** One-line hint: what the verb does + what input it needs. */
+  readonly hint: string;
+}
+
+/**
+ * Decorate a target with the affordances the agent may follow on it,
+ * gated by delegation scope. Pure — no pod access. This is the
+ * "distributed" in distributed affordances: the action surface is
+ * computed at the edge, per item, and travels with the data.
+ */
+export function affordancesFor(
+  target: IRI,
+  descriptorUrl: string,
+  scope: DelegationScope = 'ReadWrite',
+): readonly BridgeAffordance[] {
+  return (SCOPE_VERBS[scope] ?? SCOPE_VERBS.ReadWrite).map(action => ({
+    action,
+    target,
+    descriptorUrl,
+    hint: VERB_HINTS[action],
+  }));
+}
+
+// ── interego_discover — navigate the substrate ───────────────────────
+
+export interface DiscoverContextsArgs {
+  /** Optional keyword filter over descriptor IRI / describes. */
+  readonly query?: string;
+  /** Max results; default 12. */
+  readonly limit?: number;
+}
+
+export interface DiscoveredDescriptor {
+  readonly descriptorUrl: string;
+  readonly describes: readonly string[];
+  readonly modalStatus: string;
+  readonly recordedAt: string;
+  /** HATEOAS: the actions available on this descriptor. */
+  readonly affordances: readonly BridgeAffordance[];
+}
+
+/**
+ * Discover context descriptors on the configured pod, each decorated
+ * with its affordances. The agent's navigation entry point — it does
+ * not need to know substrate tool names; it follows what it is handed.
+ */
+export async function discoverContexts(
+  args: DiscoverContextsArgs,
+  config: BridgeConfig,
+): Promise<DiscoveredDescriptor[]> {
+  const limit = args.limit ?? 12;
+  const entries = await discover(config.podUrl);
+  const q = (args.query ?? '').trim().toLowerCase();
+  const out: DiscoveredDescriptor[] = [];
+  for (const entry of entries) {
+    if (q && !entry.descriptorUrl.toLowerCase().includes(q)
+        && !entry.describes.some(d => d.toLowerCase().includes(q))) {
+      continue;
+    }
+    const subject = (entry.describes[0] ?? entry.descriptorUrl) as IRI;
+    out.push({
+      descriptorUrl: entry.descriptorUrl,
+      describes: entry.describes,
+      modalStatus: entry.modalStatus ?? '',
+      recordedAt: entry.validFrom ?? '',
+      affordances: affordancesFor(subject, entry.descriptorUrl, config.scope),
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+// ── interego_act — follow an affordance (the HATEOAS engine) ──────────
+
+export interface FollowAffordanceArgs {
+  /** An affordance handed to the agent by recall / discover. */
+  readonly affordance: BridgeAffordance;
+  /** New memory text — required for derive / retract / challenge / annotate. */
+  readonly content?: string;
+  /** Extra params — e.g. { recipients } for forward. */
+  readonly params?: { readonly recipients?: readonly IRI[] };
+}
+
+export interface FollowAffordanceResult {
+  readonly action: AffordanceVerb;
+  readonly target: IRI;
+  /** For 'read': the fetched graph text. */
+  readonly content?: string;
+  /** For write verbs: the IRI of the descriptor just published. */
+  readonly resultIri?: IRI;
+}
+
+/**
+ * Follow an affordance — the single substrate-acting path. The
+ * affordance names its own verb + target; this dispatches to the
+ * matching substrate primitive. The agent never hardcodes a tool name:
+ * the result told it what it could do, this does it.
+ */
+export async function followAffordance(
+  args: FollowAffordanceArgs,
+  config: BridgeConfig,
+): Promise<FollowAffordanceResult> {
+  const { affordance, content, params } = args;
+  const { action, target, descriptorUrl } = affordance;
+
+  // Scope guard — never follow a verb the agent's scope forbids.
+  const scope = config.scope ?? 'ReadWrite';
+  if (!(SCOPE_VERBS[scope] ?? SCOPE_VERBS.ReadWrite).includes(action)) {
+    throw new Error(`affordance '${action}' not permitted for scope '${scope}'`);
+  }
+
+  if (action === 'read') {
+    const graphUrl = descriptorUrl.replace(/\.ttl$/, '-graph.trig');
+    const r = await fetch(graphUrl, { headers: { Accept: 'application/trig, text/turtle' } });
+    if (!r.ok) throw new Error(`read: ${r.status} fetching ${graphUrl}`);
+    return { action, target, content: await r.text() };
+  }
+
+  if ((action === 'derive' || action === 'retract' || action === 'challenge'
+       || action === 'annotate') && !content?.trim()) {
+    throw new Error(`affordance '${action}' requires \`content\``);
+  }
+
+  if (action === 'retract') {
+    const r = await forgetMemory({ iri: target, reason: content }, config);
+    return { action, target, resultIri: r.memoryIri };
+  }
+  if (action === 'derive') {
+    const r = await storeMemory({ text: content!, supersedes: [target] }, config);
+    return { action, target, resultIri: r.memoryIri };
+  }
+  if (action === 'challenge') {
+    const r = await storeMemory({ text: content!, modalStatus: 'Counterfactual' }, config);
+    return { action, target, resultIri: r.memoryIri };
+  }
+  if (action === 'annotate') {
+    const r = await storeMemory(
+      { text: content!, modalStatus: 'Hypothetical', tags: [`annotates:${target}`] },
+      config,
+    );
+    return { action, target, resultIri: r.memoryIri };
+  }
+  // forward — re-publish, E2EE-shared to additional recipients.
+  const r = await storeMemory(
+    {
+      text: content?.trim() || `[FORWARD] ${target}`,
+      tags: [`forwards:${target}`],
+      ...(params?.recipients ? { shareWith: params.recipients } : {}),
+    },
+    config,
+  );
+  return { action, target, resultIri: r.memoryIri };
 }

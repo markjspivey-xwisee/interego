@@ -9,11 +9,22 @@
  * surface evolves, only this file needs to change.
  *
  * The plugin claims OpenClaw's exclusive `plugins.slots.memory` slot
- * (per the LanceDB / Honcho integration patterns) and registers three
- * tools:
- *   - memory_store    → bridge.storeMemory
- *   - memory_recall   → bridge.recallMemories
- *   - memory_forget   → bridge.forgetMemory
+ * (per the LanceDB / Honcho integration patterns) and registers a
+ * small, FIXED tool surface:
+ *   - memory_store     → bridge.storeMemory      (slot contract)
+ *   - memory_recall    → bridge.recallMemories   (slot contract)
+ *   - memory_forget    → bridge.forgetMemory     (slot contract)
+ *   - interego_discover → bridge.discoverContexts  (HATEOAS navigation)
+ *   - interego_act      → bridge.followAffordance  (HATEOAS engine)
+ *
+ * That is five tool schemas — and it never grows. The substrate has
+ * far more capability than five operations, but the agent does not
+ * carry it as a flat tool list: every memory / descriptor it receives
+ * is decorated with `affordances` (what it can do with that item), and
+ * it follows one through interego_act. Capability travels as DATA. New
+ * substrate capability surfaces as a new affordance verb in a result,
+ * never a new tool schema. This is HATEOAS — see
+ * docs/integrations/openclaw-full-substrate.md.
  *
  * If `autoCapture` is enabled in config, the plugin also subscribes to
  * the `after_assistant_response` hook and stores any extracted facts
@@ -32,10 +43,15 @@ import {
   storeMemory,
   recallMemories,
   forgetMemory,
+  discoverContexts,
+  followAffordance,
   type BridgeConfig,
+  type DelegationScope,
   type StoreMemoryArgs,
   type RecallMemoriesArgs,
   type ForgetMemoryArgs,
+  type DiscoverContextsArgs,
+  type FollowAffordanceArgs,
 } from './bridge.js';
 import type { IRI } from '../../../src/index.js';
 
@@ -83,6 +99,12 @@ export interface InteregoMemoryPluginConfig {
   readonly onBehalfOf?: IRI;
   /** Optional default delegates to share memories with via E2EE. */
   readonly shareWith?: readonly IRI[];
+  /**
+   * Agent delegation scope — gates which affordances are offered on
+   * discovered / recalled items. Default 'ReadWrite'. The agent is only
+   * ever handed actions its scope actually permits.
+   */
+  readonly scope?: DelegationScope;
   /** Default true: also write the memory automatically after each agent turn. */
   readonly autoCapture?: boolean;
   /** Default true: inject relevant memories before each prompt build. */
@@ -107,6 +129,7 @@ export function interegoMemoryPlugin(config: InteregoMemoryPluginConfig) {
     authoringAgentDid: config.agentDid,
     ...(config.onBehalfOf ? { onBehalfOf: config.onBehalfOf } : {}),
     ...(config.shareWith ? { defaultShareWith: config.shareWith } : {}),
+    ...(config.scope ? { scope: config.scope } : {}),
   };
 
   return (api: OpenClawPluginApi): void => {
@@ -140,7 +163,7 @@ export function interegoMemoryPlugin(config: InteregoMemoryPluginConfig) {
         },
         required: ['text'],
       },
-      handler: async (raw) => storeMemory(raw as StoreMemoryArgs, bridgeConfig),
+      handler: async (raw) => storeMemory(raw as unknown as StoreMemoryArgs, bridgeConfig),
     });
 
     api.registerTool({
@@ -157,7 +180,7 @@ export function interegoMemoryPlugin(config: InteregoMemoryPluginConfig) {
         },
         required: [],
       },
-      handler: async (raw) => recallMemories(raw as RecallMemoriesArgs, bridgeConfig),
+      handler: async (raw) => recallMemories(raw as unknown as RecallMemoriesArgs, bridgeConfig),
     });
 
     api.registerTool({
@@ -171,7 +194,42 @@ export function interegoMemoryPlugin(config: InteregoMemoryPluginConfig) {
         },
         required: ['iri'],
       },
-      handler: async (raw) => forgetMemory(raw as ForgetMemoryArgs, bridgeConfig),
+      handler: async (raw) => forgetMemory(raw as unknown as ForgetMemoryArgs, bridgeConfig),
+    });
+
+    // 2b. HATEOAS navigation — discover + act. These two tools, plus the
+    //     three above, are the entire fixed surface. Every result is
+    //     decorated with `affordances`; the agent follows one through
+    //     interego_act rather than carrying a flat list of substrate
+    //     operations. New substrate capability = a new affordance verb
+    //     in a result, never a new tool schema.
+    api.registerTool({
+      name: 'interego_discover',
+      description: "Discover context descriptors on the agent's pod. Each result is decorated with an `affordances` list — the actions you can take on it. To act, pass one affordance to interego_act. You do not need to know substrate tool names; navigate by following affordances.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Optional keyword filter over descriptor IRIs.' },
+          limit: { type: 'number', description: 'Max results (default 12).' },
+        },
+        required: [],
+      },
+      handler: async (raw) => discoverContexts(raw as unknown as DiscoverContextsArgs, bridgeConfig),
+    });
+
+    api.registerTool({
+      name: 'interego_act',
+      description: 'Follow an affordance — the single substrate-acting path. Pass an `affordance` object you were handed by memory_recall or interego_discover; supply `content` for derive/retract/challenge/annotate, and `params` (e.g. recipients) for forward. This is HATEOAS: the result told you what you could do; this does it.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          affordance: { type: 'object', description: 'An {action, target, descriptorUrl, hint} record from a result\'s `affordances` list.' },
+          content: { type: 'string', description: 'New memory text — for derive / retract / challenge / annotate.' },
+          params: { type: 'object', description: 'Extra args — e.g. { recipients: [did, ...] } for forward.' },
+        },
+        required: ['affordance'],
+      },
+      handler: async (raw) => followAffordance(raw as unknown as FollowAffordanceArgs, bridgeConfig),
     });
 
     // 3. Optional auto-recall / auto-capture hooks.
@@ -197,6 +255,6 @@ export function interegoMemoryPlugin(config: InteregoMemoryPluginConfig) {
       });
     }
 
-    api.log.info('[interego-memory] plugin loaded; memory-engine slot claimed');
+    api.log.info('[interego-memory] plugin loaded; memory-engine slot claimed; 5-tool HATEOAS surface registered');
   };
 }

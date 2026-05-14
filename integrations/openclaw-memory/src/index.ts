@@ -17,13 +17,24 @@ export {
   recallMemories,
   forgetMemory,
   buildMemoryDescriptor,
+  // HATEOAS navigation — distributed affordances
+  affordancesFor,
+  discoverContexts,
+  followAffordance,
   type BridgeConfig,
+  type DelegationScope,
   type StoreMemoryArgs,
   type StoreMemoryResult,
   type RecallMemoriesArgs,
   type ForgetMemoryArgs,
   type MemoryHit,
   type MemoryKind,
+  type AffordanceVerb,
+  type BridgeAffordance,
+  type DiscoverContextsArgs,
+  type DiscoveredDescriptor,
+  type FollowAffordanceArgs,
+  type FollowAffordanceResult,
 } from './bridge.js';
 
 export {

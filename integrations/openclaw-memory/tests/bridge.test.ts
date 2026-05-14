@@ -8,7 +8,7 @@
  * itself.
  */
 import { describe, it, expect } from 'vitest';
-import { buildMemoryDescriptor } from '../src/bridge.js';
+import { buildMemoryDescriptor, affordancesFor } from '../src/bridge.js';
 import type { IRI } from '../../../src/index.js';
 import { parseTrig, findSubjectsOfType, readStringValue, readStringValues } from '../../../src/index.js';
 
@@ -35,6 +35,15 @@ describe('buildMemoryDescriptor — substrate-pure', () => {
     const built = buildMemoryDescriptor({ text: 'maybe alice', modalStatus: 'Hypothetical' }, CONFIG);
     const s = built.descriptor.facets.find(f => f.type === 'Semiotic') as { modalStatus?: string };
     expect(s.modalStatus).toBe('Hypothetical');
+  });
+
+  it('Counterfactual mode marks the graph known-false (retraction modal)', () => {
+    const built = buildMemoryDescriptor({ text: 'rejected approach', modalStatus: 'Counterfactual' }, CONFIG);
+    const s = built.descriptor.facets.find(f => f.type === 'Semiotic') as {
+      modalStatus?: string; groundTruth?: boolean;
+    };
+    expect(s.modalStatus).toBe('Counterfactual');
+    expect(s.groundTruth).toBe(false);
   });
 
   it('attributes to the owner when onBehalfOf is set, not the agent', () => {
@@ -100,6 +109,43 @@ describe('buildMemoryDescriptor — substrate-pure', () => {
     expect(pref.memoryIri).toMatch(/^urn:cg:memory:preference:/);
   });
 
+});
+
+describe('affordancesFor — HATEOAS decoration', () => {
+  const TARGET = 'urn:cg:memory:fact:abc123' as IRI;
+  const DESC_URL = 'https://pod.example/alice/fact-abc123.ttl';
+
+  it('ReadWrite scope is handed the full verb set, each self-describing', () => {
+    const affs = affordancesFor(TARGET, DESC_URL, 'ReadWrite');
+    const verbs = affs.map(a => a.action).sort();
+    expect(verbs).toEqual(['annotate', 'challenge', 'derive', 'forward', 'read', 'retract']);
+    for (const a of affs) {
+      expect(a.target).toBe(TARGET);
+      expect(a.descriptorUrl).toBe(DESC_URL);
+      expect(typeof a.hint).toBe('string');
+      expect(a.hint.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('ReadOnly scope is handed only `read` — never a write verb', () => {
+    const affs = affordancesFor(TARGET, DESC_URL, 'ReadOnly');
+    expect(affs.map(a => a.action)).toEqual(['read']);
+  });
+
+  it('PublishOnly scope cannot retract, challenge, or forward', () => {
+    const verbs = affordancesFor(TARGET, DESC_URL, 'PublishOnly').map(a => a.action);
+    expect(verbs).not.toContain('retract');
+    expect(verbs).not.toContain('challenge');
+    expect(verbs).not.toContain('forward');
+    expect(verbs).toContain('derive');
+  });
+
+  it('defaults to ReadWrite when no scope is given', () => {
+    expect(affordancesFor(TARGET, DESC_URL)).toHaveLength(6);
+  });
+});
+
+describe('buildMemoryDescriptor — injection defense', () => {
   it('escapes tags containing newlines + quotes (Turtle-injection defense)', () => {
     // An adversarial tag value tries to break out of the literal and
     // inject a fake triple. With proper escapeLit, the entire value
