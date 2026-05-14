@@ -74,7 +74,7 @@ _MEMORY_TYPE = f"{_CGH}AgentMemory"
 
 # Hosted relay — zero-setup evaluation default. Point at a relay you run
 # (or a local personal-bridge) to keep everything on your own machine.
-_DEFAULT_RELAY = "https://interego-mcp-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io"
+_DEFAULT_RELAY = "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io"
 
 # ── HATEOAS affordances — how the agent reaches "all of Interego" without
 #    60 tool schemas bloating its context ───────────────────────────────
