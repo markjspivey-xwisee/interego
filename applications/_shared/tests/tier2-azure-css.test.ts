@@ -96,7 +96,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
     expect(typeof podReachable).toBe('boolean');
   });
 
-  it('publish + fetch back + parse: agent-development-practice probe descriptor', async (ctx) => {
+  it('publish + fetch back + parse: agent-development-practice probe descriptor', { timeout: 30000 }, async (ctx) => {
     if (!podReachable) return ctx.skip();
     const probe = ContextDescriptor.create('urn:cg:probe:tier2-test:1' as IRI)
       .describes('urn:graph:adp:probe' as IRI)
@@ -122,7 +122,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
     expect(fetched).toContain('Hypothetical');
   });
 
-  it('publish + fetch back: learner-performer-companion credential', async (ctx) => {
+  it('publish + fetch back: learner-performer-companion credential', { timeout: 30000 }, async (ctx) => {
     if (!podReachable) return ctx.skip();
     const cred = ContextDescriptor.create('urn:cg:credential:tier2-ob3' as IRI)
       .describes('urn:graph:lpc:credential' as IRI)
@@ -209,7 +209,7 @@ describe('Tier 2 — Azure CSS real HTTP roundtrip', () => {
     expect(ours).toBeDefined();
   });
 
-  it('cross-vertical: publish lrs-adapter ingested descriptor + verify roundtrip', async (ctx) => {
+  it('cross-vertical: publish lrs-adapter ingested descriptor + verify roundtrip', { timeout: 30000 }, async (ctx) => {
     if (!podReachable) return ctx.skip();
     const desc = ContextDescriptor.create('urn:cg:lrs-statement:tier2-stmt' as IRI)
       .describes('urn:graph:lrs:statement' as IRI)
