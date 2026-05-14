@@ -134,11 +134,20 @@ generic `RunStatus.FAILED` and no detail.
   egress IP that ACR build agents share. Never a code problem (a local
   repro of the exact Dockerfile build — fresh `npm ci` + `tsc` — passes
   clean).
-- **Retry loop** (`303c277`) — `az acr build` is now wrapped in a
-  3-attempt retry with 120 s backoff. Each invocation gets a fresh
-  build agent (often a different egress IP), so a retry clears the
-  intermittent limit. The durable escalation (noted in-workflow) is to
-  `az acr import` the base image into the ACR and `FROM` it there.
+- **Retry loop** (`303c277`) — `az acr build` is wrapped in a 3-attempt
+  retry with 120 s backoff. Each invocation gets a fresh build agent
+  (often a different egress IP), so a retry clears the intermittent
+  limit. Kept as defense-in-depth.
+- **Durable fix — base image via the ACR** (`cd043f0`) — a new
+  `prime-base-images` job `az acr import`s `node:20-slim` into our own
+  ACR once, up front; the build matrix `needs` it. All six Dockerfiles
+  take `ARG NODE_BASE=node:20-slim` and `FROM ${NODE_BASE}` — the
+  default keeps local `docker build` pulling from Docker Hub
+  anonymously, while CI passes `--build-arg NODE_BASE=…azurecr.io/
+  node:20-slim` so the build agent pulls the base image from the ACR
+  it is already authenticated to — no Docker Hub limit. If the prime
+  job fails after retries the build matrix is *skipped*, not
+  half-applied: a safe failure mode that leaves running containers up.
 - **Reproducible installs** (`44df8cc`, `303c277`) — `Dockerfile.identity`
   and `Dockerfile.validator` copied only `package.json` and ran
   `npm install`, re-resolving caret ranges on every build. Both now copy
