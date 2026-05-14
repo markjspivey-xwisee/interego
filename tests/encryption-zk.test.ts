@@ -9,6 +9,7 @@ import {
   unwrapKey,
   createEncryptedEnvelope,
   openEncryptedEnvelope,
+  openEncryptedEnvelopeWithHistory,
   reEncryptForRecipients,
   envelopeToJson,
   envelopeFromJson,
@@ -175,6 +176,60 @@ describe('E2E Encryption', () => {
     const restored = envelopeFromJson(json);
 
     expect(openEncryptedEnvelope(restored, agent)).toBe(turtle);
+  });
+
+  // ── Pubkey rollover (Sec #12 fix) ────────────────────────────────
+
+  it('openEncryptedEnvelopeWithHistory: current key decrypts (no fallback needed)', () => {
+    const sender = generateKeyPair();
+    const recipient = generateKeyPair();
+    const turtle = 'fresh envelope to current key';
+    const env = createEncryptedEnvelope(turtle, [recipient.publicKey], sender);
+    const result = openEncryptedEnvelopeWithHistory(env, recipient, []);
+    expect(result).toBe(turtle);
+  });
+
+  it('openEncryptedEnvelopeWithHistory: falls back to historical key when current key was not a recipient', () => {
+    const sender = generateKeyPair();
+    const oldKey = generateKeyPair();    // recipient's previous keypair
+    const newKey = generateKeyPair();    // recipient's current keypair
+    const turtle = 'envelope wrapped to old key (publisher had stale registry)';
+    // Publisher wraps to the OLD pubkey
+    const env = createEncryptedEnvelope(turtle, [oldKey.publicKey], sender);
+    // Recipient has rotated to newKey and has oldKey in their history
+    const result = openEncryptedEnvelopeWithHistory(env, newKey, [oldKey]);
+    expect(result).toBe(turtle);
+  });
+
+  it('openEncryptedEnvelopeWithHistory: tries multiple historical keys', () => {
+    const sender = generateKeyPair();
+    const gen1 = generateKeyPair();
+    const gen2 = generateKeyPair();
+    const gen3 = generateKeyPair();      // current
+    const turtle = 'wrapped to two-generations-ago key';
+    const env = createEncryptedEnvelope(turtle, [gen1.publicKey], sender);
+    // Recipient's history: most recent rotation first (gen2), then earlier (gen1)
+    const result = openEncryptedEnvelopeWithHistory(env, gen3, [gen2, gen1]);
+    expect(result).toBe(turtle);
+  });
+
+  it('openEncryptedEnvelopeWithHistory: returns null when neither current nor any historical key matches', () => {
+    const sender = generateKeyPair();
+    const recipient = generateKeyPair();
+    const stranger1 = generateKeyPair();
+    const stranger2 = generateKeyPair();
+    const env = createEncryptedEnvelope('content', [stranger1.publicKey], sender);
+    // Recipient + their two historical keys are all unrelated to who the envelope was wrapped for
+    const result = openEncryptedEnvelopeWithHistory(env, recipient, [stranger2, stranger2]);
+    expect(result).toBeNull();
+  });
+
+  it('openEncryptedEnvelopeWithHistory: empty history array works (no fallback needed when current matches)', () => {
+    const sender = generateKeyPair();
+    const recipient = generateKeyPair();
+    const env = createEncryptedEnvelope('plain', [recipient.publicKey], sender);
+    expect(openEncryptedEnvelopeWithHistory(env, recipient)).toBe('plain');
+    expect(openEncryptedEnvelopeWithHistory(env, recipient, [])).toBe('plain');
   });
 });
 

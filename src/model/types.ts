@@ -653,6 +653,51 @@ export interface AuthorizedAgentData {
    * encrypted payloads. See crypto/encryption.ts.
    */
   readonly encryptionPublicKey?: string;
+  /**
+   * Recently-retired X25519 public keys for this agent, with timestamps.
+   * Publishers wrapping new envelopes wrap to the current
+   * `encryptionPublicKey` AND every retired key whose `retiredAt` falls
+   * inside the rollover window (default 30 days). This gives the agent
+   * a grace period where it can rotate the active key without losing
+   * access to envelopes still in flight from publishers who haven't yet
+   * refetched the registry.
+   *
+   * Without this list, key rotation immediately orphans every pending
+   * shared descriptor — publishers see the new key but envelopes
+   * already wrapped for the old key are unrecoverable. With it,
+   * rotation has a soft cutover: the agent decrypts via whichever
+   * private key still matches a wrapped envelope, and over the
+   * rollover window publishers transition to the new key as they
+   * refresh.
+   *
+   * Closes Sec #12 from the production-readiness audit. Empty / absent
+   * means no recent rotations; an envelope wrapped only for the
+   * current key.
+   */
+  readonly encryptionKeyHistory?: readonly EncryptionKeyHistoryEntry[];
+}
+
+/**
+ * One entry in an agent's encryption-key rotation history. The
+ * private side is NEVER persisted to the pod — agents hold their own
+ * historical secret keys locally and try each on decryption. This
+ * struct only conveys the PUBLIC key + lifecycle timestamps so
+ * publishers can find keys to wrap to during the rollover window.
+ */
+export interface EncryptionKeyHistoryEntry {
+  /** Base64 X25519 public key — same shape as `encryptionPublicKey`. */
+  readonly publicKey: string;
+  /** ISO 8601 timestamp when this key was first the active key. */
+  readonly createdAt: string;
+  /** ISO 8601 timestamp when this key was rotated out (became history). */
+  readonly retiredAt: string;
+  /**
+   * Optional human / agent label for this key generation — useful when
+   * an agent has rotated multiple times and needs to distinguish "the
+   * one from before the laptop replacement" vs. "the one from the
+   * security incident."
+   */
+  readonly label?: string;
 }
 
 /** The owner profile stored on a pod. */

@@ -132,11 +132,23 @@ export async function spawnBridge(
   //   2. If the bridge doesn't yet implement the `pod` field on /,
   //      fall back to /affordances — strictly weaker, but preserves
   //      back-compat with bridges that haven't been rebuilt yet.
-  const deadline = Date.now() + 30000;
+  const TIMEOUT_MS = 30000;
+  const deadline = Date.now() + TIMEOUT_MS;
   let staleBridgeWarning: string | undefined;
+  // Track WHICH failure mode dominated during the spawn window so the
+  // diagnostic at the end can be specific. Was previously a flat
+  // "bridge failed to start within 30s" with no hint about whether
+  // the bridge never came up, came up on the wrong port, came up as
+  // someone else's process, or came up but failed health checks.
+  // Each shape needs a different fix; the diagnostic should say so.
+  type FailureMode = 'unreachable' | 'wrong-pod' | 'wrong-shape' | 'no-affordances';
+  let lastFailureMode: FailureMode = 'unreachable';
+  let lastReason = '';
+  let connectsAt = 0;
   while (Date.now() < deadline) {
     try {
       const r = await fetch(`${url}/`, { signal: AbortSignal.timeout(2000) });
+      if (!connectsAt) connectsAt = Date.now();
       if (r.ok) {
         const body = await r.json() as { pod?: string };
         if (body.pod === options.podUrl) {
@@ -146,20 +158,49 @@ export async function spawnBridge(
           // Older bridge — accept once /affordances also responds.
           const r2 = await fetch(`${url}/affordances`, { signal: AbortSignal.timeout(2000) });
           if (r2.ok) return { name, port, url, process: proc, podUrl: options.podUrl };
+          lastFailureMode = 'no-affordances';
+          lastReason = `responds at / but /affordances returned ${r2.status}`;
         } else {
-          staleBridgeWarning = `port ${port} is held by a different bridge (pod=${body.pod}); waiting for it to release`;
+          lastFailureMode = 'wrong-pod';
+          staleBridgeWarning = `port ${port} is held by a different bridge (it reports pod=${body.pod}, we want pod=${options.podUrl})`;
+          lastReason = staleBridgeWarning;
         }
+      } else {
+        lastFailureMode = 'wrong-shape';
+        lastReason = `GET / returned ${r.status} ${r.statusText}`;
       }
-    } catch { /* retry */ }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      lastFailureMode = connectsAt ? 'wrong-shape' : 'unreachable';
+      lastReason = msg;
+    }
     await new Promise(r => setTimeout(r, 500));
   }
 
-  // Bridge didn't come up — surface diagnostics
+  // Bridge didn't come up — surface a SPECIFIC diagnostic based on
+  // what we observed during the spawn window.
   const stdout = stdoutChunks.join('');
   const stderr = stderrChunks.join('');
   treeKill(proc, 'SIGTERM');
-  const hint = staleBridgeWarning ? `\nHint: ${staleBridgeWarning} — kill the stale process (taskkill /F /PID <pid> on Windows).` : '';
-  throw new Error(`bridge ${name} failed to start within 30s.${hint}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
+
+  let diagnostic: string;
+  switch (lastFailureMode) {
+    case 'unreachable':
+      diagnostic = connectsAt
+        ? `bridge ${name} on :${port} accepted a connection but never responded successfully within ${TIMEOUT_MS}ms — the server process likely started but crashed before binding its routes. Inspect STDERR below.`
+        : `bridge ${name} on :${port} never accepted a TCP connection within ${TIMEOUT_MS}ms — most likely the npx-tsx-node spawn failed (network issue downloading deps, missing dep, syntax error in server.ts). Inspect STDOUT/STDERR below. Last network error: ${lastReason}`;
+      break;
+    case 'wrong-pod':
+      diagnostic = `bridge ${name} on :${port} is up but ${staleBridgeWarning}. A stale bridge from a previous run is holding the port. Kill it:\n  Windows: taskkill /T /F /PID <pid>\n  POSIX:   kill -9 <pid>\nFind the pid with \`lsof -i :${port}\` (POSIX) or \`Get-NetTCPConnection -LocalPort ${port}\` (PowerShell).`;
+      break;
+    case 'no-affordances':
+      diagnostic = `bridge ${name} on :${port} is up and reports the right pod URL, but /affordances returned ${lastReason}. Either the bridge's manifest generation is broken or its vertical isn't fully wired. Inspect STDERR below.`;
+      break;
+    case 'wrong-shape':
+      diagnostic = `bridge ${name} on :${port} is up but the response shape is wrong: ${lastReason}. A different service is listening on this port. Stop it or use a different port via PORT=NNNN.`;
+      break;
+  }
+  throw new Error(`${diagnostic}\nSTDOUT:\n${stdout || '(empty)'}\nSTDERR:\n${stderr || '(empty)'}`);
 }
 
 /**

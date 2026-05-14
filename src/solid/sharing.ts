@@ -128,11 +128,43 @@ export async function resolveRecipient(
   }
 
   const active = profile.authorizedAgents.filter(a => !a.revoked && a.encryptionPublicKey);
+
+  // Pubkey rollover (closes Sec #12): include both current pubkey AND
+  // any recently-retired pubkeys from each agent's encryptionKeyHistory
+  // that fall inside the rollover window. The recipient can still
+  // decrypt with the corresponding old private key (which they kept
+  // locally for the same window), so envelopes wrapped during the
+  // window are recoverable even after the agent rotated keys.
+  //
+  // 30 days = a generous window for "publishers see my key, I rotate,
+  // publishers eventually refetch and start using the new key" to
+  // complete without orphaning in-flight envelopes. Bounded so a
+  // rotated-after-compromise key doesn't stay wrappable forever.
+  const ROLLOVER_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - ROLLOVER_WINDOW_MS;
+  const keys: string[] = [];
+  const ids: string[] = [];
+  for (const a of active) {
+    keys.push(a.encryptionPublicKey!);
+    ids.push(a.agentId);
+    if (a.encryptionKeyHistory && a.encryptionKeyHistory.length > 0) {
+      for (const h of a.encryptionKeyHistory) {
+        // Defensive: skip malformed entries; skip ones outside the window
+        const retiredMs = new Date(h.retiredAt).getTime();
+        if (!Number.isFinite(retiredMs)) continue;
+        if (retiredMs < cutoff) continue;
+        if (typeof h.publicKey !== 'string' || h.publicKey.length === 0) continue;
+        if (keys.includes(h.publicKey)) continue;
+        keys.push(h.publicKey);
+        ids.push(`${a.agentId}#retired-${h.retiredAt.slice(0, 10)}`);
+      }
+    }
+  }
   const result: ResolvedRecipientPod = {
     handle,
     podUrl: pod.podUrl,
-    agentEncryptionKeys: active.map(a => a.encryptionPublicKey!) as string[],
-    agentIds: active.map(a => a.agentId),
+    agentEncryptionKeys: keys,
+    agentIds: ids,
   };
   if (pod.webId) (result as { webId?: string }).webId = pod.webId;
   if (!pod.webId && profile.webId) (result as { webId?: string }).webId = profile.webId;

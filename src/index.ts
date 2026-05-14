@@ -657,6 +657,7 @@ export {
   unwrapKey,
   createEncryptedEnvelope,
   openEncryptedEnvelope,
+  openEncryptedEnvelopeWithHistory,
   reEncryptForRecipients,
   envelopeToJson,
   envelopeFromJson,

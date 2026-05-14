@@ -282,6 +282,44 @@ export function openEncryptedEnvelope(
   return decryptContent(envelope.content, contentKey);
 }
 
+/**
+ * Open an encrypted envelope using the recipient's CURRENT key pair AND
+ * any historical key pairs they're still holding from the rollover
+ * window. Returns the first plaintext that decrypts cleanly.
+ *
+ * Use this in clients that have rotated X25519 keys and want to
+ * remain able to read envelopes that publishers wrapped to a prior
+ * generation of their key. Pair with `EncryptionKeyHistoryEntry` on
+ * the registry-side (see model/types.ts) so publishers continue
+ * wrapping to the recently-retired pubkey during the same window.
+ *
+ * Closes Sec #12 from the production-readiness audit on the
+ * decryption side.
+ *
+ * @param envelope - The encrypted envelope
+ * @param currentKeyPair - The recipient's current X25519 keypair
+ * @param historicalKeyPairs - Previously-active keypairs the recipient
+ *   still has the private side of (kept locally during the rollover
+ *   window). Each is tried in order if the current pair fails to find
+ *   a matching wrappedKey or fails to unwrap.
+ * @returns Decrypted plaintext, or null if no keypair matches
+ */
+export function openEncryptedEnvelopeWithHistory(
+  envelope: EncryptedEnvelope,
+  currentKeyPair: EncryptionKeyPair,
+  historicalKeyPairs: readonly EncryptionKeyPair[] = [],
+): string | null {
+  // Try current first — fastest path, expected case.
+  const current = openEncryptedEnvelope(envelope, currentKeyPair);
+  if (current !== null) return current;
+  // Fall back through each retired keypair.
+  for (const kp of historicalKeyPairs) {
+    const result = openEncryptedEnvelope(envelope, kp);
+    if (result !== null) return result;
+  }
+  return null;
+}
+
 // ═════════════════════════════════════════════════════════════
 //  Re-encryption (for revocation)
 // ═════════════════════════════════════════════════════════════
