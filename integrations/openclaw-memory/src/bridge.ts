@@ -152,7 +152,18 @@ const MEMORY_KIND_PREDICATE = `${DCT_NS}type` as IRI;
 const MEMORY_TAG_PREDICATE = `${DCT_NS}subject` as IRI;
 
 function escapeLit(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // Escape all Turtle-active characters in a single-line string literal.
+  // Without newline / carriage-return / tab escapes, a user-supplied
+  // tag containing `\n` would break out of the single-line literal
+  // and yield a parse error downstream (or, depending on consumer
+  // tooling, an injection surface). Bring this in line with the OWM
+  // pod-publisher's escapeLit which already handles \n.
+  return s
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
 }
 
 function escapeMulti(s: string): string {

@@ -99,4 +99,29 @@ describe('buildMemoryDescriptor — substrate-pure', () => {
     expect(fact.memoryIri).toMatch(/^urn:cg:memory:fact:/);
     expect(pref.memoryIri).toMatch(/^urn:cg:memory:preference:/);
   });
+
+  it('escapes tags containing newlines + quotes (Turtle-injection defense)', () => {
+    // An adversarial tag value tries to break out of the literal and
+    // inject a fake triple. With proper escapeLit, the entire value
+    // stays inside one quoted literal — the parser sees a single tag
+    // with the weird characters in it, not two triples.
+    const malicious = `legit-tag" ;\n<urn:cg:fake-admin> a <urn:cg:Admin> ;\n  <http://xmlns.com/foaf/0.1/name> "evil`;
+    const built = buildMemoryDescriptor(
+      { text: 'tagged with malicious payload', tags: [malicious] },
+      CONFIG,
+    );
+    // The graph must still parse cleanly — no injected triples.
+    const doc = parseTrig(built.graphContent);
+    const memSubjects = findSubjectsOfType(
+      doc,
+      'https://markjspivey-xwisee.github.io/interego/ns/harness#AgentMemory' as IRI,
+    );
+    expect(memSubjects).toHaveLength(1);
+    // The tag round-trips exactly as supplied
+    const recoveredTags = readStringValues(memSubjects[0]!, 'http://purl.org/dc/terms/subject' as IRI);
+    expect(recoveredTags).toEqual([malicious]);
+    // No fake-admin subject made it in
+    const fakeAdmin = findSubjectsOfType(doc, 'urn:cg:Admin' as IRI);
+    expect(fakeAdmin).toHaveLength(0);
+  });
 });

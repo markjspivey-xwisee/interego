@@ -860,16 +860,31 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     surfaceAgent,
   } = req.body ?? {};
   if (!message || !signature || !nonce) {
-    res.status(400).json({ error: 'message, signature, and nonce are required' });
+    res.status(400).json({
+      error: 'message, signature, and nonce are required',
+      title: 'SIWE request is missing required fields',
+      detail: 'Your wallet client must send message, signature, and nonce — all three are produced by a single signing ceremony.',
+      hint: 'Call POST /challenges with purpose=siwe to obtain a fresh nonce, then sign the SIWE message with your wallet, then POST that to /auth/siwe.',
+    });
     return;
   }
   const ch = consumeChallenge(nonce, 'siwe');
   if (!ch) {
-    res.status(401).json({ error: 'Invalid or expired challenge' });
+    res.status(401).json({
+      error: 'Invalid or expired challenge',
+      title: 'Your sign-in challenge expired or was already used',
+      detail: 'Challenges are single-use and valid for 5 minutes. This one is missing from the server\'s pool — likely because too much time passed between requesting it and signing.',
+      hint: 'Request a fresh challenge via POST /challenges and complete the signing flow within 5 minutes.',
+    });
     return;
   }
   if (!String(message).includes(nonce)) {
-    res.status(400).json({ error: 'SIWE message does not contain the issued nonce' });
+    res.status(400).json({
+      error: 'SIWE message does not contain the issued nonce',
+      title: 'Signed message is missing the challenge nonce',
+      detail: 'Replay defense: the signed SIWE statement MUST embed the nonce we issued at /challenges. Without it, an attacker could replay an old signature.',
+      hint: 'Your wallet client should construct the SIWE message with `Nonce:` set to the value returned by /challenges.',
+    });
     return;
   }
 
@@ -877,14 +892,24 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   try {
     recoveredAddress = (await ethers.verifyMessage(message, signature)).toLowerCase();
   } catch (err) {
-    res.status(401).json({ error: `SIWE signature verification failed: ${(err as Error).message}` });
+    res.status(401).json({
+      error: `SIWE signature verification failed: ${(err as Error).message}`,
+      title: 'Wallet signature did not verify',
+      detail: 'The signature blob could not be parsed or didn\'t match the SIWE message. This usually means a transport encoding issue or the wallet signed a different message than what was sent.',
+      hint: 'Ensure your wallet is unlocked, you signed the EXACT message text the server expects (including newlines), and the signature is a 0x-prefixed hex string.',
+    });
     return;
   }
 
   const addressMatch = String(message).match(/0x[a-fA-F0-9]{40}/);
   const claimedAddress = addressMatch?.[0]?.toLowerCase();
   if (claimedAddress && claimedAddress !== recoveredAddress) {
-    res.status(401).json({ error: `Signature mismatch: message claims ${claimedAddress}, recovered ${recoveredAddress}` });
+    res.status(401).json({
+      error: `Signature mismatch: message claims ${claimedAddress}, recovered ${recoveredAddress}`,
+      title: 'Signature belongs to a different wallet than the message claims',
+      detail: 'The SIWE statement says one address but the cryptographic recovery produced another. Either the message was tampered with or the wallet signed without checking which account is selected.',
+      hint: 'Check which account is active in your wallet (MetaMask shows it in the toolbar) and re-sign with the address that matches the SIWE statement.',
+    });
     return;
   }
 
@@ -916,11 +941,15 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       // Guard before consuming the invite.
       const existing = await readAuthMethods(bootstrapUserId, /* allowStale */ true);
       if (hasAnyCredential(existing)) {
-        res.status(409).json({ error: `User '${bootstrapUserId}' already has credentials — use the add-wallet flow` });
+        // Uniform error — don't disclose whether `bootstrapUserId` is a
+        // valid seeded account. An attacker probing for legitimate
+        // userIds would otherwise see a distinguishable 409 vs the 401
+        // for "invalid invite," letting them enumerate seeded accounts.
+        res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
         return;
       }
       if (!verifyBootstrapInvite(bootstrapUserId, bootstrapInvite)) {
-        res.status(401).json({ error: 'Invalid or consumed bootstrap invite' });
+        res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
         return;
       }
       targetUserId = bootstrapUserId;
@@ -1018,7 +1047,7 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     }
     const expected = BOOTSTRAP_INVITES.get(bootstrapUserId);
     if (!expected || expected !== bootstrapInvite) {
-      res.status(401).json({ error: 'Invalid bootstrap invite' });
+      res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
       return;
     }
     if (CONSUMED_INVITES.has(bootstrapUserId)) {
@@ -1029,7 +1058,7 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     // file, the invite flow is locked out regardless of invite validity.
     const existing = await readAuthMethods(bootstrapUserId, /* allowStale */ true);
     if (hasAnyCredential(existing)) {
-      res.status(409).json({ error: `User '${bootstrapUserId}' already has credentials — use the add-device flow` });
+      res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
       return;
     }
     bootstrapTargetUserId = bootstrapUserId;
@@ -1158,7 +1187,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     // Re-check: if somebody else bound a credential in the interim, refuse.
     const existing = await readAuthMethods(ch.bootstrapUserId, /* allowStale */ true);
     if (hasAnyCredential(existing)) {
-      res.status(409).json({ error: `User '${ch.bootstrapUserId}' already has credentials` });
+      res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
       return;
     }
     targetUserId = ch.bootstrapUserId;
@@ -1393,11 +1422,11 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       }
       const existing = await readAuthMethods(bootstrapUserId, /* allowStale */ true);
       if (hasAnyCredential(existing)) {
-        res.status(409).json({ error: `User '${bootstrapUserId}' already has credentials — use the add-did flow` });
+        res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
         return;
       }
       if (!verifyBootstrapInvite(bootstrapUserId, bootstrapInvite)) {
-        res.status(401).json({ error: 'Invalid or consumed bootstrap invite' });
+        res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
         return;
       }
       targetUserId = bootstrapUserId;

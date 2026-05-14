@@ -157,11 +157,24 @@ export class FileBackedRelay extends InMemoryRelay {
     }
     let replayed = 0;
     let skipped = 0;
+    const skippedSamples: string[] = [];
+    let lineNum = 0;
     for (const line of content.split('\n')) {
+      lineNum++;
       const trimmed = line.trim();
       if (!trimmed) continue;
       const event = this.deserializeFromDisk(trimmed);
-      if (!event) { skipped++; continue; }
+      if (!event) {
+        skipped++;
+        // Capture the first 3 skipped lines (truncated to 100 chars
+        // each) so the operator has concrete starting points for
+        // diagnosis. Was previously a single aggregate count with
+        // no signal about which lines / which bytes were lost.
+        if (skippedSamples.length < 3) {
+          skippedSamples.push(`line ${lineNum}: ${trimmed.slice(0, 100)}${trimmed.length > 100 ? '…' : ''}`);
+        }
+        continue;
+      }
       // Mark the event so super.publish doesn't re-append it
       this.skipPersistOnReplay.add(event);
       // Use super.publish (NOT this.publish) so we go through the
@@ -173,6 +186,16 @@ export class FileBackedRelay extends InMemoryRelay {
     }
     if (replayed > 0 || skipped > 0) {
       this.log(`Replayed ${replayed} event(s) from ${this.path}${skipped > 0 ? ` (skipped ${skipped} malformed)` : ''}`);
+      // Surface the actual lines that were dropped so the operator
+      // can quote them in an investigation rather than search a
+      // multi-GB jsonl by hand.
+      if (skippedSamples.length > 0) {
+        this.log(`  First ${skippedSamples.length} malformed line(s):`);
+        for (const s of skippedSamples) this.log(`    ${s}`);
+        if (skipped > skippedSamples.length) {
+          this.log(`    (${skipped - skippedSamples.length} more — silent drops are a data-loss risk)`);
+        }
+      }
     }
   }
 }

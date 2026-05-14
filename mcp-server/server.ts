@@ -229,9 +229,18 @@ const agentKeyPair: EncryptionKeyPair = (() => {
     }
   } catch { /* fall through to fresh generation */ }
   const kp = generateKeyPair();
+  // Atomic key write: write to a tmp file with a unique suffix, then
+  // rename into place. A crash partway through a non-atomic
+  // writeFileSync would leave the key file half-written (truncated or
+  // garbage), losing the only key that can decrypt every E2EE descriptor
+  // we ever publish. rename() is atomic on the same filesystem on
+  // Windows + POSIX, so either the file is fully written or unchanged.
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require('node:fs').writeFileSync(AGENT_KEY_PATH, JSON.stringify(kp, null, 2), { mode: 0o600 });
+    const fs = require('node:fs') as typeof import('node:fs');
+    const tmp = `${AGENT_KEY_PATH}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tmp, JSON.stringify(kp, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, AGENT_KEY_PATH);
   } catch { /* best-effort; in-memory still works for this session */ }
   return kp;
 })();
@@ -363,6 +372,23 @@ async function ensureCSS(): Promise<void> {
     proc.stderr?.on('data', (d: Buffer) => {
       const text = d.toString().trim();
       if (text) log(`[css] ${text}`);
+    });
+
+    // Observability: if CSS exits unexpectedly after we declared it
+    // ready, mark our session degraded so subsequent tool calls don't
+    // blindly trust cssReady=true. Without this monitor, operators see
+    // tools fail with cryptic connection errors after CSS crashes;
+    // with it, the next tool call surfaces the actual root cause
+    // ("CSS exited with code N after running for Xs").
+    let cssStartedAtMs = Date.now();
+    proc.on('exit', (code, signal) => {
+      const upMs = Date.now() - cssStartedAtMs;
+      cssReady = false;
+      cssUnavailable = true;
+      log(`[css] process exited (code=${code ?? 'null'} signal=${signal ?? 'null'}) after ${upMs}ms uptime — tools will retry on next call.`);
+      // Clear the cssProcess handle so a later ensureCSS() invocation
+      // doesn't think it's still running.
+      if (cssProcess === proc) cssProcess = null;
     });
 
     const poll = setInterval(async () => {
