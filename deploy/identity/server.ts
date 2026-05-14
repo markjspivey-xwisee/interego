@@ -2001,6 +2001,75 @@ app.get('/auth-methods/me', async (req, res) => {
   });
 });
 
+/**
+ * GET /me — consumer-friendly identity summary.
+ *
+ * Returns just the fields a dashboard / inviter / sharing UI needs:
+ * the user's canonical DID, WebID, pod URL, display name, and the
+ * primary agent ID — without enumerating every passkey or wallet.
+ *
+ * For credential management use /auth-methods/me. For the full
+ * profile (DID document with verification methods) use
+ * /users/:id/profile or /users/:id/did.json. This endpoint exists
+ * because the consumer UX audit (UX#5) flagged "the user enrolls and
+ * has no way to find their own DID without command-line tools."
+ *
+ * Bearer-authenticated; the token's userId is authoritative — no
+ * lookup-by-arbitrary-id surface.
+ */
+app.get('/me', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({
+      error: 'authentication_required',
+      title: 'Bearer token required',
+      detail: 'GET /me returns your own identity summary. Authenticate first via /authorize on the relay or one of the /auth/* flows on the identity server.',
+    });
+    return;
+  }
+  const tr = verifyToken(authHeader.slice(7));
+  if (!tr.valid) {
+    res.status(401).json({
+      error: 'invalid_token',
+      title: 'Invalid bearer token',
+      detail: tr.reason ?? 'Token failed verification — it may have expired or been revoked.',
+    });
+    return;
+  }
+  const userId = tr.record!.userId;
+  const user = identities.get(userId);
+  if (!user || user.type !== 'user') {
+    res.status(404).json({
+      error: 'user_not_found',
+      title: 'User not found',
+      detail: 'Your token verified but the matching user record is missing. This usually means the server was restarted with a different BOOTSTRAP_INVITES configuration. Re-enroll via /auth/* to get a fresh token.',
+    });
+    return;
+  }
+  // Find the user's primary agent (first agent owned by them).
+  const primaryAgent = [...identities.values()].find(i => i.type === 'agent' && i.owner === userId);
+  // Pod URL derives from the user's canonical id (deployment convention).
+  const did = `did:web:${new URL(BASE_URL).host.replace(/:.*$/, '')}:users:${userId}`;
+  const webId = `${BASE_URL.replace(/\/$/, '')}/users/${userId}/profile#me`;
+  res.json({
+    userId,
+    did,
+    webId,
+    displayName: user.name,
+    primaryAgentId: primaryAgent?.id ?? null,
+    primaryAgentDid: primaryAgent
+      ? `did:web:${new URL(BASE_URL).host.replace(/:.*$/, '')}:agents:${primaryAgent.id}`
+      : null,
+    podHint: `${BASE_URL.replace('-identity.', '-css.').replace(/\/$/, '')}/${userId}/`,
+    enrolledAt: user.createdAt,
+    actions: {
+      manageCredentials: `${BASE_URL.replace(/\/$/, '')}/auth-methods/me`,
+      profile: `${BASE_URL.replace(/\/$/, '')}/users/${userId}/profile`,
+      didDocument: `${BASE_URL.replace(/\/$/, '')}/users/${userId}/did.json`,
+    },
+  });
+});
+
 // Shared helper: resolve bearer token to the user, refuse if invalid.
 async function requireUserFromBearer(req: express.Request, res: express.Response): Promise<Identity | null> {
   const authHeader = req.headers.authorization;

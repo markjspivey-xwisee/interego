@@ -139,12 +139,37 @@ export async function fetchWellKnownAgents(
  * choice as elsewhere in the codebase; narrow shape, zero runtime
  * deps). Tolerates missing optional fields.
  */
+// Defensive cap on agents-catalog input size. A real agent catalog
+// for a domain is small (kilobytes — handful of agents, each with a
+// few hundred bytes of metadata). The regex parser tolerates nested
+// brackets via reluctant `[\s\S]*?`, but extremely large input lets
+// pathological nesting still degrade. Cap at 256 KiB — generous for
+// legitimate use, refuses obvious DoS-shaped inputs early.
+const AGENTS_CATALOG_MAX_BYTES = 256 * 1024;
+const AGENTS_CATALOG_MAX_ENTRIES = 500;
+
 export function parseAgentsCatalog(ttl: string): readonly AgentCatalogEntry[] {
+  if (ttl.length > AGENTS_CATALOG_MAX_BYTES) {
+    // Refuse oversized input rather than risk regex backtracking +
+    // memory consumption. Truncating wouldn't preserve semantics —
+    // the catalog is a flat list of cg:hasAgent blocks but we'd cut
+    // a block in half and yield malformed entries.
+    throw new Error(
+      `parseAgentsCatalog: input exceeds ${AGENTS_CATALOG_MAX_BYTES} bytes (${ttl.length}) — likely DoS-shaped. ` +
+      `Real catalogs are <10 KB; if your catalog is genuinely large, split it across multiple <domain>/.well-known/agents resources.`,
+    );
+  }
   const entries: AgentCatalogEntry[] = [];
   // Match `cg:hasAgent [ ... ]` blocks.
   const re = /cg:hasAgent\s+\[([\s\S]*?)\]\s*(?:[;.])/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(ttl)) !== null) {
+    if (entries.length >= AGENTS_CATALOG_MAX_ENTRIES) {
+      throw new Error(
+        `parseAgentsCatalog: catalog claims >${AGENTS_CATALOG_MAX_ENTRIES} agents — refusing rather than allocating unbounded arrays. ` +
+        `Split large agent populations across multiple catalogs.`,
+      );
+    }
     const body = m[1]!;
     const idM = body.match(/cg:agentIdentity\s+<([^>]+)>/);
     if (!idM) continue;

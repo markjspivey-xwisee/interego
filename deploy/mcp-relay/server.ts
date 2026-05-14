@@ -1873,6 +1873,74 @@ app.get('/audit/frameworks', (_req, res) => {
   res.json({ frameworks });
 });
 
+/**
+ * GET /inbox?pod=<pod-url>&since=<iso>
+ *
+ * "What's new on my pod?" — consumer-friendly framing of /audit/events
+ * tailored for the share-and-discover loop. Returns descriptors on the
+ * given pod sorted newest-first, with a default 7-day window so users
+ * see what arrived recently without paging through everything.
+ *
+ * Per-publish E2EE means we can't reveal "who shared this with me" in
+ * the manifest (recipients are X25519 pubkey hashes inside the
+ * envelope, not DIDs in plaintext). The inbox surface lists ALL recent
+ * descriptors on the pod; if the consumer's agent has the matching
+ * private key, the envelope decrypts and the content shows. Otherwise
+ * the descriptor is visible-but-opaque, which is the intended E2EE
+ * tradeoff.
+ *
+ * UX audit (#10) flagged "user A shares with user B but B has no way
+ * to discover what's been sent" as a blocking gap for family/team
+ * adoption. This endpoint closes the visibility gap without leaking
+ * the recipient graph at the manifest level.
+ */
+app.get('/inbox', async (req, res) => {
+  const podUrl = req.query.pod as string | undefined;
+  if (!podUrl) {
+    res.status(400).json({
+      error: 'pod_required',
+      title: 'pod query parameter required',
+      detail: 'GET /inbox?pod=https://your-pod.example/me/ — supplies the pod URL to scan. The relay does not know which pod is "yours" unless you tell it.',
+    });
+    return;
+  }
+  // Default window: last 7 days. Tighten with ?since=2026-05-01T00:00:00Z.
+  const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const since = (req.query.since as string | undefined) ?? sevenDaysAgoIso;
+  const limit = Math.min(parseInt((req.query.limit as string | undefined) ?? '50', 10) || 50, 200);
+  try {
+    const entries = await discover(podUrl, undefined, { fetch: solidFetch });
+    const recent = entries
+      .filter(e => !e.validFrom || e.validFrom >= since)
+      .sort((a, b) => (b.validFrom ?? '').localeCompare(a.validFrom ?? ''))
+      .slice(0, limit);
+    res.json({
+      pod: podUrl,
+      window: { since, sortedBy: 'validFrom-desc', limit },
+      count: recent.length,
+      totalOnPod: entries.length,
+      hint: recent.length === 0
+        ? 'No descriptors in this window. Try a wider `since` (e.g. ?since=2025-01-01T00:00:00Z) or check that your pod URL is correct.'
+        : 'Items with an unfamiliar publisher are likely shared-with-you descriptors. Your agent\'s private key decides whether the content decrypts.',
+      events: recent.map(e => ({
+        descriptorUrl: e.descriptorUrl,
+        graphIris: e.describes,
+        validFrom: e.validFrom,
+        modalStatus: e.modalStatus,
+        trustLevel: e.trustLevel,
+        supersedes: e.supersedes,
+      })),
+    });
+  } catch (err) {
+    res.status(502).json({
+      error: 'pod_fetch_failed',
+      title: `Could not reach pod ${podUrl}`,
+      detail: (err as Error).message,
+      retry: 'Common causes: pod is offline, URL has a typo, pod requires auth that this relay doesn\'t have. Verify the URL works in a browser first.',
+    });
+  }
+});
+
 app.get('/audit/events', async (req, res) => {
   const podUrl = (req.query.pod as string | undefined) ?? `${CSS_URL}markj/`;
   const since = req.query.since as string | undefined;
