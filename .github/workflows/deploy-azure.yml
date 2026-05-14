@@ -70,7 +70,7 @@ jobs:
       identity: ${{ steps.filter.outputs.identity }}
       css: ${{ steps.filter.outputs.css }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -137,7 +137,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Determine whether THIS matrix entry should rebuild.
       #
