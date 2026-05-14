@@ -547,6 +547,19 @@ async function toolPublishContext(args: {
    * for. Currently 'eu-ai-act' | 'nist-rmf' | 'soc2'.
    */
   compliance_framework?: 'eu-ai-act' | 'nist-rmf' | 'soc2';
+  /**
+   * Opt-in override for the HIGH-severity privacy preflight block.
+   * Set to true to allow publishing graph_content that contains
+   * recognized HIGH-severity secrets (API keys, private keys, JWTs).
+   * Default: false — the substrate REFUSES the publish and surfaces
+   * the flagged matches.
+   *
+   * Set true only when the caller has independently verified the
+   * "secret" is a false positive (e.g. an example value, a redacted
+   * placeholder, a legitimate JWT used as an attestation artifact)
+   * AND the publish is genuinely safe to land. Logged either way.
+   */
+  allow_sensitive_content?: boolean;
 }): Promise<string> {
   await ensureCSS();
   await ensureRegistry();
@@ -557,12 +570,41 @@ async function toolPublishContext(args: {
   const now = new Date().toISOString();
 
   // Privacy-hygiene preflight: scan content for credentials, PII, etc.
-  // We always WARN. We don't block automatically — the calling agent
-  // decides. The warning is appended to the response so any LLM in the
-  // loop sees it and can decide to surface to the user. See
-  // docs://interego/playbook §2 for the agent-side guidance.
+  // HIGH-severity flags (recognized API keys, private keys, JWTs)
+  // now BLOCK the publish by default — the consumer-UX audit flagged
+  // "warning was appended but the LLM ignored it and published anyway"
+  // as a real exfiltration shape. The caller can opt back into the
+  // legacy warn-only behavior with `allow_sensitive_content: true`
+  // when the match is genuinely a false positive.
+  //
+  // Lower-severity flags (PII, IPs, emails) continue to warn only —
+  // they're frequently legitimate in shared context and humans / agents
+  // can decide per-publish whether they belong on the pod.
   const sensitivityFlags = screenForSensitiveContent(args.graph_content ?? '');
   const sensitivityWarning = formatSensitivityWarning(sensitivityFlags);
+  if (!args.allow_sensitive_content) {
+    const highSeverityFlags = sensitivityFlags.filter(f => f.severity === 'high');
+    if (highSeverityFlags.length > 0) {
+      const kinds = [...new Set(highSeverityFlags.map(f => f.kind))].join(', ');
+      const lines: string[] = [
+        `❌ publish_context REFUSED: graph_content contains HIGH-severity sensitive content (${highSeverityFlags.length} match(es): ${kinds}).`,
+        '',
+        'The substrate refuses to publish recognized API keys, private keys, JWTs, or connection-string credentials by default — these would land on a pod and (under share_with) be cryptographically wrapped for cross-pod delivery, which is exactly the wrong place for secrets to end up.',
+        '',
+        sensitivityWarning,
+        '',
+        'If the match is genuinely a false positive (a redacted example, a legitimate attestation artifact, a test fixture), retry with `allow_sensitive_content: true`. The decision is logged either way.',
+      ];
+      // Log the refusal for audit even though we throw — the error
+      // bubbles to the MCP client; the log line stays for the operator.
+      log(`publish_context REFUSED on HIGH-severity sensitivity: ${kinds} (${highSeverityFlags.length} flag(s))`);
+      throw new Error(lines.join('\n'));
+    }
+  } else if (sensitivityFlags.some(f => f.severity === 'high')) {
+    // The caller opted in — log it so the audit trail records the override.
+    const kinds = [...new Set(sensitivityFlags.filter(f => f.severity === 'high').map(f => f.kind))].join(', ');
+    log(`publish_context allow_sensitive_content=true OVERRIDE: published with HIGH-severity content (${kinds}) — caller asserted false-positive`);
+  }
 
   // Auto-supersede: if previous descriptor(s) on this pod describe the
   // same graph_iri, our new one supersedes them. Disabled with
