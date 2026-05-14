@@ -83,7 +83,61 @@ a two-track "try it" experience (person → passkey/wallet enroll; agent →
 copy the relay URL into an MCP client). `/connect` does in-browser
 passkey enrollment (Touch ID / Windows Hello / security key) **and**
 Ethereum-wallet enrollment — no password, no email, no account
-database; DID + pod minted from the credential.
+database; DID + pod minted from the credential. The relay landing page
+cross-links the identity front door so neither hosted surface dead-ends.
+
+## 2026-05-13 — Production hardening, batches 1–4
+
+A four-batch pass tightening the substrate for consumer-grade
+deployment — error handling, resource bounds, race fixes, and the
+identity/relay attack surface.
+
+- **Escape correctness + privacy preflight** (`4cdf0ea`) — fixed Turtle
+  literal escaping across the pod-publishers, added API-key / PII
+  sensitivity detectors, resource caps, timeouts, and concurrency-race
+  fixes.
+- **Identity + relay hardening** (`edc1f25`) — per-IP rate limiting on
+  every auth endpoint; browser-friendly landing pages so a non-technical
+  visitor sees an actionable page, not `Cannot GET /`.
+- **Batch 2** (`b00f171`) — Merkle BIP-98 leaf/internal domain tags,
+  discovery diagnostics, a connector-failure surface (`getLastFailures`).
+- **Batch 3** (`92af768`) — actionable error messages, atomic agent-key
+  write (tmp + rename), Turtle-injection defense, relay-replay
+  diagnostics.
+- **Batch 4** (`d4d50c2`) — CAS exponential backoff, PGSL ingest cap,
+  WebSocket reconnect, `discover_all` partial-failure summaries.
+- `cg:supersedes` round-trips through `ManifestEntry` (`ba4712f`).
+
+## 2026-05-02 — Complexity-science foundations, demo set 16–23, agent-runtime integration scaffolding
+
+Three arcs landed over early May.
+
+### Categorical foundations + complexity-aware extensions
+- `docs/ARCHITECTURAL-FOUNDATIONS.md` (`d7f0d04`) — the formal account
+  of the substrate (holonic hypergraphics, PGSL as Grothendieck
+  fibration, HELA as topos, the four invariants, Peircean correspondence).
+- §9 complexity-aware extensions, then §10 — the substrate
+  self-bootstraps an emergent protocol-and-app (`d768e81`, `a6a5257`,
+  `5514c82`). Three engineering-honesty gaps closed alongside:
+  tree-kill, real range-proof verification, substrate-enforced
+  constitutional constraints (`9f5e367`).
+
+### Benchmark honesty
+- Stripped cross-run study-notes from the LongMemEval prompts; reported
+  an honest cold-start baseline (`48ac9f5`, `7c89e33`). The system's
+  value is infrastructure, not test-set fitting.
+
+### Demos 16–23 + agent-runtime integration paths 1–4
+- Demos 16–23 (`e6408e4`, `0f8fc72`, `fcdf30f`, `85f0b3e`, …) — including
+  Demo 22 (autonomous game design/build/play) and Demo 23 (federated
+  zero-copy semantic layer).
+- **Agent-runtime integration paths 1–4** (`f3fb1c1`) — the skills
+  bridge (SKILL.md ↔ `cg:Affordance`), the OpenClaw memory plugin, the
+  compliance overlay, and the integration map. The Hermes provider
+  (Path 5) and the HATEOAS surface for both plugins followed on
+  2026-05-14.
+- Review follow-ups (`a1bf4b1`) — a real subject-extraction TriG parser
+  replacing regex, range-proof hardening, hardened readiness probes.
 
 ## 2026-04-28 (later) — Layering correction: verticals out of generic deployments; affordance-first
 
