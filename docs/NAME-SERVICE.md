@@ -1,8 +1,8 @@
-# Interego Name Service — design note
+# Interego Name Service — design + reference runtime
 
-> **Status:** design note (non-normative). Answers "is it possible to
-> have an Interego name service?" — yes — and pins the design before any
-> code, so a reference implementation can be built from it.
+> **Status:** design note **+ shipped reference runtime**
+> ([`src/naming/`](../src/naming/index.ts), tests in
+> [`tests/naming.test.ts`](../tests/naming.test.ts)). Non-normative.
 >
 > **Layer:** L2 architecture pattern. A construction *over* L1
 > primitives (typed descriptors, the seven facets, `cg:supersedes`,
@@ -10,6 +10,29 @@
 > [`passport:`](ns/passport.ttl). It adds **no new L1/L2 ontology
 > terms**: a name is a `foaf:nick` literal on a DID, inside an ordinary
 > Context Descriptor.
+
+## At a glance — the shipped API
+
+```ts
+import { attestName, resolveName, namesFor, defaultNameTrustPolicy } from '@interego/core';
+
+// Attest a name (publishes a signed, provenance-stamped descriptor):
+await attestName({ subject: aliceDid, name: 'alice' }, config);
+
+// Forward: name → principals, trust-ranked (NOT a single answer):
+const hits = await resolveName('alice', config, { pods: [myPod, ...subscribedPods] });
+
+// Reverse: principal → its attested names:
+const names = await namesFor(aliceDid, config);
+```
+
+`buildNameAttestation` is the pure (pod-free) builder; `attestName`
+publishes it. `resolveName` / `namesFor` walk the given pods, parse
+name-attestation graphs, and rank with a **pluggable trust policy**
+(`defaultNameTrustPolicy` drops retracted/superseded bindings and ranks
+`CryptographicallyVerified` > `ThirdPartyAttested` > `SelfAsserted`,
+recency as tiebreaker). All resolvers take an injectable `fetch`, like
+the rest of the substrate's federated calls.
 
 ## The question
 
@@ -183,17 +206,33 @@ opt into a `did:web` or ENS tier.
   `amta:`, the pod directory. **No new L1/L2 ontology terms.**
 - ✅ Layer-clean — L2 pattern, sibling of `registry:` / `passport:`.
 
-## Next steps (if built)
+## Build status
 
-1. `src/naming/` — `resolveName` (forward, trust-ranked), `namesFor`
-   (reverse), and a default pluggable trust policy.
-2. Extend the pod directory with an optional `name → did` index.
-3. A name-attestation helper on the descriptor builder (sugar over the
-   existing `.describes()` + `foaf:nick` + Trust/Provenance facets).
-4. Optionally a `docs/ns/naming.ttl` *only if* the applicability note
-   needs typed shapes — but the binding itself stays plain `foaf:nick`.
-5. Surface it as a tier in `resolveIdentifier` so `resolveName` is just
-   another entry into the existing tiered resolver.
+**Shipped** ([`src/naming/index.ts`](../src/naming/index.ts), 14 tests):
+
+- ✅ `buildNameAttestation` — pure builder (content-addressed on
+  `(subject, name)`; idempotent re-attestation).
+- ✅ `attestName` — builds + publishes a signed, provenance-stamped
+  attestation descriptor.
+- ✅ `resolveName` — forward, federated, trust-ranked candidate set.
+- ✅ `namesFor` — reverse lookup.
+- ✅ `defaultNameTrustPolicy` — pluggable; drops retracted/superseded,
+  ranks by trust level + recency.
+- ✅ Injectable `fetch` on every resolver.
+
+**Not yet built (optional, deferred):**
+
+1. Extend the pod directory with an optional `name → did` index, so
+   federated resolution doesn't have to walk every pod. (The index is a
+   cache/hint, re-derivable from the attestation descriptors — not an
+   authority.)
+2. Surface `resolveName` as a tier inside `resolveIdentifier`, so a bare
+   name is just another entry into the existing tiered resolver.
+3. A host-free convenience namespace (`@alice`) resolved via the
+   federation index — explicitly a convenience view over a trust-ranked
+   set, not a uniqueness guarantee.
+4. A `docs/ns/naming.ttl` *only if* typed shapes are ever needed — the
+   binding itself stays plain `foaf:nick`, so likely never.
 
 ## See also
 
