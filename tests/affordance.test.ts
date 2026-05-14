@@ -410,4 +410,53 @@ describe('Stigmergic Field', () => {
     // All self-asserted → coherence = 0
     expect(field.coherenceMetric).toBe(0);
   });
+
+  it('computes a non-negative change rate from update timestamps', () => {
+    let field = createStigmergicField();
+    // Backdate the field so a measurable interval has elapsed.
+    field = { ...field, timestamp: new Date(Date.now() - 2000).toISOString() };
+
+    field = updateStigmergicField(
+      field,
+      'https://pod.example.com/alice/' as IRI,
+      [buildAssertedDescriptor(), buildHypotheticalDescriptor()],
+      ['urn:agent:a' as IRI],
+    );
+
+    // 2 descriptors gained over ~2s → strictly positive, finite rate.
+    expect(field.changeRate).toBeGreaterThan(0);
+    expect(Number.isFinite(field.changeRate)).toBe(true);
+  });
+
+  it('aggregates dominant vocabularies from Projection facets', () => {
+    const projected = ContextDescriptor.create('urn:cg:test:projected' as IRI)
+      .describes('urn:graph:test:projected' as IRI)
+      .temporal({ validFrom: '2026-01-01T00:00:00Z' })
+      .asserted(0.9)
+      .selfAsserted('did:web:alice.example' as IRI)
+      .projection({
+        targetVocabulary: 'http://schema.org/' as IRI,
+        bindings: [{
+          source: 'urn:graph:test:projected#x' as IRI,
+          target: 'http://schema.org/Thing' as IRI,
+          strength: 'Strong',
+          targetVocabulary: 'http://schema.org/' as IRI,
+        }],
+        vocabularyMappings: [{
+          source: 'urn:cg:p' as IRI,
+          target: 'http://www.w3.org/ns/prov#wasDerivedFrom' as IRI,
+          mappingType: 'property',
+          relationship: 'related',
+        }],
+      })
+      .version(1)
+      .build();
+
+    let field = createStigmergicField();
+    field = updateStigmergicField(field, 'https://pod.example.com/alice/' as IRI, [projected], ['urn:agent:a' as IRI]);
+
+    // schema.org appears twice (facet + binding), prov# once → schema.org leads.
+    expect(field.dominantVocabularies[0]).toBe('http://schema.org/');
+    expect(field.dominantVocabularies).toContain('http://www.w3.org/ns/prov#');
+  });
 });

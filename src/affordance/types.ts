@@ -334,6 +334,12 @@ export interface PodFieldState {
   readonly modifiedBy: readonly IRI[];
   readonly affordanceDensity: number;   // how many affordances per descriptor
   readonly trustDistribution: TrustDistribution;
+  /**
+   * Target vocabularies referenced by this pod's Projection facets,
+   * counted by occurrence. Aggregated across pods into the field's
+   * `dominantVocabularies`.
+   */
+  readonly vocabularyCounts: Readonly<Record<string, number>>;
 }
 
 export interface TrustDistribution {

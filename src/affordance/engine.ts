@@ -428,6 +428,7 @@ export function updateStigmergicField(
       ? descriptors.reduce((sum, d) => sum + d.facets.length, 0) / descriptors.length
       : 0,
     trustDistribution: trustDist,
+    vocabularyCounts: countVocabularies(descriptors),
   };
 
   pods.set(podUrl, podState);
@@ -449,15 +450,74 @@ export function updateStigmergicField(
   }
   const coherenceMetric = total > 0 ? totalVerified / total : 1.0;
 
+  // Change rate: net descriptors per second since the field was last updated.
+  // A non-positive elapsed interval (clock skew, sub-millisecond updates)
+  // carries the prior rate forward rather than producing a spike.
+  const now = new Date();
+  const prevMs = Date.parse(field.timestamp);
+  const elapsedSec = Number.isFinite(prevMs) ? (now.getTime() - prevMs) / 1000 : 0;
+  const changeRate = elapsedSec > 0
+    ? (totalDescriptors - field.totalDescriptors) / elapsedSec
+    : field.changeRate;
+
+  // Dominant vocabularies: sum each pod's Projection-facet vocabulary counts,
+  // ranked most-referenced first.
+  const vocabTotals = new Map<string, number>();
+  for (const [, pod] of pods) {
+    for (const [vocab, count] of Object.entries(pod.vocabularyCounts)) {
+      vocabTotals.set(vocab, (vocabTotals.get(vocab) ?? 0) + count);
+    }
+  }
+  const dominantVocabularies = [...vocabTotals.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([vocab]) => vocab);
+
   return {
     pods,
     totalDescriptors,
     totalAgents: allAgents.size,
     coherenceMetric,
-    changeRate: field.changeRate, // TODO: compute from timestamps
-    dominantVocabularies: [], // TODO: compute from projection facets
-    timestamp: new Date().toISOString(),
+    changeRate,
+    dominantVocabularies,
+    timestamp: now.toISOString(),
   };
+}
+
+/**
+ * Count the target vocabularies referenced by a set of descriptors'
+ * Projection facets — the facet-level `targetVocabulary`, each external
+ * binding's `targetVocabulary`, and the namespace of each vocabulary
+ * mapping's target term.
+ */
+function countVocabularies(
+  descriptors: readonly ContextDescriptorData[],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  const bump = (vocab: string | undefined): void => {
+    if (!vocab) return;
+    counts[vocab] = (counts[vocab] ?? 0) + 1;
+  };
+  for (const desc of descriptors) {
+    for (const facet of desc.facets) {
+      if (facet.type !== 'Projection') continue;
+      bump(facet.targetVocabulary);
+      for (const binding of facet.bindings ?? []) bump(binding.targetVocabulary);
+      for (const mapping of facet.vocabularyMappings ?? []) bump(namespaceOf(mapping.target));
+    }
+  }
+  return counts;
+}
+
+/**
+ * Extract the namespace IRI from a term IRI by trimming the local name
+ * after the last `#` or `/`.
+ */
+function namespaceOf(iri: string): string {
+  const hash = iri.lastIndexOf('#');
+  if (hash >= 0) return iri.slice(0, hash + 1);
+  const slash = iri.lastIndexOf('/');
+  if (slash >= 0) return iri.slice(0, slash + 1);
+  return iri;
 }
 
 // ═════════════════════════════════════════════════════════════
