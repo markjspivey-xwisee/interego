@@ -611,6 +611,150 @@ app.use((_req, res, next) => {
   next();
 });
 
+// ── Per-IP rate limiting (auth endpoints) ──────────────────────────
+//
+// Sliding-window counters per IP × endpoint family. Without these, an
+// attacker can pound /auth/webauthn/register-options or /challenges
+// faster than legitimate users could ever do, exhausting the in-memory
+// challenge map (~5 min TTL × N entries) until the server OOMs.
+//
+// Limits are calibrated for legitimate usage:
+//   - WebAuthn / SIWE / DID enrollment: a few per minute per device
+//     (human-driven, not bot-driven). 30/min is generous.
+//   - Challenge nonces: minted as part of every auth ceremony. 60/min
+//     accommodates retries + multiple methods.
+//   - Token issue / verify: per-session, low volume.
+//
+// In-memory implementation is fine for a single-container Azure
+// Container Apps deployment. For multi-instance deployments, replace
+// with a Redis-backed counter so limits are shared across replicas.
+
+interface RateLimitEntry {
+  count: number;
+  resetAt: number;
+}
+
+const rateLimitBuckets = new Map<string, Map<string, RateLimitEntry>>();
+
+function rateLimit(bucketName: string, opts: { windowMs: number; max: number }) {
+  if (!rateLimitBuckets.has(bucketName)) rateLimitBuckets.set(bucketName, new Map());
+  const bucket = rateLimitBuckets.get(bucketName)!;
+  return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
+    // req.ip honors trust-proxy when set; for Container Apps deployments
+    // the platform terminates TLS at the ingress and the real client IP
+    // is in X-Forwarded-For. Trust the first hop only (set above in
+    // app.set('trust proxy', 1) when configured at deploy time).
+    const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
+    const now = Date.now();
+    let entry = bucket.get(ip);
+    if (!entry || entry.resetAt < now) {
+      entry = { count: 0, resetAt: now + opts.windowMs };
+      bucket.set(ip, entry);
+    }
+    entry.count++;
+    if (entry.count > opts.max) {
+      const retryAfterSec = Math.ceil((entry.resetAt - now) / 1000);
+      res.setHeader('Retry-After', String(retryAfterSec));
+      res.status(429).json({
+        error: 'rate_limit_exceeded',
+        title: 'Too many requests',
+        detail: `${opts.max} requests in a ${opts.windowMs / 1000}s window for ${bucketName} on this IP. Retry in ${retryAfterSec}s.`,
+        retryAfterSeconds: retryAfterSec,
+      });
+      return;
+    }
+    next();
+  };
+}
+
+// Periodic cleanup of expired entries so a long-lived process doesn't
+// accumulate entries from one-off attackers. Runs every 5 minutes;
+// `unref` keeps Node from holding the event loop open for it.
+setInterval(() => {
+  const now = Date.now();
+  for (const bucket of rateLimitBuckets.values()) {
+    for (const [ip, entry] of bucket) {
+      if (entry.resetAt < now) bucket.delete(ip);
+    }
+  }
+}, 5 * 60 * 1000).unref();
+
+const authEnrollLimiter = rateLimit('auth-enroll', { windowMs: 60_000, max: 30 });
+const challengeLimiter = rateLimit('challenges', { windowMs: 60_000, max: 60 });
+const tokenLimiter = rateLimit('tokens', { windowMs: 60_000, max: 60 });
+
+// ── Browser-friendly landing page ─────────────────────────────────
+//
+// The identity server is an API surface; everything authoritative is
+// JSON. But a non-technical user who lands at the root URL (e.g.
+// because an inviter shared it as "go here to set up") deserves a
+// friendly explanation, not a 404. This serves a minimal page that:
+//   - explains what they're looking at
+//   - shows the OAuth-led onboarding flow (their MCP client will
+//     trigger /authorize on the relay; that page does the method
+//     picker; this URL is server-to-server otherwise)
+//   - lists their developer-side endpoints for transparency
+//
+// Inline HTML keeps the deployment artifact-free; no build step.
+
+const LANDING_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interego identity</title>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 720px; margin: 4em auto; padding: 0 1.5em; line-height: 1.55; color: #1c1f23; background: #fbfbfd; }
+  h1 { font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.2em; }
+  .sub { color: #5a6470; margin-top: 0; }
+  h2 { margin-top: 2.4em; border-bottom: 1px solid #e3e7eb; padding-bottom: 0.3em; }
+  code { background: #f0f2f5; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  .note { background: #fff8e6; border-left: 4px solid #f0b400; padding: 0.8em 1em; margin: 1em 0; border-radius: 4px; }
+  a { color: #0a66c2; }
+  ul { padding-left: 1.2em; }
+  li { margin-bottom: 0.35em; }
+  footer { margin-top: 4em; color: #8a929c; font-size: 0.87em; }
+</style>
+</head>
+<body>
+<h1>Interego identity</h1>
+<p class="sub">Cryptographic identity service for the Interego substrate. You shouldn't normally visit this page directly.</p>
+
+<div class="note">
+<strong>If you were invited to try Interego:</strong> your MCP client (Claude Code, Claude Desktop, Cursor, Hermes, OpenClaw, etc.) will drive enrollment for you automatically the first time it talks to the relay. You don't need to do anything on this page.
+</div>
+
+<h2>How enrollment works</h2>
+<ol>
+  <li>Add the <strong>relay</strong> URL to your MCP client's server list. (Not this URL — the relay's URL.)</li>
+  <li>First time the client calls any tool, your browser opens an authorization page on the relay.</li>
+  <li>The relay's page asks you to enroll a <strong>passkey</strong> (Touch ID / Windows Hello / Yubikey / iCloud Keychain), an <strong>Ethereum wallet</strong> (MetaMask / Coinbase / hardware), or a <strong>did:key</strong>.</li>
+  <li>You sign the challenge with your chosen credential. The credential never leaves your device.</li>
+  <li>The relay issues your client an access token; your DID and pod are auto-minted from the credential.</li>
+</ol>
+
+<h2>Why this is an API server, not a sign-up page</h2>
+<p>Your private keys stay on your device. This server only verifies signatures and issues tokens — it has no password to set, no email to confirm, no account database. The OAuth flow on the relay is the visible front door; this server runs the cryptography behind the scenes.</p>
+
+<h2>For developers / auditors</h2>
+<ul>
+  <li><a href="/.well-known/did.json">/.well-known/did.json</a> — this server's DID document</li>
+  <li><a href="/health">/health</a> — server health + counts</li>
+  <li>Auth methods (POST): <code>/auth/webauthn/register-options</code>, <code>/auth/webauthn/register</code>, <code>/auth/webauthn/authenticate</code>, <code>/auth/siwe</code>, <code>/auth/did</code>, <code>/challenges</code>, <code>/tokens</code>, <code>/tokens/verify</code></li>
+  <li>Per-user (after enrollment): <code>/users/:id/did.json</code>, <code>/users/:id/profile</code>, <code>/auth-methods/me</code></li>
+  <li>Federation: <code>/.well-known/webfinger</code></li>
+</ul>
+
+<footer>
+Open-source substrate · <a href="https://github.com/markjspivey-xwisee/interego">github</a> · this deployment is the maintainer's reference instance
+</footer>
+</body>
+</html>`;
+
+app.get('/', (_req, res) => {
+  res.type('text/html').send(LANDING_HTML);
+});
+
 // Health check
 app.get('/health', (_req, res) => {
   res.json({
@@ -676,7 +820,7 @@ app.post('/register', (_req, res) => {
  *             (server returns allowed credential IDs the client may use)
  * Returns: { nonce, expiresAt, allowCredentials? }
  */
-app.post('/challenges', async (req, res) => {
+app.post('/challenges', challengeLimiter, async (req, res) => {
   const { purpose, userId } = req.body as { purpose?: Challenge['purpose']; userId?: string };
   const ch = issueChallenge(purpose, userId);
   const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
@@ -708,7 +852,7 @@ app.post('/challenges', async (req, res) => {
  *   agentId?: string,        // agent to mint alongside (first-time)
  * }
  */
-app.post('/auth/siwe', async (req, res) => {
+app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   const {
     message, signature, nonce,
     name,
@@ -845,7 +989,7 @@ app.post('/auth/siwe', async (req, res) => {
  *
  * Returns: PublicKeyCredentialCreationOptionsJSON (pass to navigator.credentials.create)
  */
-app.post('/auth/webauthn/register-options', async (req, res) => {
+app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) => {
   const { name, bootstrapUserId, bootstrapInvite } = req.body ?? {};
   if (!name) {
     res.status(400).json({ error: 'name is required' });
@@ -949,7 +1093,7 @@ app.post('/auth/webauthn/register-options', async (req, res) => {
  *   - bootstrapUserId (mode B): bound at options-time by valid invite
  *   - else (mode A): derived from the new credential's ID
  */
-app.post('/auth/webauthn/register', async (req, res) => {
+app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   const { response, surfaceAgent } = req.body ?? {};
   if (!response) {
     res.status(400).json({ error: 'response is required' });
@@ -1068,7 +1212,7 @@ app.post('/auth/webauthn/register', async (req, res) => {
  * the assertion against the user's stored credential.
  * Body: { userId, response: AuthenticationResponseJSON }
  */
-app.post('/auth/webauthn/authenticate', async (req, res) => {
+app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
   const { response, surfaceAgent } = req.body ?? {};
   if (!response?.id) {
     res.status(400).json({ error: 'response (with credential id) is required' });
@@ -1161,7 +1305,7 @@ app.post('/auth/webauthn/authenticate', async (req, res) => {
  *   publicKeyMultibase?: string,  // for did:key, or first-time registration
  * }
  */
-app.post('/auth/did', async (req, res) => {
+app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   const {
     did, nonce, signature,
     name,
@@ -1427,7 +1571,7 @@ app.post('/register-agent', (req, res) => {
  * Body: { userId, agentId }
  * Returns: { token, expiresAt }
  */
-app.post('/tokens', (req, res) => {
+app.post('/tokens', tokenLimiter, (req, res) => {
   const { userId, agentId } = req.body;
   if (!userId || !agentId) {
     res.status(400).json({ error: 'userId and agentId are required' });
@@ -1455,7 +1599,7 @@ app.post('/tokens', (req, res) => {
  * Body: { token }
  * Returns: { valid, userId?, agentId?, scope?, reason? }
  */
-app.post('/tokens/verify', (req, res) => {
+app.post('/tokens/verify', tokenLimiter, (req, res) => {
   const { token } = req.body;
   if (!token) {
     res.status(400).json({ error: 'token is required' });

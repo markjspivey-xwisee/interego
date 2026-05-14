@@ -1750,6 +1750,91 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   res.json({ redirect: redirect.toString() });
 });
 
+// ── Browser-friendly landing page ─────────────────────────────────
+//
+// A non-technical user hitting the relay's root URL would otherwise
+// see "Cannot GET /" — not actionable. This serves a minimal page
+// pointing them at the right next step (configure their MCP client
+// with the /sse URL; OAuth-led flow handles enrollment).
+
+const RELAY_LANDING_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interego MCP relay</title>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 760px; margin: 4em auto; padding: 0 1.5em; line-height: 1.55; color: #1c1f23; background: #fbfbfd; }
+  h1 { font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.2em; }
+  .sub { color: #5a6470; margin-top: 0; }
+  h2 { margin-top: 2.4em; border-bottom: 1px solid #e3e7eb; padding-bottom: 0.3em; }
+  code { background: #f0f2f5; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  pre { background: #f0f2f5; padding: 0.9em 1em; border-radius: 6px; overflow-x: auto; font-size: 0.86em; line-height: 1.5; }
+  .note { background: #eaf6ff; border-left: 4px solid #0a66c2; padding: 0.8em 1em; margin: 1em 0; border-radius: 4px; }
+  a { color: #0a66c2; }
+  ul { padding-left: 1.2em; }
+  li { margin-bottom: 0.35em; }
+  footer { margin-top: 4em; color: #8a929c; font-size: 0.87em; }
+</style>
+</head>
+<body>
+<h1>Interego MCP relay</h1>
+<p class="sub">OAuth-gated MCP server. Connect your AI agent runtime here.</p>
+
+<h2>Connect your agent runtime</h2>
+
+<p>Add this URL to your MCP-speaking agent runtime (Claude Code, Claude Desktop, Cursor, Windsurf, Hermes, OpenClaw, claude.ai connectors, etc.):</p>
+
+<pre><strong>SSE endpoint:</strong>  <span id="sseUrl"></span>/sse
+<strong>HTTP endpoint:</strong> <span id="mcpUrl"></span>/mcp</pre>
+
+<p>Example MCP config (file location depends on your client):</p>
+
+<pre>{
+  "mcpServers": {
+    "interego": {
+      "url": "<span id="sseUrl2"></span>/sse"
+    }
+  }
+}</pre>
+
+<div class="note">
+First call triggers an OAuth flow in your browser. You'll be asked to enroll a <strong>passkey</strong>, <strong>Ethereum wallet</strong>, or <strong>did:key</strong>. Your private keys never leave your device.
+</div>
+
+<h2>What's exposed here</h2>
+<ul>
+  <li><strong>60+ MCP tools</strong> — typed-context publish/discover, federation, identity ops, PGSL lattice, ZK proofs, compliance-grade descriptors, ABAC, x402 payments, agent registry</li>
+  <li><strong>Per-surface agents</strong> — your DCR client name (chatgpt, cursor, claude-code-vscode, etc.) maps to a per-surface agent automatically</li>
+  <li><strong>Cross-pod E2EE share</strong> — <code>publish_context(..., share_with: [did:web:bob])</code> wraps the envelope key for any recipient DID</li>
+</ul>
+
+<h2>For auditors / developers</h2>
+<ul>
+  <li><a href="/health">/health</a> — relay status</li>
+  <li><a href="/tools">/tools</a> — list of every MCP tool this surface exposes</li>
+  <li><a href="/audit/frameworks">/audit/frameworks</a> — compliance frameworks supported (EU AI Act / NIST RMF / SOC 2)</li>
+  <li><a href="/audit/events">/audit/events</a> — public read of compliance-graded events</li>
+  <li><a href="/.well-known/oauth-authorization-server">/.well-known/oauth-authorization-server</a> — OAuth discovery</li>
+  <li><a href="/.well-known/security.txt">/.well-known/security.txt</a> — coordinated disclosure contact</li>
+</ul>
+
+<script>
+  const u = new URL(window.location.href);
+  const base = u.origin;
+  for (const el of document.querySelectorAll('#sseUrl, #sseUrl2, #mcpUrl')) el.textContent = base;
+</script>
+
+<footer>
+Open-source substrate · <a href="https://github.com/markjspivey-xwisee/interego">github</a> · this deployment is the maintainer's reference instance
+</footer>
+</body>
+</html>`;
+
+app.get('/', (_req, res) => {
+  res.type('text/html').send(RELAY_LANDING_HTML);
+});
+
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', css: CSS_URL, tools: Object.keys(TOOLS).length, auth: 'bearer-token', x402: true });
