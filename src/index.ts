@@ -969,3 +969,23 @@ export type {
   SkillToDescriptorOptions,
   DescriptorBundle as SkillDescriptorBundle,
 } from './skills/index.js';
+
+// ── Name service (L2 — attestation-based naming) ───────────────────
+// A name is a verifiable attestation (`<did> foaf:nick "alice"`), not a
+// claimed registration. Forward + reverse resolution by federated
+// discovery + a pluggable trust policy. See docs/NAME-SERVICE.md.
+export {
+  buildNameAttestation,
+  attestName,
+  resolveName,
+  namesFor,
+  defaultNameTrustPolicy,
+} from './naming/index.js';
+export type {
+  NamingConfig,
+  AttestNameArgs,
+  AttestNameResult,
+  NameCandidate,
+  ResolveOptions as NameResolveOptions,
+  NameTrustPolicy,
+} from './naming/index.js';
