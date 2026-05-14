@@ -6,7 +6,10 @@ import {
   podDirectoryToTurtle,
   parsePodDirectory,
   resolveWebFinger,
+  ownerProfileToTurtle,
+  parseOwnerProfile,
   type PodDirectoryData,
+  type OwnerProfileData,
   type IRI,
 } from '../src/index.js';
 import { PodRegistry } from '../mcp-server/pod-registry.js';
@@ -322,5 +325,93 @@ describe('PodRegistry', () => {
 
     expect(registry.size).toBe(1);
     expect(registry.get('https://unknown.com/')!.discoveredVia).toBe('manual');
+  });
+});
+
+// ── Agent registry: encryption-key rollover history (Sec #12) ──────
+
+describe('OwnerProfile encryption-key history round-trip', () => {
+  const baseProfile: OwnerProfileData = {
+    webId: 'https://id.example.com/alice/profile#me' as IRI,
+    name: 'Alice',
+    authorizedAgents: [
+      {
+        agentId: 'did:web:alice.example:agents:cli' as IRI,
+        delegatedBy: 'https://id.example.com/alice/profile#me' as IRI,
+        scope: 'ReadWrite',
+        validFrom: '2026-01-01T00:00:00Z',
+        encryptionPublicKey: 'currentPubKeyBase64AAAA',
+        encryptionKeyHistory: [
+          {
+            publicKey: 'retiredPubKey1Base64BBBB',
+            createdAt: '2025-06-01T00:00:00Z',
+            retiredAt: '2026-01-01T00:00:00Z',
+            label: 'pre-laptop-replacement',
+          },
+          {
+            publicKey: 'retiredPubKey2Base64CCCC',
+            createdAt: '2025-01-01T00:00:00Z',
+            retiredAt: '2025-06-01T00:00:00Z',
+          },
+        ],
+      },
+    ],
+  };
+
+  it('round-trips encryptionKeyHistory through serialize + parse', () => {
+    const turtle = ownerProfileToTurtle(baseProfile);
+    const parsed = parseOwnerProfile(turtle);
+    expect(parsed.authorizedAgents).toHaveLength(1);
+    const agent = parsed.authorizedAgents[0]!;
+    expect(agent.encryptionPublicKey).toBe('currentPubKeyBase64AAAA');
+    expect(agent.encryptionKeyHistory).toBeDefined();
+    expect(agent.encryptionKeyHistory).toHaveLength(2);
+    expect(agent.encryptionKeyHistory![0]).toEqual({
+      publicKey: 'retiredPubKey1Base64BBBB',
+      createdAt: '2025-06-01T00:00:00Z',
+      retiredAt: '2026-01-01T00:00:00Z',
+      label: 'pre-laptop-replacement',
+    });
+    // Second entry has no label — must round-trip without an undefined label key
+    expect(agent.encryptionKeyHistory![1]).toEqual({
+      publicKey: 'retiredPubKey2Base64CCCC',
+      createdAt: '2025-01-01T00:00:00Z',
+      retiredAt: '2025-06-01T00:00:00Z',
+    });
+  });
+
+  it('agents with no history round-trip without an encryptionKeyHistory field', () => {
+    const noHistory: OwnerProfileData = {
+      ...baseProfile,
+      authorizedAgents: [
+        {
+          ...baseProfile.authorizedAgents[0]!,
+          encryptionKeyHistory: undefined,
+        },
+      ],
+    };
+    const parsed = parseOwnerProfile(ownerProfileToTurtle(noHistory));
+    expect(parsed.authorizedAgents[0]!.encryptionKeyHistory).toBeUndefined();
+  });
+
+  it('labels containing a pipe character survive the round-trip (escaped)', () => {
+    const piped: OwnerProfileData = {
+      ...baseProfile,
+      authorizedAgents: [
+        {
+          ...baseProfile.authorizedAgents[0]!,
+          encryptionKeyHistory: [
+            {
+              publicKey: 'somePubKeyBase64DDDD',
+              createdAt: '2025-01-01T00:00:00Z',
+              retiredAt: '2025-06-01T00:00:00Z',
+              label: 'rotated | after | incident',
+            },
+          ],
+        },
+      ],
+    };
+    const parsed = parseOwnerProfile(ownerProfileToTurtle(piped));
+    expect(parsed.authorizedAgents[0]!.encryptionKeyHistory![0]!.label).toBe('rotated | after | incident');
   });
 });

@@ -168,6 +168,18 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
       // algorithm is implicit X25519-XSalsa20-Poly1305 per the crypto layer.
       lines.push(`    cg:encryptionPublicKey "${agent.encryptionPublicKey}" ;`);
     }
+    if (agent.encryptionKeyHistory && agent.encryptionKeyHistory.length > 0) {
+      // Pubkey rollover (Sec #12): each retired key is a pipe-delimited
+      // literal "<pubkey>|<createdAt>|<retiredAt>|<label?>". Base64
+      // pubkeys + ISO timestamps never contain '|', and labels with a
+      // '|' are escaped below. Private keys are NEVER serialized — only
+      // the public side + lifecycle timestamps so publishers can wrap
+      // to in-window retired keys.
+      for (const h of agent.encryptionKeyHistory) {
+        const safeLabel = (h.label ?? '').replace(/\|/g, '%7C').replace(/"/g, '\\"');
+        lines.push(`    cg:retiredEncryptionKey "${h.publicKey}|${h.createdAt}|${h.retiredAt}|${safeLabel}" ;`);
+      }
+    }
     // Close
     const lastIdx = lines.length - 1;
     lines[lastIdx] = lines[lastIdx]!.replace(/ ;$/, ' .');
@@ -209,6 +221,26 @@ export function parseOwnerProfile(turtle: string): OwnerProfileData {
     const encKeyMatch = block.match(/cg:encryptionPublicKey\s+"([^"]+)"/);
     const isSoftware = block.includes('prov:SoftwareAgent');
 
+    // Pubkey rollover history (Sec #12): one or more
+    // cg:retiredEncryptionKey literals, each pipe-delimited
+    // "<pubkey>|<createdAt>|<retiredAt>|<label?>". Parsed via matchAll;
+    // malformed entries (fewer than 3 segments) are skipped defensively.
+    const historyMatches = [...block.matchAll(/cg:retiredEncryptionKey\s+"([^"]+)"/g)];
+    const encryptionKeyHistory = historyMatches
+      .map(m => {
+        const parts = m[1]!.split('|');
+        if (parts.length < 3) return null;
+        const [publicKey, createdAt, retiredAt, rawLabel] = parts;
+        const label = rawLabel ? rawLabel.replace(/%7C/g, '|') : undefined;
+        return {
+          publicKey: publicKey!,
+          createdAt: createdAt!,
+          retiredAt: retiredAt!,
+          ...(label ? { label } : {}),
+        };
+      })
+      .filter((e): e is NonNullable<typeof e> => e !== null);
+
     if (idMatch && delegatedByMatch && scopeMatch && fromMatch) {
       agents.push({
         agentId: idMatch[1]! as IRI,
@@ -219,6 +251,7 @@ export function parseOwnerProfile(turtle: string): OwnerProfileData {
         label: labelMatch?.[1],
         isSoftwareAgent: isSoftware || undefined,
         encryptionPublicKey: encKeyMatch?.[1],
+        ...(encryptionKeyHistory.length > 0 ? { encryptionKeyHistory } : {}),
       });
     }
   }

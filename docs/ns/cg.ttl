@@ -658,6 +658,13 @@ cg:encryptionPublicKey a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
+cg:retiredEncryptionKey a owl:DatatypeProperty ;
+    rdfs:label "retired encryption key" ;
+    rdfs:comment "A recently-retired X25519 public key for this agent, serialized as a pipe-delimited string: \"<base64-pubkey>|<createdAt-iso>|<retiredAt-iso>|<optional-label>\". Multiple cardinality — one per rotation kept inside the rollover window. Publishers wrapping new envelopes wrap to the current cg:encryptionPublicKey AND every cg:retiredEncryptionKey whose retiredAt falls inside the window (default 30 days), giving the agent a soft cutover where key rotation does not orphan in-flight shared descriptors. Private keys are NEVER serialized here — agents hold their own historical secret keys locally and try each on decryption (see crypto/encryption.ts openEncryptedEnvelopeWithHistory)." ;
+    rdfs:domain cg:AuthorizedAgent ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
 # ── Cross-pod sharing property ────────────────────────────────
 
 cg:sharedWith a owl:ObjectProperty ;
