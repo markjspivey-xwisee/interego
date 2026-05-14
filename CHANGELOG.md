@@ -121,6 +121,29 @@ trust-ranked) / `namesFor` (reverse) / `defaultNameTrustPolicy`
 ontology terms** — `foaf:nick` is W3C FOAF; L2 pattern, sibling of
 `registry:` / `passport:`.
 
+### Deploy reliability — diagnosable + reproducible + rate-limit-resilient ACR builds
+
+The Azure deploy workflow was intermittently failing the
+`interego-identity` / `interego-pgsl-browser` image builds with a
+generic `RunStatus.FAILED` and no detail.
+
+- **`--no-logs` removed** (`44df8cc`) — the workflow ran `az acr build
+  --no-logs`, which suppressed the actual build output. With it gone,
+  the real error was immediately visible: `Step 1/N : FROM node:20-slim
+  → toomanyrequests` — Docker Hub's anonymous pull rate limit on the
+  egress IP that ACR build agents share. Never a code problem (a local
+  repro of the exact Dockerfile build — fresh `npm ci` + `tsc` — passes
+  clean).
+- **Retry loop** (`303c277`) — `az acr build` is now wrapped in a
+  3-attempt retry with 120 s backoff. Each invocation gets a fresh
+  build agent (often a different egress IP), so a retry clears the
+  intermittent limit. The durable escalation (noted in-workflow) is to
+  `az acr import` the base image into the ACR and `FROM` it there.
+- **Reproducible installs** (`44df8cc`, `303c277`) — `Dockerfile.identity`
+  and `Dockerfile.validator` copied only `package.json` and ran
+  `npm install`, re-resolving caret ranges on every build. Both now copy
+  `package-lock.json` and run `npm ci`.
+
 ### Fixes
 
 - **Relay hostname** (`a0ec397`) — the Hermes plugin + the identity
