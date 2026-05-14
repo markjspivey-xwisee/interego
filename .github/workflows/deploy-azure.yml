@@ -254,6 +254,55 @@ jobs:
             echo "Latest active revision: $LATEST"
           fi
 
+      # Identity-specific env wiring. The identity server needs to know:
+      #   - BASE_URL              — its own public FQDN (WebID profiles,
+      #                             DID docs, the static WebAuthn RP fallback)
+      #   - WEBAUTHN_RP_ORIGINS   — the allowlist of origins where a
+      #                             WebAuthn ceremony may legitimately run:
+      #                             BOTH the identity FQDN (the /connect
+      #                             enrollment page) AND the relay FQDN
+      #                             (the relay's OAuth /authorize page POSTs
+      #                             its ceremonies here). Without the identity
+      #                             FQDN on this list, /connect passkey
+      #                             enrollment fails with an rpID-mismatch.
+      #   - RELAY_URL             — surfaced on the landing page so agent
+      #                             operators can copy it.
+      # FQDNs are looked up from the live container apps so renaming an
+      # app keeps this working — same pattern as the dashboard step.
+      - name: Wire identity env vars
+        if: steps.decide.outputs.build == 'true' && matrix.image == 'interego-identity'
+        run: |
+          IDENTITY_FQDN=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          RELAY_FQDN=$(az containerapp show --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          az containerapp update \
+            --name interego-identity \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --set-env-vars \
+              "BASE_URL=https://$IDENTITY_FQDN" \
+              "WEBAUTHN_RP_ID=$IDENTITY_FQDN" \
+              "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
+              "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
+              "RELAY_URL=https://$RELAY_FQDN" \
+            --output none
+          # Same Multiple-vs-Single revision-mode handling as the dashboard
+          # step: in Multiple mode an env-var update creates a new revision
+          # that ingress won't serve until traffic is explicitly shifted.
+          MODE=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.activeRevisionsMode" -o tsv)
+          echo "activeRevisionsMode=$MODE"
+          if [ "$MODE" = "Multiple" ]; then
+            az containerapp ingress traffic set \
+              --name interego-identity \
+              --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+              --revision-weight latest=100 \
+              --output none
+            LATEST=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.latestRevisionName" -o tsv)
+            az containerapp revision list --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "[?name!='$LATEST' && properties.active].name" -o tsv | while read -r rev; do
+              [ -z "$rev" ] && continue
+              az containerapp revision deactivate --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --revision "$rev" --output none || true
+            done
+            echo "Latest active revision: $LATEST"
+          fi
+
       - name: Summary
         if: always()
         run: |
