@@ -95,22 +95,43 @@ export interface AgentCatalogEntry {
 export async function fetchWellKnownAgents(
   domainOrUrl: string,
   options: { fetch?: FetchFn } = {},
-): Promise<{ url: string; entries: readonly AgentCatalogEntry[] } | null> {
+): Promise<{ url: string; entries: readonly AgentCatalogEntry[]; error?: string } | null> {
   const fetchFn = options.fetch ?? getDefaultFetch();
   const base = domainOrUrl.startsWith('http') ? domainOrUrl : `https://${domainOrUrl}`;
   const stripped = base.replace(/\/+$/, '');
   const url = `${stripped}/${WELL_KNOWN_AGENTS_PATH}`;
 
+  // Returns:
+  //   { url, entries: [...] }            — success (catalog published, entries valid)
+  //   { url, entries: [], error: "..." } — catalog not published OR fetch failed.
+  //                                         The error message surfaces the root
+  //                                         cause to callers; an empty array
+  //                                         alone is ambiguous (no catalog vs.
+  //                                         catalog exists but empty).
+  //
+  // We deliberately return a typed result with error info rather than
+  // `null` on failure so consumers can distinguish "domain has no
+  // agents catalog" from "domain unreachable" from "catalog malformed."
+  // Past behaviour was a silent `null`, which masked DNS / pod-down
+  // / config errors as "no agents found" — the reliability audit
+  // flagged this as a high-likelihood support-ticket shape.
   try {
     const resp = await fetchFn(url, {
       method: 'GET',
       headers: { Accept: `${TURTLE_CONTENT_TYPE}, ${JSONLD_CONTENT_TYPE}` },
     });
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      // 404 is the common case: domain exists but no catalog. Distinct
+      // from connection failures (network / TLS / DNS).
+      return { url, entries: [], error: `catalog not published (HTTP ${resp.status})` };
+    }
     const body = await resp.text();
     const entries = parseAgentsCatalog(body);
     return { url, entries };
-  } catch { return null; }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { url, entries: [], error: `catalog fetch failed: ${reason}` };
+  }
 }
 
 /**

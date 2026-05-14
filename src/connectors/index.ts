@@ -59,11 +59,35 @@ export interface ConnectorEvent {
   readonly metadata: Record<string, unknown>;
 }
 
+export interface ConnectorFailure {
+  /** Source-specific identifier of the item that failed (URL, page ID, message ID, …). */
+  readonly source: string;
+  /** Human-readable reason — surfaces directly to operators / consumers. */
+  readonly reason: string;
+  /** ISO 8601 timestamp of the failure. */
+  readonly at: string;
+}
+
 export interface Connector {
   readonly type: ConnectorType;
   readonly name: string;
+  /**
+   * Run one poll cycle. Returns successfully-extracted events; failures
+   * are surfaced separately via {@link getLastFailures} rather than
+   * thrown, so a partial-success run still progresses sync state. Pre-
+   * production behaviour silently dropped failures; the reliability
+   * audit flagged this as a "sync appears successful, data quietly
+   * incomplete" support-ticket shape.
+   */
   poll(): Promise<ConnectorEvent[]>;
   getSyncState(): SyncState;
+  /**
+   * Failures recorded during the most recent poll. Empty array means
+   * every source item succeeded. Operators MUST surface non-empty
+   * arrays to the user — silent partial sync is the failure mode this
+   * field exists to prevent. Cleared at the start of each poll.
+   */
+  getLastFailures(): readonly ConnectorFailure[];
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -78,6 +102,7 @@ export function createNotionConnector(config: ConnectorConfig & {
     lastSyncAt: new Date(0).toISOString(),
     itemsSynced: 0,
   };
+  let lastFailures: ConnectorFailure[] = [];
 
   return {
     type: 'notion',
@@ -149,13 +174,25 @@ export function createNotionConnector(config: ConnectorConfig & {
           lastCursor: undefined,
           itemsSynced: syncState.itemsSynced + events.length,
         };
+        lastFailures = [];
       } catch (err) {
-        throw new Error(`Notion poll failed: ${(err as Error).message}`);
+        const reason = err instanceof Error ? err.message : String(err);
+        // Whole-poll failures (auth invalid, API shape changed) surface
+        // through both the throw (so caller knows the poll failed) AND
+        // lastFailures (so observability dashboards see the cause without
+        // catching the throw).
+        lastFailures = [{
+          source: `notion:database:${config.databaseId ?? 'unknown'}`,
+          reason: `Notion poll failed: ${reason}`,
+          at: new Date().toISOString(),
+        }];
+        throw new Error(`Notion poll failed: ${reason}`);
       }
 
       return events;
     },
     getSyncState(): SyncState { return syncState; },
+    getLastFailures(): readonly ConnectorFailure[] { return lastFailures; },
   };
 }
 
@@ -171,6 +208,7 @@ export function createSlackConnector(config: ConnectorConfig & {
     itemsSynced: 0,
   };
   let lastTs = '0';
+  let lastFailures: ConnectorFailure[] = [];
 
   return {
     type: 'slack',
@@ -186,7 +224,7 @@ export function createSlackConnector(config: ConnectorConfig & {
         });
 
         if (resp.ok) {
-          const data = await resp.json() as { ok: boolean; messages: Array<{ ts: string; text: string; user: string }> };
+          const data = await resp.json() as { ok: boolean; messages: Array<{ ts: string; text: string; user: string }>; error?: string };
           if (data.ok && data.messages) {
             for (const msg of data.messages.reverse()) {
               const extraction = await extract(msg.text);
@@ -202,7 +240,22 @@ export function createSlackConnector(config: ConnectorConfig & {
               });
               lastTs = msg.ts;
             }
+          } else if (!data.ok) {
+            // Slack returned a 200 with ok:false — common shape for
+            // invalid_auth / channel_not_found / not_in_channel. Used
+            // to be invisible; surface it.
+            lastFailures = [{
+              source: `slack:${config.channelId}`,
+              reason: `Slack API returned ok:false: ${data.error ?? 'unknown'}`,
+              at: new Date().toISOString(),
+            }];
           }
+        } else {
+          lastFailures = [{
+            source: `slack:${config.channelId}`,
+            reason: `Slack HTTP ${resp.status} ${resp.statusText}`,
+            at: new Date().toISOString(),
+          }];
         }
 
         syncState = {
@@ -211,12 +264,19 @@ export function createSlackConnector(config: ConnectorConfig & {
           itemsSynced: syncState.itemsSynced + events.length,
         };
       } catch (err) {
-        throw new Error(`Slack poll failed: ${(err as Error).message}`);
+        const reason = err instanceof Error ? err.message : String(err);
+        lastFailures = [{
+          source: `slack:${config.channelId}`,
+          reason: `Slack poll failed: ${reason}`,
+          at: new Date().toISOString(),
+        }];
+        throw new Error(`Slack poll failed: ${reason}`);
       }
 
       return events;
     },
     getSyncState(): SyncState { return syncState; },
+    getLastFailures(): readonly ConnectorFailure[] { return lastFailures; },
   };
 }
 
@@ -231,12 +291,14 @@ export function createWebConnector(config: ConnectorConfig & {
     lastSyncAt: new Date(0).toISOString(),
     itemsSynced: 0,
   };
+  let lastFailures: ConnectorFailure[] = [];
 
   return {
     type: 'web',
     name: config.name,
     async poll(): Promise<ConnectorEvent[]> {
       const events: ConnectorEvent[] = [];
+      const failures: ConnectorFailure[] = [];
 
       for (const url of config.urls) {
         try {
@@ -259,9 +321,25 @@ export function createWebConnector(config: ConnectorConfig & {
               action: 'update',
               metadata: { url, contentType },
             });
+          } else {
+            // Non-OK status — record it so the operator sees which
+            // URL produced a 4xx/5xx instead of an invisible drop.
+            failures.push({
+              source: `web:${url}`,
+              reason: `HTTP ${resp.status} ${resp.statusText}`,
+              at: new Date().toISOString(),
+            });
           }
-        } catch {
-          // Skip failed URLs
+        } catch (err) {
+          // Network/TLS/DNS error — surface the message rather than
+          // silently skipping. Was the dominant invisible-failure mode
+          // identified in the reliability audit.
+          const reason = err instanceof Error ? err.message : String(err);
+          failures.push({
+            source: `web:${url}`,
+            reason: `fetch error: ${reason}`,
+            at: new Date().toISOString(),
+          });
         }
       }
 
@@ -269,10 +347,12 @@ export function createWebConnector(config: ConnectorConfig & {
         lastSyncAt: new Date().toISOString(),
         itemsSynced: syncState.itemsSynced + events.length,
       };
+      lastFailures = failures;
 
       return events;
     },
     getSyncState(): SyncState { return syncState; },
+    getLastFailures(): readonly ConnectorFailure[] { return lastFailures; },
   };
 }
 
