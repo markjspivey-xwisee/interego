@@ -371,9 +371,19 @@ Every MCP tool is exposed as a `POST /tools/{tool_name}` endpoint with a JSON bo
 
 Open one of the deployed web UIs in your browser — no install required:
 
+- **Landing page / enroll:** https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io — passkey / wallet / DID enrollment, friendly first-time-user surface
+- **Your dashboard:** https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/dashboard — your DID, registered credentials, pod inbox (requires you've enrolled first)
 - **PGSL Browser:** https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io
-- **Dashboard:** https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io
-- **Identity setup:** https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io
+- **Compliance Dashboard:** https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io
+
+### 👶 I'm new — what's the actual first-hour experience?
+
+[**First-hour walkthrough**](docs/FIRST-HOUR.md) — guided tour for non-developers. Enroll an identity, visit your dashboard, wire up an AI client, publish your first memory, recall it later, share with a friend. 30 minutes, no CLI.
+
+Companion docs:
+- [Recovery flows](docs/RECOVERY-FLOWS.md) — what to do when you lose a credential or rotate keys
+- [Mobile parity](docs/MOBILE-PARITY.md) — what works from phone-based clients
+- [OAuth setup per client](deploy/mcp-relay/OAUTH-SETUP.md) — Claude Code / Cursor / Hermes / OpenClaw / ChatGPT
 
 ### 🛠 I want to clone and hack on the system itself
 
