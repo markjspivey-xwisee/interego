@@ -41,6 +41,10 @@ import {
 const PORT = parseInt(process.env['PORT'] ?? '8090');
 const BASE_URL = process.env['BASE_URL'] ?? `http://localhost:${PORT}`;
 const CSS_URL = process.env['CSS_URL'] ?? 'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/';
+// The sibling MCP relay — surfaced on the landing page so agent
+// operators can copy it into their MCP client without hunting.
+const RELAY_URL = (process.env['RELAY_URL'] ?? 'https://interego-mcp-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+const REPO_URL = process.env['REPO_URL'] ?? 'https://github.com/markjspivey-xwisee/interego';
 const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
 const TOKEN_TTL_SECONDS = 86400; // 24 hours
 
@@ -719,59 +723,95 @@ const LANDING_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Interego identity</title>
+<title>Try Interego — verifiable, federated memory for AI agents</title>
 <style>
-  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 720px; margin: 4em auto; padding: 0 1.5em; line-height: 1.55; color: #1c1f23; background: #fbfbfd; }
-  h1 { font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.2em; }
-  .sub { color: #5a6470; margin-top: 0; }
-  h2 { margin-top: 2.4em; border-bottom: 1px solid #e3e7eb; padding-bottom: 0.3em; }
-  code { background: #f0f2f5; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
-  .note { background: #fff8e6; border-left: 4px solid #f0b400; padding: 0.8em 1em; margin: 1em 0; border-radius: 4px; }
-  a { color: #0a66c2; }
-  ul { padding-left: 1.2em; }
-  li { margin-bottom: 0.35em; }
-  footer { margin-top: 4em; color: #8a929c; font-size: 0.87em; }
+  :root { --ink:#1c1f23; --mut:#5a6470; --line:#e3e7eb; --bg:#fbfbfd; --accent:#0a66c2; --accent2:#6366f1; }
+  * { box-sizing: border-box; }
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 860px; margin: 0 auto; padding: 3.5em 1.5em 5em; line-height: 1.6; color: var(--ink); background: var(--bg); }
+  h1 { font-weight: 800; letter-spacing: -0.025em; font-size: 2.1rem; margin: 0 0 0.15em; }
+  .tag { color: var(--mut); font-size: 1.12rem; margin: 0 0 1.6em; }
+  h2 { margin: 2.6em 0 0.6em; font-size: 1.18rem; }
+  p { margin: 0.6em 0; }
+  code { background: #f0f2f5; padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
+  pre { background: #11151a; color: #e6edf3; padding: 0.9em 1.1em; border-radius: 8px; overflow-x: auto; font-size: 0.85rem; line-height: 1.5; }
+  a { color: var(--accent); }
+  .tracks { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1em; margin: 1.4em 0; }
+  @media (max-width: 620px) { .tracks { grid-template-columns: 1fr; } }
+  .track { border: 1px solid var(--line); border-radius: 12px; padding: 1.3em 1.4em; background: #fff; }
+  .track h3 { margin: 0 0 0.2em; font-size: 1.05rem; }
+  .track .who { color: var(--mut); font-size: 0.9rem; margin: 0 0 1em; }
+  .btn { display: inline-block; background: var(--accent2); color: #fff; text-decoration: none; padding: 0.62em 1.2em; border-radius: 8px; font-weight: 600; font-size: 0.95rem; margin-top: 0.4em; }
+  .btn:hover { background: #818cf8; }
+  .btn.ghost { background: #eef0f4; color: var(--ink); }
+  .btn.ghost:hover { background: #e3e6ec; }
+  .what { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1em; margin: 1.2em 0; }
+  @media (max-width: 620px) { .what { grid-template-columns: 1fr; } }
+  .what div { border-left: 3px solid var(--accent2); padding-left: 0.9em; }
+  .what strong { display: block; }
+  .what span { color: var(--mut); font-size: 0.9rem; }
+  ul { padding-left: 1.2em; } li { margin-bottom: 0.3em; }
+  .muted { color: var(--mut); font-size: 0.92rem; }
+  footer { margin-top: 4em; padding-top: 1.2em; border-top: 1px solid var(--line); color: #8a929c; font-size: 0.87em; }
 </style>
 </head>
 <body>
-<h1>Interego identity</h1>
-<p class="sub">Cryptographic identity service for the Interego substrate. You shouldn't normally visit this page directly.</p>
+<h1>Try Interego</h1>
+<p class="tag">Verifiable, federated memory and identity for AI agents — owned by you, portable everywhere. No password, no email, no account database.</p>
 
-<div class="note">
-<strong>If you were invited to try Interego:</strong> your MCP client (Claude Code, Claude Desktop, Cursor, Hermes, OpenClaw, etc.) will drive enrollment for you automatically the first time it talks to the relay. You don't need to do anything on this page.
+<p>Interego gives an agent (and the human behind it) a <strong>pod</strong>: a place its memory and identity live as signed, provenance-stamped records. Switch machines, switch runtimes, hand work to another agent — the context comes with you, and anyone can verify where it came from.</p>
+
+<div class="what">
+  <div><strong>Verifiable</strong><span>Every record is cryptographically signed — who wrote it, when, on whose behalf.</span></div>
+  <div><strong>Portable</strong><span>Pod-rooted, not machine-rooted. Survives a device or runtime change.</span></div>
+  <div><strong>Federated</strong><span>Agents share context across pods — no central server, no lock-in.</span></div>
 </div>
 
-<h2>How enrollment works</h2>
-<ol>
-  <li>Add the <strong>relay</strong> URL to your MCP client's server list. (Not this URL — the relay's URL.)</li>
-  <li>First time the client calls any tool, your browser opens an authorization page on the relay.</li>
-  <li>The relay's page asks you to enroll a <strong>passkey</strong> (Touch ID / Windows Hello / Yubikey / iCloud Keychain), an <strong>Ethereum wallet</strong> (MetaMask / Coinbase / hardware), or a <strong>did:key</strong>.</li>
-  <li>You sign the challenge with your chosen credential. The credential never leaves your device.</li>
-  <li>The relay issues your client an access token; your DID and pod are auto-minted from the credential.</li>
-</ol>
+<h2>Pick your path</h2>
+<div class="tracks">
+  <div class="track">
+    <h3>I'm a person</h3>
+    <p class="who">You want your own identity + pod, or you're trying it hands-on.</p>
+    <p>Enroll with a <strong>passkey</strong> (Touch ID / Windows Hello / Yubikey) or an <strong>Ethereum wallet</strong>. It takes about 30 seconds — your key never leaves your device, and your DID + pod are minted from it automatically.</p>
+    <a class="btn" href="/connect">Create my identity &rarr;</a>
+    <a class="btn ghost" href="/dashboard">I'm already enrolled</a>
+  </div>
+  <div class="track">
+    <h3>I'm setting up an agent</h3>
+    <p class="who">You run a Hermes bot, an OpenClaw / Claude / Cursor agent, or anything MCP-speaking.</p>
+    <p>Point your MCP client at the hosted <strong>relay</strong>. The first tool call walks you through enrollment automatically (the passkey/wallet picker above, in your browser) and issues your agent a token.</p>
+    <pre>MCP relay URL:
+${RELAY_URL}</pre>
+    <a class="btn ghost" href="${REPO_URL}/blob/main/docs/integrations/agent-runtime-integration.md">Integration guide &rarr;</a>
+  </div>
+</div>
+<p class="muted">Want it on your own machine instead of this hosted instance? Everything here is open source and runs locally — see the repo. This deployment is the maintainer's reference instance, free to try.</p>
 
-<h2>Why this is an API server, not a sign-up page</h2>
-<p>Your private keys stay on your device. This server only verifies signatures and issues tokens — it has no password to set, no email to confirm, no account database. The OAuth flow on the relay is the visible front door; this server runs the cryptography behind the scenes.</p>
-
-<h2>Already enrolled?</h2>
-<p>Visit your <a href="/dashboard">dashboard</a> to see your DID, manage credentials, and view recent descriptors on your pod. (Requires a valid bearer token — typically issued via the OAuth flow your MCP client triggers, or appended as <code>?token=...</code> by the auth callback.)</p>
-
-<h2>For developers / auditors</h2>
+<h2>Connect a specific runtime</h2>
 <ul>
-  <li><a href="/.well-known/did.json">/.well-known/did.json</a> — this server's DID document</li>
-  <li><a href="/health">/health</a> — server health + counts</li>
-  <li>Auth methods (POST): <code>/auth/webauthn/register-options</code>, <code>/auth/webauthn/register</code>, <code>/auth/webauthn/authenticate</code>, <code>/auth/siwe</code>, <code>/auth/did</code>, <code>/challenges</code>, <code>/tokens</code>, <code>/tokens/verify</code></li>
-  <li>Per-user (after enrollment): <code>/me</code> (summary), <code>/dashboard</code> (browser UI), <code>/users/:id/did.json</code>, <code>/users/:id/profile</code>, <code>/auth-methods/me</code></li>
-  <li>Federation: <code>/.well-known/webfinger</code></li>
+  <li><strong>Hermes Agent</strong> — drop in the <a href="${REPO_URL}/tree/main/integrations/hermes-memory">interego memory provider</a>; <code>hermes memory setup</code>, pick <code>interego</code>. Pod-rooted memory with a HATEOAS tool surface.</li>
+  <li><strong>OpenClaw</strong> — the <a href="${REPO_URL}/tree/main/integrations/openclaw-memory">@interego/openclaw-memory</a> plugin claims the memory slot; same HATEOAS surface.</li>
+  <li><strong>Any MCP client</strong> (Claude Code/Desktop, Cursor, Codex…) — add the relay URL above as an MCP server. <a href="${REPO_URL}/blob/main/docs/integrations/agent-runtimes-mcp.md">MCP path</a>.</li>
+  <li>New here? The <a href="${REPO_URL}/blob/main/docs/FIRST-HOUR.md">first-hour walkthrough</a> takes you end to end.</li>
 </ul>
 
+<h2>What happens when you enroll</h2>
+<ol>
+  <li>You sign a one-time challenge with a passkey or wallet. <strong>No transaction, no gas, no cost.</strong> The credential never leaves your device.</li>
+  <li>Your DID and pod are derived from that credential — the server never accepts a user-supplied identity.</li>
+  <li>You (or your agent) get a bearer token. From there, memory and context flow through the substrate, signed and provenance-stamped.</li>
+</ol>
+
 <footer>
-Open-source substrate · <a href="https://github.com/markjspivey-xwisee/interego">github</a> · this deployment is the maintainer's reference instance
+Open source · <a href="${REPO_URL}">github.com/markjspivey-xwisee/interego</a> ·
+<a href="/dashboard">dashboard</a> ·
+<a href="/health">status</a> ·
+<a href="/.well-known/did.json">did.json</a> ·
+this deployment is the maintainer's free reference instance
 </footer>
 </body>
 </html>`;
 
-app.get('/', (_req, res) => {
+app.get(['/', '/try'], (_req, res) => {
   res.type('text/html').send(LANDING_HTML);
 });
 
@@ -2648,56 +2688,63 @@ app.get('/connect', (_req, res) => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect Wallet — Interego</title>
+<title>Create your Interego identity</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:#0a0a0f; color:#e0e0e8; display:flex; justify-content:center; align-items:center; min-height:100vh; }
-  .card { background:#12121a; border:1px solid #2a2a3a; border-radius:12px; padding:32px; max-width:480px; width:100%; }
-  h1 { font-size:1.4rem; margin-bottom:8px; }
-  p { color:#888; margin-bottom:20px; font-size:0.9rem; line-height:1.5; }
-  input { width:100%; padding:10px 14px; border:1px solid #2a2a3a; border-radius:8px; background:#0a0a0f; color:#e0e0e8; font-size:0.9rem; margin-bottom:12px; }
-  button { width:100%; padding:12px; border:none; border-radius:8px; font-size:0.95rem; cursor:pointer; margin-bottom:10px; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:#0a0a0f; color:#e0e0e8; display:flex; justify-content:center; align-items:center; min-height:100vh; padding:24px; }
+  .card { background:#12121a; border:1px solid #2a2a3a; border-radius:14px; padding:32px; max-width:460px; width:100%; }
+  h1 { font-size:1.45rem; margin-bottom:8px; letter-spacing:-0.02em; }
+  .lede { color:#9aa0ac; margin-bottom:22px; font-size:0.92rem; line-height:1.55; }
+  input { width:100%; padding:10px 14px; border:1px solid #2a2a3a; border-radius:8px; background:#0a0a0f; color:#e0e0e8; font-size:0.9rem; margin-bottom:10px; }
+  button { width:100%; padding:13px; border:none; border-radius:9px; font-size:0.97rem; font-weight:600; cursor:pointer; }
   .primary { background:#6366f1; color:white; }
   .primary:hover { background:#818cf8; }
   .secondary { background:#1a1a2e; color:#e0e0e8; border:1px solid #2a2a3a; }
   .secondary:hover { background:#22223a; }
-  .status { padding:12px; border-radius:8px; margin-top:16px; font-size:0.85rem; display:none; }
+  .status { padding:13px 14px; border-radius:8px; margin-top:18px; font-size:0.85rem; line-height:1.5; display:none; }
   .status.success { display:block; background:#0a2a0a; border:1px solid #2a6a2a; color:#6ae66a; }
   .status.error { display:block; background:#2a0a0a; border:1px solid #6a2a2a; color:#e66a6a; }
-  .status.info { display:block; background:#0a0a2a; border:1px solid #2a2a6a; color:#6a6ae6; }
-  .step { margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid #1a1a2a; }
-  .step:last-child { border-bottom:none; }
-  label { display:block; font-size:0.8rem; color:#888; margin-bottom:4px; }
+  .status.info { display:block; background:#0a0a2a; border:1px solid #2a2a6a; color:#8a8af0; }
+  .step { margin-bottom:14px; }
+  .hint { color:#7a818d; font-size:0.78rem; margin-top:6px; line-height:1.45; }
+  details { margin-top:8px; border-top:1px solid #1f1f2e; padding-top:14px; }
+  summary { color:#7a818d; font-size:0.82rem; cursor:pointer; }
+  details label { display:block; font-size:0.78rem; color:#888; margin:10px 0 4px; }
   code { background:#1a1a2e; padding:2px 6px; border-radius:4px; font-size:0.85rem; }
+  .foot { margin-top:20px; font-size:0.82rem; color:#7a818d; }
+  .foot a { color:#8a8af0; }
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>Connect Wallet to Interego</h1>
-  <p>Your Interego userId is derived from the wallet you sign with. Typing someone else's name cannot bind your wallet to their account.</p>
+  <h1>Create your Interego identity</h1>
+  <p class="lede">No password, no email, no account to set up. Your identity is a key that stays on your device — Interego only ever sees signatures. Your DID and pod are minted from whatever credential you pick.</p>
 
   <div class="step">
-    <label>Display name (optional)</label>
-    <input id="displayName" placeholder="e.g. Mark J" />
+    <input id="displayName" placeholder="Display name (optional) — e.g. Mark J" />
   </div>
 
   <div class="step">
-    <label style="color:#8ea0be">Advanced: claim a legacy seeded userId (requires one-time invite)</label>
+    <button class="primary" onclick="passkeyCreate()">Create with a passkey</button>
+    <p class="hint">Touch ID, Windows Hello, a security key, or your password manager. Recommended — works on most modern devices, nothing to install.</p>
+  </div>
+
+  <div class="step">
+    <button class="secondary" onclick="connectMetaMask()">Connect an Ethereum wallet</button>
+    <p class="hint">MetaMask, Coinbase Wallet, or a hardware wallet. You sign one message — no transaction, no gas, no cost.</p>
+  </div>
+
+  <details class="step">
+    <summary>Advanced options</summary>
+    <label>Claim a legacy seeded userId (requires a one-time invite token)</label>
     <input id="bootstrapUserId" placeholder="Legacy userId (e.g. markj)" />
-    <input id="bootstrapInvite" placeholder="Bootstrap invite token (out-of-band)" />
-  </div>
-
-  <div class="step">
-    <label style="color:#8ea0be">Advanced: add this wallet to an already-signed-in account (paste bearer token)</label>
-    <input id="addDeviceToken" placeholder="Bearer token from a previous sign-in (optional)" />
-  </div>
-
-  <div id="step-metamask" class="step">
-    <button class="primary" onclick="connectMetaMask()">Connect with MetaMask / Browser Wallet</button>
-    <p style="margin-top:8px;margin-bottom:0;">Your wallet will prompt you to sign a message. No transaction, no gas, no cost.</p>
-  </div>
+    <input id="bootstrapInvite" placeholder="Bootstrap invite token (provided out-of-band)" />
+    <label>Add this credential to an account you already have</label>
+    <input id="addDeviceToken" placeholder="Bearer token from a previous sign-in" />
+  </details>
 
   <div id="status" class="status"></div>
+  <p class="foot">Already enrolled? <a href="/dashboard">Open your dashboard</a>. New here? <a href="/">Start at the overview</a>.</p>
 </div>
 
 <script>
@@ -2709,20 +2756,98 @@ function setStatus(msg, type) {
   el.className = 'status ' + type;
 }
 
-async function connectMetaMask() {
-  if (!window.ethereum) {
-    setStatus('No wallet detected. Install MetaMask.', 'error');
-    return;
-  }
+function onEnrolled(result) {
+  const el = document.getElementById('status');
+  el.className = 'status success';
+  const dash = '/dashboard?token=' + encodeURIComponent(result.token);
+  el.innerHTML = "<strong>You're in.</strong> Identity: <code>" + result.userId + "</code>"
+    + '<br>Your DID and pod are minted and a bearer token has been issued — '
+    + 'your agent or MCP client can use it now.'
+    + '<br><a href="' + dash + '" style="color:#6ae66a;text-decoration:underline">Open your dashboard &rarr;</a>';
+}
 
-  const displayName = document.getElementById('displayName').value.trim();
+function readAdvanced() {
   const bootstrapUserId = document.getElementById('bootstrapUserId').value.trim();
   const bootstrapInvite = document.getElementById('bootstrapInvite').value.trim();
   const addDeviceToken = document.getElementById('addDeviceToken').value.trim();
   if ((bootstrapUserId && !bootstrapInvite) || (!bootstrapUserId && bootstrapInvite)) {
-    setStatus('Bootstrap userId and invite must both be supplied.', 'error');
+    throw new Error('Bootstrap userId and invite must both be supplied.');
+  }
+  return { bootstrapUserId, bootstrapInvite, addDeviceToken };
+}
+
+// ── base64url helpers (same conversion the relay's auth page uses) ──
+function b64urlToBytes(s) {
+  const p = s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4);
+  const bin = atob(p);
+  return Uint8Array.from(bin, c => c.charCodeAt(0));
+}
+function bytesToB64url(bytes) {
+  let s = '';
+  const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (const b of arr) s += String.fromCharCode(b);
+  return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+}
+
+// ── Passkey (WebAuthn) — the recommended path ──
+async function passkeyCreate() {
+  if (!window.PublicKeyCredential) {
+    setStatus('This browser does not support passkeys. Try the wallet option below.', 'error');
     return;
   }
+  let adv;
+  try { adv = readAdvanced(); } catch (e) { setStatus(e.message, 'error'); return; }
+  const name = document.getElementById('displayName').value.trim() || 'Interego user';
+  try {
+    setStatus('Creating your passkey...', 'info');
+    const body = { name };
+    if (adv.bootstrapUserId) { body.bootstrapUserId = adv.bootstrapUserId; body.bootstrapInvite = adv.bootstrapInvite; }
+    const headers = { 'Content-Type': 'application/json' };
+    if (adv.addDeviceToken) headers['Authorization'] = 'Bearer ' + adv.addDeviceToken;
+
+    const optRes = await fetch(BASE + '/auth/webauthn/register-options', {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+    if (!optRes.ok) throw new Error('register-options: ' + await optRes.text());
+    const options = await optRes.json();
+    options.challenge = b64urlToBytes(options.challenge);
+    options.user.id = b64urlToBytes(options.user.id);
+    if (options.excludeCredentials) options.excludeCredentials.forEach(c => c.id = b64urlToBytes(c.id));
+
+    setStatus('Confirm with Touch ID / Windows Hello / your security key...', 'info');
+    const cred = await navigator.credentials.create({ publicKey: options });
+    const resp = {
+      id: cred.id,
+      rawId: bytesToB64url(new Uint8Array(cred.rawId)),
+      type: cred.type,
+      response: {
+        attestationObject: bytesToB64url(new Uint8Array(cred.response.attestationObject)),
+        clientDataJSON: bytesToB64url(new Uint8Array(cred.response.clientDataJSON)),
+        transports: (cred.response.getTransports && cred.response.getTransports()) || [],
+      },
+      clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+    };
+    const regRes = await fetch(BASE + '/auth/webauthn/register', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ response: resp }),
+    });
+    const result = await regRes.json();
+    if (regRes.ok && result.userId && result.token) onEnrolled(result);
+    else setStatus('Enrollment failed: ' + (result.error || ('HTTP ' + regRes.status)), 'error');
+  } catch (err) {
+    setStatus('Error: ' + (err && err.message ? err.message : err), 'error');
+  }
+}
+
+// ── Ethereum wallet (SIWE) ──
+async function connectMetaMask() {
+  if (!window.ethereum) {
+    setStatus('No wallet detected. Install MetaMask, or use the passkey option above.', 'error');
+    return;
+  }
+  let adv;
+  try { adv = readAdvanced(); } catch (e) { setStatus(e.message, 'error'); return; }
+  const displayName = document.getElementById('displayName').value.trim();
 
   try {
     setStatus('Requesting wallet connection...', 'info');
@@ -2753,19 +2878,16 @@ async function connectMetaMask() {
 
     const body = { message: siweMessage, signature, nonce };
     if (displayName) body.name = displayName;
-    if (bootstrapUserId) { body.bootstrapUserId = bootstrapUserId; body.bootstrapInvite = bootstrapInvite; }
+    if (adv.bootstrapUserId) { body.bootstrapUserId = adv.bootstrapUserId; body.bootstrapInvite = adv.bootstrapInvite; }
     const headers = { 'Content-Type': 'application/json' };
-    if (addDeviceToken) headers['Authorization'] = 'Bearer ' + addDeviceToken;
+    if (adv.addDeviceToken) headers['Authorization'] = 'Bearer ' + adv.addDeviceToken;
 
     const authResp = await fetch(BASE + '/auth/siwe', { method: 'POST', headers, body: JSON.stringify(body) });
     const result = await authResp.json();
-    if (authResp.ok && result.userId && result.token) {
-      setStatus('Signed in as ' + result.userId + '. Bearer token issued; you can close this page.', 'success');
-    } else {
-      setStatus('Sign-in failed: ' + (result.error || 'Unknown error'), 'error');
-    }
+    if (authResp.ok && result.userId && result.token) onEnrolled(result);
+    else setStatus('Sign-in failed: ' + (result.error || 'Unknown error'), 'error');
   } catch (err) {
-    setStatus('Error: ' + err.message, 'error');
+    setStatus('Error: ' + (err && err.message ? err.message : err), 'error');
   }
 }
 </script>

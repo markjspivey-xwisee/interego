@@ -1799,8 +1799,16 @@ const RELAY_LANDING_HTML = `<!doctype html>
 }</pre>
 
 <div class="note">
-First call triggers an OAuth flow in your browser. You'll be asked to enroll a <strong>passkey</strong>, <strong>Ethereum wallet</strong>, or <strong>did:key</strong>. Your private keys never leave your device.
+First call triggers an OAuth flow in your browser. You'll be asked to enroll a <strong>passkey</strong>, <strong>Ethereum wallet</strong>, or <strong>did:key</strong>. Your private keys never leave your device — no password, no email, no account database.
 </div>
+
+<h2>New to Interego, or just a person?</h2>
+<p>You don't need an MCP client to start. Create an identity and pod directly — passkey or wallet, about 30 seconds — then point an agent at it later:</p>
+<ul>
+  <li><a href="${IDENTITY_URL}/">Overview &amp; sign-up</a> — what Interego is, and the human/agent paths</li>
+  <li><a href="${IDENTITY_URL}/connect">Create my identity</a> — enroll a passkey or wallet now</li>
+  <li><a href="https://github.com/markjspivey-xwisee/interego/blob/main/docs/FIRST-HOUR.md">First-hour walkthrough</a> · <a href="https://github.com/markjspivey-xwisee/interego/blob/main/docs/integrations/agent-runtime-integration.md">Runtime integration guide</a> (Hermes / OpenClaw / MCP)</li>
+</ul>
 
 <h2>What's exposed here</h2>
 <ul>
