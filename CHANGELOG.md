@@ -8,6 +8,83 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-14 — Production hardening, Hermes integration, HATEOAS runtime surface, hosted onboarding
+
+A multi-part pass: harden the substrate, land the Hermes Agent
+integration, give both memory plugins a bloat-free HATEOAS tool surface,
+and make the hosted deployment a retail-grade front door.
+
+### Production hardening — real bugs + coverage on untested public API
+
+Cross-referenced all 743 `src/index.ts` exports against the test suite;
+the gaps surfaced real, shipped bugs:
+
+- **`detectValueDrift` always returned `[]`** (`5490fa4`) — the heuristic
+  loop computed vocabulary overlap but its `if` block was empty. Wired
+  it, restricted the scan to conduct-bearing event kinds, + 4 tests.
+- **`countUniquePGSL` was dead on arrival** (`bdba0d9`) — it loaded its
+  deps with `require()` inside an ESM module, throwing "Cannot find
+  module" on every call; also swallowed embed failures with `catch {}`.
+  Converted to ESM imports, made the failure path non-silent, added the
+  missing barrel export, + 2 tests.
+- **Zero-coverage modules locked down** — `src/pgsl/computation.ts` (13
+  functions, `b8ca403`), BIP-340 Schnorr (`f87081c`, also exported the
+  unreachable `sha256Hex`), `src/model/delegation.ts` — the
+  authorization gate (`f724410`), `src/solid/sharing.ts` — cross-pod
+  recipient resolution incl. the Sec #12 rollover window (`47c7f1e`).
+- **Validator-as-agent: bring-your-own SHACL engine** (`814180e`) —
+  `deploy/validator/` hands descriptors to an operator-provided SHACL
+  engine over a W3C-standard HTTP contract; dropped `n3` +
+  `rdf-validate-shacl` (the container keeps only `express` + `ws`).
+  Graceful no-op when unconfigured.
+- **Multiplayer playtest** (`08075bb`) — 8 end-to-end journey scenarios
+  (solo / device-migration / pairwise + group E2EE / revocation /
+  key-rollover / adversarial / efficiency / cross-device parity), each
+  judged against a production-quality property. The substrate held.
+
+Full suite: 1238 passing.
+
+### Hermes Agent memory provider (Path 5)
+
+`integrations/hermes-memory/` (`b558f4b`) — a `MemoryProvider` plugin for
+Nous Research's Hermes Agent (the most-used agent runtime, ~140k stars).
+stdlib-only Python; maps Hermes' memory hooks (`sync_turn`, `prefetch`,
+`on_memory_write`) onto the relay's `publish_context` / `discover_context`
+REST surface. Same `cgh:AgentMemory` graph shape as the OpenClaw
+provider — Hermes bots and OpenClaw agents on one pod read each other's
+memories. New `docs/integrations/path-5-hermes-memory-provider.md`;
+integration map grew from four paths to five.
+
+### HATEOAS tool surface — reach the whole substrate without tool bloat
+
+Both memory plugins now reach *all* of Interego from a fixed, tiny tool
+surface instead of carrying a flat list of ~15–60 substrate tools:
+
+- **Hermes** (`e98ebce`) — `get_tool_schemas()` exposes three schemas:
+  `interego_recall` / `interego_discover` / `interego_act`.
+- **OpenClaw** (`423acb2`) — five: the three memory-slot tools +
+  `interego_discover` / `interego_act`. Also fixed two pre-existing
+  bridge bugs (an unsupported `{ shareWith }` option `publish()`
+  silently ignored; `entry.confidence` read off a type that lacks it)
+  and corrected `forgetMemory` to publish `Counterfactual`, not
+  `Hypothetical`, matching its own contract.
+
+Every `recall` / `discover` result is decorated with `affordances` —
+self-describing `{action, target, …}` records, gated by delegation
+scope. The agent acts by passing one to `*_act`. Capability travels as
+data: new substrate capability is a new affordance verb in a result,
+never a new tool schema. New docs:
+`docs/integrations/{hermes,openclaw}-full-substrate.md`.
+
+### Retail-grade hosted onboarding
+
+`deploy/identity/server.ts` (`bee7429`) — the hosted landing page is now
+a two-track "try it" experience (person → passkey/wallet enroll; agent →
+copy the relay URL into an MCP client). `/connect` does in-browser
+passkey enrollment (Touch ID / Windows Hello / security key) **and**
+Ethereum-wallet enrollment — no password, no email, no account
+database; DID + pod minted from the credential.
+
 ## 2026-04-28 (later) — Layering correction: verticals out of generic deployments; affordance-first
 
 Earlier commits today bundled vertical-application MCP tools (`lpc.*` /

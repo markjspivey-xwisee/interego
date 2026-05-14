@@ -31,7 +31,7 @@ primitives — what changes is how tightly the runtime wraps them.
     ─────────────────────────────────────────────────────────
     OpenClaw / Hermes / Codex / Cursor / …    runtime ergonomic
                        │
-                       │  4 paths from ergonomic → substrate
+                       │  5 paths from ergonomic → substrate
                        ▼
     ┌─ Path 1 ─ MCP server (config-only)        ── L1 primitives
     │  Path 2 ─ OpenClaw memory-engine plugin   ── L2 patterns
@@ -47,7 +47,7 @@ primitives — what changes is how tightly the runtime wraps them.
 ```
 
 Each path is independently adoptable. Adopting Path 1 does not block
-Path 3. Adopting all four does not require any change to the substrate
+Path 3. Adopting all five does not require any change to the substrate
 itself — they are translators, not extensions.
 
 ---
