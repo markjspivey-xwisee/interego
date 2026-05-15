@@ -37,6 +37,7 @@
 import { ContextDescriptor } from '../model/descriptor.js';
 import { publish, discover } from '../solid/client.js';
 import { parseTrig } from '../rdf/turtle-parser.js';
+import { escapeTurtleLiteral } from '../rdf/escape.js';
 import { sha256 } from '../crypto/ipfs.js';
 import type {
   IRI,
@@ -167,15 +168,6 @@ export type NameTrustPolicy = (candidates: readonly NameCandidate[]) => readonly
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-function escapeLit(s: string): string {
-  return s
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r')
-    .replace(/\t/g, '\\t');
-}
-
 function nowIso(): string { return new Date().toISOString(); }
 
 /**
@@ -268,7 +260,7 @@ export function buildNameAttestation(
     builder.supersedes(...args.supersedes);
   }
 
-  const graphContent = `<${args.subject}> <${FOAF_NICK}> "${escapeLit(name)}" .\n`;
+  const graphContent = `<${args.subject}> <${FOAF_NICK}> "${escapeTurtleLiteral(name)}" .\n`;
   return { descriptor: builder.build(), graphContent, attestationIri, graphIri };
 }
 

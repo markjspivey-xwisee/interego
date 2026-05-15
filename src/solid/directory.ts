@@ -9,6 +9,7 @@
 
 import type { IRI, PodDirectoryData, PodDirectoryEntry } from '../model/types.js';
 import { turtlePrefixes } from '../rdf/namespaces.js';
+import { escapeTurtleLiteral, unescapeTurtleLiteral } from '../rdf/escape.js';
 import type { FetchFn } from './types.js';
 
 /** Default path within a pod where the directory is stored. */
@@ -43,7 +44,7 @@ export function podDirectoryToTurtle(directory: PodDirectoryData): string {
       lines.push(`${bnode} cg:owner <${e.owner}> .`);
     }
     if (e.label) {
-      lines.push(`${bnode} rdfs:label "${escapeTurtle(e.label)}" .`);
+      lines.push(`${bnode} rdfs:label "${escapeTurtleLiteral(e.label)}" .`);
     }
     if (e.owner && e.ownerNicks) {
       let set = nicksByOwner.get(e.owner);
@@ -59,7 +60,7 @@ export function podDirectoryToTurtle(directory: PodDirectoryData): string {
     if (nicks.size === 0) continue;
     lines.push('');
     for (const n of nicks) {
-      lines.push(`<${owner}> foaf:nick "${escapeTurtle(n)}" .`);
+      lines.push(`<${owner}> foaf:nick "${escapeTurtleLiteral(n)}" .`);
     }
   }
 
@@ -117,7 +118,7 @@ export function parsePodDirectory(turtle: string): PodDirectoryData {
     let m: RegExpExecArray | null;
     while ((m = re.exec(turtle)) !== null) {
       const owner = m[1]!;
-      const nick = unescapeTurtle(m[2]!);
+      const nick = unescapeTurtleLiteral(m[2]!);
       const arr = nicksByOwner.get(owner) ?? [];
       if (!arr.includes(nick)) arr.push(nick);
       nicksByOwner.set(owner, arr);
@@ -186,21 +187,6 @@ export async function publishPodDirectory(
 }
 
 // ── Helpers ──────────────────────────────────────────────────
-
-function escapeTurtle(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-function unescapeTurtle(s: string): string {
-  return s.replace(/\\(["\\nrt])/g, (_, c) => {
-    switch (c) {
-      case 'n': return '\n';
-      case 'r': return '\r';
-      case 't': return '\t';
-      default: return c;
-    }
-  });
-}
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

@@ -359,6 +359,44 @@ describe('PodDirectory — foaf:nick name hints', () => {
     expect(parsed.entries.find(e => e.podUrl === 'https://pod-c.example/')?.ownerNicks).toBeUndefined();
   });
 
+  it('round-trips ownerNicks containing newlines / quotes / backslashes / tabs', () => {
+    // Regression for the just-shipped escape/unescape asymmetry — escape used
+    // to cover only \\ and ", but unescape decoded \n / \r / \t too, so a
+    // nick containing a control char produced malformed Turtle (or, on the
+    // reverse path, corrupted data). The shared helper closes the gap.
+    const adversarial = [
+      'alice\nbob',
+      'has"quotes"',
+      'back\\slash',
+      'tab\there',
+      'cr\rstuff',
+      'all\\"\n\r\tchars',
+    ];
+    const dir: PodDirectoryData = {
+      id: 'urn:directory:adversarial' as IRI,
+      entries: [{
+        podUrl: 'https://pod.example/' as IRI,
+        owner: ALICE_DID,
+        ownerNicks: adversarial,
+      }],
+    };
+    const ttl = podDirectoryToTurtle(dir);
+    // Cheap sanity: a literal LF inside a "..." literal is malformed
+    // Turtle. After escaping there must be zero LFs inside the nick body —
+    // they should all have become the two-character escape `\n`.
+    for (const line of ttl.split('\n')) {
+      // Every foaf:nick line must have BOTH quotes on the same emitted line.
+      if (line.includes('foaf:nick')) {
+        const opens = (line.match(/(?<!\\)"/g) ?? []).length;
+        expect(opens % 2).toBe(0); // balanced
+        expect(opens).toBeGreaterThanOrEqual(2);
+      }
+    }
+    const parsed = parsePodDirectory(ttl);
+    const entry = parsed.entries.find(e => e.owner === ALICE_DID);
+    expect(entry?.ownerNicks?.slice().sort()).toEqual(adversarial.slice().sort());
+  });
+
   it('omits the foaf: prefix when no entry has hints (keeps the common path tight)', () => {
     const dir: PodDirectoryData = {
       id: 'urn:directory:plain' as IRI,

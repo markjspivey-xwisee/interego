@@ -40,6 +40,7 @@ import type {
   DecoratorResult,
 } from './affordance-decorators.js';
 import { createHash } from 'node:crypto';
+import { escapeTurtleLiteral as escapeForTurtle } from '../rdf/escape.js';
 
 // ══════════════════════════════════════════════════════════════
 // 1. Abstract Agent Types (AAT)
@@ -627,11 +628,6 @@ export function traceToTurtle(trace: ProvTrace): string {
 
   lines.push('');
   return lines.join('\n');
-}
-
-/** Escape a string for inclusion in a Turtle literal. */
-function escapeForTurtle(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 }
 
 /**

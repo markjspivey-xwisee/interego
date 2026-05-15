@@ -31,6 +31,7 @@ import { ContextDescriptor } from '../model/descriptor.js';
 import { sha256 } from '../crypto/ipfs.js';
 import type { IRI, ContextDescriptorData } from '../model/types.js';
 import { parseSkillMd, emitSkillMd, type SkillValidationError } from './skill-md.js';
+import { escapeTurtleLiteral } from '../rdf/escape.js';
 
 // ── Skill package: SKILL.md plus optional sibling files ──────────────
 
@@ -98,20 +99,14 @@ const DCT_NS = 'http://purl.org/dc/terms/';
 const PROV_NS = 'http://www.w3.org/ns/prov#';
 const RDFS_NS = 'http://www.w3.org/2000/01/rdf-schema#';
 
-function escapeLit(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-function escapeMulti(s: string): string {
-  // Escape ALL double-quotes, not just the substring `"""`. A string
-  // ending in one or two quotes would otherwise collide with the
-  // closing `"""` of the literal and the parser would close the
-  // literal prematurely (with content truncated).
-  // Over-escaping (`"x"` → `\"x\"`) is verbose but always valid;
-  // under-escaping is a correctness bug. See tests/skills.test.ts
-  // "adversarial literal escaping" for the round-trip contract.
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
+// `escapeLit` and `escapeMulti` both delegate to the shared
+// `escapeTurtleLiteral` helper. The `Multi` name is preserved at the
+// call sites for readability — it documents that the value lands inside
+// a `"""..."""` triple-quoted literal where escape rules are the same
+// (every quote escaped, no LF/CR/TAB shenanigans). See
+// tests/skills.test.ts "adversarial literal escaping".
+const escapeLit = escapeTurtleLiteral;
+const escapeMulti = escapeTurtleLiteral;
 
 /**
  * Translate a SKILL.md bundle into a typed substrate descriptor +

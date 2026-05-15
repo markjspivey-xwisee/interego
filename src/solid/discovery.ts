@@ -37,6 +37,7 @@ import { resolveDidWeb, findStorageEndpoint } from './did.js';
 import { resolveWebFinger } from './webfinger.js';
 import { resolveName } from '../naming/index.js';
 import type { NameCandidate, NamingConfig } from '../naming/index.js';
+import { escapeTurtleLiteral } from '../rdf/escape.js';
 
 const TURTLE_CONTENT_TYPE = 'text/turtle';
 const JSONLD_CONTENT_TYPE = 'application/ld+json';
@@ -228,7 +229,7 @@ export function agentsCatalogTurtle(
       `        a cg:AuthorizedAgent ;`,
       `        cg:agentIdentity <${e.agentId}> ;`,
     ];
-    if (e.label) parts.push(`        foaf:name "${e.label.replace(/"/g, '\\"')}" ;`);
+    if (e.label) parts.push(`        foaf:name "${escapeTurtleLiteral(e.label)}" ;`);
     if (e.webId) parts.push(`        cg:webId <${e.webId}> ;`);
     if (e.podUrl) parts.push(`        cg:podUrl <${e.podUrl}> ;`);
     if (e.capabilities && e.capabilities.length > 0) {

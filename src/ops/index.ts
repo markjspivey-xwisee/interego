@@ -14,6 +14,7 @@
  */
 
 import type { ComplianceFramework } from '../compliance/index.js';
+import { escapeTurtleLiteral as escapeLiteral } from '../rdf/escape.js';
 
 /**
  * Common shape returned by every builder. The caller takes this object and
@@ -39,10 +40,6 @@ const PREFIXES = [
 
 function nowIso(): string {
   return new Date().toISOString();
-}
-
-function escapeLiteral(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 }
 
 // Make a string safe to embed inside an IRI (URN segment). Anything outside
