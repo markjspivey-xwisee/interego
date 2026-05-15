@@ -2729,7 +2729,7 @@ app.get('/dashboard', (_req, res) => {
   }
 
   // Auth-class error messages from the identity server — when the
-  // dashboard sees any of these on a `/me`-style call, the stored token
+  // dashboard sees any of these on a /me-style call, the stored token
   // is stale (most often: the in-memory token store was wiped by a
   // server restart) and the user needs to re-authenticate.
   function isAuthError(err) {
@@ -2900,7 +2900,7 @@ app.get('/dashboard', (_req, res) => {
   } else {
     renderDashboard().catch(function (e) {
       console.error(e);
-      // Token might be stale — give the user a path forward. `isAuthError`
+      // Token might be stale — give the user a path forward. isAuthError
       // catches "Token not found" (in-memory store wiped on server
       // restart), "Invalid bearer", "expired", etc.
       if (isAuthError(e)) {
