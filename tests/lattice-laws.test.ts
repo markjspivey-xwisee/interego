@@ -153,6 +153,22 @@ describe('lattice laws — intersection', () => {
     const ab = intersection(a, b);
     expect(ab.facets.length).toBe(0);
   });
+
+  it('empty described-graph intersection yields empty describes (meet ≤ each operand)', () => {
+    // Regression: intersection used to fall back to allDescribedGraphs([d1, d2])
+    // — the UNION — when commonGraphs was empty. That violated `d1 ∧ d2 ≤ d1`
+    // and `d1 ∧ d2 ≤ d2`. Empty meet is the empty set; the result must contain
+    // no graphs that aren't in both operands.
+    const a = buildDescriptor('urn:cg:a', [temporal]);
+    const b = buildDescriptor('urn:cg:b', [temporal]);
+    // Override the describes sets so they're DISJOINT.
+    const aDisjoint: ContextDescriptorData = { ...a, describes: ['urn:graph:only-a' as IRI] };
+    const bDisjoint: ContextDescriptorData = { ...b, describes: ['urn:graph:only-b' as IRI] };
+    const ab = intersection(aDisjoint, bDisjoint);
+    expect(ab.describes).toEqual([]);
+    expect(ab.describes).not.toContain('urn:graph:only-a');
+    expect(ab.describes).not.toContain('urn:graph:only-b');
+  });
 });
 
 describe('lattice laws — absorption', () => {

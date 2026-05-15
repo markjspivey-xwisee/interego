@@ -140,7 +140,10 @@ export function intersection(
     }
   }
 
-  // Intersection of described graphs
+  // Intersection of described graphs — meet is the GREATEST LOWER BOUND, so
+  // when there is no overlap the result IS the empty set. Falling back to
+  // `allDescribedGraphs([d1, d2])` (the union) used to violate the lattice
+  // property `d1 ∧ d2 ≤ d1`, which the §3.4 composition algebra relies on.
   const graphs1 = new Set(d1.describes);
   const commonGraphs = d2.describes.filter(g => graphs1.has(g));
 
@@ -148,7 +151,7 @@ export function intersection(
     id: id ?? nextComposedId(),
     compositionOp: 'intersection',
     operands: [d1.id, d2.id],
-    describes: commonGraphs.length > 0 ? commonGraphs : allDescribedGraphs([d1, d2]),
+    describes: commonGraphs,
     facets: resultFacets,
     // PGSL structural metadata:
     // Intersection = the shared boundary itself (lattice meet).
