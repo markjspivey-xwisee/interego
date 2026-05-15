@@ -1997,8 +1997,8 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           graph_iri: { type: 'string', description: 'IRI for the named graph (e.g. urn:graph:project:arch-v1)' },
           graph_content: { type: 'string', description: 'RDF Turtle content of the knowledge graph' },
           descriptor_id: { type: 'string', description: 'Optional IRI for the descriptor (auto-generated if omitted)' },
-          confidence: { type: 'number', description: 'Epistemic confidence 0.0-1.0 (default 0.85)' },
-          modal_status: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'], description: 'Semiotic modal status (default: Asserted)' },
+          confidence: { type: 'number', description: 'Epistemic confidence 0.0-1.0 (default 0.7 — paired with the Hypothetical default).' },
+          modal_status: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'], description: 'Semiotic modal status (default: Hypothetical — the safe default for inferences). Set Asserted ONLY when committing to a verified fact; Counterfactual for explicit "not true" or retraction.' },
           task_description: { type: 'string', description: 'What task produced this context (for provenance)' },
           valid_from: { type: 'string', description: 'ISO 8601 start of validity (default: now)' },
           valid_until: { type: 'string', description: 'ISO 8601 end of validity (optional)' },
@@ -2006,7 +2006,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           share_with: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Optional list of external identity handles (did:web:..., WebID URLs, or acct:user@host) to include as additional E2EE recipients. Their pods are resolved and their authorized agents are added to the envelope recipient set — only those specific agents can decrypt THIS graph. Use for selective cross-pod sharing without exposing other pod content.',
+            description: 'Default: OWNER-ONLY. Omit this field to keep the graph decryptable only by your own authorized agents. Supply it only when the user has EXPLICITLY asked to share with someone — pass external identity handles (did:web:..., WebID URLs, or acct:user@host) of the intended recipients. Their pods are resolved and their authorized agents are added to the envelope recipient set; only those specific agents (plus the owner) can decrypt THIS graph. Never set this on speculative inference — share by user request, not by default.',
           },
           auto_supersede_prior: {
             type: 'boolean',

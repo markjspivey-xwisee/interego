@@ -32,9 +32,25 @@
 import type { IRI, ModalStatus, RevocationConditionData } from './types.js';
 
 export interface PublishInputs {
-  /** Semiotic modal status — defaults to 'Asserted' if unset. */
+  /**
+   * Semiotic modal status — defaults to `'Hypothetical'` when unset.
+   *
+   * Most callers of `publish_context` are agents recording an inference
+   * (a memory note, a derived claim, an action result). The substrate's
+   * own published MCP guidance is explicit: *"don't drift to 'Asserted
+   * for safety'... USE Hypothetical DEFAULT for inferences."* A
+   * Hypothetical default makes the safe thing the easy thing —
+   * compliance-grade and human-verified callers always set
+   * `modalStatus: 'Asserted'` explicitly via their builders, so they
+   * are unaffected.
+   */
   readonly modalStatus?: ModalStatus;
-  /** Caller-supplied epistemic confidence [0.0, 1.0]. */
+  /**
+   * Caller-supplied epistemic confidence `[0.0, 1.0]`. Defaults to
+   * `0.7` — high enough that the claim isn't ignored, low enough that
+   * the affordance engine still gates `apply` / `forward` on a stricter
+   * confidence (≥ 0.8) per the Hypothetical-with-caution rule.
+   */
   readonly confidence?: number;
   /** Raw Turtle graph content — mined for cross-descriptor mirrors. */
   readonly graphContent?: string;
@@ -61,8 +77,12 @@ export interface PreprocessedPublish {
  * publish inputs. Returns a struct the builder can use directly.
  */
 export function normalizePublishInputs(inputs: PublishInputs): PreprocessedPublish {
-  const modalStatus: ModalStatus = inputs.modalStatus ?? 'Asserted';
-  const epistemicConfidence = inputs.confidence ?? 0.85;
+  // Default to Hypothetical / 0.7 — see `PublishInputs.modalStatus` docs.
+  // Compliance + human-verified callers set Asserted explicitly via their
+  // builders; agent-driven publish paths (the common case) get a safe
+  // tentative claim that downstream affordances gate appropriately.
+  const modalStatus: ModalStatus = inputs.modalStatus ?? 'Hypothetical';
+  const epistemicConfidence = inputs.confidence ?? 0.7;
 
   let groundTruth: boolean | undefined;
   if (modalStatus === 'Asserted' || modalStatus === 'Quoted') groundTruth = true;

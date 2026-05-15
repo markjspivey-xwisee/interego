@@ -48,6 +48,27 @@ describe('stripStringsAndComments', () => {
   });
 });
 
+describe('normalizePublishInputs — modal-status default', () => {
+  it('defaults to Hypothetical / 0.7 when modalStatus + confidence are unset', () => {
+    // Pin the principled default: an agent calling publish_context
+    // without explicit modal status is recording an inference, so the
+    // substrate marks the claim as tentative. Compliance / verified
+    // paths set Asserted explicitly via their builders and are
+    // unaffected. Flipping this back to Asserted would silently re-open
+    // the "drift to Asserted for safety" failure mode that the MCP
+    // server's own guidance warns against.
+    const result = normalizePublishInputs({});
+    expect(result.semiotic.modalStatus).toBe('Hypothetical');
+    expect(result.semiotic.epistemicConfidence).toBe(0.7);
+    expect(result.semiotic.groundTruth).toBeUndefined(); // three-valued
+  });
+
+  it('still honors explicit modal status', () => {
+    expect(normalizePublishInputs({ modalStatus: 'Asserted' }).semiotic.modalStatus).toBe('Asserted');
+    expect(normalizePublishInputs({ modalStatus: 'Counterfactual' }).semiotic.modalStatus).toBe('Counterfactual');
+  });
+});
+
 describe('normalizePublishInputs — cleartext mirror', () => {
   it('lifts top-level dct:conformsTo to descriptor', () => {
     const result = normalizePublishInputs({
