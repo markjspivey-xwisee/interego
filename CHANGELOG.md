@@ -136,6 +136,128 @@ trust-ranked) / `namesFor` (reverse) / `defaultNameTrustPolicy`
 21 tests. **No new L1/L2 ontology terms** — `foaf:nick` is W3C FOAF;
 L2 pattern, sibling of `registry:` / `passport:`.
 
+## 2026-05-15 — Project-wide audit pass: 13 fixes across crypto / federation / substrate / MCP
+
+A four-reviewer parallel audit covered crypto + identity, federation + RDF
+I/O, substrate core (composition, validation, PGSL, compliance), and the
+MCP + integrations + verticals surfaces. Of 17 raw findings, 3 turned out
+to be reviewer false alarms (the corresponding code was already correct
+or the rule had been misread), 1 was a clarifying-doc-only item, and 13
+landed as code changes. Two patterns ran throughout: **make the safe
+thing the default**, and **compose existing primitives instead of letting
+helpers fork**.
+
+### Correctness regressions caught + fixed
+
+- **Turtle literal escape consolidated** (`82bb5bd`) — six places had
+  their own escape helper (`escapeTurtle` / `escapeLit` /
+  `escapeForTurtle` / `escapeLiteral` / two `escapeMulti`s + an inline
+  `.replace`), each covering a different subset of `\\` / `"` / `\n` /
+  `\r` / `\t`. The directory.ts pair shipped in [`bf171e6`](#)
+  covered only `\\` and `"` while its inverse decoded all five — a
+  nick with a control char produced malformed Turtle. New
+  [`src/rdf/escape.ts`](src/rdf/escape.ts) is the single source of
+  truth; all six call sites route through it. Adversarial round-trip
+  test pins the regression in `tests/naming.test.ts`.
+- **`intersection()` is the meet again** (`d443596`) — when
+  `commonGraphs` was empty, the operator fell back to
+  `allDescribedGraphs([d1, d2])` (the union), violating
+  `d1 ∧ d2 ≤ d1`. Now returns the empty set, which is the correct
+  meet. Regression test added with disjoint described-sets.
+
+### Identity + auth hardening
+
+- **Bootstrap-invite verify is constant-time** (`6f2cf96`) —
+  `crypto.timingSafeEqual` on equal-length buffers, length-mismatch
+  short-circuits. Closes a timing channel that could enumerate the
+  single-use seeded-userId gate.
+- **WebAuthn counter persistence respects clone-detection** (`6f2cf96`)
+  — counter is captured, advanced in memory, persisted; on persist
+  failure the in-memory value is rolled back AND the request returns
+  503 so the client retries. The previous catch-and-warn path silently
+  defeated WebAuthn §6.1.1 cloned-authenticator detection.
+- **WebAuthn rpID allowlist fallback warns once per misconfig**
+  (`6f2cf96`) — a browser Origin not on `WEBAUTHN_RP_ORIGINS` no
+  longer silently uses the static `RP_ID`; the operator gets one
+  warning per distinct Origin so the misconfig is visible before users
+  hit the "rpID is not a registrable suffix" error.
+- **DID-userId derivation is global by design — documented in code**
+  (`6f2cf96`) — the auditor flagged "same DID, two pods, two userIds"
+  as a federation bug, but the rule is actually the opposite: userId
+  IS deterministic from the credential / wallet / DID; per-pod checks
+  prevent enrolling the same credential twice on the same pod, not
+  enrolling on a second pod. A pod-scoped userId would re-centralize
+  the namespace. Source comment now states this explicitly.
+
+### Compliance discipline
+
+- **Framework-report status is bi-modal** (`94830c0`) — dropped the
+  arbitrary "exactly one evidence → partial" rule from the default
+  aggregation policy. One signed audit record fully satisfies a
+  control; callers who genuinely need an N-evidence threshold derive
+  status from `evidenceCount` themselves. The `'partial'` literal
+  survives in the type for custom `AggregationPolicy` implementations.
+- **Compliance overlay removes the `'allow'` screening bypass**
+  (`19861f8`) — compliance evidence is the highest-stakes surface and
+  cannot opt out of `screenForSensitiveContent`. Pre-screening
+  pipelines should sanitize args before calling
+  `buildAgentActionDescriptor`. Test pins the throw-on-HIGH behavior.
+- **Wallet-rotation temporal verification** (no change needed) — the
+  reviewer asked for it; [`listValidSignerAddressesAt`](src/compliance/index.ts)
+  already provides exactly that bounded predicate. The unbounded
+  variant survives for internal-audit walks.
+
+### Crypto layered defense + SIWE pin
+
+- **Optional `expectedSenderPublicKey` on decrypt** (`2a21cdf`) —
+  `decryptFacetValue` and `resolveAtomValue` gain an optional
+  expected-sender param. NaCl box.open authenticates an envelope but
+  takes the sender pubkey from the envelope itself; passing the
+  expected sender narrows the trusted-sender set from "anyone who knew
+  the recipient's pubkey" to "exactly this sender." Layered defense —
+  the primary integrity guarantee remains pod-write ACL +
+  content-addressing.
+- **SIWE format-stability regression test** (`2a21cdf`) —
+  `formatSiweMessage` is now pinned byte-for-byte against a fixed
+  input including Resources. A stylistic refactor that drifts the
+  bytes would silently invalidate every prior signature; the test
+  guards against that.
+
+### Principled-call: modal status default
+
+- **`publish-preprocess` defaults to `Hypothetical`** (`a1c9837`) — the
+  MCP server's own published guidance to agents is explicit
+  (*"don't drift to 'Asserted for safety'... USE Hypothetical DEFAULT
+  for inferences"*), but `normalizePublishInputs` defaulted to
+  `Asserted`. Substrate vs. guidance drifted. Flipped:
+  `modalStatus ?? 'Hypothetical'`, paired confidence default
+  `0.85 → 0.7` (high enough not to be ignored, low enough that the
+  affordance engine's `Hypothetical with confidence ≥ 0.8` gate still
+  blocks auto-apply on inferred claims). Compliance and
+  human-verified callers set `Asserted` explicitly via their builders
+  and are unaffected. Affordance-engine *consumption* of a descriptor
+  missing the semiotic facet keeps the L1 default (`Asserted`); the
+  rule is about authoring, not interpreting stored content.
+- **`share_with` schema text emphasizes owner-only default**
+  (`a1c9837`) — the implementation has always been owner-only when
+  the field is omitted; the schema description now says so explicitly
+  so an LLM reading the tool doesn't infer sharing is opt-out.
+
+### False alarms (verified, no fix needed)
+
+- Modal-status default `'Asserted'` in `src/affordance/compute.ts:293`
+  was flagged as drift but is the L1 spec default for *consuming* a
+  descriptor with no explicit modalStatus — the "Hypothetical default"
+  rule is about *authoring*, not interpretation.
+- Subscription slot leak on `subscribe_to_pod` failure: `setSubscription`
+  is already called *after* the awaited `subscribe()` resolves, so a
+  thrown subscribe never consumes a slot.
+- Wallet-rotation history "append-only forever": addressed by
+  `listValidSignerAddressesAt` already shipped.
+
+Suite: **1271 passed / 29 skipped / 0 failed**; type-check clean;
+ontology-lint clean.
+
 ## 2026-05-15 — Name service: pod-directory `name → did` index
 
 Closes the last deferred item from the 2026-05-14 name-service entry —
