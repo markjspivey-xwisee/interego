@@ -134,9 +134,40 @@ trust-ranked) / `namesFor` (reverse) / `defaultNameTrustPolicy`
   `naming` flag). `resolveName` strips a leading `@`.
 
 21 tests. **No new L1/L2 ontology terms** — `foaf:nick` is W3C FOAF;
-L2 pattern, sibling of `registry:` / `passport:`. One item stays
-deliberately deferred (a pod-directory `name → did` index — it carries
-a real schema-design decision; see `docs/NAME-SERVICE.md`).
+L2 pattern, sibling of `registry:` / `passport:`.
+
+## 2026-05-15 — Name service: pod-directory `name → did` index
+
+Closes the last deferred item from the 2026-05-14 name-service entry —
+a federation hint that lets a resolver narrow which pods it walks for a
+given name.
+
+- **`PodDirectoryEntry.ownerNicks` — schema decision recorded.** The
+  question was "new directory predicate, or reuse a W3C term?" The
+  resolution is to reuse `foaf:nick` (the same predicate the
+  underlying attestation graph uses) and serialize it as plain top-level
+  `<owner> foaf:nick "name"` triples in the directory document. The
+  directory hint is then literally a projection of the attestations —
+  re-derivable, never authoritative. No new ontology term in any
+  `cg:` / `cgh:` / pattern namespace.
+- **`directoryNameIndex(directories)` materializes a
+  `lowercase-name → NameHint[]` map** across one or more pod
+  directories. `NameHint` carries the directory ID for provenance.
+- **`resolveName(name, config, { directories })` narrows the pod walk**
+  to those advertising the queried name; `namesFor(subject, …)` narrows
+  reverse-lookup the analogous way. Stale-hint safety: when no hint
+  matches, the resolver falls through to the full `pods` list. The
+  caller's own `config.podUrl` stays in the walk as a safety net so a
+  local-only attestation is never missed.
+- 28 naming tests (7 new) — round-trip, `directoryNameIndex` building,
+  forward narrowing, stale-hint fallback, local-pod safety net, reverse
+  narrowing. Federation tests (24) still pass; type-check + ontology-lint
+  clean.
+- Honest record: `docs/ns/naming.ttl` is **not** being added — the
+  binding is plain `foaf:nick`, the directory hint reuses the same
+  predicate, and nothing in the runtime references a `naming:` term.
+  The absence is the design (the design note now records this; the
+  prior deferred-list bullet for it has been removed).
 
 ### Deploy reliability — diagnosable + reproducible + rate-limit-resilient ACR builds
 

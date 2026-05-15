@@ -980,6 +980,7 @@ export {
   resolveName,
   namesFor,
   defaultNameTrustPolicy,
+  directoryNameIndex,
 } from './naming/index.js';
 export type {
   NamingConfig,
@@ -988,4 +989,5 @@ export type {
   NameCandidate,
   ResolveOptions as NameResolveOptions,
   NameTrustPolicy,
+  NameHint,
 } from './naming/index.js';

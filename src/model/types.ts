@@ -759,6 +759,15 @@ export interface PodDirectoryEntry {
   readonly owner?: IRI;
   /** Human-readable label for this pod. */
   readonly label?: string;
+  /**
+   * Optional hint advertising name attestations the pod hosts about its
+   * owner — serialized as plain `<owner> foaf:nick "name"` triples in the
+   * directory graph. Lets a federated `resolveName` narrow the pods it
+   * walks. This is a CACHE/HINT, re-derivable from the pod's attestation
+   * descriptors — NOT authoritative; the resolver still verifies the
+   * underlying attestation. Uses W3C FOAF; no new ontology terms.
+   */
+  readonly ownerNicks?: readonly string[];
 }
 
 /** A directory of known pods, itself publishable as a context graph. */

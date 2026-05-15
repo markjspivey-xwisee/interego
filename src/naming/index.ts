@@ -43,6 +43,7 @@ import type {
   TrustLevel,
   ModalStatus,
   ContextDescriptorData,
+  PodDirectoryData,
 } from '../model/types.js';
 import type { ManifestEntry, FetchFn } from '../solid/types.js';
 
@@ -139,6 +140,20 @@ export interface ResolveOptions {
    * accept. Defaults to the global fetch.
    */
   readonly fetch?: FetchFn;
+  /**
+   * Federation hints. When supplied, the resolver consults each
+   * directory's `foaf:nick` hints to narrow the pod walk: only pods
+   * advertising the queried name (or owner subject) are visited, plus
+   * `config.podUrl` as a safety net. Hints are NOT authoritative — the
+   * underlying attestation is still verified — so a stale or missing
+   * hint just falls back to `pods` (or `[config.podUrl]`) and the
+   * resolver behaves identically.
+   *
+   * Pass an empty array to opt out of narrowing even when `pods` is
+   * large; pass `pods` AND `directories` together to constrain the walk
+   * to the hint-implied subset of `pods`.
+   */
+  readonly directories?: readonly PodDirectoryData[];
 }
 
 /**
@@ -349,6 +364,78 @@ async function gatherCandidates(
   }));
 }
 
+// ── Federation hints (pod-directory name → did index) ────────────────
+
+/**
+ * One name→pod hint extracted from a pod directory's `foaf:nick`
+ * triples. The pod is whatever entry has that owner; the directory is
+ * tracked for trust / debug purposes. A resolver consults the index to
+ * narrow its pod walk — never to short-circuit verification.
+ */
+export interface NameHint {
+  /** The name literal advertised by the directory (`foaf:nick` value). */
+  readonly name: string;
+  /** The principal the name is hinted to bind to. */
+  readonly subject: IRI;
+  /** Pod URL that hosts the (alleged) attestation. */
+  readonly podUrl: string;
+  /** The directory IRI the hint came from — for provenance/debugging. */
+  readonly directoryId: IRI;
+}
+
+/**
+ * Materialize a `lowercase-name → NameHint[]` index from one or more
+ * directories. Each `<owner> foaf:nick "name"` triple becomes a hint
+ * linking that name to whichever entries have that owner. The index is
+ * a CACHE — never authoritative; the resolver still fetches and
+ * verifies the underlying attestation descriptor on the named pod.
+ */
+export function directoryNameIndex(
+  directories: readonly PodDirectoryData[],
+): ReadonlyMap<string, readonly NameHint[]> {
+  const idx = new Map<string, NameHint[]>();
+  for (const dir of directories) {
+    for (const entry of dir.entries) {
+      if (!entry.owner || !entry.ownerNicks) continue;
+      for (const nick of entry.ownerNicks) {
+        const key = nick.trim().toLowerCase();
+        if (key.length === 0) continue;
+        const list = idx.get(key) ?? [];
+        list.push({
+          name: nick,
+          subject: entry.owner,
+          podUrl: entry.podUrl,
+          directoryId: dir.id,
+        });
+        idx.set(key, list);
+      }
+    }
+  }
+  return idx;
+}
+
+/**
+ * Narrow a pod list using directory hints. Returns the subset of `pods`
+ * that any directory advertises as hosting the predicate, plus
+ * `seedPod` (the caller's own pod) as a safety net so a local-only
+ * attestation is never missed. If no hint matches, returns `pods`
+ * unchanged — hints accelerate the common case but never restrict
+ * correctness.
+ */
+function narrowPodsByHints(
+  pods: readonly string[],
+  seedPod: string,
+  hints: readonly NameHint[],
+): readonly string[] {
+  if (hints.length === 0) return pods;
+  const allowed = new Set<string>();
+  for (const h of hints) allowed.add(h.podUrl);
+  const narrowed = pods.filter(p => allowed.has(p));
+  if (narrowed.length === 0) return pods;
+  if (!narrowed.includes(seedPod)) narrowed.push(seedPod);
+  return narrowed;
+}
+
 // ── Resolution ───────────────────────────────────────────────────────
 
 /**
@@ -373,7 +460,19 @@ export async function resolveName(
   // a name — see its `detectKind`.)
   const target = name.trim().replace(/^@/, '').toLowerCase();
   if (target.length === 0) return [];
-  const pods = options.pods && options.pods.length > 0 ? options.pods : [config.podUrl];
+  const basePods = options.pods && options.pods.length > 0 ? options.pods : [config.podUrl];
+
+  // If the caller supplied federation directories, use their foaf:nick
+  // hints to narrow the pod walk. Hints are advisory only — the
+  // attestation itself is still fetched and verified — so a stale or
+  // missing hint falls through to the unfiltered pod list.
+  let pods = basePods;
+  if (options.directories && options.directories.length > 0) {
+    const idx = directoryNameIndex(options.directories);
+    const hits = idx.get(target) ?? [];
+    pods = narrowPodsByHints(basePods, config.podUrl, hits);
+  }
+
   const candidates = await gatherCandidates(
     pods,
     b => b.name.trim().toLowerCase() === target,
@@ -392,7 +491,30 @@ export async function namesFor(
   config: NamingConfig,
   options: ResolveOptions = {},
 ): Promise<readonly NameCandidate[]> {
-  const pods = options.pods && options.pods.length > 0 ? options.pods : [config.podUrl];
+  const basePods = options.pods && options.pods.length > 0 ? options.pods : [config.podUrl];
+
+  // Reverse-lookup narrowing: any pod whose directory entry has this
+  // subject as `cg:owner` AND advertises any nick is a candidate. We
+  // don't have a subject-keyed index, but every entry already carries
+  // its `owner`, so iterate directly.
+  let pods = basePods;
+  if (options.directories && options.directories.length > 0) {
+    const allowed = new Set<string>();
+    for (const dir of options.directories) {
+      for (const entry of dir.entries) {
+        if (entry.owner === subject && entry.ownerNicks && entry.ownerNicks.length > 0) {
+          allowed.add(entry.podUrl);
+        }
+      }
+    }
+    if (allowed.size > 0) {
+      const narrowed = basePods.filter(p => allowed.has(p));
+      if (narrowed.length > 0) {
+        pods = narrowed.includes(config.podUrl) ? narrowed : [...narrowed, config.podUrl];
+      }
+    }
+  }
+
   const candidates = await gatherCandidates(pods, b => b.subject === subject, options.fetch);
   const policy = options.trustPolicy ?? defaultNameTrustPolicy;
   return policy(candidates).slice(0, options.limit ?? 8);

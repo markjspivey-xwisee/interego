@@ -18,10 +18,20 @@ export const POD_DIRECTORY_PATH = 'directory';
  * Serialize a PodDirectory to Turtle.
  */
 export function podDirectoryToTurtle(directory: PodDirectoryData): string {
-  const prefixes = turtlePrefixes(['cg', 'rdfs']);
+  // Emit foaf: only if at least one entry advertises name hints — keeps
+  // the prefix block minimal on the common no-hint path.
+  const anyNicks = directory.entries.some(
+    e => e.owner && e.ownerNicks && e.ownerNicks.length > 0,
+  );
+  const prefixes = turtlePrefixes(anyNicks ? ['cg', 'rdfs', 'foaf'] : ['cg', 'rdfs']);
   const lines: string[] = [prefixes, ''];
 
   lines.push(`<${directory.id}> a cg:PodDirectory .`);
+
+  // Emit pod entries first, then any name hints at the bottom — keeps
+  // the entry blocks tight and groups hint triples by subject (one block
+  // per owner DID) for readability.
+  const nicksByOwner = new Map<IRI, Set<string>>();
 
   for (let i = 0; i < directory.entries.length; i++) {
     const e = directory.entries[i]!;
@@ -34,6 +44,22 @@ export function podDirectoryToTurtle(directory: PodDirectoryData): string {
     }
     if (e.label) {
       lines.push(`${bnode} rdfs:label "${escapeTurtle(e.label)}" .`);
+    }
+    if (e.owner && e.ownerNicks) {
+      let set = nicksByOwner.get(e.owner);
+      if (!set) { set = new Set(); nicksByOwner.set(e.owner, set); }
+      for (const n of e.ownerNicks) {
+        const trimmed = n.trim();
+        if (trimmed.length > 0) set.add(trimmed);
+      }
+    }
+  }
+
+  for (const [owner, nicks] of nicksByOwner) {
+    if (nicks.size === 0) continue;
+    lines.push('');
+    for (const n of nicks) {
+      lines.push(`<${owner}> foaf:nick "${escapeTurtle(n)}" .`);
     }
   }
 
@@ -81,7 +107,32 @@ export function parsePodDirectory(turtle: string): PodDirectoryData {
     entries.push({ podUrl, owner, label });
   }
 
-  return { id, entries };
+  // Gather foaf:nick hints at the directory's top level and attach to
+  // each entry whose owner matches. Tolerates either the full IRI or the
+  // `foaf:` prefix form. Multiple nicks per owner are supported.
+  const nicksByOwner = new Map<string, string[]>();
+  const nickFullRe = /<([^>]+)>\s+<http:\/\/xmlns\.com\/foaf\/0\.1\/nick>\s+"((?:[^"\\]|\\.)*)"/g;
+  const nickPrefRe = /<([^>]+)>\s+foaf:nick\s+"((?:[^"\\]|\\.)*)"/g;
+  for (const re of [nickFullRe, nickPrefRe]) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(turtle)) !== null) {
+      const owner = m[1]!;
+      const nick = unescapeTurtle(m[2]!);
+      const arr = nicksByOwner.get(owner) ?? [];
+      if (!arr.includes(nick)) arr.push(nick);
+      nicksByOwner.set(owner, arr);
+    }
+  }
+
+  const enriched = nicksByOwner.size === 0
+    ? entries
+    : entries.map(e => {
+        if (!e.owner) return e;
+        const nicks = nicksByOwner.get(e.owner);
+        return nicks && nicks.length > 0 ? { ...e, ownerNicks: nicks } : e;
+      });
+
+  return { id, entries: enriched };
 }
 
 /**
@@ -138,6 +189,17 @@ export async function publishPodDirectory(
 
 function escapeTurtle(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function unescapeTurtle(s: string): string {
+  return s.replace(/\\(["\\nrt])/g, (_, c) => {
+    switch (c) {
+      case 'n': return '\n';
+      case 'r': return '\r';
+      case 't': return '\t';
+      default: return c;
+    }
+  });
 }
 
 function escapeRegex(s: string): string {

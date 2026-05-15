@@ -15,8 +15,11 @@ import {
   namesFor,
   defaultNameTrustPolicy,
   resolveIdentifier,
+  directoryNameIndex,
+  podDirectoryToTurtle,
+  parsePodDirectory,
 } from '../src/index.js';
-import type { IRI, NamingConfig, NameCandidate, FetchFn } from '../src/index.js';
+import type { IRI, NamingConfig, NameCandidate, FetchFn, PodDirectoryData } from '../src/index.js';
 
 const FOAF_NICK = 'http://xmlns.com/foaf/0.1/nick';
 const ALICE_DID = 'did:web:pod.example:users:alice' as IRI;
@@ -319,5 +322,216 @@ describe('resolveName — @-prefix', () => {
     const without = await resolveName('alice', CONFIG, { fetch });
     expect(withAt).toHaveLength(1);
     expect(withAt[0]?.subject).toBe(without[0]?.subject);
+  });
+});
+
+// ── Pod-directory name-index — federation hints (foaf:nick on cg:owner) ──
+
+describe('PodDirectory — foaf:nick name hints', () => {
+  it('round-trips ownerNicks through podDirectoryToTurtle / parsePodDirectory', () => {
+    const dir: PodDirectoryData = {
+      id: 'urn:directory:test' as IRI,
+      entries: [
+        {
+          podUrl: 'https://pod-a.example/' as IRI,
+          owner: ALICE_DID,
+          ownerNicks: ['alice', 'a.spivey'],
+        },
+        {
+          podUrl: 'https://pod-b.example/' as IRI,
+          owner: BOB_DID,
+          ownerNicks: ['bob'],
+        },
+        // Entry with no hints stays a plain entry (the no-hint path).
+        { podUrl: 'https://pod-c.example/' as IRI },
+      ],
+    };
+    const ttl = podDirectoryToTurtle(dir);
+    expect(ttl).toContain('foaf:');
+    expect(ttl).toContain(`<${ALICE_DID}> foaf:nick "alice"`);
+    expect(ttl).toContain(`<${BOB_DID}> foaf:nick "bob"`);
+
+    const parsed = parsePodDirectory(ttl);
+    const aliceEntry = parsed.entries.find(e => e.owner === ALICE_DID);
+    const bobEntry = parsed.entries.find(e => e.owner === BOB_DID);
+    expect(aliceEntry?.ownerNicks?.slice().sort()).toEqual(['a.spivey', 'alice']);
+    expect(bobEntry?.ownerNicks).toEqual(['bob']);
+    expect(parsed.entries.find(e => e.podUrl === 'https://pod-c.example/')?.ownerNicks).toBeUndefined();
+  });
+
+  it('omits the foaf: prefix when no entry has hints (keeps the common path tight)', () => {
+    const dir: PodDirectoryData = {
+      id: 'urn:directory:plain' as IRI,
+      entries: [{ podUrl: 'https://pod-x.example/' as IRI, owner: ALICE_DID }],
+    };
+    const ttl = podDirectoryToTurtle(dir);
+    expect(ttl).not.toContain('foaf:');
+  });
+
+  it('directoryNameIndex builds a lowercase name → hint map across directories', () => {
+    const dirA: PodDirectoryData = {
+      id: 'urn:directory:a' as IRI,
+      entries: [{
+        podUrl: 'https://pod-a.example/' as IRI,
+        owner: ALICE_DID,
+        ownerNicks: ['Alice'],
+      }],
+    };
+    const dirB: PodDirectoryData = {
+      id: 'urn:directory:b' as IRI,
+      entries: [{
+        podUrl: 'https://pod-b.example/' as IRI,
+        owner: BOB_DID,
+        ownerNicks: ['alice'], // Bob also claims "alice" — a contested name
+      }],
+    };
+    const idx = directoryNameIndex([dirA, dirB]);
+    const hits = idx.get('alice') ?? [];
+    expect(hits).toHaveLength(2);
+    expect(hits.map(h => h.podUrl).sort()).toEqual([
+      'https://pod-a.example/',
+      'https://pod-b.example/',
+    ]);
+    // Reverse-lookup case verified separately; sanity-check that
+    // `bob` is also indexed off `dirB`'s alice-claimer if it appears.
+    expect(idx.get('bob')).toBeUndefined();
+  });
+});
+
+// ── resolveName / namesFor — directory-hint narrowing ────────────────
+
+describe('resolveName — narrows the pod walk via directory hints', () => {
+  it('only visits pods the directory advertises for the target name', async () => {
+    // Count manifest fetches per pod URL to verify which pods got walked.
+    let podAManifestFetches = 0;
+    let podBManifestFetches = 0;
+    const podAMock = mockPod('https://pod-a.example/', [
+      { descriptorUrl: 'https://pod-a.example/cg/n.ttl', subject: ALICE_DID, name: 'alice',
+        trustLevel: 'CryptographicallyVerified' },
+    ]);
+    const podBMock = mockPod('https://pod-b.example/', [
+      { descriptorUrl: 'https://pod-b.example/cg/n.ttl', subject: BOB_DID, name: 'bob' },
+    ]);
+    const fetch: FetchFn = async (url, init) => {
+      if (typeof url === 'string') {
+        if (url.startsWith('https://pod-a.example/') && url.endsWith('.well-known/context-graphs')) podAManifestFetches++;
+        if (url.startsWith('https://pod-b.example/') && url.endsWith('.well-known/context-graphs')) podBManifestFetches++;
+      }
+      return mergeMocks(podAMock, podBMock)(url, init);
+    };
+
+    const dir: PodDirectoryData = {
+      id: 'urn:directory:t' as IRI,
+      entries: [
+        { podUrl: 'https://pod-a.example/' as IRI, owner: ALICE_DID, ownerNicks: ['alice'] },
+        { podUrl: 'https://pod-b.example/' as IRI, owner: BOB_DID, ownerNicks: ['bob'] },
+      ],
+    };
+
+    const hits = await resolveName('alice', CONFIG, {
+      pods: ['https://pod-a.example/', 'https://pod-b.example/'],
+      directories: [dir],
+      fetch,
+    });
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.subject).toBe(ALICE_DID);
+    // pod-b should have been narrowed out — only pod-a (the alice-hosting
+    // pod) walked, since the directory advertises bob there, not alice.
+    expect(podAManifestFetches).toBeGreaterThan(0);
+    expect(podBManifestFetches).toBe(0);
+  });
+
+  it('falls back to the full pod list when no hint matches (stale-hint safety net)', async () => {
+    const podA = mockPod('https://pod-a.example/', [
+      { descriptorUrl: 'https://pod-a.example/cg/n.ttl', subject: ALICE_DID, name: 'alice' },
+    ]);
+    const podB = mockPod('https://pod-b.example/', []);
+    const fetch = mergeMocks(podA, podB);
+
+    // Directory advertises neither pod for "alice" — hints are stale.
+    // The resolver MUST fall through to the unfiltered pod list.
+    const dir: PodDirectoryData = {
+      id: 'urn:directory:stale' as IRI,
+      entries: [
+        { podUrl: 'https://pod-a.example/' as IRI, owner: ALICE_DID, ownerNicks: ['oldname'] },
+      ],
+    };
+
+    const hits = await resolveName('alice', CONFIG, {
+      pods: ['https://pod-a.example/', 'https://pod-b.example/'],
+      directories: [dir],
+      fetch,
+    });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.subject).toBe(ALICE_DID);
+  });
+
+  it('keeps config.podUrl in the walk even when the directory does not list it', async () => {
+    const localPod = mockPod(CONFIG.podUrl, [
+      { descriptorUrl: 'https://pod.example/cg/local.ttl', subject: ALICE_DID, name: 'alice' },
+    ]);
+    const podA = mockPod('https://pod-a.example/', [
+      { descriptorUrl: 'https://pod-a.example/cg/n.ttl', subject: BOB_DID, name: 'alice' },
+    ]);
+    const fetch = mergeMocks(localPod, podA);
+
+    const dir: PodDirectoryData = {
+      id: 'urn:directory:t' as IRI,
+      entries: [{
+        podUrl: 'https://pod-a.example/' as IRI,
+        owner: BOB_DID,
+        ownerNicks: ['alice'],
+      }],
+    };
+
+    const hits = await resolveName('alice', CONFIG, {
+      pods: [CONFIG.podUrl, 'https://pod-a.example/'],
+      directories: [dir],
+      fetch,
+    });
+
+    // Both bindings surface — the local pod is kept as a safety net even
+    // though the directory only hints pod-a.
+    const subjects = hits.map(h => h.subject).sort();
+    expect(subjects).toEqual([ALICE_DID, BOB_DID].sort());
+  });
+});
+
+describe('namesFor — narrows the pod walk via directory hints (reverse lookup)', () => {
+  it('only visits pods whose directory entry has this subject as owner', async () => {
+    let podAManifestFetches = 0;
+    let podBManifestFetches = 0;
+    const podAMock = mockPod('https://pod-a.example/', [
+      { descriptorUrl: 'https://pod-a.example/cg/n.ttl', subject: ALICE_DID, name: 'alice' },
+    ]);
+    const podBMock = mockPod('https://pod-b.example/', [
+      { descriptorUrl: 'https://pod-b.example/cg/n.ttl', subject: BOB_DID, name: 'bob' },
+    ]);
+    const fetch: FetchFn = async (url, init) => {
+      if (typeof url === 'string') {
+        if (url.startsWith('https://pod-a.example/') && url.endsWith('.well-known/context-graphs')) podAManifestFetches++;
+        if (url.startsWith('https://pod-b.example/') && url.endsWith('.well-known/context-graphs')) podBManifestFetches++;
+      }
+      return mergeMocks(podAMock, podBMock)(url, init);
+    };
+
+    const dir: PodDirectoryData = {
+      id: 'urn:directory:t' as IRI,
+      entries: [
+        { podUrl: 'https://pod-a.example/' as IRI, owner: ALICE_DID, ownerNicks: ['alice'] },
+        { podUrl: 'https://pod-b.example/' as IRI, owner: BOB_DID, ownerNicks: ['bob'] },
+      ],
+    };
+
+    const names = await namesFor(ALICE_DID, CONFIG, {
+      pods: ['https://pod-a.example/', 'https://pod-b.example/'],
+      directories: [dir],
+      fetch,
+    });
+    expect(names).toHaveLength(1);
+    expect(names[0]?.name).toBe('alice');
+    expect(podAManifestFetches).toBeGreaterThan(0);
+    expect(podBManifestFetches).toBe(0);
   });
 });

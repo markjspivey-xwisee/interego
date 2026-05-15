@@ -140,7 +140,11 @@ Small, all composing existing primitives:
 4. **Optional: a federation name index.** Extend the pod directory to
    carry a `name → did` index per pod, so `resolveName` doesn't have to
    walk every pod. The index is a *cache/hint*, not an authority — it's
-   re-derivable from the attestation descriptors themselves.
+   re-derivable from the attestation descriptors themselves. **Shipped**
+   as `PodDirectoryEntry.ownerNicks`, serialized as plain
+   `<owner> foaf:nick "name"` triples in the directory graph
+   (`directoryNameIndex(directories)` materializes the lookup map;
+   `resolveName(..., { directories })` narrows the pod walk).
 5. **Optional: a host-free convenience form.** A surface convention
    (`@alice`, or `alice~interego`) that the federation index resolves.
    This is explicitly a **convenience view, not a guarantee** — it
@@ -237,18 +241,30 @@ runnable demo at [`examples/demo-name-service.mjs`](../../examples/demo-name-ser
   (a *bare* name still can't be detected and stays opt-in). `resolveName`
   strips a leading `@`, so `@alice` and `alice` resolve identically.
   No new ontology term — `@` is purely a presentation convention.
+- ✅ **Pod-directory `name → did` index (federation hint)** —
+  [`src/solid/directory.ts`](../src/solid/directory.ts) serializes
+  `PodDirectoryEntry.ownerNicks` as plain
+  `<owner> foaf:nick "name"` triples at the directory's top level
+  (parsed back into `ownerNicks` per entry); `directoryNameIndex()` in
+  [`src/naming/index.ts`](../src/naming/index.ts) materializes a
+  `lowercase-name → NameHint[]` map; `resolveName` and `namesFor` accept
+  `options.directories` to narrow the pod walk. **Schema decision
+  recorded:** reuse W3C `foaf:nick` rather than introduce a new
+  directory predicate — the directory hint is literally a projection of
+  the underlying attestation graph, which uses the same predicate. No
+  new ontology terms. The hint is advisory: a resolver that finds no
+  matching hint falls through to the unfiltered pod list (stale-hint
+  safety), and the attestation itself is always re-verified. The
+  caller's own `config.podUrl` is kept in the walk as a safety net even
+  when no directory advertises it.
 
-**Not yet built (optional, deferred):**
+**Not yet built (deliberately deferred — likely never):**
 
-1. Extend the pod directory with an optional `name → did` index, so
-   federated resolution doesn't have to walk every pod. (The index is a
-   cache/hint, re-derivable from the attestation descriptors — not an
-   authority. This is the one remaining item with a real schema-design
-   decision — it needs either a new directory predicate or a reuse of an
-   existing W3C term — so it is left for deliberate scoping rather than
-   momentum.)
-2. A `docs/ns/naming.ttl` *only if* typed shapes are ever needed — the
-   binding itself stays plain `foaf:nick`, so likely never.
+1. A `docs/ns/naming.ttl` would only be needed if typed shapes were ever
+   required. The binding itself is plain `foaf:nick`; the directory
+   hint reuses the same predicate; nothing in the runtime references a
+   `naming:` term. There is no work to schedule here — the absence is
+   the design.
 
 ## See also
 
