@@ -87,11 +87,11 @@ export interface BuildEventResult {
   readonly cited: readonly IRI[];
   /**
    * Sensitivity flags surfaced by the pre-construction privacy
-   * preflight. Empty array means no secrets / PII detected. Present
-   * whenever args / result / error were screened (see
-   * `onSensitiveArgs` on OverlayConfig). With `onSensitiveArgs:
-   * 'block'` (the default), construction throws on HIGH flags
-   * rather than returning them here.
+   * preflight. Empty array means no secrets / PII detected. The
+   * preflight ALWAYS runs on compliance descriptors — compliance
+   * evidence is the highest-stakes surface, so there is no opt-out.
+   * With `onSensitiveArgs: 'block'` (the default), construction
+   * throws on HIGH flags rather than returning them here.
    */
   readonly sensitivityFlags?: readonly import('../../../src/index.js').SensitivityFlag[];
 }
@@ -111,13 +111,16 @@ export interface OverlayConfig {
   readonly recordArgs?: boolean;
   /**
    * Policy for handling sensitive content detected in args / result /
-   * error fields. Default 'block' — refuse to construct the descriptor
+   * error fields. Default `'block'` — refuse to construct the descriptor
    * if HIGH-severity flags are present (API keys, JWTs, private keys).
-   * 'warn' allows construction but exposes flags on the result so the
-   * caller can decide. 'allow' skips the preflight entirely (only use
-   * for trusted-input pipelines that have screened earlier).
+   * `'warn'` allows construction but exposes flags on the result so the
+   * caller can decide. There is deliberately NO `'allow'` mode: a
+   * compliance descriptor that bypasses sensitivity screening defeats
+   * the purpose of compliance evidence. Pre-screening pipelines should
+   * sanitize args BEFORE calling `buildAgentActionDescriptor` — the
+   * overlay runs the preflight unconditionally.
    */
-  readonly onSensitiveArgs?: 'block' | 'warn' | 'allow';
+  readonly onSensitiveArgs?: 'block' | 'warn';
 }
 
 // ── Substrate construction ──────────────────────────────────────────
@@ -157,19 +160,20 @@ function resolveControls(citation: ComplianceCitation): readonly IRI[] {
  * and produces a typed descriptor + named-graph TriG block. Pure
  * synchronous; testable without a pod. Caller publishes the result.
  *
- * Privacy preflight: when `onSensitiveArgs` is 'block' (default) or
- * 'warn', screens the canonical JSON of args, the result summary, and
- * the error message via the substrate's screenForSensitiveContent.
- * 'block' refuses to construct on HIGH severity (API keys, JWTs,
- * private keys); 'warn' returns the flags on the result so the caller
- * can decide; 'allow' skips screening (use only for already-screened
- * pipelines). Stops the most common leak shape — a runtime forwarding
- * its tool args to compliance recording with secrets inside.
+ * Privacy preflight: the overlay ALWAYS screens the canonical JSON of
+ * args, the result summary, and the error message via the substrate's
+ * `screenForSensitiveContent`. `onSensitiveArgs: 'block'` (default)
+ * refuses to construct on HIGH severity (API keys, JWTs, private keys);
+ * `'warn'` returns the flags on the result so the caller can decide.
+ * There is no `'allow'` mode — compliance evidence is the highest-stakes
+ * surface, so screening is non-negotiable. Stops the most common leak
+ * shape: a runtime forwarding its tool args to compliance recording
+ * with secrets inside.
  */
 export function buildAgentActionDescriptor(
   event: AgentActionEvent,
   citation: ComplianceCitation,
-  options?: { recordArgs?: boolean; onSensitiveArgs?: 'block' | 'warn' | 'allow' },
+  options?: { recordArgs?: boolean; onSensitiveArgs?: 'block' | 'warn' },
 ): BuildEventResult {
   const recordArgs = options?.recordArgs ?? true;
   const onSensitive = options?.onSensitiveArgs ?? 'block';
@@ -185,19 +189,18 @@ export function buildAgentActionDescriptor(
   // may forward user-controlled strings (transcripts, tool args, error
   // messages) — these are the most common shapes for a secrets-in-
   // audit-log leak.
+  // Screening is unconditional — compliance evidence cannot opt out.
   let sensitivityFlags: readonly import('../../../src/index.js').SensitivityFlag[] = [];
-  if (onSensitive !== 'allow') {
-    const screenInput = [
-      recordArgs ? argsCanonical : '',
-      event.resultSummary ?? '',
-      event.errorMessage ?? '',
-    ].filter(s => s.length > 0).join('\n');
-    if (screenInput.length > 0) {
-      sensitivityFlags = screenForSensitiveContent(screenInput);
-      if (onSensitive === 'block' && shouldBlockOnSensitivity(sensitivityFlags)) {
-        const warning = formatSensitivityWarning(sensitivityFlags);
-        throw new Error(`compliance-overlay refused to construct descriptor: detected high-severity sensitive content. ${warning}. Pass onSensitiveArgs: 'warn' to surface flags without blocking, or 'allow' to skip screening entirely.`);
-      }
+  const screenInput = [
+    recordArgs ? argsCanonical : '',
+    event.resultSummary ?? '',
+    event.errorMessage ?? '',
+  ].filter(s => s.length > 0).join('\n');
+  if (screenInput.length > 0) {
+    sensitivityFlags = screenForSensitiveContent(screenInput);
+    if (onSensitive === 'block' && shouldBlockOnSensitivity(sensitivityFlags)) {
+      const warning = formatSensitivityWarning(sensitivityFlags);
+      throw new Error(`compliance-overlay refused to construct descriptor: detected high-severity sensitive content. ${warning}. Pass onSensitiveArgs: 'warn' to surface flags without blocking, or sanitize the args before calling buildAgentActionDescriptor.`);
     }
   }
   const fingerprint = [

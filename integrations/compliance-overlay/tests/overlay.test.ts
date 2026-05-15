@@ -209,16 +209,19 @@ describe('buildAgentActionDescriptor — privacy preflight (onSensitiveArgs)', (
     expect(out.sensitivityFlags!.some(f => f.severity === 'high')).toBe(true);
   });
 
-  it("'allow' policy skips screening entirely (use only for pre-screened inputs)", () => {
-    const out = buildAgentActionDescriptor(
-      baseEvent({ args: { authHeader: 'Bearer sk-ant-' + 'PLACEHOLDER_NOT_A_REAL_KEY_XYZ'.padEnd(30, 'X') } }),
-      { framework: 'eu-ai-act' },
-      { onSensitiveArgs: 'allow' },
-    );
-    // Construction succeeds even with HIGH content
-    expect(out.eventIri).toBeDefined();
-    // sensitivityFlags is undefined when screening is skipped
-    expect(out.sensitivityFlags).toBeUndefined();
+  it("there is no 'allow' policy — compliance evidence cannot opt out of screening", () => {
+    // Compliance evidence is the highest-stakes surface: a runtime
+    // forwarding tool args into the audit trail with credentials inside
+    // is the most common privacy-leak shape. There must be no escape
+    // hatch; pre-screening pipelines should sanitize args BEFORE calling
+    // buildAgentActionDescriptor. The default 'block' policy still
+    // refuses construction on HIGH severity.
+    expect(() =>
+      buildAgentActionDescriptor(
+        baseEvent({ args: { authHeader: 'Bearer sk-ant-' + 'PLACEHOLDER_NOT_A_REAL_KEY_XYZ'.padEnd(30, 'X') } }),
+        { framework: 'eu-ai-act' },
+      ),
+    ).toThrow(/sensitive content/i);
   });
 
   it('benign args do not trigger any flags', () => {
