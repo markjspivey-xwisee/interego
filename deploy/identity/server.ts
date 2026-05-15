@@ -94,7 +94,14 @@ function hasAnyCredential(m: AuthMethods): boolean {
 function verifyBootstrapInvite(userId: string, token: string | undefined): boolean {
   if (!token) return false;
   const expected = BOOTSTRAP_INVITES.get(userId);
-  if (!expected || expected !== token) return false;
+  if (!expected) return false;
+  // Constant-time comparison so the response-time signal can't be used to
+  // enumerate the invite token character-by-character. `timingSafeEqual`
+  // requires equal-length buffers, so a length mismatch is the short-circuit.
+  const a = Buffer.from(token);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  if (!crypto.timingSafeEqual(a, b)) return false;
   if (CONSUMED_INVITES.has(userId)) return false;
   CONSUMED_INVITES.add(userId);
   return true;
@@ -107,6 +114,22 @@ function verifyBootstrapInvite(userId: string, token: string | undefined): boole
 // someone else's userId by typing it because the userId is a function
 // of a keypair they don't control. Seeded legacy userIds (markj) are
 // protected separately by BOOTSTRAP_INVITES.
+//
+// IMPORTANT — derivation is GLOBAL, by design:
+//   * The same credential / wallet / DID enrolling on a second
+//     identity-server instance produces the SAME userId. This is the
+//     "DIDs are canonical; userId is derived" invariant in CLAUDE.md —
+//     the userId is a deterministic function of the cryptographic
+//     material, not of the pod hosting the enrollment.
+//   * Per-pod registration STILL checks for duplicate credentials within
+//     that pod (so the same passkey can't enroll twice on the same pod
+//     and accumulate state), but it does NOT prevent the user from
+//     enrolling the same credential on a different pod. That's the
+//     federated identity story: the same user is the same user across
+//     pods, identified by the same userId derived from the same DID.
+//   * If you ever want a pod-LOCAL identity, that's a different
+//     construct (use a fresh credential per pod). Don't try to make
+//     userId pod-scoped — that would re-centralize the namespace.
 function deriveUserIdFromCredentialId(credentialId: string): string {
   const h = crypto.createHash('sha256').update(credentialId).digest('hex');
   return `u-pk-${h.slice(0, 12)}`;
@@ -543,11 +566,26 @@ const RP_ALLOWLIST: ReadonlyMap<string, { rpId: string; origin: string }> = (() 
  * enforces rpID↔origin during the ceremony; the allowlist is the
  * server-side guard against honoring an attacker-chosen Origin.
  */
+// Throttle fallback warnings: log each off-allowlist Origin at most once so
+// a misconfigured deployment shows up clearly in logs without spamming
+// every request.
+const _loggedOffAllowlistOrigins = new Set<string>();
+
 function resolveRp(req: { headers: { origin?: string } }): { rpId: string; origin: string } {
   const origin = req.headers.origin;
   if (origin) {
     const hit = RP_ALLOWLIST.get(origin);
     if (hit) return hit;
+    // Operator misconfig early-warning: a browser is presenting an Origin
+    // that isn't on WEBAUTHN_RP_ORIGINS, so we fall back to RP_ID/RP_ORIGIN.
+    // The browser will subsequently refuse the ceremony if the resolved
+    // rpID isn't a registrable suffix of its Origin — that's the exact
+    // failure mode that triggered the 2026-05 origin-aware fix. Logging
+    // here lets the operator notice BEFORE users hit the error.
+    if (!_loggedOffAllowlistOrigins.has(origin)) {
+      _loggedOffAllowlistOrigins.add(origin);
+      log(`WARN: WebAuthn Origin "${origin}" is not on WEBAUTHN_RP_ORIGINS — falling back to RP_ID=${RP_ID}. If this is your identity server's own origin, add it to the allowlist.`);
+    }
   }
   return { rpId: RP_ID, origin: RP_ORIGIN };
 }
@@ -1437,15 +1475,22 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
     return;
   }
 
-  // Counter is bumped by the authenticator; persist the new value so the
-  // next authentication rejects replay of older signed counters.
+  // Counter is bumped by the authenticator; we MUST persist the new value
+  // before considering the auth successful, or a clone with a stale counter
+  // can keep authenticating indefinitely (WebAuthn §6.1.1 clone detection).
+  // Persist FIRST; on failure, roll the in-memory counter back to what's
+  // stored on the pod and refuse the auth with a transient 503 so the
+  // client retries. That preserves the invariant: in-memory counter ≡
+  // persisted counter.
+  const previousCounter = cred.counter;
   cred.counter = verification.authenticationInfo.newCounter;
   try {
     await putPodAuthMethods(userId, methods);
   } catch (err) {
-    log(`WARN: failed to persist updated passkey counter: ${(err as Error).message}`);
-    // Not fatal — the user successfully authenticated this round; worst case
-    // the next attempt re-accepts an older counter value (still valid per spec).
+    cred.counter = previousCounter;
+    log(`WARN: refused passkey auth — counter persist failed: ${(err as Error).message}`);
+    res.status(503).json({ error: 'transient: failed to persist passkey counter; retry' });
+    return;
   }
   res.json(issueTokenResponse(user, surfaceAgent));
 });
