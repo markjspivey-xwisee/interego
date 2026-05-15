@@ -2624,15 +2624,117 @@ app.get('/dashboard', (_req, res) => {
     return wrap;
   }
 
-  function renderAuthRequired() {
+  // ── base64url helpers (paired with the bytesToB64url on /connect) ──
+  function b64urlToBytes(s) {
+    const p = s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4);
+    const bin = atob(p);
+    return Uint8Array.from(bin, c => c.charCodeAt(0));
+  }
+  function bytesToB64url(bytes) {
+    let s = '';
+    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    for (const b of arr) s += String.fromCharCode(b);
+    return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+  }
+
+  // Returning users authenticate (passkey assertion / wallet SIWE) — they
+  // are NOT enrolling new credentials. The browser holds the keypair; the
+  // server holds the credential registry. A successful ceremony yields a
+  // fresh bearer token that replaces whatever stale one was in
+  // sessionStorage.
+  async function signInWithPasskey() {
+    if (!window.PublicKeyCredential) {
+      alert('This browser does not support passkeys.');
+      return;
+    }
+    try {
+      // Username-less ceremony: no userId in the challenge, no
+      // allowCredentials — the browser shows its discoverable-credential
+      // picker and /auth/webauthn/authenticate looks up the user via the
+      // credential id that comes back.
+      const chResp = await fetch(IDENTITY_BASE + '/challenges', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purpose: 'webauthn-authenticate' }),
+      });
+      if (!chResp.ok) throw new Error('challenge: ' + await chResp.text());
+      const ch = await chResp.json();
+      const assertion = await navigator.credentials.get({
+        publicKey: {
+          challenge: b64urlToBytes(ch.nonce),
+          // Empty = any discoverable credential on this device. The
+          // browser/OS shows the picker.
+          allowCredentials: [],
+          userVerification: 'preferred',
+          timeout: 60000,
+        },
+      });
+      if (!assertion) throw new Error('No credential returned');
+      const response = {
+        id: assertion.id,
+        rawId: bytesToB64url(assertion.rawId),
+        type: assertion.type,
+        response: {
+          authenticatorData: bytesToB64url(assertion.response.authenticatorData),
+          clientDataJSON: bytesToB64url(assertion.response.clientDataJSON),
+          signature: bytesToB64url(assertion.response.signature),
+          userHandle: assertion.response.userHandle ? bytesToB64url(assertion.response.userHandle) : null,
+        },
+        clientExtensionResults: assertion.getClientExtensionResults ? assertion.getClientExtensionResults() : {},
+      };
+      const authResp = await fetch(IDENTITY_BASE + '/auth/webauthn/authenticate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ response }),
+      });
+      if (!authResp.ok) {
+        const t = await authResp.text();
+        throw new Error('authenticate: ' + t);
+      }
+      const result = await authResp.json();
+      sessionStorage.setItem('cg.token', result.token);
+      renderDashboard().catch(function (e) { console.error(e); });
+    } catch (e) {
+      const msg = (e && e.message) ? e.message : String(e);
+      alert('Passkey sign-in failed: ' + msg + '\\n\\nIf you originally enrolled with a wallet, use that option instead.');
+    }
+  }
+
+  function renderAuthRequired(opts) {
+    const reason = opts && opts.reason;
     const app = document.getElementById('app');
     app.innerHTML = '';
     const div = document.createElement('div');
     div.className = 'auth-required';
-    div.innerHTML = '<h2 style="font-size:1.2rem;margin-bottom:12px;color:#e0e0e8">Sign in to see your dashboard</h2>' +
-      '<p style="margin-bottom:16px;font-size:0.9rem">Enroll a passkey, wallet, or DID first.</p>' +
-      '<p><a href="/">Go to the landing page →</a></p>';
+    div.style.maxWidth = '460px';
+    div.style.margin = '60px auto';
+    div.style.padding = '32px';
+    div.style.background = '#12121a';
+    div.style.border = '1px solid #2a2a3a';
+    div.style.borderRadius = '14px';
+    div.style.textAlign = 'left';
+    var html = '<h2 style="font-size:1.2rem;margin-bottom:8px;color:#e0e0e8">Sign back in</h2>';
+    if (reason) {
+      html += '<p style="margin-bottom:12px;font-size:0.82rem;color:#9aa0ac">' + reason + '</p>';
+    } else {
+      html += '<p style="margin-bottom:16px;font-size:0.9rem;color:#9aa0ac">Your session ended. Use the credential you originally enrolled with — no new identity needed.</p>';
+    }
+    html += '<button id="signInPasskeyBtn" style="width:100%;padding:13px;border:none;border-radius:9px;font-size:0.97rem;font-weight:600;cursor:pointer;background:#6366f1;color:white;margin-bottom:10px">Sign in with your passkey</button>';
+    html += '<a href="/connect" style="display:block;text-align:center;padding:13px;border-radius:9px;font-size:0.92rem;background:#1a1a2e;color:#e0e0e8;border:1px solid #2a2a3a;text-decoration:none;margin-bottom:10px">Sign in with your wallet / enroll a new credential</a>';
+    html += '<p style="margin-top:14px;font-size:0.8rem;color:#7a818d"><a href="/" style="color:#8a8af0">← Back to the overview</a></p>';
+    div.innerHTML = html;
     app.appendChild(div);
+    var btn = document.getElementById('signInPasskeyBtn');
+    if (btn) btn.onclick = signInWithPasskey;
+  }
+
+  // Auth-class error messages from the identity server — when the
+  // dashboard sees any of these on a `/me`-style call, the stored token
+  // is stale (most often: the in-memory token store was wiped by a
+  // server restart) and the user needs to re-authenticate.
+  function isAuthError(err) {
+    var m = (err && err.message) || '';
+    return /token not found|invalid bearer|expired|not authenticated|401|user for token not found/i.test(m);
   }
 
   async function renderDashboard() {
@@ -2677,10 +2779,26 @@ app.get('/dashboard', (_req, res) => {
     try {
       meData = await api(IDENTITY_BASE, '/me');
     } catch (e) {
+      // Stale tokens are the common case here — the identity server's
+      // in-memory token store is wiped on restart (every deploy), so a
+      // perfectly-good-looking sessionStorage token becomes "Token not
+      // found" on the server side. Surface a sign-in path; never leave
+      // the user stranded on a broken dashboard view.
+      if (isAuthError(e)) {
+        clearToken();
+        renderAuthRequired({ reason: 'Your previous session ended. Sign in again with the credential you enrolled — no new identity is created.' });
+        return;
+      }
       idCard.innerHTML = '<h2>🆔 Your Identity</h2><div class="err">Could not load identity: ' + e.message + '</div>';
       credCard.innerHTML = '<h2>🔐 Registered Credentials</h2><div class="err">' + e.message + '</div>';
       inboxCard.innerHTML = '<h2>📬 Inbox</h2><div class="err">' + e.message + '</div>';
       document.getElementById('greeting').textContent = 'Not signed in';
+      // Even on non-auth errors, give the user a way out.
+      var retry = document.createElement('button');
+      retry.textContent = 'Sign in again';
+      retry.style.cssText = 'margin-top:12px;padding:10px 18px;border:none;border-radius:8px;background:#6366f1;color:white;cursor:pointer;font-weight:600';
+      retry.onclick = function () { clearToken(); renderAuthRequired(); };
+      idCard.appendChild(retry);
       return;
     }
     document.getElementById('greeting').textContent = 'Hi ' + (meData.displayName || meData.userId);
@@ -2782,8 +2900,10 @@ app.get('/dashboard', (_req, res) => {
   } else {
     renderDashboard().catch(function (e) {
       console.error(e);
-      // Token might be stale — give the user a path forward
-      if (e.message && (e.message.indexOf('Invalid bearer') >= 0 || e.message.indexOf('expired') >= 0)) {
+      // Token might be stale — give the user a path forward. `isAuthError`
+      // catches "Token not found" (in-memory store wiped on server
+      // restart), "Invalid bearer", "expired", etc.
+      if (isAuthError(e)) {
         clearToken();
         renderAuthRequired();
       }
