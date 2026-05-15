@@ -111,12 +111,17 @@ describe('generateFrameworkReport', () => {
     expect(cc61?.evidenceCount).toBe(2);
   });
 
-  it('reports partial when exactly 1 evidence record', () => {
+  it('reports satisfied when exactly 1 evidence record (single signed audit record is sufficient)', () => {
+    // The default policy is bi-modal: any evidence → satisfied. The
+    // earlier "exactly one → partial" heuristic was arbitrary — one
+    // well-formed signed evidence record fully satisfies a control. A
+    // caller that genuinely requires a count threshold should derive
+    // their own status from `evidenceCount`.
     const descs: AuditableDescriptor[] = [
       { id: 'urn:1' as IRI, publishedAt: NOW, evidenceForControls: ['soc2:CC6.1' as IRI] },
     ];
     const rpt = generateFrameworkReport('soc2', descs);
-    expect(rpt.entries.find(e => e.controlIri === 'soc2:CC6.1')?.status).toBe('partial');
+    expect(rpt.entries.find(e => e.controlIri === 'soc2:CC6.1')?.status).toBe('satisfied');
   });
 
   it('respects audit period filter', () => {
@@ -131,8 +136,11 @@ describe('generateFrameworkReport', () => {
     expect(cc61?.evidenceCount).toBe(1); // only urn:new is in period
   });
 
-  it('overallScore is weighted: satisfied=1, partial=0.5, missing=0', () => {
-    // Construct exactly: 2 satisfied + 1 partial + rest missing
+  it('overallScore is weighted: satisfied=1, partial=0.5, missing=0 (default policy never emits partial)', () => {
+    // The default policy is bi-modal — 'partial' is preserved in the
+    // type for callers that override aggregation, but the default
+    // never emits it. Three distinct controls with evidence are all
+    // satisfied; the rest are missing.
     const descs: AuditableDescriptor[] = [
       { id: 'urn:a' as IRI, publishedAt: NOW, evidenceForControls: ['soc2:CC1.1' as IRI] },
       { id: 'urn:b' as IRI, publishedAt: NOW, evidenceForControls: ['soc2:CC1.1' as IRI] },
@@ -141,9 +149,9 @@ describe('generateFrameworkReport', () => {
       { id: 'urn:e' as IRI, publishedAt: NOW, evidenceForControls: ['soc2:CC6.1' as IRI] },
     ];
     const rpt = generateFrameworkReport('soc2', descs);
-    expect(rpt.summary.satisfied).toBe(2);
-    expect(rpt.summary.partial).toBe(1);
-    const expected = (2 + 1 * 0.5) / rpt.summary.totalControls;
+    expect(rpt.summary.satisfied).toBe(3);
+    expect(rpt.summary.partial).toBe(0);
+    const expected = 3 / rpt.summary.totalControls;
     expect(rpt.summary.overallScore).toBeCloseTo(expected, 5);
   });
 });

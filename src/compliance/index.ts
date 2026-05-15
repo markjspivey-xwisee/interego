@@ -173,9 +173,17 @@ export function generateFrameworkReport(
     const evidence = descriptors.filter(d =>
       inPeriod(d) && d.evidenceForControls.includes(c.iri),
     );
+    // The default policy is bi-modal: either evidence exists for the
+    // control (satisfied) or it doesn't (missing). The previous "exactly
+    // one evidence → partial" rule was arbitrary — a single signed audit
+    // record can fully satisfy a control. Callers who need a quality
+    // threshold (e.g., "N pieces of evidence required") should derive
+    // their own status from `evidenceCount` rather than rely on a
+    // hardcoded count. The `'partial'` value is preserved in the type
+    // so a custom aggregation can still produce it.
     const status: FrameworkReportEntry['status'] = evidence.length === 0
       ? 'missing'
-      : evidence.length === 1 ? 'partial' : 'satisfied';
+      : 'satisfied';
     const mostRecentEvidence = evidence.length > 0
       ? evidence.map(e => e.publishedAt).sort().at(-1) ?? null
       : null;
@@ -191,7 +199,9 @@ export function generateFrameworkReport(
   const satisfied = entries.filter(e => e.status === 'satisfied').length;
   const partial = entries.filter(e => e.status === 'partial').length;
   const missing = entries.filter(e => e.status === 'missing').length;
-  // Overall: weighted score — satisfied=1, partial=0.5, missing=0
+  // Overall: weighted score — satisfied=1, partial=0.5, missing=0. The
+  // default policy never emits 'partial' (see above); the weight survives
+  // for custom aggregation policies that do.
   const overallScore = (satisfied + partial * 0.5) / entries.length;
 
   return {
