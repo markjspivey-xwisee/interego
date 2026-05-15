@@ -265,17 +265,23 @@ export function mintEncryptedAtom(
  * Retrieve the plaintext value of an atom, decrypting if necessary.
  * Returns null when the atom doesn't exist OR when it's encrypted and
  * the caller isn't a recipient. Plaintext atoms round-trip unchanged.
+ *
+ * Optional layered defense: pass `expectedSenderPublicKey` (base64) to
+ * also require the envelope to have been wrapped by that exact sender —
+ * useful when the pod-write ACL alone isn't sufficient provenance for
+ * the resolved value. See `decryptFacetValue` for the trust model.
  */
 export function resolveAtomValue(
   pgsl: PGSLInstance,
   uri: IRI,
   recipientKeyPair?: EncryptionKeyPair,
+  expectedSenderPublicKey?: string,
 ): string | null {
   const node = pgsl.nodes.get(uri);
   if (!node || node.kind !== 'Atom') return null;
   if (node.encrypted) {
     if (!recipientKeyPair) return null;
-    return decryptFacetValue(node.encrypted, recipientKeyPair);
+    return decryptFacetValue(node.encrypted, recipientKeyPair, expectedSenderPublicKey);
   }
   return String(node.value);
 }

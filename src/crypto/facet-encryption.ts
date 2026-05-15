@@ -66,12 +66,29 @@ export function encryptFacetValue(
  * Attempt to decrypt a facet value. Returns the plaintext (string form)
  * if the recipient's key is present; returns `null` when the caller is
  * not authorized.
+ *
+ * Optional layered defense: pass `expectedSenderPublicKey` (base64) to
+ * also require the envelope to be wrapped by a specific sender — useful
+ * when the pod-write ACL isn't itself sufficient provenance (e.g.
+ * cross-pod relay scenarios). When the param is supplied, the function
+ * returns `null` if any wrappedKey on the envelope reports a different
+ * sender. The primary integrity defense remains pod-write authorization
+ * + nacl's authenticated encryption (a tampered ciphertext fails its
+ * MAC); this just narrows the trusted-sender set from "anyone who knew
+ * the recipient's pubkey" to "exactly this sender."
  */
 export function decryptFacetValue(
   encrypted: EncryptedFacetValue,
   recipientKeyPair: EncryptionKeyPair,
+  expectedSenderPublicKey?: string,
 ): string | null {
   if (!isEncryptedFacetValue(encrypted)) return null;
+  if (expectedSenderPublicKey !== undefined) {
+    const ok = encrypted.envelope.wrappedKeys.some(
+      wk => wk.senderPublicKey === expectedSenderPublicKey,
+    );
+    if (!ok) return null;
+  }
   return openEncryptedEnvelope(encrypted.envelope, recipientKeyPair);
 }
 

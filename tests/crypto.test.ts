@@ -317,6 +317,43 @@ describe('SIWE (real crypto)', () => {
     expect(result.address?.toLowerCase()).toBe(wallet.address.toLowerCase());
   });
 
+  it('format is byte-stable — verification depends on it (regression guard)', () => {
+    // SIWE signatures cover the ERC-4361-formatted string byte-for-byte.
+    // If `formatSiweMessage` ever drifts (extra whitespace, reordered
+    // fields, different line separator), every prior signature suddenly
+    // fails to verify and every freshly-signed message fails to
+    // round-trip. This test pins the exact line layout so a stylistic
+    // refactor that changes the bytes is caught before it ships.
+    const msg = createSiweMessage(
+      'example.com',
+      '0x1234567890abcdef1234567890abcdef12345678',
+      'Sign in.',
+      'https://example.com',
+      1,
+      ['https://example.com/r1', 'https://example.com/r2'],
+    );
+    // Replace the auto-generated nonce + timestamp with fixed values so
+    // the assertion is deterministic.
+    const fixed = { ...msg, nonce: 'fixed-nonce-1234', issuedAt: '2026-01-01T00:00:00.000Z' };
+    expect(formatSiweMessage(fixed)).toBe(
+      [
+        'example.com wants you to sign in with your Ethereum account:',
+        '0x1234567890abcdef1234567890abcdef12345678',
+        '',
+        'Sign in.',
+        '',
+        'URI: https://example.com',
+        'Version: 1',
+        'Chain ID: 1',
+        'Nonce: fixed-nonce-1234',
+        'Issued At: 2026-01-01T00:00:00.000Z',
+        'Resources:',
+        '- https://example.com/r1',
+        '- https://example.com/r2',
+      ].join('\n'),
+    );
+  });
+
   it('rejects signature from wrong address', async () => {
     const wallet = await createWallet('human', 'SIWE-Wrong');
     const otherAddress = '0x0000000000000000000000000000000000000001';
