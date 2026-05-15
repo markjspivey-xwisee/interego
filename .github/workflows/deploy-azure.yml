@@ -305,16 +305,40 @@ jobs:
         run: |
           IDENTITY_FQDN=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
           RELAY_FQDN=$(az containerapp show --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
-          az containerapp update \
-            --name interego-identity \
-            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
-            --set-env-vars \
-              "BASE_URL=https://$IDENTITY_FQDN" \
-              "WEBAUTHN_RP_ID=$IDENTITY_FQDN" \
-              "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
-              "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
-              "RELAY_URL=https://$RELAY_FQDN" \
-            --output none
+          # TOKEN_SIGNING_KEY: HMAC secret used to sign stateless bearer
+          # tokens. Without it the identity server falls back to an
+          # ephemeral random key — which means every deploy / pod restart
+          # invalidates every user's session. Idempotent: we only set it
+          # if it isn't already configured, so subsequent deploys reuse
+          # the original key and existing sessions survive.
+          EXISTING_TOKEN_KEY=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='TOKEN_SIGNING_KEY'].value | [0]" -o tsv)
+          if [ -z "$EXISTING_TOKEN_KEY" ]; then
+            echo "TOKEN_SIGNING_KEY not yet configured — generating fresh 32-byte HMAC key."
+            NEW_TOKEN_KEY=$(openssl rand -base64 32)
+            az containerapp update \
+              --name interego-identity \
+              --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+              --set-env-vars \
+                "BASE_URL=https://$IDENTITY_FQDN" \
+                "WEBAUTHN_RP_ID=$IDENTITY_FQDN" \
+                "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
+                "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
+                "RELAY_URL=https://$RELAY_FQDN" \
+                "TOKEN_SIGNING_KEY=$NEW_TOKEN_KEY" \
+              --output none
+          else
+            echo "TOKEN_SIGNING_KEY already configured (length: ${#EXISTING_TOKEN_KEY}) — preserving so sessions survive this deploy."
+            az containerapp update \
+              --name interego-identity \
+              --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+              --set-env-vars \
+                "BASE_URL=https://$IDENTITY_FQDN" \
+                "WEBAUTHN_RP_ID=$IDENTITY_FQDN" \
+                "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
+                "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
+                "RELAY_URL=https://$RELAY_FQDN" \
+              --output none
+          fi
           # Same Multiple-vs-Single revision-mode handling as the dashboard
           # step: in Multiple mode an env-var update creates a new revision
           # that ingress won't serve until traffic is explicitly shifted.

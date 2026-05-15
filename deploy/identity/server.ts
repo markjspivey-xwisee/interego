@@ -202,6 +202,14 @@ interface AuthMethods {
     label?: string;
     createdAt: string;
   }>;
+  /**
+   * Per-user token-revocation marker. Tokens carry the epoch they were
+   * issued under; sign-out-everywhere increments this and any token with
+   * a smaller epoch fails verification. Defaults to 0 when absent
+   * (back-compat for auth-methods.jsonld files written before this
+   * field existed). The pod is the source of truth.
+   */
+  sessionEpoch?: number;
 }
 
 function emptyAuthMethods(userId: string, name = userId, agentId?: string): AuthMethods {
@@ -241,7 +249,6 @@ interface TokenRecord {
 // without scanning every pod on every call.
 const identities: Map<string, Identity> = new Map();
 const keys: Map<string, KeyPair> = new Map();
-const tokens: Map<string, TokenRecord> = new Map();
 
 // lowercased wallet address → userId
 const walletIndex: Map<string, string> = new Map();
@@ -592,29 +599,162 @@ function resolveRp(req: { headers: { origin?: string } }): { rpId: string; origi
 
 // ── Token Management ────────────────────────────────────────
 
-function issueToken(userId: string, agentId: string, scope: string): TokenRecord {
-  const token = `cg_${crypto.randomBytes(32).toString('base64url')}`;
+// ── Stateless signed tokens (HMAC) ──────────────────────────
+//
+// The identity server is stateless wrt user-owned credential data (the
+// CLAUDE.md invariant: pods are the source of truth). Tokens were the
+// last bit of state on the server — held in an in-memory Map that was
+// wiped on every pod restart, logging every user out on every deploy.
+//
+// Replaced with HMAC-signed tokens carrying their own payload:
+//   cg2_<base64url(payload-json)>.<base64url(hmac-sha256(payload-b64))>
+//
+// Payload includes a `sessionEpoch` snapshot at issuance time. Revocation
+// (sign-out-everywhere) increments the pod's stored sessionEpoch; verify
+// rejects any token whose embedded epoch is below the pod's current
+// value. Per-user revocation, no global state, and the server can be
+// restarted / scaled / replaced without losing sessions — as long as
+// `TOKEN_SIGNING_KEY` is stable.
+//
+// `TOKEN_SIGNING_KEY` env var (base64-encoded 32+ bytes) is the
+// stable secret. When unset, a fresh ephemeral key is generated with a
+// loud warning — that case behaves like the legacy in-memory Map: every
+// restart logs everyone out. The deploy workflow sets the env var once
+// on first deploy and never overwrites it, so subsequent deploys
+// preserve sessions.
+const TOKEN_SIGNING_KEY: Buffer = (() => {
+  const envKey = process.env['TOKEN_SIGNING_KEY'];
+  if (envKey && envKey.length > 0) {
+    try {
+      const buf = Buffer.from(envKey, 'base64');
+      if (buf.length >= 32) {
+        log(`Token signing key: loaded from TOKEN_SIGNING_KEY env (${buf.length} bytes) — tokens survive restart.`);
+        return buf;
+      }
+      log(`WARN: TOKEN_SIGNING_KEY env is set but decodes to ${buf.length} bytes (need >= 32) — falling back to ephemeral. All users will be signed out on every restart.`);
+    } catch (e) {
+      log(`WARN: TOKEN_SIGNING_KEY env is set but not valid base64 (${(e as Error).message}) — falling back to ephemeral.`);
+    }
+  } else {
+    log(`WARN: TOKEN_SIGNING_KEY env is unset — using an ephemeral signing key. All users will be signed out on every restart. Set TOKEN_SIGNING_KEY (base64-encoded 32 bytes) to persist sessions across deploys.`);
+  }
+  return crypto.randomBytes(32);
+})();
+
+interface SignedTokenPayload {
+  userId: string;
+  agentId: string;
+  scope: string;
+  issuedAt: string;
+  expiresAt: string;
+  /** Pod-stored sessionEpoch at issuance time. Below pod's current value → revoked. */
+  epoch: number;
+}
+
+function signPayload(payload: SignedTokenPayload): string {
+  const json = JSON.stringify(payload);
+  const b64 = Buffer.from(json, 'utf8').toString('base64url');
+  const sig = crypto.createHmac('sha256', TOKEN_SIGNING_KEY).update(b64).digest('base64url');
+  return `cg2_${b64}.${sig}`;
+}
+
+function parseAndVerifySignature(token: string): { valid: true; payload: SignedTokenPayload } | { valid: false; reason: string } {
+  if (!token.startsWith('cg2_')) return { valid: false, reason: 'Token not found' };
+  const stripped = token.slice(4);
+  const dot = stripped.lastIndexOf('.');
+  if (dot < 0) return { valid: false, reason: 'Token malformed' };
+  const b64 = stripped.slice(0, dot);
+  const sigPart = stripped.slice(dot + 1);
+  const expectedSig = crypto.createHmac('sha256', TOKEN_SIGNING_KEY).update(b64).digest();
+  const sigBuf = Buffer.from(sigPart, 'base64url');
+  if (sigBuf.length !== expectedSig.length || !crypto.timingSafeEqual(sigBuf, expectedSig)) {
+    return { valid: false, reason: 'Invalid bearer token: signature mismatch' };
+  }
+  let payload: SignedTokenPayload;
+  try {
+    payload = JSON.parse(Buffer.from(b64, 'base64url').toString('utf8'));
+  } catch {
+    return { valid: false, reason: 'Token payload malformed' };
+  }
+  if (!payload.userId || !payload.expiresAt) return { valid: false, reason: 'Token payload incomplete' };
+  return { valid: true, payload };
+}
+
+async function issueToken(userId: string, agentId: string, scope: string): Promise<TokenRecord> {
   const now = new Date();
-  const record: TokenRecord = {
-    token,
+  // Pod is the source of truth for the user's current sessionEpoch.
+  // Stale-while-revalidate cache is fine here — issuing under a
+  // slightly-stale epoch still works (the verify check uses the same
+  // cache), and a sign-out-everywhere invalidates the cache so the next
+  // issue picks up the bumped value.
+  let epoch = 0;
+  try {
+    const methods = await readAuthMethods(userId, /* allowStale */ true);
+    epoch = methods.sessionEpoch ?? 0;
+  } catch {
+    // Fresh user, no pod yet — epoch 0 is correct.
+  }
+  const payload: SignedTokenPayload = {
     userId,
     agentId,
     scope,
     issuedAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + TOKEN_TTL_SECONDS * 1000).toISOString(),
+    epoch,
   };
-  tokens.set(token, record);
-  log(`Issued token for ${agentId} (user: ${userId}, scope: ${scope}, expires: ${record.expiresAt})`);
+  const token = signPayload(payload);
+  const record: TokenRecord = {
+    token,
+    userId,
+    agentId,
+    scope,
+    issuedAt: payload.issuedAt,
+    expiresAt: payload.expiresAt,
+  };
+  log(`Issued token for ${agentId} (user: ${userId}, scope: ${scope}, epoch: ${epoch}, expires: ${record.expiresAt})`);
   return record;
 }
 
-function verifyToken(token: string): { valid: boolean; record?: TokenRecord; reason?: string } {
-  const record = tokens.get(token);
-  if (!record) return { valid: false, reason: 'Token not found' };
-  if (new Date(record.expiresAt) < new Date()) {
-    tokens.delete(token);
+async function verifyToken(token: string): Promise<{ valid: boolean; record?: TokenRecord; reason?: string }> {
+  const parsed = parseAndVerifySignature(token);
+  if (parsed.valid !== true) {
+    return { valid: false, reason: (parsed as { valid: false; reason: string }).reason };
+  }
+  const payload = parsed.payload;
+  if (new Date(payload.expiresAt) < new Date()) {
     return { valid: false, reason: 'Token expired' };
   }
+  // Deleted-user check: identities is rebuilt from pod scans at startup
+  // AND mutated synchronously by deleteUserCompletely. A token whose
+  // userId no longer maps to a real identity (deleted user, or some
+  // malformed token that survived signature check) MUST fail. This is
+  // also the hard-fail path that closes the gap left by the
+  // partition-tolerant pod-read below.
+  if (!identities.has(payload.userId)) {
+    return { valid: false, reason: 'User for token not found' };
+  }
+  // Revocation check: token's embedded epoch must be ≥ pod's current
+  // sessionEpoch. A sign-out-everywhere bumps the pod's value, making
+  // every prior token verify-fail until the user authenticates again.
+  try {
+    const methods = await readAuthMethods(payload.userId, /* allowStale */ true);
+    const podEpoch = methods.sessionEpoch ?? 0;
+    if (payload.epoch < podEpoch) {
+      return { valid: false, reason: 'Token revoked (signed out everywhere)' };
+    }
+  } catch {
+    // If we can't read the pod, fall through: signature + expiry +
+    // identities-map already bound the trust. A transient pod outage
+    // is a partition, not a security event.
+  }
+  const record: TokenRecord = {
+    token,
+    userId: payload.userId,
+    agentId: payload.agentId,
+    scope: payload.scope,
+    issuedAt: payload.issuedAt,
+    expiresAt: payload.expiresAt,
+  };
   return { valid: true, record };
 }
 
@@ -907,7 +1047,9 @@ app.get('/health', (_req, res) => {
     status: 'ok',
     users: [...identities.values()].filter(i => i.type === 'user').length,
     agents: [...identities.values()].filter(i => i.type === 'agent').length,
-    activeTokens: tokens.size,
+    // Tokens are stateless (HMAC-signed) — there's no server-side count
+    // to report. Caller can still trust signature + expiry + sessionEpoch.
+    tokenSigningKeyOrigin: process.env['TOKEN_SIGNING_KEY'] ? 'env' : 'ephemeral',
     base: BASE_URL,
   });
 });
@@ -1078,7 +1220,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
   if (!user) {
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith('Bearer ')) {
-      const tr = verifyToken(authHeader.slice(7));
+      const tr = await verifyToken(authHeader.slice(7));
       if (tr.valid) {
         userId = tr.record!.userId;
         user = identities.get(userId);
@@ -1146,7 +1288,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     }
   }
 
-  res.json(issueTokenResponse(user, surfaceAgent));
+  res.json(await issueTokenResponse(user, surfaceAgent));
 });
 
 // ── WebAuthn / Passkeys ─────────────────────────────────────
@@ -1185,7 +1327,7 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
   let addDeviceUserId: string | undefined;
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
-    const tr = verifyToken(authHeader.slice(7));
+    const tr = await verifyToken(authHeader.slice(7));
     if (!tr.valid) {
       res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` });
       return;
@@ -1400,7 +1542,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   }
   log(`WebAuthn credential registered for ${targetUserId} (mode=${ch.addDeviceUserId ? 'add-device' : ch.bootstrapUserId ? 'bootstrap' : 'derive'})`);
 
-  res.json(issueTokenResponse(user, surfaceAgent));
+  res.json(await issueTokenResponse(user, surfaceAgent));
 });
 
 /**
@@ -1492,7 +1634,7 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
     res.status(503).json({ error: 'transient: failed to persist passkey counter; retry' });
     return;
   }
-  res.json(issueTokenResponse(user, surfaceAgent));
+  res.json(await issueTokenResponse(user, surfaceAgent));
 });
 
 // ── Generic DID-signature auth (did:key / did:web) ──────────
@@ -1582,7 +1724,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   if (!user) {
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith('Bearer ')) {
-      const tr = verifyToken(authHeader.slice(7));
+      const tr = await verifyToken(authHeader.slice(7));
       if (tr.valid) {
         userId = tr.record!.userId;
         user = identities.get(userId);
@@ -1654,7 +1796,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     }
   }
 
-  res.json(issueTokenResponse(user, surfaceAgent));
+  res.json(await issueTokenResponse(user, surfaceAgent));
 });
 
 // ── Token response helper (shared across auth methods) ──────
@@ -1694,9 +1836,9 @@ function ensureSurfaceAgent(user: Identity, surfaceAgent: string | undefined): I
   return firstAgent;
 }
 
-function issueTokenResponse(user: Identity, surfaceAgent?: string): Record<string, unknown> {
+async function issueTokenResponse(user: Identity, surfaceAgent?: string): Promise<Record<string, unknown>> {
   const agent = ensureSurfaceAgent(user, surfaceAgent);
-  const tokenRecord = issueToken(user.id, agent.id, agent.scope ?? 'ReadWrite');
+  const tokenRecord = await issueToken(user.id, agent.id, agent.scope ?? 'ReadWrite');
   const host = new URL(BASE_URL).host;
   // Summarise registered auth methods from cache (stale ok — this is just
   // a UI hint, not security-critical).
@@ -1726,14 +1868,14 @@ function issueTokenResponse(user: Identity, surfaceAgent?: string): Record<strin
  * Body: { userId, agentId, agentName, scope }
  * Requires: Authorization header with valid token for that user
  */
-app.post('/register-agent', (req, res) => {
+app.post('/register-agent', async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Bearer token required' });
     return;
   }
 
-  const tokenResult = verifyToken(authHeader.slice(7));
+  const tokenResult = await verifyToken(authHeader.slice(7));
   if (!tokenResult.valid) {
     res.status(401).json({ error: tokenResult.reason });
     return;
@@ -1757,7 +1899,7 @@ app.post('/register-agent', (req, res) => {
 
   const agentLabel = agentName ?? `Agent (${agentId})`;
   seedIdentity(agentId, 'agent', agentLabel, userId, scope ?? 'ReadWrite');
-  const tokenRecord = issueToken(userId, agentId, scope ?? 'ReadWrite');
+  const tokenRecord = await issueToken(userId, agentId, scope ?? 'ReadWrite');
 
   const host = new URL(BASE_URL).host;
   res.status(201).json({
@@ -1777,7 +1919,7 @@ app.post('/register-agent', (req, res) => {
  * Body: { userId, agentId }
  * Returns: { token, expiresAt }
  */
-app.post('/tokens', tokenLimiter, (req, res) => {
+app.post('/tokens', tokenLimiter, async (req, res) => {
   const { userId, agentId } = req.body;
   if (!userId || !agentId) {
     res.status(400).json({ error: 'userId and agentId are required' });
@@ -1796,7 +1938,7 @@ app.post('/tokens', tokenLimiter, (req, res) => {
     return;
   }
 
-  const record = issueToken(userId, agentId, agent.scope ?? 'ReadWrite');
+  const record = await issueToken(userId, agentId, agent.scope ?? 'ReadWrite');
   res.json({ token: record.token, expiresAt: record.expiresAt, scope: record.scope });
 });
 
@@ -1805,14 +1947,14 @@ app.post('/tokens', tokenLimiter, (req, res) => {
  * Body: { token }
  * Returns: { valid, userId?, agentId?, scope?, reason? }
  */
-app.post('/tokens/verify', tokenLimiter, (req, res) => {
+app.post('/tokens/verify', tokenLimiter, async (req, res) => {
   const { token } = req.body;
   if (!token) {
     res.status(400).json({ error: 'token is required' });
     return;
   }
 
-  const result = verifyToken(token);
+  const result = await verifyToken(token);
   if (result.valid) {
     res.json({
       valid: true,
@@ -1976,7 +2118,7 @@ app.get('/.well-known/webfinger', (req, res) => {
  *   Nonce: {nonce}
  *   Issued At: {issuedAt}
  */
-app.post('/siwe/verify', (req, res) => {
+app.post('/siwe/verify', async (req, res) => {
   const { message, signature } = req.body;
   if (!message || !signature) {
     res.status(400).json({ error: 'message and signature are required' });
@@ -2008,7 +2150,7 @@ app.post('/siwe/verify', (req, res) => {
   const user = userId ? identities.get(userId) : undefined;
 
   if (user) {
-    const token = issueToken(user.id, `wallet-${walletAddress}`, 'ReadWrite');
+    const token = await issueToken(user.id, `wallet-${walletAddress}`, 'ReadWrite');
     res.json({
       valid: true,
       walletAddress,
@@ -2089,7 +2231,7 @@ app.post('/wallet/link', async (req, res) => {
     res.status(401).json({ error: 'Bearer token required to link a wallet. POST /auth/siwe (no userId claim) to bind a fresh wallet to its own derived userId; POST /auth/siwe with Authorization: Bearer <token> to bind an additional wallet to the token\'s user.' });
     return;
   }
-  const tr = verifyToken(authHeader.slice(7));
+  const tr = await verifyToken(authHeader.slice(7));
   if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return; }
 
   const { walletAddress, siweMessage, signature } = req.body ?? {};
@@ -2154,7 +2296,7 @@ app.get('/auth-methods/me', async (req, res) => {
     res.status(401).json({ error: 'Bearer token required' });
     return;
   }
-  const tr = verifyToken(authHeader.slice(7));
+  const tr = await verifyToken(authHeader.slice(7));
   if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return; }
   const userId = tr.record!.userId;
   const methods = await readAuthMethods(userId);
@@ -2204,7 +2346,7 @@ app.get('/me', async (req, res) => {
     });
     return;
   }
-  const tr = verifyToken(authHeader.slice(7));
+  const tr = await verifyToken(authHeader.slice(7));
   if (!tr.valid) {
     res.status(401).json({
       error: 'invalid_token',
@@ -2254,7 +2396,7 @@ async function requireUserFromBearer(req: express.Request, res: express.Response
     res.status(401).json({ error: 'Bearer token required' });
     return null;
   }
-  const tr = verifyToken(authHeader.slice(7));
+  const tr = await verifyToken(authHeader.slice(7));
   if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return null; }
   const user = identities.get(tr.record!.userId);
   if (!user || user.type !== 'user') {
@@ -2365,15 +2507,28 @@ app.delete('/auth-methods/me/did', async (req, res) => {
 app.post('/tokens/me/sign-out-everywhere', async (req, res) => {
   const user = await requireUserFromBearer(req, res);
   if (!user) return;
-  let revoked = 0;
-  for (const [tokenStr, rec] of tokens) {
-    if (rec.userId === user.id) {
-      tokens.delete(tokenStr);
-      revoked++;
-    }
+  // Stateless revocation: bump the pod's sessionEpoch. Tokens were
+  // signed with the epoch in force at their issuance; verifyToken
+  // refuses anything below the pod's current value. The cache is
+  // invalidated via putPodAuthMethods so the next verify sees the
+  // bumped epoch immediately.
+  let methods: AuthMethods;
+  try {
+    methods = await readAuthMethods(user.id, /* allowStale */ false);
+  } catch (err) {
+    res.status(500).json({ error: `Failed to read auth-methods: ${(err as Error).message}` });
+    return;
   }
-  log(`Signed out ${revoked} tokens for ${user.id}`);
-  res.json({ revoked, userId: user.id });
+  const newEpoch = (methods.sessionEpoch ?? 0) + 1;
+  const updated: AuthMethods = { ...methods, sessionEpoch: newEpoch };
+  try {
+    await putPodAuthMethods(user.id, updated);
+  } catch (err) {
+    res.status(500).json({ error: `Failed to persist sessionEpoch bump: ${(err as Error).message}` });
+    return;
+  }
+  log(`Signed out everywhere for ${user.id} — sessionEpoch ${methods.sessionEpoch ?? 0} → ${newEpoch}`);
+  res.json({ revoked: true, userId: user.id, sessionEpoch: newEpoch });
 });
 
 /**
@@ -2407,9 +2562,11 @@ async function deleteUserCompletely(userId: string): Promise<{ agents: string[];
   identities.delete(userId);
   keys.delete(userId);
 
-  for (const [tok, rec] of tokens) {
-    if (rec.userId === userId) tokens.delete(tok);
-  }
+  // Token revocation: deleting the pod's auth-methods.jsonld (below)
+  // makes `readAuthMethods` fail for this user; verifyToken handles
+  // that as a soft-pass (partition tolerance), but tokens will hit TTL
+  // shortly. Hard revocation isn't necessary for a delete — the user
+  // and their pod are gone.
   authMethodsCache.delete(userId);
   for (const [k, v] of walletIndex) if (v === userId) walletIndex.delete(k);
   for (const [k, v] of credentialIndex) if (v === userId) credentialIndex.delete(k);
@@ -2734,7 +2891,9 @@ app.get('/dashboard', (_req, res) => {
   // server restart) and the user needs to re-authenticate.
   function isAuthError(err) {
     var m = (err && err.message) || '';
-    return /token not found|invalid bearer|expired|not authenticated|401|user for token not found/i.test(m);
+    // Cover every reason verifyToken can return: signature mismatch,
+    // expired, revoked (sign-out-everywhere), malformed, deleted user.
+    return /token not found|invalid bearer|expired|not authenticated|401|user for token not found|token revoked|signature mismatch|token malformed|token payload/i.test(m);
   }
 
   async function renderDashboard() {
