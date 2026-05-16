@@ -94,10 +94,11 @@ Design discipline: [`docs/DUAL-AUDIENCE.md`](docs/DUAL-AUDIENCE.md).
 ## Test + validation hygiene
 
 - **`npx tsc -p tsconfig.json --noEmit`** — currently clean across the repo + each sub-project (mcp-server, deploy/identity, etc.).
-- **`npx vitest run`** — **1446/1446 passing**, 29 skipped (network / external dependencies). The walkthrough regression test (`tests/walkthrough-v4-partial-vss.test.ts`) runs the v4-partial narrative end-to-end as a child process to catch any drift in the composed primitives.
+- **`npx vitest run`** — **1447/1447 passing**, 29 skipped (network / external dependencies). Two walkthrough regression tests (`tests/walkthrough-v4-partial-vss.test.ts` + `tests/walkthrough-v3-distribution.test.ts`) run the narrative scripts end-to-end as child processes to catch any drift in the composed primitives.
 - **`node tools/ontology-lint.mjs`** — every owned-namespace reference in TS is defined in the corresponding `docs/ns/<prefix>.ttl` or allowlisted. CI-gated.
 - **`node tools/smoke-try-flow.mjs`** — 12-check end-to-end contract test of the `/try → claim` activation funnel against any live deployment.
 - **`npx tsx tools/walkthrough-v4-partial-vss.ts`** — single-process narrative walkthrough of the v4-partial+VSS + committee attestation flow. Pure protocol-layer demo, no pod or network required. Living documentation: 7 phases from contributor commit → operator threshold-reveal → committee reconstruction → chain-of-custody attestation → tampering simulation.
+- **`npx tsx tools/walkthrough-v3-distribution.ts`** — single-process narrative walkthrough of the v3 zk-distribution flow. Pure protocol-layer demo: 7 phases from bucketing-scheme definition → one-hot-encoded contributor commits → operator per-bucket sums + DP noise → auditor verification → two tampering simulations + DP sensitivity reminder.
 - **`node tools/derivation-lint.mjs`** — derivation-chain consistency check.
 - **`node tools/security-txt-expiry-check.mjs`** — RFC 9116 expiry guardrail.
 
