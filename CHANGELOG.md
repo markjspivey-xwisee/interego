@@ -8,6 +8,71 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy v3.2: cumulative ε-budget tracking
+
+Closes the DP-discipline gap that's currently the caller's burden:
+without budget tracking, a caller could run an aggregate query 1000
+times at ε=0.01 each and effectively get ε=10 of accumulated leakage.
+The per-query privacy claim stays sound; the cumulative claim is gone.
+
+NEW: `EpsilonBudget` class in
+`applications/_shared/aggregate-privacy/index.ts`. Construct with a
+per-cohort max ε; call `consume({queryDescription, epsilon})` before
+each query; the call throws if cumulative consumption would exceed
+the cap. Records a log entry per successful consume so an auditor
+can replay the budget consumption. `canAfford(ε)` lets the caller
+preflight without consuming. `toJSON()` / `fromJSON(snap)` for
+persistence.
+
+`buildAttestedHomomorphicSum` gains optional `epsilonBudget` +
+`queryDescription` args. When supplied, the function calls
+`epsilonBudget.consume(...)` BEFORE building the bundle — budget
+overrun aborts the query rather than producing a bundle the caller
+has to throw away.
+
+9 new contract tests (38 total in aggregate-privacy.test.ts now: 12
+v2 + 9 v3 + 8 v3.1 + 9 v3.2):
+- construction rejects non-positive maxEpsilon
+- construction rejects initial.spent > maxEpsilon
+- consume across queries: remaining decrements; spent tracks
+- consume throws when it would exceed cap; spent does NOT advance
+  on the failed attempt
+- log entry recorded per successful consume
+- canAfford preflight does not consume
+- toJSON / fromJSON round-trips losslessly (cohortIri, maxEpsilon,
+  spent, log)
+- buildAttestedHomomorphicSum consumes ε from a supplied budget;
+  log records the queryDescription
+- buildAttestedHomomorphicSum REFUSES to run if budget would be
+  exhausted (the first query succeeds; the second throws; spent
+  reflects only the successful query)
+
+Trust model: honest accounting, not tamper-evident. An auditor can
+replay the log to verify the remaining-budget claim; a malicious
+caller that bypasses the tracker still leaks DP info, but the audit
+log shows the gap. Future v3.3 would wrap `EpsilonBudget.toJSON()`
+in a signed pod descriptor so the log itself becomes a verifiable
+artifact (`src/compliance/signDescriptor` + standard `publish()`).
+
+Validation: tsc clean; full vitest suite **1326/1326 passing** (1317
+prior + 9 new).
+
+STATUS.md updated: v3.2 row added to the aggregate-privacy ladder;
+remaining-work cumulative-ε-budget item replaced with v3.3 (signed
+audit-log descriptor) as the next iteration.
+
+The aggregate-privacy ladder now covers:
+  v1 'abac'                          → ABAC-bounded count (default)
+  v2 'merkle-attested-opt-in'        → verifiable count + opt-in
+  v3 'zk-aggregate'                  → homomorphic sum + DP noise
+  v3.1 + requireSignedBounds: true   → regulator-grade attribution
+  v3.2 + epsilonBudget               → cumulative ε discipline
+
+Each step composes the previous; no breaking changes to the
+affordance signatures (every new field is optional).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy v3.1: aggregator-side bounds enforcement + signed-bounds attestations
 
 Closes the "lying contributor" cheat that v3 alone could not catch.
