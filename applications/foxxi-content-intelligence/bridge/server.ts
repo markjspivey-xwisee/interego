@@ -31,6 +31,14 @@ import {
   type ParsedFoxxiPackage,
   type CoverageQueryArgs,
 } from '../src/publisher.js';
+import {
+  discoverAssignedCourses,
+  type FoxxiAdminPayload,
+} from '../src/enrollment.js';
+import {
+  askCourseQuestion,
+  type FoxxiCourseContent,
+} from '../src/course-qa.js';
 import type { IRI } from '../../../src/index.js';
 
 const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
@@ -47,14 +55,34 @@ function configOrThrow(args: Record<string, unknown>): { tenantPodUrl: string; a
 const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
   // ── Learner-side ────────────────────────────────────────────────────
   'foxxi.discover_assigned_courses': async (args) => {
-    // Skeleton: real implementation walks tenant pod's policy descriptors
-    // + filters by learner's audience tags.
-    return { assignments: [], note: 'stub: bridge handler not yet wired to pod-walk; affordance is discoverable' };
+    if (!args.admin) {
+      return {
+        note: 'stub: pass args.admin (FoxxiAdminPayload from the tenant pod) — real bridge fetches it via tenant pod walk; in-process callers supply directly.',
+      };
+    }
+    return discoverAssignedCourses({
+      admin: args.admin as FoxxiAdminPayload,
+      learnerWebId: args.learner_did as string,
+      audienceTagsOverride: args.audience_tags as readonly string[] | undefined,
+    });
   },
 
   'foxxi.consume_lesson': async (args) => {
     // Real implementation streams the parsed lesson + emits xAPI via lrs-adapter.
     return { consumed: false, note: 'stub: bridge handler not yet wired; compose with applications/lrs-adapter/' };
+  },
+
+  'foxxi.ask_course_question': async (args) => {
+    if (!args.course_content) {
+      return {
+        note: 'stub: pass args.course_content (FoxxiCourseContent — transcripts + concepts). Real bridge fetches from tenant pod via published fxs/fxk descriptors.',
+      };
+    }
+    return askCourseQuestion({
+      learnerDid: args.learner_did as IRI,
+      course: args.course_content as FoxxiCourseContent,
+      question: args.question as string,
+    });
   },
 
   'foxxi.explore_concept_map': async (args) => {

@@ -50,6 +50,21 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
   },
 
   {
+    action: 'urn:cg:action:foxxi:ask-course-question' as IRI,
+    toolName: 'foxxi.ask_course_question',
+    title: 'Ask a question about a course',
+    description: 'Grounded Q&A over a course\'s narration transcripts + extracted concepts. The learner asks "what is reactive current?" and the substrate returns verbatim-cited transcript segments + concept snippets that overlap the question. Composes the existing learner-performer-companion grounded-answer machinery (same honesty discipline: tamper-detected atoms, IRI citations, honest null when no atom overlaps the question).',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/ask_course_question',
+    inputs: [
+      { name: 'course_iri', type: 'string', required: true, description: 'IRI of the course (matches federation_iri_base#package emitted by ingest_content_package).' },
+      { name: 'learner_did', type: 'string', required: true, description: 'Asking learner DID. Recorded on the response descriptor for audit.' },
+      { name: 'question', type: 'string', required: true, description: 'Natural-language question (e.g., "what is reactive current?").' },
+      { name: 'course_content', type: 'object', required: true, description: 'The course\'s narration transcripts + extracted concepts. In a real deployment the bridge fetches this from the tenant pod via the published fxs/fxk descriptors; for the in-process invocation supply the shape from the parser\'s dashboard_data + transcripts payloads.' },
+    ],
+  },
+
+  {
     action: 'urn:cg:action:foxxi:explore-concept-map' as IRI,
     toolName: 'foxxi.explore_concept_map',
     title: 'Explore the published concept map for a course',
