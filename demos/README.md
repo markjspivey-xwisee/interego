@@ -1,4 +1,4 @@
-# Interego demos — twenty-three end-to-end scenarios
+# Interego demos — twenty-five end-to-end scenarios
 
 Self-contained scenarios that drive **real Claude Code CLI agents**
 against **real per-vertical bridges**, a **real Solid pod** (Azure CSS),
@@ -33,7 +33,7 @@ Each scenario:
 ## Run them
 
 ```bash
-# all twenty-three
+# all twenty-five
 ./demos/run-all.sh
 
 # subset
@@ -123,6 +123,15 @@ CLAUDECODE= npx tsx demos/scenarios/14-zk-confidence-without-disclosure.ts
 |---|----------|----------------------|
 | 22 | [Two agents design + ratify + play a game autonomously](scenarios/22-game-design-build-play.ts) | **Smallest-viable design → build → play loop.** Two claude processes (alpha + beta) — never see each other's prompts, share only the substrate — design a rock-paper-scissors-with-commit-reveal protocol, ratify it via 2-of-2 constitutional vote, autonomously pick moves, publish hash commitments, reveal, and let the substrate verify neither cheated via `protocol.zk_verify_commitment`. Six phases (design, cross-attest, ratify, commit, reveal, settle). The game emerges from substrate primitives only — no game-engine code anywhere. Same machinery scales to any multi-round adversarial game; tic-tac-toe / cards / chess differ only in the supersedes-chain length. ~3 minutes runtime. |
 | 23 | [Federated zero-copy virtual semantic layer (emergent)](scenarios/23-zero-copy-semantic-layer.ts) | Four claude processes (two librarians, one aligner, one consumer) plus two mock heterogeneous data sources (xAPI LRS-shaped + Databricks-shaped warehouse). Each librarian publishes a `hyprcat:FederatedDataProduct` declaring its source vocabulary. The aligner discovers both catalogs and proposes an `align:NamespaceBridge` with four typed `align:TermMapping` entries (`owl:equivalentClass` for the class, `skos:closeMatch` for properties whose URI schemes / resolution differ). Both librarians independently attest on the `accuracy` axis; substrate-enforced `cgh:PromotionConstraint` requires ≥2 distinct attestations before the bridge can supersede to Asserted. The consumer issues a federated query; the harness rewrites via the ratified alignment graph and fetches LIVE from each source's `hydra:target` — **the data never leaves its system of record**. Result descriptor carries `prov:wasDerivedFrom` citing both source endpoints AND the bridge IRI. Same shape scales to enterprise data mesh with hundreds of products and thousands of bridges. ~7 minutes runtime. |
+
+### Dual-audience pilots (24, 25)
+
+Both pilot verticals from the dual-audience design discipline ([`docs/DUAL-AUDIENCE.md`](../docs/DUAL-AUDIENCE.md)) get an end-to-end demo that drives BOTH audiences against ONE bridge against the live pod. Each demo includes in-process auditor verification of the v2 attested-merkle aggregate bundle — count inflation / leaf substitution / Merkle-root tamper are all detected and rejected.
+
+| # | Scenario | What it demonstrates |
+|---|----------|----------------------|
+| 24 | [Dual-audience OWM — contributor + operator](scenarios/24-dual-audience-owm.ts) | A Contributor agent authors a project + 3 decisions (one Hypothetical superseded by a 4th Asserted) + overdue follow-up + 2 notes on the org pod via `owm.upsert_*` / `record_decision` / `queue_followup` / `record_note`. An Operator agent (different process, no shared memory) runs `aggregate_decisions_query` with `privacy_mode='merkle-attested-opt-in'` to get a tamper-evident count + Merkle root + per-leaf inclusion proofs, then `project_health_summary`, then `publish_org_policy` (retention) signed by the org-authority DID, then `publish_compliance_evidence` wrapping a synthetic deploy event with `soc2:CC8.1` citation. In-process auditor re-verifies the attestation bundle AND confirms cheat-protection by inflating the count + re-verifying. ~3 minutes runtime. |
+| 25 | [Dual-audience LEARNING — learner + institution](scenarios/25-dual-audience-learning.ts) | Companion to 24, applied to LPC. Two pods (learner's + institution's). An Institution agent publishes authoritative training content + an Open Badges 3.0 cohort credential template to its own pod. A Learner agent (different process) calls `lpc.opt_into_cohort` to publish a signed `agg:CohortParticipation` descriptor on the learner's pod — the bilateral consent boundary. A third process (still no shared state) runs `aggregate_cohort_query` with `privacy_mode='merkle-attested-opt-in'`, passing the learner's pod URL as a candidate. The institution gets count=1 with a Merkle inclusion proof for the learner's pod; the auditor verifies the bundle + confirms cheat-protection + confirms the revocation symmetry path. ~4 minutes runtime. |
 
 ## Architecture
 

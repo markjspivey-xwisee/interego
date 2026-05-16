@@ -42,7 +42,7 @@ The MCP surface above is a thin ergonomic wrapper on three pillars over one cryp
 | Mount Interego under an OpenClaw / Hermes / Codex runtime | The MCP path above is the default. OpenClaw and Hermes also have native memory-slot plugins ([`integrations/openclaw-memory/`](integrations/openclaw-memory/), [`integrations/hermes-memory/`](integrations/hermes-memory/)) when you want it tighter than MCP. Compliance teams add [`integrations/compliance-overlay/`](integrations/compliance-overlay/) on top. Full map: [docs/integrations/agent-runtime-integration.md](docs/integrations/agent-runtime-integration.md). |
 | Build a TypeScript app on top of the substrate | [Developer entry point](#-im-a-developer-building-a-typescript-app) |
 | Build a vertical (LRS adapter, agent collective, organizational memory) | [Vertical applications](applications/README.md) |
-| Run a live demo of multi-agent emergent coordination | [`demos/`](demos/README.md) — 23 end-to-end scenarios |
+| Run a live demo of multi-agent emergent coordination | [`demos/`](demos/README.md) — 25 end-to-end scenarios (24 + 25 are the dual-audience pilot demos) |
 | Understand the spec / category-theoretic foundations | [`spec/architecture.md`](spec/architecture.md) + [`docs/ARCHITECTURAL-FOUNDATIONS.md`](docs/ARCHITECTURAL-FOUNDATIONS.md) |
 | Run a SOC 2 / EU AI Act / NIST RMF audit against an Interego pod | [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) |
 | Set up Interego for a non-technical friend or family member | [The hosted front door](https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/) — they enroll a passkey or wallet directly (~30s, no command line), or their MCP client drives it on first call |
