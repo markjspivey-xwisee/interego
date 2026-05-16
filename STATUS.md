@@ -90,6 +90,7 @@ Design discipline: [`docs/DUAL-AUDIENCE.md`](docs/DUAL-AUDIENCE.md).
 - **`npx vitest run`** — **1404/1404 passing**, 29 skipped (network / external dependencies).
 - **`node tools/ontology-lint.mjs`** — every owned-namespace reference in TS is defined in the corresponding `docs/ns/<prefix>.ttl` or allowlisted. CI-gated.
 - **`node tools/smoke-try-flow.mjs`** — 12-check end-to-end contract test of the `/try → claim` activation funnel against any live deployment.
+- **`npx tsx tools/walkthrough-v4-partial-vss.ts`** — single-process narrative walkthrough of the v4-partial+VSS + committee attestation flow. Pure protocol-layer demo, no pod or network required. Living documentation: 7 phases from contributor commit → operator threshold-reveal → committee reconstruction → chain-of-custody attestation → tampering simulation.
 - **`node tools/derivation-lint.mjs`** — derivation-chain consistency check.
 - **`node tools/security-txt-expiry-check.mjs`** — RFC 9116 expiry guardrail.
 
