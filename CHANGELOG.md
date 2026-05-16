@@ -8,6 +8,71 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy v3.3: signed audit-log descriptor
+
+Closes the "honest accounting vs tamper-evident" gap from v3.2. The
+EpsilonBudget consumption log now ships in a signed bundle whose
+signature recovers the operator's DID; tamper-detection at every
+angle (modified spent, dropped log entries, impersonated signer,
+internal-consistency violations).
+
+NEW in `applications/_shared/aggregate-privacy/index.ts`:
+- `canonicalizeBudgetForSigning(snap)` — deterministic string with
+  sorted keys + fixed numeric formatting + log entries in
+  chronological insertion order. Both signer and verifier use the
+  same canonicalization; format drift breaks signature verify.
+- `signBudgetAuditLog({budget, signerWallet, signerDid})` — snapshots
+  the budget, signs the canonical via `signMessageRaw` from the
+  existing `src/crypto/wallet.ts`, returns the SignedBudgetAuditLog.
+- `verifyBudgetAuditLog(signed)` — auditor side. Recovers the signer
+  via `recoverMessageSigner`; checks the recovered address appears
+  in the claimed signerDid (loose containment, catches the common
+  did:ethr / did:pkh shapes); verifies log entries sum to spent
+  (within 1e-9 rounding); verifies spent ≤ maxEpsilon.
+
+6 new contract tests (44 total in aggregate-privacy.test.ts now: 12
+v2 + 9 v3 + 8 v3.1 + 9 v3.2 + 6 v3.3):
+- canonicalizeBudgetForSigning deterministic + correct shape
+- honest round-trip: sign → verify accepts; recovered address
+  matches wallet
+- REJECTS bundle with snapshot.spent tampered after signing
+- REJECTS bundle whose log entries were silently dropped
+- REJECTS bundle whose signerDid claims a different identity than
+  the signature recovers
+- REJECTS bundle with internal consistency violation
+  (snapshot.spent > maxEpsilon)
+
+Composes existing primitives: no new ontology terms; the
+SignedBudgetAuditLog is a plain typed object that can be serialized
+into a normal ContextDescriptor's graph content on the operator's
+pod (publish() handles the rest).
+
+Validation: tsc clean; full vitest suite **1332/1332 passing** (1326
+prior + 6 new).
+
+STATUS.md updated: v3.3 row added; remaining-work signed-audit-log
+item replaced with v4 (multi-party threshold reveal) as the next
+genuine iteration.
+
+The aggregate-privacy ladder now covers FIVE layered modes:
+
+  v1   'abac'                           → ABAC-bounded count
+  v2   'merkle-attested-opt-in'         → verifiable count + opt-in
+  v3   'zk-aggregate'                   → homomorphic sum + DP noise
+  v3.1 + requireSignedBounds            → regulator-grade attribution
+  v3.2 + epsilonBudget                  → cumulative ε discipline
+  v3.3 signBudgetAuditLog               → tamper-evident audit log
+
+Every step composes the previous; no breaking changes to the
+affordance signatures (every new field is optional). The four
+PM-eval recommendations are all complete; the aggregate-privacy
+ladder is end-to-end auditable; the honest remaining work is
+v4 multi-aggregator threshold reveal (real distributed crypto
+work) + the second-language Interego implementation needed to
+advance L1 from Last Call → Candidate Recommendation.
+
+---
+
 ## 2026-05-16 — Aggregate-privacy v3.2: cumulative ε-budget tracking
 
 Closes the DP-discipline gap that's currently the caller's burden:

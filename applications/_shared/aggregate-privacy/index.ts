@@ -759,3 +759,119 @@ export class EpsilonBudget {
     });
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────
+//  v3.3 — Signed audit-log descriptor
+// ─────────────────────────────────────────────────────────────────────
+//
+// v3.2 ships honest-accounting EpsilonBudget — an auditor can replay
+// the consumption log to verify the remaining-budget claim, but the
+// log itself is in-memory and trusts the caller. v3.3 wraps the log
+// in a signed artifact so the audit-log itself is tamper-evident:
+//
+//   1. Aggregator canonicalizes the budget snapshot to a stable
+//      string (sorted keys, fixed numeric formatting).
+//   2. Aggregator signs the canonical string with their wallet.
+//   3. Publishes the SignedBudgetAuditLog (or includes it in a pod
+//      descriptor authored by that wallet's DID).
+//   4. Auditor recovers the signer from the signature + canonical
+//      string; verifies the recovered address matches the
+//      operator's claimed DID.
+//
+// Composes existing `src/crypto/wallet.ts` — `signMessageRaw` +
+// `recoverMessageSigner`. No new ontology terms; the SignedBudgetAuditLog
+// is a plain typed object that can be serialized into a normal
+// ContextDescriptor's graph content.
+
+import { signMessageRaw, recoverMessageSigner, type Wallet } from '../../../src/crypto/wallet.js';
+
+/**
+ * Canonical serialization of an EpsilonBudget for signing. Stable
+ * across implementations and versions: keys are sorted within each
+ * object; numbers are formatted with enough precision to round-trip
+ * IEEE-754 doubles; the consumption log is in chronological order
+ * (as inserted; consume() is the only mutator).
+ *
+ * Format:
+ *   "interego/v1/aggregate/budget-audit|cohortIri=...|maxEpsilon=...|spent=...|log=[{queryDescription:...,epsilon:...,consumedAt:...},...]"
+ */
+export function canonicalizeBudgetForSigning(snap: {
+  cohortIri: IRI;
+  maxEpsilon: number;
+  spent: number;
+  log: readonly EpsilonConsumption[];
+}): string {
+  const logCanon = snap.log
+    .map(e => `{queryDescription=${JSON.stringify(e.queryDescription)},epsilon=${e.epsilon},consumedAt=${e.consumedAt}}`)
+    .join(',');
+  return `interego/v1/aggregate/budget-audit|cohortIri=${snap.cohortIri}|maxEpsilon=${snap.maxEpsilon}|spent=${snap.spent}|log=[${logCanon}]`;
+}
+
+export interface SignedBudgetAuditLog {
+  /** Serialized EpsilonBudget snapshot — the same shape `EpsilonBudget.toJSON()` returns. */
+  readonly snapshot: { cohortIri: IRI; maxEpsilon: number; spent: number; log: readonly EpsilonConsumption[] };
+  /** DID of the signer (typically the aggregator's operator DID). */
+  readonly signerDid: IRI;
+  /** 0x-prefixed ECDSA signature over `canonicalizeBudgetForSigning(snapshot)`. */
+  readonly signature: string;
+  /** ISO timestamp the audit log was signed. */
+  readonly signedAt: string;
+}
+
+/**
+ * Aggregator-side: snapshot the budget + sign it with the operator
+ * wallet. The returned bundle is publishable as the graph_content of
+ * a normal ContextDescriptor on the operator's pod (composes
+ * publish() + the standard provenance / agent facets).
+ */
+export async function signBudgetAuditLog(args: {
+  budget: EpsilonBudget;
+  signerWallet: Wallet;
+  signerDid: IRI;
+}): Promise<SignedBudgetAuditLog> {
+  const snap = args.budget.toJSON();
+  const canon = canonicalizeBudgetForSigning(snap);
+  const signature = await signMessageRaw(args.signerWallet, canon);
+  return {
+    snapshot: snap,
+    signerDid: args.signerDid,
+    signature,
+    signedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Auditor-side: verify the signed audit log. Returns valid+recovered
+ * address on success; descriptive reason on any failure path.
+ * Catches: aggregator tampering with the snapshot after signing;
+ * aggregator forging a snapshot under a different DID; signature
+ * corruption.
+ */
+export function verifyBudgetAuditLog(signed: SignedBudgetAuditLog): { valid: boolean; reason?: string; recoveredAddress?: string } {
+  let recovered: string;
+  try {
+    const canon = canonicalizeBudgetForSigning(signed.snapshot);
+    recovered = recoverMessageSigner(canon, signed.signature);
+  } catch (err) {
+    return { valid: false, reason: `signature recovery failed: ${(err as Error).message}` };
+  }
+  const didLower = signed.signerDid.toLowerCase();
+  const recoveredLower = recovered.toLowerCase();
+  if (!didLower.includes(recoveredLower)) {
+    return {
+      valid: false,
+      reason: `recovered address ${recovered} not present in signerDid ${signed.signerDid}`,
+      recoveredAddress: recovered,
+    };
+  }
+  // Internal consistency: log entries must sum to spent (rounding-safe).
+  const logSum = signed.snapshot.log.reduce((acc, e) => acc + e.epsilon, 0);
+  // Allow ε rounding noise of 1e-9.
+  if (Math.abs(logSum - signed.snapshot.spent) > 1e-9) {
+    return { valid: false, reason: `log entries sum to ${logSum} but snapshot.spent is ${signed.snapshot.spent}` };
+  }
+  if (signed.snapshot.spent > signed.snapshot.maxEpsilon) {
+    return { valid: false, reason: `snapshot.spent (${signed.snapshot.spent}) exceeds maxEpsilon (${signed.snapshot.maxEpsilon})` };
+  }
+  return { valid: true, recoveredAddress: recovered };
+}

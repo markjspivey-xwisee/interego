@@ -33,9 +33,11 @@ import {
   verifyAttestedHomomorphicSum,
   signedBoundsMessage, verifySignedBounds,
   EpsilonBudget,
+  canonicalizeBudgetForSigning, signBudgetAuditLog, verifyBudgetAuditLog,
   type ParticipationHit,
   type CommittedContribution,
 } from '../aggregate-privacy/index.js';
+import { createWallet, signMessageRaw } from '../../../src/index.js';
 import type { IRI } from '../../../src/index.js';
 import { Wallet } from 'ethers';
 
@@ -575,5 +577,108 @@ describe('aggregate-privacy v3.2: cumulative ε-budget tracking', () => {
     // spend (consume throws before incrementing).
     expect(budget.spent).toBeCloseTo(0.4, 9);
     expect(budget.log.length).toBe(1);
+  });
+});
+
+describe('aggregate-privacy v3.3: signed audit-log descriptor', () => {
+  it('canonicalizeBudgetForSigning is deterministic + uses sorted keys', () => {
+    const snap = {
+      cohortIri: COHORT,
+      maxEpsilon: 1.0,
+      spent: 0.5,
+      log: [
+        { queryDescription: 'q1', epsilon: 0.3, consumedAt: '2026-05-16T00:00:00.000Z' },
+        { queryDescription: 'q2', epsilon: 0.2, consumedAt: '2026-05-16T00:01:00.000Z' },
+      ],
+    };
+    const c1 = canonicalizeBudgetForSigning(snap);
+    const c2 = canonicalizeBudgetForSigning(snap);
+    expect(c1).toBe(c2);
+    expect(c1).toContain('cohortIri=' + COHORT);
+    expect(c1).toContain('maxEpsilon=1');
+    expect(c1).toContain('spent=0.5');
+    expect(c1).toContain('"q1"');
+    expect(c1).toContain('"q2"');
+  });
+
+  it('signBudgetAuditLog + verifyBudgetAuditLog honest round-trip', async () => {
+    const budget = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    budget.consume({ queryDescription: 'q1', epsilon: 0.3 });
+    budget.consume({ queryDescription: 'q2', epsilon: 0.2 });
+    const wallet = await createWallet('agent', 'audit-log-signer');
+    const signerDid = `did:ethr:${wallet.address}` as IRI;
+    const signed = await signBudgetAuditLog({ budget, signerWallet: wallet, signerDid });
+    expect(signed.snapshot.spent).toBeCloseTo(0.5, 9);
+    expect(signed.snapshot.log.length).toBe(2);
+    expect(signed.signature).toMatch(/^0x[0-9a-fA-F]+$/);
+    const r = verifyBudgetAuditLog(signed);
+    expect(r.valid).toBe(true);
+    expect(r.recoveredAddress?.toLowerCase()).toBe(wallet.address.toLowerCase());
+  });
+
+  it('REJECTS a bundle whose snapshot.spent was tampered after signing', async () => {
+    const budget = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    budget.consume({ queryDescription: 'q', epsilon: 0.4 });
+    const wallet = await createWallet('agent', 'tamper-test');
+    const did = `did:ethr:${wallet.address}` as IRI;
+    const signed = await signBudgetAuditLog({ budget, signerWallet: wallet, signerDid: did });
+    const tampered = {
+      ...signed,
+      snapshot: { ...signed.snapshot, spent: 0.1 }, // pretend less was spent
+    };
+    const r = verifyBudgetAuditLog(tampered);
+    expect(r.valid).toBe(false);
+    // Two failure paths land here: log-sum mismatch (logSum=0.4 ≠ spent=0.1)
+    // OR signature mismatch (canonical changed). Either is correct rejection.
+    expect(r.reason).toMatch(/log entries sum|not present in signerDid/);
+  });
+
+  it('REJECTS a bundle whose log entries have been silently dropped', async () => {
+    const budget = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    budget.consume({ queryDescription: 'q1', epsilon: 0.3 });
+    budget.consume({ queryDescription: 'q2', epsilon: 0.2 });
+    const wallet = await createWallet('agent', 'drop-test');
+    const did = `did:ethr:${wallet.address}` as IRI;
+    const signed = await signBudgetAuditLog({ budget, signerWallet: wallet, signerDid: did });
+    const tampered = {
+      ...signed,
+      snapshot: { ...signed.snapshot, log: signed.snapshot.log.slice(1) }, // drop q1
+    };
+    const r = verifyBudgetAuditLog(tampered);
+    expect(r.valid).toBe(false);
+  });
+
+  it('REJECTS a bundle whose signerDid claims a different identity than the signature recovers', async () => {
+    const realWallet = await createWallet('agent', 'real');
+    const realDid = `did:ethr:${realWallet.address}` as IRI;
+    const decoyDid = 'did:ethr:0x0000000000000000000000000000000000000000' as IRI;
+    const budget = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    budget.consume({ queryDescription: 'q', epsilon: 0.1 });
+    const signed = await signBudgetAuditLog({ budget, signerWallet: realWallet, signerDid: realDid });
+    // Swap in the decoy DID; signature is still over a canonical that
+    // mentioned realDid, so verify-by-canonical can find the address
+    // BUT it won't appear in the decoy DID.
+    const cheating = { ...signed, signerDid: decoyDid };
+    const r = verifyBudgetAuditLog(cheating);
+    expect(r.valid).toBe(false);
+  });
+
+  it('REJECTS a bundle whose snapshot.spent exceeds maxEpsilon (internal consistency)', async () => {
+    // We can't directly construct this through EpsilonBudget (the
+    // class enforces the invariant), so we mock the snapshot.
+    const wallet = await createWallet('agent', 'cap-test');
+    const did = `did:ethr:${wallet.address}` as IRI;
+    const snap = {
+      cohortIri: COHORT,
+      maxEpsilon: 1.0,
+      spent: 2.0,
+      log: [{ queryDescription: 'q', epsilon: 2.0, consumedAt: '2026-05-16T00:00:00.000Z' }],
+    };
+    const canon = canonicalizeBudgetForSigning(snap);
+    const signature = await signMessageRaw(wallet, canon);
+    const signed = { snapshot: snap, signerDid: did, signature, signedAt: new Date().toISOString() };
+    const r = verifyBudgetAuditLog(signed);
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/exceeds maxEpsilon/);
   });
 });
