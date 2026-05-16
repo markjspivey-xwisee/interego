@@ -33,6 +33,7 @@ import type {
   AttestedHomomorphicSumResult,
   AttestedAggregateResult,
   SignedBudgetAuditLog,
+  CommitteeReconstructionAttestation,
 } from '../../../applications/_shared/aggregate-privacy/index.js';
 
 /**
@@ -190,5 +191,59 @@ export function buildBudgetAuditComplianceDescriptor(args: {
     outcome: 'success',
     startedAt: args.signed.signedAt,
     endedAt: args.signed.signedAt,
+  }, cited);
+}
+
+/**
+ * Wrap a v4-partial CommitteeReconstructionAttestation as a compliance
+ * descriptor. This is the "we kept chain-of-custody on the threshold
+ * reveal" audit record — the operator publishes it alongside the
+ * underlying AttestedHomomorphicSumBundle so a regulator can see WHO
+ * participated in the reveal, WHEN, and on WHICH bundle.
+ *
+ * The descriptor body carries the committee composition + reconstructedAt
+ * timestamp + the bundle's sum-commitment bytes (so the regulator can
+ * link this attestation to a specific aggregate query) + the count
+ * of signatures collected. Individual signatures are intentionally
+ * NOT embedded in the descriptor body — they live in the published
+ * CommitteeReconstructionAttestation pod artifact, which the regulator
+ * can fetch separately via fetchPublishedCommitteeReconstructionAttestation.
+ *
+ * Default compliance citation pairs with the SOC 2 / EU AI Act / NIST
+ * RMF controls already in defaultAggregateControls, since chain-of-
+ * custody is part of the same access-and-record-keeping story as
+ * the underlying aggregate query.
+ */
+export function buildCommitteeReconstructionComplianceDescriptor(args: {
+  attestation: CommitteeReconstructionAttestation;
+  citation: ComplianceCitation;
+  toolName?: string;
+}): BuildEventResult {
+  const cited: ComplianceCitation = {
+    framework: args.citation.framework,
+    controls: (args.citation.controls && args.citation.controls.length > 0
+      ? args.citation.controls
+      : defaultAggregateControls(args.citation.framework)) as ComplianceCitation['controls'],
+  };
+
+  const resultSummary = JSON.stringify({
+    bundleSumCommitment: args.attestation.bundleSumCommitment,
+    claimedTrueSum: args.attestation.claimedTrueSum.toString(),
+    committeeDids: [...args.attestation.committeeDids].sort(),
+    committeeSize: args.attestation.committeeDids.length,
+    signatureCount: args.attestation.signatures.length,
+    reconstructedAt: args.attestation.reconstructedAt,
+  });
+
+  return buildAgentActionDescriptor({
+    toolName: args.toolName ?? 'aggregate-privacy.committee-threshold-reveal',
+    args: {
+      bundleSumCommitment: args.attestation.bundleSumCommitment,
+      reconstructedAt: args.attestation.reconstructedAt,
+    },
+    resultSummary,
+    outcome: 'success',
+    startedAt: args.attestation.reconstructedAt,
+    endedAt: args.attestation.reconstructedAt,
   }, cited);
 }

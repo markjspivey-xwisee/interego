@@ -8,6 +8,33 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Compliance-overlay bridge for v4-partial committee attestation
+
+Extends the compliance-overlay aggregate-bridge with a fourth wrapper:
+the CommitteeReconstructionAttestation chain-of-custody artifact is
+now a compliance-grade descriptor citing framework controls, ready
+for the regulator audit trail.
+
+NEW in `integrations/compliance-overlay/src/aggregate-bridge.ts`:
+- `buildCommitteeReconstructionComplianceDescriptor({attestation,
+  citation, toolName?})` — embeds bundleSumCommitment, claimedTrueSum,
+  committeeDids (sorted), committeeSize, signatureCount, reconstructedAt
+  in the resultSummary. Intentionally omits the individual signatures —
+  those live in the published pod artifact (an auditor fetches the
+  pod copy when they want the cryptographic re-verification).
+  Default toolName: `aggregate-privacy.committee-threshold-reveal`.
+- Re-exported from `integrations/compliance-overlay/src/index.ts`.
+
+3 new contract tests in
+`integrations/compliance-overlay/tests/aggregate-bridge.test.ts`
+(11 total): embedding shape (sum-commitment + reconstructedAt +
+committee membership + sizes), signature-non-leakage (descriptor
+body must NOT contain the signature hex), default toolName.
+
+Tests: 1404/1404 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy: publishable committee-reconstruction attestation
 
 The CommitteeReconstructionAttestation is now publishable as a normal

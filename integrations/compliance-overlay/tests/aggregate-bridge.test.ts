@@ -26,16 +26,19 @@ import {
   buildAggregateQueryComplianceDescriptor,
   buildMerkleAttestationComplianceDescriptor,
   buildBudgetAuditComplianceDescriptor,
+  buildCommitteeReconstructionComplianceDescriptor,
 } from '../src/index.js';
 import {
   buildCommittedContribution,
   buildAttestedHomomorphicSum,
   buildAttestedAggregateResult,
   signBudgetAuditLog,
+  signCommitteeReconstruction,
   EpsilonBudget,
   participationDescriptorIri,
   participationGraphIri,
   type ParticipationHit,
+  type CommitteeReconstructionAttestation,
 } from '../../../applications/_shared/aggregate-privacy/index.js';
 import { createWallet } from '../../../src/index.js';
 import type { IRI } from '../../../src/index.js';
@@ -184,5 +187,89 @@ describe('compliance-aggregate bridge: v3.3 signed budget audit log → complian
       citation: { framework: 'nist-rmf' },
     });
     expect(r.graphContent).toContain('aggregate-privacy.epsilon-budget-audit');
+  });
+});
+
+describe('compliance-aggregate bridge: v4-partial committee reconstruction attestation → compliance descriptor', () => {
+  const bounds = { min: 0n, max: 100n };
+
+  async function mkAttestation(): Promise<CommitteeReconstructionAttestation> {
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://x/', value: 30n, bounds, blindingSeed: 'cx', blindingLabel: 'l' }),
+      buildCommittedContribution({ contributorPodUrl: 'https://y/', value: 40n, bounds, blindingSeed: 'cy', blindingLabel: 'l' }),
+    ];
+    const bundle = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0,
+      includeAuditFields: true,
+      thresholdReveal: { n: 3, t: 2 },
+    });
+    const reconstructedAt = new Date().toISOString();
+    const w1 = await createWallet('agent', 'comp-bridge-c1');
+    const w2 = await createWallet('agent', 'comp-bridge-c2');
+    const dids = [`did:ethr:${w1.address.toLowerCase()}` as IRI, `did:ethr:${w2.address.toLowerCase()}` as IRI];
+    const sigs = [
+      await signCommitteeReconstruction({
+        bundleSumCommitment: bundle.sumCommitment.bytes,
+        claimedTrueSum: bundle.trueSum!,
+        committeeDids: dids,
+        reconstructedAt,
+        signerWallet: w1 as unknown as import('ethers').Wallet,
+        signerDid: dids[0]!,
+      }),
+      await signCommitteeReconstruction({
+        bundleSumCommitment: bundle.sumCommitment.bytes,
+        claimedTrueSum: bundle.trueSum!,
+        committeeDids: dids,
+        reconstructedAt,
+        signerWallet: w2 as unknown as import('ethers').Wallet,
+        signerDid: dids[1]!,
+      }),
+    ];
+    return {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signatures: sigs,
+    };
+  }
+
+  it('embeds committee membership + sum-commitment + reconstructedAt; cites framework defaults', async () => {
+    const attestation = await mkAttestation();
+    const r = buildCommitteeReconstructionComplianceDescriptor({
+      attestation,
+      citation: { framework: 'soc2' },
+    });
+    expect(r.cited).toContain('soc2:CC6.1');
+    expect(r.graphContent).toContain(attestation.bundleSumCommitment);
+    expect(r.graphContent).toContain(attestation.reconstructedAt);
+    expect(r.graphContent).toContain('\\"committeeSize\\":2');
+    expect(r.graphContent).toContain('\\"signatureCount\\":2');
+    // Both committee DIDs are recorded in the body.
+    for (const did of attestation.committeeDids) {
+      expect(r.graphContent).toContain(did);
+    }
+  });
+
+  it('does NOT embed individual signatures in the descriptor body (live in pod artifact)', async () => {
+    const attestation = await mkAttestation();
+    const r = buildCommitteeReconstructionComplianceDescriptor({
+      attestation,
+      citation: { framework: 'eu-ai-act' },
+    });
+    // Signatures are 0x-prefixed 132-char hex; check at least one is absent.
+    for (const sig of attestation.signatures) {
+      expect(r.graphContent).not.toContain(sig.signature);
+    }
+  });
+
+  it('default toolName is the committee-reveal tool', async () => {
+    const attestation = await mkAttestation();
+    const r = buildCommitteeReconstructionComplianceDescriptor({
+      attestation,
+      citation: { framework: 'nist-rmf' },
+    });
+    expect(r.graphContent).toContain('aggregate-privacy.committee-threshold-reveal');
   });
 });
