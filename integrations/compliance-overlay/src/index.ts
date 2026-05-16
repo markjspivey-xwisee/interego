@@ -31,3 +31,12 @@ export {
   type OverlayConfig,
   type RecordAgentActionResult,
 } from './overlay.js';
+
+// Aggregate-privacy → compliance-overlay bridge: wrap v3+ aggregate
+// bundles as compliance-grade descriptors citing framework controls.
+// See aggregate-bridge.ts for the threat-model + control-mapping notes.
+export {
+  buildAggregateQueryComplianceDescriptor,
+  buildMerkleAttestationComplianceDescriptor,
+  buildBudgetAuditComplianceDescriptor,
+} from './aggregate-bridge.js';
