@@ -1,0 +1,1556 @@
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix prov:    <http://www.w3.org/ns/prov#> .
+@prefix schema:  <http://schema.org/> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix cnt:     <http://www.w3.org/2011/content#> .
+@prefix fxs:     <https://vocab.foxximediums.com/scorm#> .
+@prefix fxk:     <https://vocab.foxximediums.com/knowledge#> .
+
+# Consumes vocab v0.2. fxs:Slide, fxs:Scene, fxs:NarrationTranscript,
+# fxk:semioticRole, fxk:headWord, fxk:isFreeStanding, fxk:modifierOf are
+# all defined in https://vocab.foxximediums.com/scorm/0.2.0 and
+# https://vocab.foxximediums.com/knowledge/0.2.0.
+
+
+# ═══════════════════════════════════════════════════
+# STRUCTURAL STRATUM (fxs:)
+# ═══════════════════════════════════════════════════
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> a fxs:Package ;
+    dcterms:title "Lesson 3: Inverter Controls" ;
+    dcterms:identifier "_69JeglEuzyv" ;
+    fxs:identifiedBy "_69JeglEuzyv" ;
+    fxs:standardConformance fxs:SCORM_2004_4 ;
+    schema:softwareVersion "3.104.35448.0" ;
+    fxs:authoredWith fxs:ArticulateStoryline ;
+    fxs:hasOrganization <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/org/Lesson_3%3A_Inverter_Controls_ORG> ;
+    fxs:defaultOrganization <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/org/Lesson_3%3A_Inverter_Controls_ORG> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0> ;
+    prov:generatedAtTime "2026-04-30T14:57:12Z"^^xsd:dateTime .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/org/Lesson_3%3A_Inverter_Controls_ORG> a fxs:Organization ;
+    dcterms:title "Lesson 3: Inverter Controls" ;
+    fxs:identifiedBy "Lesson_3:_Inverter_Controls_ORG" ;
+    fxs:hasItem <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/item/EPRI_Template_2023_SCO> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/item/EPRI_Template_2023_SCO> a fxs:Item ;
+    dcterms:title "Lesson 3: Inverter Controls" ;
+    fxs:identifiedBy "EPRI_Template_2023_SCO" ;
+    fxs:sequenceIndex 0 ;
+    fxs:hasResource <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> a fxs:SCO ;
+    fxs:identifiedBy "__69JeglEuzyv_RES" ;
+    fxs:fileLocator "package!/index_lms.html" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+# ─── Storyline scenes & slides ───
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/scene/6RdIHQ8sw43> a fxs:Scene ;
+    dcterms:title "Scene 1" ;
+    fxs:identifiedBy "6RdIHQ8sw43" ;
+    fxs:sequenceIndex 0 ;
+    fxs:hasChild <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5mxvVHmgKIk>, <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o>, <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou>, <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx>, <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS>, <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83>, <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng>, <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb>, <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj>, <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5XHGBaZwOfD> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5mxvVHmgKIk> a fxs:Slide ;
+    dcterms:title "Welcome" ;
+    fxs:identifiedBy "5mxvVHmgKIk" ;
+    fxs:sequenceIndex 0 ;
+    fxs:fileLocator "package!/html5/data/js/5mxvVHmgKIk.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide1" ;
+    fxs:extractedTextCorpus "Lesson 3: Inverter Controls; Use this title layout.\\nIt is ok to change the background image as long as the EPRI gradient overlay remains on this page prominently displayed.\\nRemove audio track if the course does not contain any other audio. You may replace with different audio, especially if you are branding a series of courses. \\nAdd prerequisite or recommended prior course work or knowledge to this slide if needed.\\n\\nStart Course – Trigger to jump to About This Course.\\n; © 2025 Electric Power Research Institute (EPRI), Inc. All rights reserved.; title.jpg" .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> a fxs:Slide ;
+    dcterms:title "Introduction" ;
+    fxs:identifiedBy "6ps7ro4Er5o" ;
+    fxs:sequenceIndex 1 ;
+    fxs:fileLocator "package!/html5/data/js/6ps7ro4Er5o.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide2" ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6XoiU1qYPis_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6XoiU1qYPis_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Lesson 2 Focus; Lesson 3 Focus; Rectangle 1; Image 37.emf; Rectangle 2" .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6XoiU1qYPis_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6XoiU1qYPis_44100_48_0.mp3" ;
+    schema:duration "PT28S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6XoiU1qYPis_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT28S"^^xsd:duration ;
+    cnt:chars "It's important for transmission operations personnel to understand how IBR's synchronize to the grid and manage current voltage and power flows. IBR's use advanced electronics to control how they interact with the grid. In the last lesson, we focused on how to produce the desired voltage given a reference voltage. In this lesson, we'll focus on how the control system for the inverter produces the desired voltage set point based on the commands from the base level controller." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6XoiU1qYPis_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5dLzuRNCmmT_44100_48_0.mp3" ;
+    schema:duration "PT9S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT9S"^^xsd:duration ;
+    cnt:chars "Upon completion of this lesson, you should be able to describe key aspects of the various IBR control system options and be able to meet the learning objectives shown." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> a fxs:Slide ;
+    dcterms:title "Inverter Operating Principles" ;
+    fxs:identifiedBy "5zBRyvxOwou" ;
+    fxs:sequenceIndex 2 ;
+    fxs:fileLocator "package!/html5/data/js/5zBRyvxOwou.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide3" ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Rectangle 3; Rectangle 5; Rectangle 4; Rectangle 1; Down Arrow 1; Click each equation to see what it represents; Rectangle 13; Down Arrow 2; Rectangle 12; Rectangle 2" .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6qbFcOmxbpl_44100_48_0.mp3" ;
+    schema:duration "PT17S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT17S"^^xsd:duration ;
+    cnt:chars "To begin, let's review a few foundational inverter operating principles. A present day inverter connects to a network grid. The inverter and the network are different technologies, but the inverter control must follow the grid voltage, so that the inverter and grid are synchronized." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5pUWbRqZNS6_44100_48_0.mp3" ;
+    schema:duration "PT45S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT45S"^^xsd:duration ;
+    cnt:chars "As discussed in lesson two, the plant controller provides the set points for active and reactive power. The inverter must quickly and accurately estimate the frequency and the phase angle of grid voltage. This is achieved using a phase-locked loop or PLL. In addition, when the grid voltage changes, the inverter control needs to respond quickly to that change, accurately controlling its terminal current to generate the voltage reference. Simply put, the current injected by the inverter, determined by complex power divided by voltage, needs to match the current drawn by the network, voltage divided by impedance, to maintain the stable grid operation. Click each equation at the bottom of the page for additional information. Click next to continue." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> a fxs:Slide ;
+    dcterms:title "Current Control Overview" ;
+    fxs:identifiedBy "6eVptVTR2Lx" ;
+    fxs:sequenceIndex 3 ;
+    fxs:fileLocator "package!/html5/data/js/6eVptVTR2Lx.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide4" ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6llp0vzR9dL_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6llp0vzR9dL_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Rectangle 3; Control output current of the inverter:; Using measured and transformed current, i; Up Arrow 1; Rectangle 4; Inverter Control Objective; Rectangle 1; Using measured and transformed voltage, Vt; Image 38.emf; Inverter Control Objective\\nControl output current of the inverter: \\nUsing measured and transformed current, i\\nUsing measured and transformed voltage, Vt; Rectangle 2; Up Arrow 2" .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/68UQ9jgrgX0_44100_48_0.mp3" ;
+    schema:duration "PT15S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT15S"^^xsd:duration ;
+    cnt:chars "The objective of Inverter Control is to control the output current of the inverter by using the measured and transformed current and measured and transformed voltage as inputs. The output is the voltage reference or modulating signal for the PWM scheme." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6llp0vzR9dL_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6llp0vzR9dL_44100_48_0.mp3" ;
+    schema:duration "PT28S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6llp0vzR9dL_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT28S"^^xsd:duration ;
+    cnt:chars "The inverter control achieves the subjective through a nested loop structure. You learned about this flow in lesson 2, but let's review. The plant controller provides the desired active and reactive power set points to the inverter control. Sensors measure the voltage. The outer loop provides the reference currents which the inner loop uses to generate the reference voltage. This voltage reference is processed by the PWM scheme to generate the system reference voltage E." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6llp0vzR9dL_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> a fxs:Slide ;
+    dcterms:title "Power and Voltage Control Overview" ;
+    fxs:identifiedBy "5q1PTTjK3aS" ;
+    fxs:sequenceIndex 4 ;
+    fxs:fileLocator "package!/html5/data/js/5q1PTTjK3aS.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide5" ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5x2cQjOSedu_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5x2cQjOSedu_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Rectangle 3; Rectangle 5; Rectangle 4; Power Control; Rectangle 6; Rectangle 1; Voltage Control; Rectangle 2" .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5x2cQjOSedu_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5x2cQjOSedu_44100_48_0.mp3" ;
+    schema:duration "PT21S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5x2cQjOSedu_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT21S"^^xsd:duration ;
+    cnt:chars "Now that we've discussed current control, let's discuss power and voltage control. Power control is dependent on the primary power source. The inverter controls DC voltage while terminal voltage depends on both the inverter and how the system is reacting to it. Click next to look in more depth at active and reactive power control." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5x2cQjOSedu_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> a fxs:Slide ;
+    dcterms:title "Active and Reactive Power Control" ;
+    fxs:identifiedBy "6KhIqryeG83" ;
+    fxs:sequenceIndex 5 ;
+    fxs:fileLocator "package!/html5/data/js/6KhIqryeG83.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide6" ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "More commonly used in bulk renewable generation inverters; more accurately produces controllable power output.; Image 43.emf; Reactive Power; Simpler and more easily used in distribution-connected DER.; Image 45.emf; Approach 2:  PPS controls dc voltage and the inverter manages active power.; Rectangle 6; Rectangle 9; Rectangle 1; Rectangle 7; Rectangle 5; Rectangle 4; Rectangle 10; Rectangle 2; Approach 1:  Primary power source (PPS) controls active power and the inverter controls Vdc.\\nApproach 2:  PPS controls dc voltage and the inverter manages active power.  ; Approach 1:  Primary power source (PPS) controls active power and the inverter controls Vdc.; Reactive power reference (Q*ppc) from the plant controller to the inverter; Rectangle 8; Active Power; Image 44.emf; Open Loop; Closed Loop; Rectangle 11; Image 42.emf" .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6Uhqd0AwLft_44100_48_0.mp3" ;
+    schema:duration "PT36S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT36S"^^xsd:duration ;
+    cnt:chars "There are two common approaches for managing DC voltage so that the inverter's output voltage is synchronized with the grid. In one approach, the primary power source controls active power while the inverter regulates DC voltage. In the other approach, the source controls DC voltage and the inverter manages active power. We'll focus on the first approach. This approach is used, for example, in a maximum PPS tracking scheme where the maximum power is extracted from the primary power source. Click each button to learn how active and reactive power control systems are implemented." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5gtwDF7sBFF_44100_48_0.mp3" ;
+    schema:duration "PT27S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT27S"^^xsd:duration ;
+    cnt:chars "Reactive power can be controlled in open loop or closed loop. With open loop control, the reference set point for reactive current is determined based on the reactive power set point and the voltage measurement. So Q, reactive power divided by Vd, voltage gives the reactive reference current. With closed loop control, the reference reactive power is compared to the measured reactive power and then a compensator generates the reactive reference current." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6Rv8igKXCV7_44100_48_0.mp3" ;
+    schema:duration "PT46S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT46S"^^xsd:duration ;
+    cnt:chars "Let's examine two DC control approaches used to determine the amount of active power. In the first approach, control is based on DC-voltage squared control, where VDC squared control develops an active power reference. This reference can then be used for either closed loop active power control or open loop control by calculating a current reference. This approach is more commonly used in bulk renewable generation inverters and more accurately produces controllable power output. The second DC voltage control approach controls VDC directly by developing the current reference to maintain the desired voltage level. This approach is more easily used in distribution-connected distributed energy resources or DER." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> a fxs:Slide ;
+    dcterms:title "Voltage Control" ;
+    fxs:identifiedBy "6cuGuY88hng" ;
+    fxs:sequenceIndex 6 ;
+    fxs:fileLocator "package!/html5/data/js/6cuGuY88hng.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide7" ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6JiqSURUYvI_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6I0VR61PQcO_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6SypeIXvavu_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5nckAIutyat_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6JiqSURUYvI_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6I0VR61PQcO_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6SypeIXvavu_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5nckAIutyat_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Required to account for voltage drops due to changing frequency. \\nNote:  Lg may take on a range of values based on system conditions.; Grid strength at connection point; IBR Internal control system; Image 48.png; Vgd - System Voltage; It is common to limit recovery rate of id1\\nNote: Lg may take on a range of values based on system conditions.; voltage drop across the system inductance due to the rotating reference frame; Rectangle 17; For transmission, assume impedance (X)>> resistance (R)\\nControl terminal voltage (Vtd1) controlled by reactive current (iq1); Note: Lg may take on a range of values based on system conditions.; Rectangle 6; Rectangle 9; represents voltage drop due to system inductance and the rate of change of the active current; Rectangle 1; Image 52.emf; Image 50.emf; IBR response is dependent on:; Rectangle 7; Rectangle 12; Control terminal voltage (Vtd1) controlled by reactive current (iq1); Rectangle 3; Rectangle 5; Rectangle 4; It is common to limit recovery rate" .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6JiqSURUYvI_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6JiqSURUYvI_44100_48_0.mp3" ;
+    schema:duration "PT15S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6JiqSURUYvI_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT15S"^^xsd:duration ;
+    cnt:chars "As you learned earlier, terminal voltage is dependent on both the inverter and how the system is reacting to it. We assume that the inverter autonomously measures and regulates terminal voltage locally without receiving a voltage reference point from the plant controller." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6JiqSURUYvI_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5ZIVqtC2X4g_44100_48_0.mp3" ;
+    schema:duration "PT39S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT39S"^^xsd:duration ;
+    cnt:chars "Inverter voltage is controlled through reactive current. To understand how the inverter develops the reactive current reference in the dynamics, we can use Kirchhoff's voltage law to calculate the system voltage, VTD1. The equation shows that the active current component of the terminal voltage depends on several terms. Note that the parameter LG which represents the grid inductance and is an indication of the short circuit strength of the grid appears in two of those terms. This suggests that the dynamics of VTD1 depends on grid strength. Click each component of the equation that contributes to system voltage to learn more. Click next to continue." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6I0VR61PQcO_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6I0VR61PQcO_44100_48_0.mp3" ;
+    schema:duration "PT49S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6I0VR61PQcO_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT49S"^^xsd:duration ;
+    cnt:chars "The last term in the equation is system voltage. The presence of the term LG in voltage dynamics makes voltage control dependent on grid strength. The graph shows the step response of the terminal voltage for different grid short circuit ratio or SCR values with the same controller gain. In weaker grid conditions, for example, a short circuit ratio of 2 to 5, the response is faster. However, as the grid gets stronger, for example, a short circuit ratio of 10 to 15, the response slows down because LG is larger and it takes more reactive current to change voltage. In summary, the IBR response is dependent upon both its internal control system and the grid strength at its connection point. The graph of the voltage response at different SCR values is extremely telling." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6I0VR61PQcO_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5jMp1uOBvcw_44100_48_0.mp3" ;
+    schema:duration "PT24S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT24S"^^xsd:duration ;
+    cnt:chars "LG Omega PLLIQ1 represents a voltage across the system inductance due to the rotating reference frame or changing frequency. LG or grid-side inductance can take on a range of values based on system conditions. In a weak grid where LG is large, a small change in reactive current can cause a large change in voltage. This can affect the controller's performance." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6SypeIXvavu_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6SypeIXvavu_44100_48_0.mp3" ;
+    schema:duration "PT24S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6SypeIXvavu_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT24S"^^xsd:duration ;
+    cnt:chars "This part of the equation represents the voltage drop due to system inductance and the change rate of the active current. In a weak grid, after a fault, we aim to limit the ramp rate of the active current component, DID1, by DT to avoid rapid changes in ID1 that could lead to undesirable large changes in voltage. LG may take on a range of values based on system conditions." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6SypeIXvavu_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5nckAIutyat_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5nckAIutyat_44100_48_0.mp3" ;
+    schema:duration "PT43S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5nckAIutyat_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT43S"^^xsd:duration ;
+    cnt:chars "This part of the equation represents voltage drop due to system resistance. Rg is the resistive part of the grid impedance. ID references active power current. In transmission applications, we can assume that the resistive part of grid impedance R is a negligible component of the overall impedance x. Hence, we can ignore Rgid with in voltage dynamics. This suggests that the terminal voltage can be controlled by the reactive current. Looking at the voltage control system, the reference voltage is compared to the measured voltage and the difference is processed by a compensator to develop the reference current. The compensator is typically a proportional integrator controller." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5nckAIutyat_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> a fxs:Slide ;
+    dcterms:title "Fault Ride-Through Response (FRT)" ;
+    fxs:identifiedBy "6JZsAHMHpvb" ;
+    fxs:sequenceIndex 7 ;
+    fxs:fileLocator "package!/html5/data/js/6JZsAHMHpvb.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide8" ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F64w1SoQq2BD_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6O98E7I3oiU_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F64w1SoQq2BD_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6O98E7I3oiU_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Control Objectives; Rectangle 4; Maintain current limits of the power electronics \\nControl dc voltage\\nInject reactive current to keep phase current between 1.1 - 1.5; Rectangle 1; Inject reactive current to support the voltage - either positive or negative sequence; Have fast response time - tens of milliseconds -- based on the agreed code and interconnection requirements; Image 38.emf; Rectangle 2" .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F64w1SoQq2BD_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/64w1SoQq2BD_44100_48_0.mp3" ;
+    schema:duration "PT33S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F64w1SoQq2BD_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT33S"^^xsd:duration ;
+    cnt:chars "So far we've discussed control under normal operating conditions where voltage and frequency are within the normal range and the plant controller generates set points for individual inverters. What do control objectives look like during abnormal conditions such as a fault where the voltage is fallen outside the normal range? When grid voltage is abnormally low or high, the inverter operates in low voltage drive through or high voltage drive through control mode. The plant controls are typically frozen and the inverter control responds to its terminal voltage." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F64w1SoQq2BD_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6O98E7I3oiU_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6O98E7I3oiU_44100_48_0.mp3" ;
+    schema:duration "PT9S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6O98E7I3oiU_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT9S"^^xsd:duration ;
+    cnt:chars "Click on each photo to learn about some control objectives for a fault ride through response. Click next when you have finished to continue to a lesson summary." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6O98E7I3oiU_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> a fxs:Slide ;
+    dcterms:title "Conclusion" ;
+    fxs:identifiedBy "66RtiTQPuzj" ;
+    fxs:sequenceIndex 8 ;
+    fxs:fileLocator "package!/html5/data/js/66RtiTQPuzj.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide9" ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "You have now completed Lesson 3: Inverter Controls; AdobeStock_635174439.jpg; Rectangle 1; Image 38.emf; Rectangle 2" .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5jKG5HVuxEz_44100_48_0.mp3" ;
+    schema:duration "PT6S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT6S"^^xsd:duration ;
+    cnt:chars "You have now completed the third lesson of the Inverter-based Resource Basics and Operations course." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6Yj2OVM5BXp_44100_48_0.mp3" ;
+    schema:duration "PT16S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT16S"^^xsd:duration ;
+    cnt:chars "In this lesson, you reviewed some basic inverter operating principles. You were introduced to control objectives used in normal conditions for current, outer loop, reactive power and voltage controls. You also reviewed some control objectives for a fault ride-through response." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/60Wi5ALwlLq_44100_48_0.mp3" ;
+    schema:duration "PT7S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT7S"^^xsd:duration ;
+    cnt:chars "You should now be able to describe key aspects of the various IBR control system options covered in this lesson." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5XHGBaZwOfD> a fxs:Slide ;
+    dcterms:title "Thank You" ;
+    fxs:identifiedBy "5XHGBaZwOfD" ;
+    fxs:sequenceIndex 9 ;
+    fxs:fileLocator "package!/html5/data/js/5XHGBaZwOfD.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide10" ;
+    fxs:embedsAsset <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5lCm0CvEUym_44100_48_0.mp3> ;
+    fxs:hasNarration <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5lCm0CvEUym_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Exit; Thank you for your participation in \\nLesson 3: Inverter Controls.\\n\\rSelect the Exit button to end this course.; EPRI training_editable backgrounds EXIT.jpg; Instructions for Developer:\\n\\nThis slide must be included in all courses.\\nThis slide must contain the course title, the EPRI U graphic, and an Exit button.\\nThe background image and other features can be changed to fit each course.\\nRemove the music if the course does not contain audio, or change the music if desired." .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5lCm0CvEUym_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5lCm0CvEUym_44100_48_0.mp3" ;
+    schema:duration "PT60S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/narration/story_content%2F5lCm0CvEUym_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT60S"^^xsd:duration ;
+    cnt:chars "Thank you." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/asset/story_content%2F5lCm0CvEUym_44100_48_0.mp3> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/scene/5sFB072XEDS> a fxs:Scene ;
+    dcterms:title "Scene 2" ;
+    fxs:identifiedBy "5sFB072XEDS" ;
+    fxs:sequenceIndex 1 ;
+    fxs:hasChild <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6DAYZylYZ4Y>, <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6IcYxMXh0mW> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6DAYZylYZ4Y> a fxs:Slide ;
+    dcterms:title "Navigating This Course" ;
+    fxs:identifiedBy "6DAYZylYZ4Y" ;
+    fxs:sequenceIndex 0 ;
+    fxs:fileLocator "package!/html5/data/js/6DAYZylYZ4Y.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide1" ;
+    fxs:extractedTextCorpus "Exit; If additional reference materials are included with this course, they can be accessed from the Resource menu at the top right of the course window.\\n \\nNotes: \\nMany reference materials are provided as Adobe PDF files. To read these documents, you must have the free Adobe Acrobat Reader installed. Go to https://get.adobe.com/reader to install Acrobat Reader if needed.\\r \\nLinks may lead to external resources. Some of these may require membership in a specific organization. If you are interested in those resources, see that organization’s web site for more information.; You can exit the course at any time by selecting the Exit button in the top right. If you return to the course at a later date, you can pick-up right where you left off. \\n\\nWhen you reach the end of the course, you will also be able to Exit using a button on the last page.; A playbar is provided at the bottom of the course. Buttons on the playbar allow you to pause, play, rewind, and fast forward through audio and" .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6IcYxMXh0mW> a fxs:Slide ;
+    dcterms:title "About This Course" ;
+    fxs:identifiedBy "6IcYxMXh0mW" ;
+    fxs:sequenceIndex 1 ;
+    fxs:fileLocator "package!/html5/data/js/6IcYxMXh0mW.js" ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide2" ;
+    fxs:extractedTextCorpus "template3.jpg; About EPRI\\n\\nFounded in 1972, EPRI is the world’s preeminent independent, non-profit energy research and development organization, with offices around the world. EPRI’s trusted experts collaborate with more than 450 companies in 45 countries, driving innovation to ensure the public has clean, safe, reliable, affordable, and equitable access to electricity across the globe. Together, we are shaping the future of energy.\\n\\n; Disclaimer; Select each item on the right to learn more about this course and EPRI.; This course does not contain audio. ; Inverter-Based Resource (IBR) Basics and Operations\\n\\nEPRI Product ID # 3002033926\\r\\nCopyright © 2025 Electric Power Research Institute, Inc. All rights reserved. \\r\\nEPRI reserves all rights in the Program as delivered. The Program or any portion thereof may not be reproduced in any form whatsoever except as provided by license without the written consent of EPRI. A license under EPRI's rights in the Program may be available d" .
+
+# ═══════════════════════════════════════════════════
+# SEMANTIC STRATUM (fxk:)
+# ═══════════════════════════════════════════════════
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/conditions-where-voltage> a fxk:Concept ;
+    skos:prefLabel "conditions where voltage" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "voltage" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> a fxk:Concept ;
+    skos:prefLabel "inverter operating principles" ;
+    fxk:extractionConfidence 0.92 ;
+    fxk:headWord "principles" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/points-for-individual> a fxk:Concept ;
+    skos:prefLabel "points for individual" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "individual" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> a fxk:Concept ;
+    skos:prefLabel "power and voltage" ;
+    fxk:extractionConfidence 0.93 ;
+    fxk:headWord "voltage" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/ibr-control-system> a fxk:Concept ;
+    skos:prefLabel "ibr control system" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "system" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/how-they-interact> a fxk:Concept ;
+    skos:prefLabel "how they interact" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "interact" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/from-the-base> a fxk:Concept ;
+    skos:prefLabel "from the base" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "base" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/generates-set-points> a fxk:Concept ;
+    skos:prefLabel "generates set points" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "points" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reviewed-some-basic> a fxk:Concept ;
+    skos:prefLabel "reviewed some basic" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "basic" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/output> a fxk:Concept ;
+    skos:prefLabel "output" ;
+    fxk:extractionConfidence 0.9 ;
+    fxk:headWord "output" ;
+    fxk:isFreeStanding false ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> a fxk:Concept ;
+    skos:prefLabel "plant controller provides" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:headWord "provides" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/basics-and-operations> a fxk:Concept ;
+    skos:prefLabel "basics and operations" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "operations" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-power> a fxk:Concept ;
+    skos:prefLabel "active power" ;
+    fxk:extractionConfidence 0.73 ;
+    fxk:headWord "power" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid-strength> a fxk:Concept ;
+    skos:prefLabel "grid strength" ;
+    fxk:extractionConfidence 0.71 ;
+    fxk:headWord "strength" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-current> a fxk:Concept ;
+    skos:prefLabel "active current" ;
+    fxk:extractionConfidence 0.71 ;
+    fxk:headWord "current" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/loop-reactive-power> a fxk:Concept ;
+    skos:prefLabel "loop reactive power" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "power" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/scheme-the-inverter> a fxk:Concept ;
+    skos:prefLabel "scheme the inverter" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "inverter" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/base-level-controller> a fxk:Concept ;
+    skos:prefLabel "base level controller" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "controller" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-and-frequency> a fxk:Concept ;
+    skos:prefLabel "voltage and frequency" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "frequency" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/approaches-for-managing> a fxk:Concept ;
+    skos:prefLabel "approaches for managing" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "managing" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/present-day-inverter> a fxk:Concept ;
+    skos:prefLabel "present day inverter" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "inverter" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power> a fxk:Concept ;
+    skos:prefLabel "power" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:headWord "power" ;
+    fxk:isFreeStanding false ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/loop> a fxk:Concept ;
+    skos:prefLabel "loop" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:headWord "loop" ;
+    fxk:isFreeStanding false ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/pwm-scheme> a fxk:Concept ;
+    skos:prefLabel "pwm scheme" ;
+    fxk:extractionConfidence 0.7 ;
+    fxk:headWord "scheme" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/normal-conditions> a fxk:Concept ;
+    skos:prefLabel "normal conditions" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "conditions" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/short-circuit> a fxk:Concept ;
+    skos:prefLabel "short circuit" ;
+    fxk:extractionConfidence 0.72 ;
+    fxk:headWord "circuit" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/various-ibr> a fxk:Concept ;
+    skos:prefLabel "various ibr" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "ibr" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inputs-the-output> a fxk:Concept ;
+    skos:prefLabel "inputs the output" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "output" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-control-achieves> a fxk:Concept ;
+    skos:prefLabel "inverter control achieves" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "achieves" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/discussed-current> a fxk:Concept ;
+    skos:prefLabel "discussed current" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "current" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-reference-current> a fxk:Concept ;
+    skos:prefLabel "reactive reference current" ;
+    fxk:extractionConfidence 0.7 ;
+    fxk:headWord "current" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> a fxk:Concept ;
+    skos:prefLabel "inverter" ;
+    fxk:extractionConfidence 0.95 ;
+    fxk:headWord "inverter" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/closed-loop> a fxk:Concept ;
+    skos:prefLabel "closed loop" ;
+    fxk:extractionConfidence 0.71 ;
+    fxk:headWord "loop" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-flows-ibr> a fxk:Concept ;
+    skos:prefLabel "power flows ibr" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "ibr" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/nested-loop-structure> a fxk:Concept ;
+    skos:prefLabel "nested loop structure" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "structure" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/response> a fxk:Concept ;
+    skos:prefLabel "response" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:headWord "response" ;
+    fxk:isFreeStanding false ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/achieves-the-subjective> a fxk:Concept ;
+    skos:prefLabel "achieves the subjective" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "subjective" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/terminal-voltage-depends> a fxk:Concept ;
+    skos:prefLabel "terminal voltage depends" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "depends" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/normal-operating-conditions> a fxk:Concept ;
+    skos:prefLabel "normal operating conditions" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "conditions" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/measured-and-transformed> a fxk:Concept ;
+    skos:prefLabel "measured and transformed" ;
+    fxk:extractionConfidence 0.7 ;
+    fxk:headWord "transformed" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/individual-inverters-what> a fxk:Concept ;
+    skos:prefLabel "individual inverters what" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "what" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-drive> a fxk:Concept ;
+    skos:prefLabel "voltage drive" ;
+    fxk:extractionConfidence 0.7 ;
+    fxk:headWord "drive" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/desired-voltage> a fxk:Concept ;
+    skos:prefLabel "desired voltage" ;
+    fxk:extractionConfidence 0.7 ;
+    fxk:headWord "voltage" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/system-voltage> a fxk:Concept ;
+    skos:prefLabel "system voltage" ;
+    fxk:extractionConfidence 0.71 ;
+    fxk:headWord "voltage" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-control-power> a fxk:Concept ;
+    skos:prefLabel "voltage control power" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "power" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/system-options-covered> a fxk:Concept ;
+    skos:prefLabel "system options covered" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "covered" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/structure-you-learned> a fxk:Concept ;
+    skos:prefLabel "structure you learned" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "learned" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/foundational-inverter-operating> a fxk:Concept ;
+    skos:prefLabel "foundational inverter operating" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "operating" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/basic-inverter-operating> a fxk:Concept ;
+    skos:prefLabel "basic inverter operating" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "operating" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/produce-the-desired> a fxk:Concept ;
+    skos:prefLabel "produce the desired" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "desired" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-current> a fxk:Concept ;
+    skos:prefLabel "reactive current" ;
+    fxk:extractionConfidence 0.73 ;
+    fxk:headWord "current" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-generates> a fxk:Concept ;
+    skos:prefLabel "plant controller generates" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "generates" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/manage-current-voltage> a fxk:Concept ;
+    skos:prefLabel "manage current voltage" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "voltage" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/controller-generates-set> a fxk:Concept ;
+    skos:prefLabel "controller generates set" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "set" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/outer-loop-reactive> a fxk:Concept ;
+    skos:prefLabel "outer loop reactive" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "reactive" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/how-the-system> a fxk:Concept ;
+    skos:prefLabel "how the system" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "system" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/provides-the-set> a fxk:Concept ;
+    skos:prefLabel "provides the set" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "set" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/follow-the-grid> a fxk:Concept ;
+    skos:prefLabel "follow the grid" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "grid" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> a fxk:Concept ;
+    skos:prefLabel "fault ride-through response" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:headWord "response" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-outer-loop> a fxk:Concept ;
+    skos:prefLabel "current outer loop" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "loop" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/system> a fxk:Concept ;
+    skos:prefLabel "system" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:headWord "system" ;
+    fxk:isFreeStanding false ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid> a fxk:Concept ;
+    skos:prefLabel "grid" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:headWord "grid" ;
+    fxk:isFreeStanding false ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-while-terminal> a fxk:Concept ;
+    skos:prefLabel "voltage while terminal" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "terminal" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid-are-synchronized> a fxk:Concept ;
+    skos:prefLabel "grid are synchronized" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "synchronized" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-and-measured> a fxk:Concept ;
+    skos:prefLabel "current and measured" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "measured" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/level-controller-upon> a fxk:Concept ;
+    skos:prefLabel "level controller upon" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "upon" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid-voltage> a fxk:Concept ;
+    skos:prefLabel "grid voltage" ;
+    fxk:extractionConfidence 0.71 ;
+    fxk:headWord "voltage" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> a fxk:Concept ;
+    skos:prefLabel "active and reactive" ;
+    fxk:extractionConfidence 0.93 ;
+    fxk:headWord "reactive" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/set-point-based> a fxk:Concept ;
+    skos:prefLabel "set point based" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "based" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-and-how> a fxk:Concept ;
+    skos:prefLabel "inverter and how" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "how" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage> a fxk:Concept ;
+    skos:prefLabel "voltage" ;
+    fxk:extractionConfidence 0.93 ;
+    fxk:headWord "voltage" ;
+    fxk:isFreeStanding false ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current> a fxk:Concept ;
+    skos:prefLabel "current" ;
+    fxk:extractionConfidence 0.92 ;
+    fxk:headWord "current" ;
+    fxk:isFreeStanding false ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-control-let> a fxk:Concept ;
+    skos:prefLabel "current control let" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "let" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/transmission-operations-personnel> a fxk:Concept ;
+    skos:prefLabel "transmission operations personnel" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "personnel" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/primary-power-source> a fxk:Concept ;
+    skos:prefLabel "primary power source" ;
+    fxk:extractionConfidence 0.92 ;
+    fxk:headWord "source" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/provides-the-desired> a fxk:Concept ;
+    skos:prefLabel "provides the desired" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "desired" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid-the-inverter> a fxk:Concept ;
+    skos:prefLabel "grid the inverter" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "inverter" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/short-circuit-ratio> a fxk:Concept ;
+    skos:prefLabel "short circuit ratio" ;
+    fxk:extractionConfidence 0.71 ;
+    fxk:headWord "ratio" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/day-inverter-connects> a fxk:Concept ;
+    skos:prefLabel "day inverter connects" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "connects" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/desired-voltage-set> a fxk:Concept ;
+    skos:prefLabel "desired voltage set" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "set" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/ride-through-response-frt> a fxk:Concept ;
+    skos:prefLabel "ride-through response frt" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "frt" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/produces-the-desired> a fxk:Concept ;
+    skos:prefLabel "produces the desired" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "desired" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/conditions-for-current> a fxk:Concept ;
+    skos:prefLabel "conditions for current" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "current" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-based-resource-basics> a fxk:Concept ;
+    skos:prefLabel "inverter-based resource basics" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "basics" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-and-grid> a fxk:Concept ;
+    skos:prefLabel "inverter and grid" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "grid" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/terminal-voltage> a fxk:Concept ;
+    skos:prefLabel "terminal voltage" ;
+    fxk:extractionConfidence 0.73 ;
+    fxk:headWord "voltage" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/important-for-transmission> a fxk:Concept ;
+    skos:prefLabel "important for transmission" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "transmission" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/source-the-inverter> a fxk:Concept ;
+    skos:prefLabel "source the inverter" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "inverter" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid-and-manage> a fxk:Concept ;
+    skos:prefLabel "grid and manage" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "manage" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-power> a fxk:Concept ;
+    skos:prefLabel "reactive power" ;
+    fxk:extractionConfidence 0.94 ;
+    fxk:headWord "power" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/normal-range> a fxk:Concept ;
+    skos:prefLabel "normal range" ;
+    fxk:extractionConfidence 0.7 ;
+    fxk:headWord "range" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/2-but-let> a fxk:Concept ;
+    skos:prefLabel "2 but let" ;
+    fxk:extractionConfidence 0.49 ;
+    fxk:headWord "let" ;
+    fxk:isFreeStanding true ;
+    fxk:taughtIn <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> .
+
+# ─── Modifier-of (morphological head-modifier relations) ───
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/desired-voltage> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/system-voltage> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid-voltage> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/terminal-voltage> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/conditions-where-voltage> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/manage-current-voltage> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/ibr-control-system> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/system> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/how-the-system> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/system> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inputs-the-output> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/output> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-power> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-power> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/loop-reactive-power> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-control-power> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-current> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/discussed-current> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-current> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-reference-current> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/conditions-for-current> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/scheme-the-inverter> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/present-day-inverter> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid-the-inverter> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/source-the-inverter> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/closed-loop> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/loop> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-outer-loop> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/loop> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/response> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/follow-the-grid> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-and-grid> fxk:modifierOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid> .
+
+# ─── Prerequisite (free-standing concepts only) ───
+
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/measured-and-transformed> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/pwm-scheme> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-and-measured> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inputs-the-output> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/scheme-the-inverter> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-control-achieves> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/achieves-the-subjective> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/nested-loop-structure> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/structure-you-learned> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/2-but-let> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/provides-the-desired> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/measured-and-transformed> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/pwm-scheme> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-and-measured> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inputs-the-output> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/scheme-the-inverter> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-control-achieves> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/achieves-the-subjective> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/nested-loop-structure> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/structure-you-learned> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/2-but-let> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/provides-the-desired> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-provides> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-control-let> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-control-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/primary-power-source> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/source-the-inverter> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-while-terminal> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/terminal-voltage-depends> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-and-how> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/how-the-system> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/discussed-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-control-let> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-control-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/primary-power-source> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/source-the-inverter> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-while-terminal> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/terminal-voltage-depends> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-and-how> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/how-the-system> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/discussed-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-control-let> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-control-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/primary-power-source> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/source-the-inverter> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-while-terminal> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/terminal-voltage-depends> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-and-how> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/how-the-system> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/discussed-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-power> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-power> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/closed-loop> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-power> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-reference-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-power> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/approaches-for-managing> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/closed-loop> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-reference-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-and-reactive> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/approaches-for-managing> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/primary-power-source> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/primary-power-source> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/closed-loop> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/primary-power-source> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-reference-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/primary-power-source> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/approaches-for-managing> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/closed-loop> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-reference-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/approaches-for-managing> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/terminal-voltage> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reactive-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/short-circuit> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/short-circuit-ratio> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/system-voltage> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/active-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/grid-strength> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/normal-range> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-drive> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/ride-through-response-frt> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/normal-operating-conditions> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/conditions-where-voltage> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/voltage-and-frequency> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/plant-controller-generates> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/controller-generates-set> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/generates-set-points> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/points-for-individual> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/individual-inverters-what> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-based-resource-basics> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/basics-and-operations> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reviewed-some-basic> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/basic-inverter-operating> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/conditions-for-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-outer-loop> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/outer-loop-reactive> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/loop-reactive-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/ibr-control-system> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/system-options-covered> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/normal-conditions> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/various-ibr> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-based-resource-basics> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/basics-and-operations> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reviewed-some-basic> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/basic-inverter-operating> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-operating-principles> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/conditions-for-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-outer-loop> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/outer-loop-reactive> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/loop-reactive-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/ibr-control-system> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/system-options-covered> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/normal-conditions> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/power-and-voltage> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/various-ibr> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/inverter-based-resource-basics> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/basics-and-operations> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/reviewed-some-basic> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/basic-inverter-operating> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/conditions-for-current> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/current-outer-loop> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/outer-loop-reactive> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/loop-reactive-power> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/ibr-control-system> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/system-options-covered> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/normal-conditions> .
+<https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/fault-ride-through-response> fxk:prerequisiteOf <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson3/concept/various-ibr> .
+
+# ─── Parser provenance ───
+<https://vocab.foxximediums.com/parsers/storyline/0.3.0> a prov:SoftwareAgent ;
+    rdfs:label "foxxi-storyline-parser" ;
+    schema:softwareVersion "0.3.0" .
+
+<https://vocab.foxximediums.com/parsers/storyline/0.3.0#concept-extractor> a prov:SoftwareAgent ;
+    rdfs:label "foxxi heuristic concept extractor v0.3" ;
+    rdfs:comment "n-gram TF + bag-dedup + head-word morphology + free-standing tagging + heuristic semiotic role assignment. v0.4 will use LLM-backed OLKE decomposition." .

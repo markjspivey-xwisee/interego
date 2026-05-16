@@ -1,0 +1,1569 @@
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix sh:      <http://www.w3.org/ns/shacl#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix prov:    <http://www.w3.org/ns/prov#> .
+@prefix schema:  <http://schema.org/> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix cnt:     <http://www.w3.org/2011/content#> .
+@prefix fxs:     <https://vocab.foxximediums.com/scorm#> .
+@prefix fxk:     <https://vocab.foxximediums.com/knowledge#> .
+@prefix fxsh:    <https://vocab.foxximediums.com/shapes#> .
+
+# ─── v0.2 vocabulary extensions (declared inline pending vocab v0.2) ───
+# Slide is both an Item (so it composes into the pedagogical tree) AND
+# a Resource (so it can carry a fileLocator and embed assets directly).
+# This dual nature reflects the reality of slide-based authoring.
+fxs:Slide a rdfs:Class ;
+    rdfs:subClassOf fxs:Item, fxs:Resource ;
+    rdfs:label "Slide" ;
+    rdfs:comment "A leaf-level pedagogical unit, typically authored as a single screen with optional narration. Functions both as an Item in the organization tree and as a Resource carrying content." .
+
+fxs:Scene a rdfs:Class ;
+    rdfs:subClassOf fxs:Item ;
+    rdfs:label "Scene" ;
+    rdfs:comment "A grouping of related slides, used by some authoring tools (e.g. Storyline) to organize content into chapters." .
+
+fxs:NarrationTranscript a rdfs:Class ;
+    rdfs:label "Narration Transcript" ;
+    rdfs:comment "Text content of a narration audio track, typically produced by ASR." .
+
+fxs:hasNarration a rdf:Property ;
+    rdfs:label "has narration" ;
+    rdfs:domain fxs:Item ;
+    rdfs:range fxs:NarrationTranscript .
+
+fxs:transcribedBy a rdf:Property ;
+    rdfs:label "transcribed by" ;
+    rdfs:range prov:Agent .
+
+fxs:extractedTextCorpus a rdf:Property ;
+    rdfs:label "extracted text corpus" ;
+    rdfs:comment "Collected text content from a Resource (alt-text, on-screen labels, etc.) used as input for semantic extraction." .
+
+# Override v0.1 ItemShape: a Slide is self-contained (Item ∩ Resource)
+# and need not reference an external Resource. v0.2 vocabulary will
+# refactor ItemShape to scope by class rather than carry this exception.
+fxsh:SlideShape a sh:NodeShape ;
+    sh:targetClass fxs:Slide ;
+    sh:property [
+        sh:path fxs:identifiedBy ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+    ] ;
+    sh:property [
+        sh:path fxs:fileLocator ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+    ] .
+
+
+# ═══════════════════════════════════════════════════
+# STRUCTURAL STRATUM (fxs:)
+# ═══════════════════════════════════════════════════
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv> a fxs:Package ;
+    dcterms:title "Lesson 3: Inverter Controls" ;
+    dcterms:identifier "_69JeglEuzyv" ;
+    fxs:identifiedBy "_69JeglEuzyv" ;
+    fxs:standardConformance fxs:SCORM_2004_4 ;
+    schema:softwareVersion "3.104.35448.0" ;
+    fxs:authoredWith fxs:ArticulateStoryline ;
+    fxs:hasOrganization <https://example.foxximediums.com/pkg/_69JeglEuzyv/org/Lesson_3%3A_Inverter_Controls_ORG> ;
+    fxs:defaultOrganization <https://example.foxximediums.com/pkg/_69JeglEuzyv/org/Lesson_3%3A_Inverter_Controls_ORG> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0> ;
+    prov:generatedAtTime "2026-04-29T20:15:00Z"^^xsd:dateTime .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/org/Lesson_3%3A_Inverter_Controls_ORG> a fxs:Organization ;
+    dcterms:title "Lesson 3: Inverter Controls" ;
+    fxs:identifiedBy "Lesson_3:_Inverter_Controls_ORG" ;
+    fxs:hasItem <https://example.foxximediums.com/pkg/_69JeglEuzyv/item/EPRI_Template_2023_SCO> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/item/EPRI_Template_2023_SCO> a fxs:Item ;
+    dcterms:title "Lesson 3: Inverter Controls" ;
+    fxs:identifiedBy "EPRI_Template_2023_SCO" ;
+    fxs:sequenceIndex 0 ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> a fxs:SCO ;
+    fxs:identifiedBy "__69JeglEuzyv_RES" ;
+    fxs:fileLocator "package!/index_lms.html" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+# ─── Storyline scenes & slides ───
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/scene/6RdIHQ8sw43> a fxs:Scene, fxs:Item ;
+    dcterms:title "Scene 1" ;
+    fxs:identifiedBy "6RdIHQ8sw43" ;
+    fxs:sequenceIndex 0 ;
+    fxs:hasChild <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5mxvVHmgKIk>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5XHGBaZwOfD> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5mxvVHmgKIk> a fxs:Slide, fxs:Item ;
+    dcterms:title "Welcome" ;
+    fxs:identifiedBy "5mxvVHmgKIk" ;
+    fxs:sequenceIndex 0 ;
+    fxs:fileLocator "package!/html5/data/js/5mxvVHmgKIk.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5mxvVHmgKIk> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide1" ;
+    fxs:extractedTextCorpus "Lesson 3: Inverter Controls; Use this title layout.\\nIt is ok to change the background image as long as the EPRI gradient overlay remains on this page prominently displayed.\\nRemove audio track if the course does not contain any other audio. You may replace with different audio, especially if you are branding a series of courses. \\nAdd prerequisite or recommended prior course work or knowledge to this slide if needed.\\n\\nStart Course – Trigger to jump to About This Course.\\n; title.jpg; © 2025 Electric Power Research Institute (EPRI), Inc. All rights reserved." .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> a fxs:Slide, fxs:Item ;
+    dcterms:title "Introduction" ;
+    fxs:identifiedBy "6ps7ro4Er5o" ;
+    fxs:sequenceIndex 1 ;
+    fxs:fileLocator "package!/html5/data/js/6ps7ro4Er5o.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide2" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6XoiU1qYPis_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6XoiU1qYPis_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Lesson 3 Focus; Image 37.emf; Rectangle 1; Lesson 2 Focus; Rectangle 2" .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6XoiU1qYPis_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6XoiU1qYPis_44100_48_0.mp3" ;
+    schema:duration "PT28S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6XoiU1qYPis_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT28S"^^xsd:duration ;
+    cnt:chars "It's important for transmission operations personnel to understand how IBR's synchronize to the grid and manage current voltage and power flows. IBR's use advanced electronics to control how they interact with the grid. In the last lesson, we focused on how to produce the desired voltage given a reference voltage. In this lesson, we'll focus on how the control system for the inverter produces the desired voltage set point based on the commands from the base level controller." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6XoiU1qYPis_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5dLzuRNCmmT_44100_48_0.mp3" ;
+    schema:duration "PT9S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT9S"^^xsd:duration ;
+    cnt:chars "Upon completion of this lesson, you should be able to describe key aspects of the various IBR control system options and be able to meet the learning objectives shown." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> a fxs:Slide, fxs:Item ;
+    dcterms:title "Inverter Operating Principles" ;
+    fxs:identifiedBy "5zBRyvxOwou" ;
+    fxs:sequenceIndex 2 ;
+    fxs:fileLocator "package!/html5/data/js/5zBRyvxOwou.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide3" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Rectangle 13; Rectangle 3; Rectangle 12; Rectangle 2; Rectangle 5; Rectangle 1; Down Arrow 1; Click each equation to see what it represents; Rectangle 4; Down Arrow 2" .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6qbFcOmxbpl_44100_48_0.mp3" ;
+    schema:duration "PT17S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT17S"^^xsd:duration ;
+    cnt:chars "To begin, let's review a few foundational inverter operating principles. A present day inverter connects to a network grid. The inverter and the network are different technologies, but the inverter control must follow the grid voltage, so that the inverter and grid are synchronized." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5pUWbRqZNS6_44100_48_0.mp3" ;
+    schema:duration "PT45S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT45S"^^xsd:duration ;
+    cnt:chars "As discussed in lesson two, the plant controller provides the set points for active and reactive power. The inverter must quickly and accurately estimate the frequency and the phase angle of grid voltage. This is achieved using a phase-locked loop or PLL. In addition, when the grid voltage changes, the inverter control needs to respond quickly to that change, accurately controlling its terminal current to generate the voltage reference. Simply put, the current injected by the inverter, determined by complex power divided by voltage, needs to match the current drawn by the network, voltage divided by impedance, to maintain the stable grid operation. Click each equation at the bottom of the page for additional information. Click next to continue." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> a fxs:Slide, fxs:Item ;
+    dcterms:title "Current Control Overview" ;
+    fxs:identifiedBy "6eVptVTR2Lx" ;
+    fxs:sequenceIndex 3 ;
+    fxs:fileLocator "package!/html5/data/js/6eVptVTR2Lx.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide4" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6llp0vzR9dL_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6llp0vzR9dL_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Control output current of the inverter:; Image 38.emf; Rectangle 3; Up Arrow 2; Inverter Control Objective; Up Arrow 1; Inverter Control Objective\\nControl output current of the inverter: \\nUsing measured and transformed current, i\\nUsing measured and transformed voltage, Vt; Rectangle 1; Using measured and transformed current, i; Rectangle 4; Using measured and transformed voltage, Vt; Rectangle 2" .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/68UQ9jgrgX0_44100_48_0.mp3" ;
+    schema:duration "PT15S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT15S"^^xsd:duration ;
+    cnt:chars "The objective of Inverter Control is to control the output current of the inverter by using the measured and transformed current and measured and transformed voltage as inputs. The output is the voltage reference or modulating signal for the PWM scheme." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6llp0vzR9dL_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6llp0vzR9dL_44100_48_0.mp3" ;
+    schema:duration "PT28S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6llp0vzR9dL_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT28S"^^xsd:duration ;
+    cnt:chars "The inverter control achieves the subjective through a nested loop structure. You learned about this flow in lesson 2, but let's review. The plant controller provides the desired active and reactive power set points to the inverter control. Sensors measure the voltage. The outer loop provides the reference currents which the inner loop uses to generate the reference voltage. This voltage reference is processed by the PWM scheme to generate the system reference voltage E." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6llp0vzR9dL_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> a fxs:Slide, fxs:Item ;
+    dcterms:title "Power and Voltage Control Overview" ;
+    fxs:identifiedBy "5q1PTTjK3aS" ;
+    fxs:sequenceIndex 4 ;
+    fxs:fileLocator "package!/html5/data/js/5q1PTTjK3aS.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide5" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5x2cQjOSedu_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5x2cQjOSedu_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Rectangle 6; Voltage Control; Rectangle 3; Rectangle 5; Power Control; Rectangle 1; Rectangle 4; Rectangle 2" .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5x2cQjOSedu_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5x2cQjOSedu_44100_48_0.mp3" ;
+    schema:duration "PT21S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5x2cQjOSedu_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT21S"^^xsd:duration ;
+    cnt:chars "Now that we've discussed current control, let's discuss power and voltage control. Power control is dependent on the primary power source. The inverter controls DC voltage while terminal voltage depends on both the inverter and how the system is reacting to it. Click next to look in more depth at active and reactive power control." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5x2cQjOSedu_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> a fxs:Slide, fxs:Item ;
+    dcterms:title "Active and Reactive Power Control" ;
+    fxs:identifiedBy "6KhIqryeG83" ;
+    fxs:sequenceIndex 5 ;
+    fxs:fileLocator "package!/html5/data/js/6KhIqryeG83.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide6" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Approach 2:  PPS controls dc voltage and the inverter manages active power.; Image 42.emf; Rectangle 7; Rectangle 8; Closed Loop; Rectangle 2; Reactive power reference (Q*ppc) from the plant controller to the inverter; Rectangle 6; Rectangle 10; Rectangle 5; Active Power; Image 45.emf; Image 44.emf; Simpler and more easily used in distribution-connected DER.; Reactive Power; Approach 1:  Primary power source (PPS) controls active power and the inverter controls Vdc.; More commonly used in bulk renewable generation inverters; more accurately produces controllable power output.; Rectangle 1; Rectangle 11; Image 43.emf; Approach 1:  Primary power source (PPS) controls active power and the inverter controls Vdc.\\nApproach 2:  PPS controls dc voltage and the inverter manages active power.  ; Open Loop; Rectangle 4; Rectangle 9" .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6Uhqd0AwLft_44100_48_0.mp3" ;
+    schema:duration "PT36S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT36S"^^xsd:duration ;
+    cnt:chars "There are two common approaches for managing DC voltage so that the inverter's output voltage is synchronized with the grid. In one approach, the primary power source controls active power while the inverter regulates DC voltage. In the other approach, the source controls DC voltage and the inverter manages active power. We'll focus on the first approach. This approach is used, for example, in a maximum PPS tracking scheme where the maximum power is extracted from the primary power source. Click each button to learn how active and reactive power control systems are implemented." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5gtwDF7sBFF_44100_48_0.mp3" ;
+    schema:duration "PT27S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT27S"^^xsd:duration ;
+    cnt:chars "Reactive power can be controlled in open loop or closed loop. With open loop control, the reference set point for reactive current is determined based on the reactive power set point and the voltage measurement. So Q, reactive power divided by Vd, voltage gives the reactive reference current. With closed loop control, the reference reactive power is compared to the measured reactive power and then a compensator generates the reactive reference current." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6Rv8igKXCV7_44100_48_0.mp3" ;
+    schema:duration "PT46S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT46S"^^xsd:duration ;
+    cnt:chars "Let's examine two DC control approaches used to determine the amount of active power. In the first approach, control is based on DC-voltage squared control, where VDC squared control develops an active power reference. This reference can then be used for either closed loop active power control or open loop control by calculating a current reference. This approach is more commonly used in bulk renewable generation inverters and more accurately produces controllable power output. The second DC voltage control approach controls VDC directly by developing the current reference to maintain the desired voltage level. This approach is more easily used in distribution-connected distributed energy resources or DER." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> a fxs:Slide, fxs:Item ;
+    dcterms:title "Voltage Control" ;
+    fxs:identifiedBy "6cuGuY88hng" ;
+    fxs:sequenceIndex 6 ;
+    fxs:fileLocator "package!/html5/data/js/6cuGuY88hng.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide7" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6JiqSURUYvI_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6I0VR61PQcO_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6SypeIXvavu_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5nckAIutyat_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6JiqSURUYvI_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6I0VR61PQcO_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6SypeIXvavu_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5nckAIutyat_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Rectangle 7; voltage drop across the system inductance due to the rotating reference frame; Rectangle 8; Image 49.png; Rgid1 voltage drop due to system resistance; For transmission, assume impedance (X)>> resistance (R); Rectangle 6; Image 52.emf; It is common to limit recovery rate of id1; IBR response is dependent on:; Rectangle 5; Required to account for voltage drops due to changing frequency. \\nNote:  Lg may take on a range of values based on system conditions.; Image 48.png; Vgd - System Voltage; It is common to limit recovery rate of id1\\nNote: Lg may take on a range of values based on system conditions.; Rectangle 3; Rectangle 12; Rectangle 17; Rectangle 1; Required to account for voltage drops due to changing frequency.; represents voltage drop due to system inductance and the rate of change of the active current; Note: Lg may take on a range of values based on system conditions.; Image 46.png; Image 50.emf; For transmission, assume impedance (X)>> resistance (R)\\nControl term" .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6JiqSURUYvI_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6JiqSURUYvI_44100_48_0.mp3" ;
+    schema:duration "PT15S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6JiqSURUYvI_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT15S"^^xsd:duration ;
+    cnt:chars "As you learned earlier, terminal voltage is dependent on both the inverter and how the system is reacting to it. We assume that the inverter autonomously measures and regulates terminal voltage locally without receiving a voltage reference point from the plant controller." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6JiqSURUYvI_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5ZIVqtC2X4g_44100_48_0.mp3" ;
+    schema:duration "PT39S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT39S"^^xsd:duration ;
+    cnt:chars "Inverter voltage is controlled through reactive current. To understand how the inverter develops the reactive current reference in the dynamics, we can use Kirchhoff's voltage law to calculate the system voltage, VTD1. The equation shows that the active current component of the terminal voltage depends on several terms. Note that the parameter LG which represents the grid inductance and is an indication of the short circuit strength of the grid appears in two of those terms. This suggests that the dynamics of VTD1 depends on grid strength. Click each component of the equation that contributes to system voltage to learn more. Click next to continue." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6I0VR61PQcO_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6I0VR61PQcO_44100_48_0.mp3" ;
+    schema:duration "PT49S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6I0VR61PQcO_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT49S"^^xsd:duration ;
+    cnt:chars "The last term in the equation is system voltage. The presence of the term LG in voltage dynamics makes voltage control dependent on grid strength. The graph shows the step response of the terminal voltage for different grid short circuit ratio or SCR values with the same controller gain. In weaker grid conditions, for example, a short circuit ratio of 2 to 5, the response is faster. However, as the grid gets stronger, for example, a short circuit ratio of 10 to 15, the response slows down because LG is larger and it takes more reactive current to change voltage. In summary, the IBR response is dependent upon both its internal control system and the grid strength at its connection point. The graph of the voltage response at different SCR values is extremely telling." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6I0VR61PQcO_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5jMp1uOBvcw_44100_48_0.mp3" ;
+    schema:duration "PT24S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT24S"^^xsd:duration ;
+    cnt:chars "LG Omega PLLIQ1 represents a voltage across the system inductance due to the rotating reference frame or changing frequency. LG or grid-side inductance can take on a range of values based on system conditions. In a weak grid where LG is large, a small change in reactive current can cause a large change in voltage. This can affect the controller's performance." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6SypeIXvavu_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6SypeIXvavu_44100_48_0.mp3" ;
+    schema:duration "PT24S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6SypeIXvavu_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT24S"^^xsd:duration ;
+    cnt:chars "This part of the equation represents the voltage drop due to system inductance and the change rate of the active current. In a weak grid, after a fault, we aim to limit the ramp rate of the active current component, DID1, by DT to avoid rapid changes in ID1 that could lead to undesirable large changes in voltage. LG may take on a range of values based on system conditions." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6SypeIXvavu_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5nckAIutyat_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5nckAIutyat_44100_48_0.mp3" ;
+    schema:duration "PT43S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5nckAIutyat_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT43S"^^xsd:duration ;
+    cnt:chars "This part of the equation represents voltage drop due to system resistance. Rg is the resistive part of the grid impedance. ID references active power current. In transmission applications, we can assume that the resistive part of grid impedance R is a negligible component of the overall impedance x. Hence, we can ignore Rgid with in voltage dynamics. This suggests that the terminal voltage can be controlled by the reactive current. Looking at the voltage control system, the reference voltage is compared to the measured voltage and the difference is processed by a compensator to develop the reference current. The compensator is typically a proportional integrator controller." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5nckAIutyat_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> a fxs:Slide, fxs:Item ;
+    dcterms:title "Fault Ride-Through Response (FRT)" ;
+    fxs:identifiedBy "6JZsAHMHpvb" ;
+    fxs:sequenceIndex 7 ;
+    fxs:fileLocator "package!/html5/data/js/6JZsAHMHpvb.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide8" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F64w1SoQq2BD_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6O98E7I3oiU_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F64w1SoQq2BD_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6O98E7I3oiU_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Control Objectives; Inject reactive current to support the voltage - either positive or negative sequence; Image 38.emf; Rectangle 1; Have fast response time - tens of milliseconds -- based on the agreed code and interconnection requirements; Maintain current limits of the power electronics \\nControl dc voltage\\nInject reactive current to keep phase current between 1.1 - 1.5; Rectangle 4; Rectangle 2" .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F64w1SoQq2BD_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/64w1SoQq2BD_44100_48_0.mp3" ;
+    schema:duration "PT33S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F64w1SoQq2BD_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT33S"^^xsd:duration ;
+    cnt:chars "So far we've discussed control under normal operating conditions where voltage and frequency are within the normal range and the plant controller generates set points for individual inverters. What do control objectives look like during abnormal conditions such as a fault where the voltage is fallen outside the normal range? When grid voltage is abnormally low or high, the inverter operates in low voltage drive through or high voltage drive through control mode. The plant controls are typically frozen and the inverter control responds to its terminal voltage." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F64w1SoQq2BD_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6O98E7I3oiU_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6O98E7I3oiU_44100_48_0.mp3" ;
+    schema:duration "PT9S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6O98E7I3oiU_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT9S"^^xsd:duration ;
+    cnt:chars "Click on each photo to learn about some control objectives for a fault ride through response. Click next when you have finished to continue to a lesson summary." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6O98E7I3oiU_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> a fxs:Slide, fxs:Item ;
+    dcterms:title "Conclusion" ;
+    fxs:identifiedBy "66RtiTQPuzj" ;
+    fxs:sequenceIndex 8 ;
+    fxs:fileLocator "package!/html5/data/js/66RtiTQPuzj.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide9" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "AdobeStock_635174439.jpg; Image 38.emf; You have now completed Lesson 3: Inverter Controls; Rectangle 1; Rectangle 2" .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5jKG5HVuxEz_44100_48_0.mp3" ;
+    schema:duration "PT6S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT6S"^^xsd:duration ;
+    cnt:chars "You have now completed the third lesson of the Inverter-based Resource Basics and Operations course." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6Yj2OVM5BXp_44100_48_0.mp3" ;
+    schema:duration "PT16S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT16S"^^xsd:duration ;
+    cnt:chars "In this lesson, you reviewed some basic inverter operating principles. You were introduced to control objectives used in normal conditions for current, outer loop, reactive power and voltage controls. You also reviewed some control objectives for a fault ride-through response." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/60Wi5ALwlLq_44100_48_0.mp3" ;
+    schema:duration "PT7S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT7S"^^xsd:duration ;
+    cnt:chars "You should now be able to describe key aspects of the various IBR control system options covered in this lesson." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5XHGBaZwOfD> a fxs:Slide, fxs:Item ;
+    dcterms:title "Thank You" ;
+    fxs:identifiedBy "5XHGBaZwOfD" ;
+    fxs:sequenceIndex 9 ;
+    fxs:fileLocator "package!/html5/data/js/5XHGBaZwOfD.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5XHGBaZwOfD> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide10" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5lCm0CvEUym_44100_48_0.mp3> ;
+    fxs:hasNarration <https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5lCm0CvEUym_44100_48_0.mp3> ;
+    fxs:extractedTextCorpus "Instructions for Developer:\\n\\nThis slide must be included in all courses.\\nThis slide must contain the course title, the EPRI U graphic, and an Exit button.\\nThe background image and other features can be changed to fit each course.\\nRemove the music if the course does not contain audio, or change the music if desired.; Thank you for your participation in \\nLesson 3: Inverter Controls.\\n\\rSelect the Exit button to end this course.; EPRI training_editable backgrounds EXIT.jpg; Exit" .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5lCm0CvEUym_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5lCm0CvEUym_44100_48_0.mp3" ;
+    schema:duration "PT60S"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/narration/story_content%2F5lCm0CvEUym_44100_48_0.mp3> a fxs:NarrationTranscript ;
+    dcterms:language "en" ;
+    schema:duration "PT60S"^^xsd:duration ;
+    cnt:chars "Thank you." ;
+    fxs:transcribedBy <https://github.com/SYSTRAN/faster-whisper#tiny.en> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5lCm0CvEUym_44100_48_0.mp3> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/scene/5sFB072XEDS> a fxs:Scene, fxs:Item ;
+    dcterms:title "Scene 2" ;
+    fxs:identifiedBy "5sFB072XEDS" ;
+    fxs:sequenceIndex 1 ;
+    fxs:hasChild <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6DAYZylYZ4Y>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6IcYxMXh0mW> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6DAYZylYZ4Y> a fxs:Slide, fxs:Item ;
+    dcterms:title "Navigating This Course" ;
+    fxs:identifiedBy "6DAYZylYZ4Y" ;
+    fxs:sequenceIndex 0 ;
+    fxs:fileLocator "package!/html5/data/js/6DAYZylYZ4Y.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6DAYZylYZ4Y> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide1" ;
+    fxs:extractedTextCorpus "Reference Materials; Screenshot (812).png; CC.png; Glossary; playback.png; Navigating This Course; Exit; Glossary.png; Full Screen Toggle allows you to minimize distractions by utilizing your entire screen to view the course. Select the button to toggle full screen on and off.; You can exit the course at any time by selecting the Exit button in the top right. If you return to the course at a later date, you can pick-up right where you left off. \\n\\nWhen you reach the end of the course, you will also be able to Exit using a button on the last page.; When you are asked to interact with the course to answer questions or complete exercises, the playbar may change. You may not see previous or next buttons at all, or they may not appear until you complete the activity. Often, a Submit button will appear. You might need to select Submit to complete the activity and see your results.; It is recommended that you progress through the course in the order it is presented. Depending on how the cour" .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6IcYxMXh0mW> a fxs:Slide, fxs:Item ;
+    dcterms:title "About This Course" ;
+    fxs:identifiedBy "6IcYxMXh0mW" ;
+    fxs:sequenceIndex 1 ;
+    fxs:fileLocator "package!/html5/data/js/6IcYxMXh0mW.js" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6IcYxMXh0mW> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> ;
+    schema:identifier "Slide2" ;
+    fxs:extractedTextCorpus "This course contains audio ; no audio icon 1; \\t\\t\\t\\t      DISCLAIMER\\n\\nTHIS NOTICE MAY NOT BE REMOVED FROM THE PROGRAM BY ANY USER THEREOF.\\r\\nNEITHER EPRI, ANY MEMBER OF EPRI, NOR ANY PERSON OR ORGANIZATION ACTING ON BEHALF OF THEM:\\r\\nMAKES ANY WARRANTY OR REPRESENTATION WHATSOEVER, EXPRESS OR IMPLIED, INCLUDING ANY WARRANTY OF MERCHANTABILITY OR FITNESS OF ANY PURPOSE WITH RESPECT TO THE PROGRAM; OR\\r\\nASSUMES ANY LIABILITY WHATSOEVER WITH RESPECT TO ANY USE OF THE PROGRAM OR ANY PORTION THEREOF OR WITH RESPECT TO ANY DAMAGES WHICH MAY RESULT FROM SUCH USE.\\r\\nRESTRICTED RIGHTS LEGEND:  USE, DUPLICATION, OR DISCLOSURE BY THE UNITED STATES FEDERAL GOVERNMENT OF THE RIGHTS IN TECHNICAL DATA AND COMPUTER SOFTWARE CLAUSE IN FAR 52.227-14, ALTERNATE III IS SUBJECT TO RESTRICTION AS SET FORTH IN PARAGRAPH (3) (g) (i), WITH THE EXCEPTION OF PARAGRAPH (3) (g) (i) (4) (b).; Electric Power Research Institute \\n3420 Hillview Avenue, Palo Alto, California 94304-1338 • PO Box 10412, Palo Alto" .
+
+# ═══════════════════════════════════════════════════
+# SEMANTIC STRATUM (fxk:)
+# Concepts and prerequisite relations extracted from
+# combined alt-text + narration transcripts.
+# ═══════════════════════════════════════════════════
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-voltage> a fxk:Concept ;
+    skos:prefLabel "grid voltage" ;
+    fxk:extractionConfidence 0.68 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-based-resource-basics> a fxk:Concept ;
+    skos:prefLabel "inverter-based resource basics" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage-depends> a fxk:Concept ;
+    skos:prefLabel "terminal voltage depends" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/how-the-system> a fxk:Concept ;
+    skos:prefLabel "how the system" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-current> a fxk:Concept ;
+    skos:prefLabel "active current" ;
+    fxk:extractionConfidence 0.68 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-operating-conditions> a fxk:Concept ;
+    skos:prefLabel "normal operating conditions" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/conditions-where-voltage> a fxk:Concept ;
+    skos:prefLabel "conditions where voltage" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-and-grid> a fxk:Concept ;
+    skos:prefLabel "inverter and grid" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit-ratio> a fxk:Concept ;
+    skos:prefLabel "short circuit ratio" ;
+    fxk:extractionConfidence 0.68 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-current> a fxk:Concept ;
+    skos:prefLabel "reactive current" ;
+    fxk:extractionConfidence 0.7 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-the-inverter> a fxk:Concept ;
+    skos:prefLabel "grid the inverter" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> a fxk:Concept ;
+    skos:prefLabel "inverter" ;
+    fxk:extractionConfidence 0.93 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-control-power> a fxk:Concept ;
+    skos:prefLabel "voltage control power" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/from-the-base> a fxk:Concept ;
+    skos:prefLabel "from the base" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/important-for-transmission> a fxk:Concept ;
+    skos:prefLabel "important for transmission" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> a fxk:Concept ;
+    skos:prefLabel "plant controller provides" ;
+    fxk:extractionConfidence 0.88 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/closed-loop> a fxk:Concept ;
+    skos:prefLabel "closed loop" ;
+    fxk:extractionConfidence 0.68 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> a fxk:Concept ;
+    skos:prefLabel "grid" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-and-manage> a fxk:Concept ;
+    skos:prefLabel "grid and manage" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system-voltage> a fxk:Concept ;
+    skos:prefLabel "system voltage" ;
+    fxk:extractionConfidence 0.68 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> a fxk:Concept ;
+    skos:prefLabel "primary power source" ;
+    fxk:extractionConfidence 0.89 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/provides-the-desired> a fxk:Concept ;
+    skos:prefLabel "provides the desired" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/basics-and-operations> a fxk:Concept ;
+    skos:prefLabel "basics and operations" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/individual-inverters-what> a fxk:Concept ;
+    skos:prefLabel "individual inverters what" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> a fxk:Concept ;
+    skos:prefLabel "reactive power" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/level-controller-upon> a fxk:Concept ;
+    skos:prefLabel "level controller upon" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage> a fxk:Concept ;
+    skos:prefLabel "terminal voltage" ;
+    fxk:extractionConfidence 0.7 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit> a fxk:Concept ;
+    skos:prefLabel "short circuit" ;
+    fxk:extractionConfidence 0.69 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/follow-the-grid> a fxk:Concept ;
+    skos:prefLabel "follow the grid" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/conditions-for-current> a fxk:Concept ;
+    skos:prefLabel "conditions for current" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/2-but-let> a fxk:Concept ;
+    skos:prefLabel "2 but let" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop-reactive-power> a fxk:Concept ;
+    skos:prefLabel "loop reactive power" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/various-ibr> a fxk:Concept ;
+    skos:prefLabel "various ibr" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/ride-through-response-frt> a fxk:Concept ;
+    skos:prefLabel "ride-through response frt" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> a fxk:Concept ;
+    skos:prefLabel "fault ride-through response" ;
+    fxk:extractionConfidence 0.88 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> a fxk:Concept ;
+    skos:prefLabel "current" ;
+    fxk:extractionConfidence 0.92 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inputs-the-output> a fxk:Concept ;
+    skos:prefLabel "inputs the output" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/set-point-based> a fxk:Concept ;
+    skos:prefLabel "set point based" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/controller-generates-set> a fxk:Concept ;
+    skos:prefLabel "controller generates set" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-and-frequency> a fxk:Concept ;
+    skos:prefLabel "voltage and frequency" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-and-measured> a fxk:Concept ;
+    skos:prefLabel "current and measured" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/ibr-control-system> a fxk:Concept ;
+    skos:prefLabel "ibr control system" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-reference-current> a fxk:Concept ;
+    skos:prefLabel "reactive reference current" ;
+    fxk:extractionConfidence 0.67 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/outer-loop-reactive> a fxk:Concept ;
+    skos:prefLabel "outer loop reactive" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/basic-inverter-operating> a fxk:Concept ;
+    skos:prefLabel "basic inverter operating" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> a fxk:Concept ;
+    skos:prefLabel "system" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-are-synchronized> a fxk:Concept ;
+    skos:prefLabel "grid are synchronized" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/day-inverter-connects> a fxk:Concept ;
+    skos:prefLabel "day inverter connects" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> a fxk:Concept ;
+    skos:prefLabel "voltage" ;
+    fxk:extractionConfidence 0.93 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/discussed-current> a fxk:Concept ;
+    skos:prefLabel "discussed current" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/foundational-inverter-operating> a fxk:Concept ;
+    skos:prefLabel "foundational inverter operating" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system-options-covered> a fxk:Concept ;
+    skos:prefLabel "system options covered" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-range> a fxk:Concept ;
+    skos:prefLabel "normal range" ;
+    fxk:extractionConfidence 0.67 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/source-the-inverter> a fxk:Concept ;
+    skos:prefLabel "source the inverter" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/present-day-inverter> a fxk:Concept ;
+    skos:prefLabel "present day inverter" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-control-achieves> a fxk:Concept ;
+    skos:prefLabel "inverter control achieves" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> a fxk:Concept ;
+    skos:prefLabel "inverter operating principles" ;
+    fxk:extractionConfidence 0.89 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> a fxk:Concept ;
+    skos:prefLabel "power and voltage" ;
+    fxk:extractionConfidence 0.9 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-while-terminal> a fxk:Concept ;
+    skos:prefLabel "voltage while terminal" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> a fxk:Concept ;
+    skos:prefLabel "power" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-flows-ibr> a fxk:Concept ;
+    skos:prefLabel "power flows ibr" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/structure-you-learned> a fxk:Concept ;
+    skos:prefLabel "structure you learned" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-power> a fxk:Concept ;
+    skos:prefLabel "active power" ;
+    fxk:extractionConfidence 0.7 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-strength> a fxk:Concept ;
+    skos:prefLabel "grid strength" ;
+    fxk:extractionConfidence 0.68 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/generates-set-points> a fxk:Concept ;
+    skos:prefLabel "generates set points" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> a fxk:Concept ;
+    skos:prefLabel "response" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-and-how> a fxk:Concept ;
+    skos:prefLabel "inverter and how" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-control-let> a fxk:Concept ;
+    skos:prefLabel "current control let" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> a fxk:Concept ;
+    skos:prefLabel "loop" ;
+    fxk:extractionConfidence 0.91 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/points-for-individual> a fxk:Concept ;
+    skos:prefLabel "points for individual" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/transmission-operations-personnel> a fxk:Concept ;
+    skos:prefLabel "transmission operations personnel" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/measured-and-transformed> a fxk:Concept ;
+    skos:prefLabel "measured and transformed" ;
+    fxk:extractionConfidence 0.67 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/approaches-for-managing> a fxk:Concept ;
+    skos:prefLabel "approaches for managing" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/desired-voltage-set> a fxk:Concept ;
+    skos:prefLabel "desired voltage set" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> a fxk:Concept ;
+    skos:prefLabel "active and reactive" ;
+    fxk:extractionConfidence 0.9 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-generates> a fxk:Concept ;
+    skos:prefLabel "plant controller generates" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/achieves-the-subjective> a fxk:Concept ;
+    skos:prefLabel "achieves the subjective" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reviewed-some-basic> a fxk:Concept ;
+    skos:prefLabel "reviewed some basic" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/provides-the-set> a fxk:Concept ;
+    skos:prefLabel "provides the set" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-drive> a fxk:Concept ;
+    skos:prefLabel "voltage drive" ;
+    fxk:extractionConfidence 0.67 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> a fxk:Concept ;
+    skos:prefLabel "output" ;
+    fxk:extractionConfidence 0.9 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/manage-current-voltage> a fxk:Concept ;
+    skos:prefLabel "manage current voltage" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/how-they-interact> a fxk:Concept ;
+    skos:prefLabel "how they interact" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-outer-loop> a fxk:Concept ;
+    skos:prefLabel "current outer loop" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/produces-the-desired> a fxk:Concept ;
+    skos:prefLabel "produces the desired" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/desired-voltage> a fxk:Concept ;
+    skos:prefLabel "desired voltage" ;
+    fxk:extractionConfidence 0.67 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/pwm-scheme> a fxk:Concept ;
+    skos:prefLabel "pwm scheme" ;
+    fxk:extractionConfidence 0.67 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/scheme-the-inverter> a fxk:Concept ;
+    skos:prefLabel "scheme the inverter" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/produce-the-desired> a fxk:Concept ;
+    skos:prefLabel "produce the desired" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-conditions> a fxk:Concept ;
+    skos:prefLabel "normal conditions" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/base-level-controller> a fxk:Concept ;
+    skos:prefLabel "base level controller" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/nested-loop-structure> a fxk:Concept ;
+    skos:prefLabel "nested loop structure" ;
+    fxk:extractionConfidence 0.46 ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> .
+
+# ─── Prerequisite relations (heuristic v0.2) ───
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/foundational-inverter-operating> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/present-day-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/day-inverter-connects> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/follow-the-grid> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-and-grid> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-are-synchronized> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/provides-the-set> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/foundational-inverter-operating> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/present-day-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/day-inverter-connects> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/follow-the-grid> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-and-grid> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-are-synchronized> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/provides-the-set> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/measured-and-transformed> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/pwm-scheme> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-and-measured> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inputs-the-output> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/scheme-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-control-achieves> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/achieves-the-subjective> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/nested-loop-structure> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/structure-you-learned> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/2-but-let> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/provides-the-desired> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/measured-and-transformed> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/pwm-scheme> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-and-measured> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inputs-the-output> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/scheme-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-control-achieves> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/achieves-the-subjective> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/nested-loop-structure> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/structure-you-learned> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/2-but-let> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/provides-the-desired> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/measured-and-transformed> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/pwm-scheme> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-and-measured> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inputs-the-output> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/scheme-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-control-achieves> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/achieves-the-subjective> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/nested-loop-structure> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/structure-you-learned> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/2-but-let> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/provides-the-desired> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/measured-and-transformed> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/pwm-scheme> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-and-measured> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inputs-the-output> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/scheme-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-control-achieves> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/achieves-the-subjective> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/nested-loop-structure> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/structure-you-learned> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/2-but-let> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/provides-the-desired> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-provides> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-control-let> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-control-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/source-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-while-terminal> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage-depends> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-and-how> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/how-the-system> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/discussed-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-control-let> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-control-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/source-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-while-terminal> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage-depends> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-and-how> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/how-the-system> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/discussed-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-control-let> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-control-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/source-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-while-terminal> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage-depends> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-and-how> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/how-the-system> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/discussed-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-control-let> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-control-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/source-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-while-terminal> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage-depends> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-and-how> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/how-the-system> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/discussed-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-control-let> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-control-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/source-the-inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-while-terminal> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage-depends> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-and-how> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/how-the-system> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/discussed-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/closed-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-reference-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/approaches-for-managing> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/closed-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-reference-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/approaches-for-managing> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/closed-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-reference-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/approaches-for-managing> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/closed-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-reference-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/approaches-for-managing> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/closed-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-reference-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/approaches-for-managing> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/closed-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-reference-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-and-reactive> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/approaches-for-managing> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/closed-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-reference-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/approaches-for-managing> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/closed-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-reference-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/approaches-for-managing> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/closed-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/primary-power-source> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-reference-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/output> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/approaches-for-managing> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit-ratio> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-strength> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit-ratio> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-strength> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit-ratio> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-strength> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit-ratio> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-strength> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/terminal-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reactive-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/short-circuit-ratio> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/active-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/grid-strength> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-range> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-drive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/ride-through-response-frt> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-operating-conditions> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/conditions-where-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-and-frequency> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-generates> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/controller-generates-set> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/generates-set-points> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/points-for-individual> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/individual-inverters-what> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-range> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-drive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/ride-through-response-frt> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-operating-conditions> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/conditions-where-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-and-frequency> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-generates> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/controller-generates-set> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/generates-set-points> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/points-for-individual> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/individual-inverters-what> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-range> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-drive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/ride-through-response-frt> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-operating-conditions> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/conditions-where-voltage> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/voltage-and-frequency> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/plant-controller-generates> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/controller-generates-set> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/generates-set-points> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/points-for-individual> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/individual-inverters-what> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-based-resource-basics> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/basics-and-operations> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reviewed-some-basic> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/basic-inverter-operating> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/conditions-for-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-outer-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/outer-loop-reactive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop-reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/ibr-control-system> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system-options-covered> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-conditions> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/various-ibr> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-based-resource-basics> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/basics-and-operations> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reviewed-some-basic> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/basic-inverter-operating> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-operating-principles> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/conditions-for-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-outer-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/outer-loop-reactive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop-reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/ibr-control-system> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system-options-covered> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-conditions> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/power-and-voltage> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/various-ibr> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/inverter-based-resource-basics> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/basics-and-operations> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/reviewed-some-basic> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/basic-inverter-operating> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/conditions-for-current> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/current-outer-loop> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/outer-loop-reactive> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/loop-reactive-power> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/ibr-control-system> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/system-options-covered> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/normal-conditions> .
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/fault-ride-through-response> fxk:prerequisiteOf <https://example.foxximediums.com/pkg/_69JeglEuzyv/concept/various-ibr> .
+
+# ─── Parser provenance ───
+<https://vocab.foxximediums.com/parsers/storyline/0.2.0> a prov:SoftwareAgent ;
+    rdfs:label "foxxi-storyline-parser" ;
+    schema:softwareVersion "0.2.0" .
+
+<https://vocab.foxximediums.com/parsers/storyline/0.2.0#concept-extractor> a prov:SoftwareAgent ;
+    rdfs:label "foxxi heuristic concept extractor v0.2" ;
+    rdfs:comment "n-gram TF + slide-coverage heuristic; v0.3 will use LLM-backed OLKE decomposition." .

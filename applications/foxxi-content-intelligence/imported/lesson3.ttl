@@ -1,0 +1,361 @@
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix prov:    <http://www.w3.org/ns/prov#> .
+@prefix schema:  <http://schema.org/> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix fxs:     <https://vocab.foxximediums.com/scorm#> .
+@prefix fxk:     <https://vocab.foxximediums.com/knowledge#> .
+
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv> a fxs:Package ;
+    dcterms:title "Lesson 3: Inverter Controls" ;
+    dcterms:identifier "_69JeglEuzyv" ;
+    fxs:identifiedBy "_69JeglEuzyv" ;
+    fxs:standardConformance fxs:SCORM_2004_4 ;
+    schema:softwareVersion "3.104.35448.0" ;
+    fxs:authoredWith fxs:ArticulateStoryline ;
+    fxs:hasOrganization <https://example.foxximediums.com/pkg/_69JeglEuzyv/org/Lesson_3%3A_Inverter_Controls_ORG> ;
+    fxs:defaultOrganization <https://example.foxximediums.com/pkg/_69JeglEuzyv/org/Lesson_3%3A_Inverter_Controls_ORG> ;
+    prov:wasGeneratedBy <https://vocab.foxximediums.com/parsers/storyline/0.1.0> ;
+    prov:generatedAtTime "2026-04-29T19:41:40Z"^^xsd:dateTime .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/org/Lesson_3%3A_Inverter_Controls_ORG> a fxs:Organization ;
+    dcterms:title "Lesson 3: Inverter Controls" ;
+    fxs:identifiedBy "Lesson_3:_Inverter_Controls_ORG" ;
+    fxs:hasItem <https://example.foxximediums.com/pkg/_69JeglEuzyv/item/EPRI_Template_2023_SCO> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/item/EPRI_Template_2023_SCO> a fxs:Item ;
+    dcterms:title "Lesson 3: Inverter Controls" ;
+    fxs:identifiedBy "EPRI_Template_2023_SCO" ;
+    fxs:sequenceIndex 0 ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> a fxs:SCO ;
+    fxs:identifiedBy "__69JeglEuzyv_RES" ;
+    fxs:fileLocator "package!/index_lms.html" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+# ─────────────────────────────────────────────
+# Storyline-specific subdivision: scenes & slides
+# These extend the single-SCO manifest with the
+# fine-grained pedagogical structure that lives
+# inside html5/data/js/data.js
+# ─────────────────────────────────────────────
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/scene/6RdIHQ8sw43> a fxs:Item ;
+    dcterms:title "Scene 1: Scene1" ;
+    fxs:identifiedBy "6RdIHQ8sw43" ;
+    fxs:sequenceIndex 0 ;
+    fxs:hasChild <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5mxvVHmgKIk>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5XHGBaZwOfD> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5mxvVHmgKIk> a fxs:Item ;
+    dcterms:title "Welcome" ;
+    fxs:identifiedBy "5mxvVHmgKIk" ;
+    fxs:sequenceIndex 0 ;
+    schema:identifier "Slide1" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/5mxvVHmgKIk> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/5mxvVHmgKIk> a fxs:Asset ;
+    dcterms:title "Slide content: Welcome" ;
+    fxs:identifiedBy "5mxvVHmgKIk" ;
+    fxs:fileLocator "package!/html5/data/js/5mxvVHmgKIk.js" ;
+    schema:abstract "© 2025 Electric Power Research Institute (EPRI), Inc. All rights reserved.; title.jpg; Lesson 3: Inverter Controls; Use this title layout.\\nIt is ok to change the background image as long as the EPRI gradient overlay remains on this page prominently displayed.\\nRemove audio track if the course does not contain any other audio. You may replace with different audio, especially if you are branding a series of courses. \\nAdd prerequisite or recommended prior course work or knowledge to this slide if" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6ps7ro4Er5o> a fxs:Item ;
+    dcterms:title "Introduction" ;
+    fxs:identifiedBy "6ps7ro4Er5o" ;
+    fxs:sequenceIndex 1 ;
+    schema:identifier "Slide2" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6ps7ro4Er5o> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6ps7ro4Er5o> a fxs:Asset ;
+    dcterms:title "Slide content: Introduction" ;
+    fxs:identifiedBy "6ps7ro4Er5o" ;
+    fxs:fileLocator "package!/html5/data/js/6ps7ro4Er5o.js" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6XoiU1qYPis_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> ;
+    schema:abstract "Rectangle 2; Lesson 2 Focus; Rectangle 1; Image 37.emf; Lesson 3 Focus" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6XoiU1qYPis_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6XoiU1qYPis_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5dLzuRNCmmT_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5dLzuRNCmmT_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5zBRyvxOwou> a fxs:Item ;
+    dcterms:title "Inverter Operating Principles" ;
+    fxs:identifiedBy "5zBRyvxOwou" ;
+    fxs:sequenceIndex 2 ;
+    schema:identifier "Slide3" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/5zBRyvxOwou> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/5zBRyvxOwou> a fxs:Asset ;
+    dcterms:title "Slide content: Inverter Operating Principles" ;
+    fxs:identifiedBy "5zBRyvxOwou" ;
+    fxs:fileLocator "package!/html5/data/js/5zBRyvxOwou.js" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> ;
+    schema:abstract "Rectangle 3; Down Arrow 1; Click each equation to see what it represents; Rectangle 2; Rectangle 4; Rectangle 1; Rectangle 12; Rectangle 13; Down Arrow 2; Rectangle 5" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6qbFcOmxbpl_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6qbFcOmxbpl_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5pUWbRqZNS6_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5pUWbRqZNS6_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6eVptVTR2Lx> a fxs:Item ;
+    dcterms:title "Current Control Overview" ;
+    fxs:identifiedBy "6eVptVTR2Lx" ;
+    fxs:sequenceIndex 3 ;
+    schema:identifier "Slide4" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6eVptVTR2Lx> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6eVptVTR2Lx> a fxs:Asset ;
+    dcterms:title "Slide content: Current Control Overview" ;
+    fxs:identifiedBy "6eVptVTR2Lx" ;
+    fxs:fileLocator "package!/html5/data/js/6eVptVTR2Lx.js" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6llp0vzR9dL_44100_48_0.mp3> ;
+    schema:abstract "Rectangle 3; Inverter Control Objective; Using measured and transformed voltage, Vt; Rectangle 2; Control output current of the inverter:; Rectangle 4; Rectangle 1; Up Arrow 2; Inverter Control Objective\\nControl output current of the inverter: \\nUsing measured and transformed current, i\\nUsing measured and transformed voltage, Vt; Image 38.emf; Up Arrow 1; Using measured and transformed current, i" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F68UQ9jgrgX0_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/68UQ9jgrgX0_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6llp0vzR9dL_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6llp0vzR9dL_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5q1PTTjK3aS> a fxs:Item ;
+    dcterms:title "Power and Voltage Control Overview" ;
+    fxs:identifiedBy "5q1PTTjK3aS" ;
+    fxs:sequenceIndex 4 ;
+    schema:identifier "Slide5" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/5q1PTTjK3aS> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/5q1PTTjK3aS> a fxs:Asset ;
+    dcterms:title "Slide content: Power and Voltage Control Overview" ;
+    fxs:identifiedBy "5q1PTTjK3aS" ;
+    fxs:fileLocator "package!/html5/data/js/5q1PTTjK3aS.js" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5x2cQjOSedu_44100_48_0.mp3> ;
+    schema:abstract "Rectangle 3; Voltage Control; Rectangle 6; Rectangle 2; Rectangle 4; Rectangle 1; Power Control; Rectangle 5" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5x2cQjOSedu_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5x2cQjOSedu_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6KhIqryeG83> a fxs:Item ;
+    dcterms:title "Active and Reactive Power Control" ;
+    fxs:identifiedBy "6KhIqryeG83" ;
+    fxs:sequenceIndex 5 ;
+    schema:identifier "Slide6" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6KhIqryeG83> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6KhIqryeG83> a fxs:Asset ;
+    dcterms:title "Slide content: Active and Reactive Power Control" ;
+    fxs:identifiedBy "6KhIqryeG83" ;
+    fxs:fileLocator "package!/html5/data/js/6KhIqryeG83.js" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> ;
+    schema:abstract "Open Loop; Rectangle 2; Rectangle 7; Closed Loop; Rectangle 10; Rectangle 9; Rectangle 1; Image 45.emf; Image 42.emf; Approach 1:  Primary power source (PPS) controls active power and the inverter controls Vdc.; Simpler and more easily used in distribution-connected DER.; Rectangle 5; Rectangle 6; Rectangle 4; More commonly used in bulk renewable generation inverters; more accurately produces controllable power output.; Active Power; Rectangle 8; Rectangle 11; Reactive power reference (Q*ppc) fr" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Uhqd0AwLft_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6Uhqd0AwLft_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5gtwDF7sBFF_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5gtwDF7sBFF_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Rv8igKXCV7_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6Rv8igKXCV7_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6cuGuY88hng> a fxs:Item ;
+    dcterms:title "Voltage Control" ;
+    fxs:identifiedBy "6cuGuY88hng" ;
+    fxs:sequenceIndex 6 ;
+    schema:identifier "Slide7" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6cuGuY88hng> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6cuGuY88hng> a fxs:Asset ;
+    dcterms:title "Slide content: Voltage Control" ;
+    fxs:identifiedBy "6cuGuY88hng" ;
+    fxs:fileLocator "package!/html5/data/js/6cuGuY88hng.js" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6JiqSURUYvI_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6I0VR61PQcO_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6SypeIXvavu_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5nckAIutyat_44100_48_0.mp3> ;
+    schema:abstract "It is common to limit recovery rate of id1; Image 46.png; Rectangle 7; Note: Lg may take on a range of values based on system conditions.; Required to account for voltage drops due to changing frequency. \\nNote:  Lg may take on a range of values based on system conditions.; Rgid1 voltage drop due to system resistance; Rectangle 9; Rectangle 1; IBR Internal control system; IBR response is dependent on:; voltage drop across the system inductance due to the rotating reference frame; Note:  Lg may t" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6JiqSURUYvI_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6JiqSURUYvI_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5ZIVqtC2X4g_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5ZIVqtC2X4g_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6I0VR61PQcO_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6I0VR61PQcO_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5jMp1uOBvcw_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5jMp1uOBvcw_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6SypeIXvavu_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6SypeIXvavu_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5nckAIutyat_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5nckAIutyat_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6JZsAHMHpvb> a fxs:Item ;
+    dcterms:title "Fault Ride-Through Response (FRT)" ;
+    fxs:identifiedBy "6JZsAHMHpvb" ;
+    fxs:sequenceIndex 7 ;
+    schema:identifier "Slide8" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6JZsAHMHpvb> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6JZsAHMHpvb> a fxs:Asset ;
+    dcterms:title "Slide content: Fault Ride-Through Response (FRT)" ;
+    fxs:identifiedBy "6JZsAHMHpvb" ;
+    fxs:fileLocator "package!/html5/data/js/6JZsAHMHpvb.js" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F64w1SoQq2BD_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6O98E7I3oiU_44100_48_0.mp3> ;
+    schema:abstract "Inject reactive current to support the voltage - either positive or negative sequence; Rectangle 2; Have fast response time - tens of milliseconds -- based on the agreed code and interconnection requirements; Rectangle 4; Rectangle 1; Maintain current limits of the power electronics \\nControl dc voltage\\nInject reactive current to keep phase current between 1.1 - 1.5; Image 38.emf; Control Objectives" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F64w1SoQq2BD_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/64w1SoQq2BD_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6O98E7I3oiU_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6O98E7I3oiU_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/66RtiTQPuzj> a fxs:Item ;
+    dcterms:title "Conclusion" ;
+    fxs:identifiedBy "66RtiTQPuzj" ;
+    fxs:sequenceIndex 8 ;
+    schema:identifier "Slide9" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/66RtiTQPuzj> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/66RtiTQPuzj> a fxs:Asset ;
+    dcterms:title "Slide content: Conclusion" ;
+    fxs:identifiedBy "66RtiTQPuzj" ;
+    fxs:fileLocator "package!/html5/data/js/66RtiTQPuzj.js" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> ;
+    schema:abstract "Rectangle 2; Rectangle 1; Image 38.emf; You have now completed Lesson 3: Inverter Controls; AdobeStock_635174439.jpg" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5jKG5HVuxEz_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5jKG5HVuxEz_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F6Yj2OVM5BXp_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/6Yj2OVM5BXp_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F60Wi5ALwlLq_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/60Wi5ALwlLq_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/5XHGBaZwOfD> a fxs:Item ;
+    dcterms:title "Thank You" ;
+    fxs:identifiedBy "5XHGBaZwOfD" ;
+    fxs:sequenceIndex 9 ;
+    schema:identifier "Slide10" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/5XHGBaZwOfD> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/5XHGBaZwOfD> a fxs:Asset ;
+    dcterms:title "Slide content: Thank You" ;
+    fxs:identifiedBy "5XHGBaZwOfD" ;
+    fxs:fileLocator "package!/html5/data/js/5XHGBaZwOfD.js" ;
+    fxs:embedsAsset <https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5lCm0CvEUym_44100_48_0.mp3> ;
+    schema:abstract "Exit; Instructions for Developer:\\n\\nThis slide must be included in all courses.\\nThis slide must contain the course title, the EPRI U graphic, and an Exit button.\\nThe background image and other features can be changed to fit each course.\\nRemove the music if the course does not contain audio, or change the music if desired.; EPRI training_editable backgrounds EXIT.jpg; Thank you for your participation in \\nLesson 3: Inverter Controls.\\n\\rSelect the Exit button to end this course." ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/asset/story_content%2F5lCm0CvEUym_44100_48_0.mp3> a fxs:Asset ;
+    dcterms:format "audio/mpeg" ;
+    fxs:fileLocator "package!/story_content/5lCm0CvEUym_44100_48_0.mp3" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/scene/5sFB072XEDS> a fxs:Item ;
+    dcterms:title "Scene 2: Scene2" ;
+    fxs:identifiedBy "5sFB072XEDS" ;
+    fxs:sequenceIndex 1 ;
+    fxs:hasChild <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6DAYZylYZ4Y>, <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6IcYxMXh0mW> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6DAYZylYZ4Y> a fxs:Item ;
+    dcterms:title "Navigating This Course" ;
+    fxs:identifiedBy "6DAYZylYZ4Y" ;
+    fxs:sequenceIndex 0 ;
+    schema:identifier "Slide1" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6DAYZylYZ4Y> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6DAYZylYZ4Y> a fxs:Asset ;
+    dcterms:title "Slide content: Navigating This Course" ;
+    fxs:identifiedBy "6DAYZylYZ4Y" ;
+    fxs:fileLocator "package!/html5/data/js/6DAYZylYZ4Y.js" ;
+    schema:abstract "Rectangle 2; Oval 1; Menu; Glossary.png; A playbar is provided at the bottom of the course. Buttons on the playbar allow you to pause, play, rewind, and fast forward through audio and video.\\n\\nIcons on the playbar will only appear if they are needed. For example, if the course or a section of the course does not contain audio, then the volume icon will not be present. Not all functions are available in all courses.; change the zoom mode to enlarge/reduce the zoom level of the slide’s contents\\n" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide/6IcYxMXh0mW> a fxs:Item ;
+    dcterms:title "About This Course" ;
+    fxs:identifiedBy "6IcYxMXh0mW" ;
+    fxs:sequenceIndex 1 ;
+    schema:identifier "Slide2" ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6IcYxMXh0mW> .
+
+<https://example.foxximediums.com/pkg/_69JeglEuzyv/slide-res/6IcYxMXh0mW> a fxs:Asset ;
+    dcterms:title "Slide content: About This Course" ;
+    fxs:identifiedBy "6IcYxMXh0mW" ;
+    fxs:fileLocator "package!/html5/data/js/6IcYxMXh0mW.js" ;
+    schema:abstract "Inverter-Based Resource (IBR) Basics and Operations\\n\\nEPRI Product ID # 3002033926\\r\\nCopyright © 2025 Electric Power Research Institute, Inc. All rights reserved. \\r\\nEPRI reserves all rights in the Program as delivered. The Program or any portion thereof may not be reproduced in any form whatsoever except as provided by license without the written consent of EPRI. A license under EPRI's rights in the Program may be available directly from EPRI.\\n\\nTogether...Shaping the Future of Energy™; no " ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/_69JeglEuzyv/res/__69JeglEuzyv_RES> .
+
+<https://vocab.foxximediums.com/parsers/storyline/0.1.0> a prov:SoftwareAgent ;
+    rdfs:label "foxxi-storyline-parser" ;
+    schema:softwareVersion "0.1.0" .

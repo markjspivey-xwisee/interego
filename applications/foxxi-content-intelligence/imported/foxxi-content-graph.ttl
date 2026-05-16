@@ -1,0 +1,988 @@
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix prov:    <http://www.w3.org/ns/prov#> .
+@prefix sh:      <http://www.w3.org/ns/shacl#> .
+@prefix schema:  <http://schema.org/> .
+@prefix foaf:    <http://xmlns.com/foaf/0.1/> .
+@prefix nfo:     <http://www.semanticdesktop.org/ontologies/nfo/#> .
+@prefix cnt:     <http://www.w3.org/2011/content#> .
+@prefix xapi:    <https://w3id.org/xapi/ontology#> .
+
+@prefix fxs:     <https://vocab.foxximediums.com/scorm#> .
+@prefix fxk:     <https://vocab.foxximediums.com/knowledge#> .
+@prefix fxa:     <https://vocab.foxximediums.com/activity#> .
+@prefix fxsh:    <https://vocab.foxximediums.com/shapes#> .
+
+@prefix ex:      <https://example.foxximediums.com/> .
+
+#################################################################
+#  Foxxi Content Graph Vocabulary — v0.1                        #
+#                                                                #
+#  A three-stratum vocabulary for representing eLearning         #
+#  content (SCORM/cmi5/xAPI), extracted knowledge structures,    #
+#  and learner/agent consumption activity as a federated RDF     #
+#  context graph.                                                #
+#                                                                #
+#  Strata:                                                       #
+#    fxs:  structural   — the package as authored                #
+#    fxk:  semantic     — concepts, claims, pedagogical relations#
+#    fxa:  behavioral   — consumption traces, extraction events  #
+#                                                                #
+#  Compositional with: HELA presheaf category, OLKE semiotic     #
+#  decomposition, SAT-Φ 10-tuple, Context Graphs 1.0, xAPI       #
+#  Topos Workbench.                                              #
+#################################################################
+
+
+#################################################################
+#  Ontology declarations                                        #
+#################################################################
+
+<https://vocab.foxximediums.com/scorm> a owl:Ontology ;
+    dcterms:title "Foxxi Structural Vocabulary for eLearning Packages" ;
+    dcterms:creator <https://id.foxximediums.com/markj/profile#me> ;
+    dcterms:issued "2026-04-29"^^xsd:date ;
+    owl:versionInfo "0.1.0" ;
+    rdfs:comment """Deterministic structural rendering of SCORM 1.2, SCORM 2004, 
+        cmi5, xAPI, and AICC packages as RDF. Emitted directly by the parser 
+        without LLM involvement.""" .
+
+<https://vocab.foxximediums.com/knowledge> a owl:Ontology ;
+    dcterms:title "Foxxi Semantic Vocabulary for Extracted Knowledge" ;
+    dcterms:creator <https://id.foxximediums.com/markj/profile#me> ;
+    dcterms:issued "2026-04-29"^^xsd:date ;
+    owl:versionInfo "0.1.0" ;
+    rdfs:comment """Concepts, claims, pedagogical relations, and Peircean 
+        sign/object/interpretant decomposition extracted from structural 
+        content. Produced by SHACL-validated enrichment passes.""" .
+
+<https://vocab.foxximediums.com/activity> a owl:Ontology ;
+    dcterms:title "Foxxi Behavioral Vocabulary for Consumption and Extraction" ;
+    dcterms:creator <https://id.foxximediums.com/markj/profile#me> ;
+    dcterms:issued "2026-04-29"^^xsd:date ;
+    owl:versionInfo "0.1.0" ;
+    rdfs:comment """Extends xAPI to capture AI-agent learner traces, 
+        extraction events, and competency signals that feed back into 
+        semantic-stratum quality assessment.""" .
+
+
+#################################################################
+#                                                               #
+#  STRATUM 1 — STRUCTURAL (fxs:)                                #
+#                                                               #
+#  One-to-one rendering of the package as it is on disk.        #
+#  The parser emits these triples deterministically.            #
+#                                                               #
+#################################################################
+
+
+# -------- Core classes -------------------------------------------------
+
+fxs:Package a owl:Class ;
+    rdfs:label "Content Package" ;
+    rdfs:subClassOf schema:Course, prov:Entity ;
+    rdfs:comment "A complete eLearning package archive (SCORM, cmi5, xAPI, AICC)." .
+
+fxs:Organization a owl:Class ;
+    rdfs:label "Manifest Organization" ;
+    rdfs:comment "A pedagogical structure tree declared in imsmanifest.xml. A package may declare multiple organizations; one is designated default." .
+
+fxs:Item a owl:Class ;
+    rdfs:label "Organization Item" ;
+    rdfs:comment "A node in an Organization tree. May be a leaf (referencing a Resource) or a branch (containing child Items)." .
+
+fxs:Resource a owl:Class ;
+    rdfs:subClassOf schema:LearningResource, prov:Entity ;
+    rdfs:label "Content Resource" ;
+    rdfs:comment "A file or set of files referenced by an Item. Concrete subtypes include SCO, AssignableUnit, Asset, and Interaction." .
+
+fxs:SCO a owl:Class ;
+    rdfs:subClassOf fxs:Resource ;
+    rdfs:label "Shareable Content Object" ;
+    rdfs:comment "A SCORM-launchable unit that communicates with the LMS via the SCORM API." .
+
+fxs:AssignableUnit a owl:Class ;
+    rdfs:subClassOf fxs:Resource ;
+    rdfs:label "cmi5 Assignable Unit" ;
+    rdfs:comment "A cmi5 launchable unit. The cmi5 analogue of a SCO." .
+
+fxs:Asset a owl:Class ;
+    rdfs:subClassOf fxs:Resource ;
+    rdfs:label "Media Asset" ;
+    rdfs:comment "A non-launchable media file: image, audio, video, PDF, etc." .
+
+fxs:Interaction a owl:Class ;
+    rdfs:subClassOf fxs:Resource ;
+    rdfs:label "Learner Interaction" ;
+    rdfs:comment "A structured interactive element extracted from content: quiz question, drag-drop, hotspot, matching, fill-in-blank, etc. Form, not function — pedagogical purpose lives in fxk:AssessmentItem." .
+
+fxs:SequencingRule a owl:Class ;
+    rdfs:label "Sequencing Rule" ;
+    rdfs:comment "An ADL SCORM 2004 sequencing constraint controlling traversal between Items." .
+
+fxs:RollupRule a owl:Class ;
+    rdfs:subClassOf fxs:SequencingRule ;
+    rdfs:label "Rollup Rule" ;
+    rdfs:comment "A rule that aggregates child Item state to a parent Item." .
+
+fxs:AuthoringTool a owl:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Authoring Tool" ;
+    rdfs:comment "A tool used to author the package. Identified by package fingerprinting; downstream consumers may use this to apply tool-specific extraction logic." .
+
+fxs:StandardConformance a owl:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Standard Conformance" ;
+    rdfs:comment "The eLearning standard the package conforms to." .
+
+fxs:InteractionType a owl:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Interaction Type" ;
+    rdfs:comment "The form of a learner interaction." .
+
+
+# -------- Authoring tool individuals -----------------------------------
+
+fxs:ArticulateStoryline a fxs:AuthoringTool ;
+    skos:prefLabel "Articulate Storyline" .
+
+fxs:ArticulateRise a fxs:AuthoringTool ;
+    skos:prefLabel "Articulate Rise" .
+
+fxs:Captivate a fxs:AuthoringTool ;
+    skos:prefLabel "Adobe Captivate" .
+
+fxs:iSpring a fxs:AuthoringTool ;
+    skos:prefLabel "iSpring Suite" .
+
+fxs:Lectora a fxs:AuthoringTool ;
+    skos:prefLabel "Lectora" .
+
+fxs:dominKnow a fxs:AuthoringTool ;
+    skos:prefLabel "dominKnow ONE" .
+
+fxs:Elucidat a fxs:AuthoringTool ;
+    skos:prefLabel "Elucidat" .
+
+fxs:Gomo a fxs:AuthoringTool ;
+    skos:prefLabel "Gomo" .
+
+fxs:UnknownAuthoringTool a fxs:AuthoringTool ;
+    skos:prefLabel "Unknown / Unfingerprinted" ;
+    skos:note "Used when package fingerprinting fails to identify the authoring tool." .
+
+
+# -------- Standard conformance individuals -----------------------------
+
+fxs:SCORM_1_1 a fxs:StandardConformance ; skos:prefLabel "SCORM 1.1" .
+fxs:SCORM_1_2 a fxs:StandardConformance ; skos:prefLabel "SCORM 1.2" .
+fxs:SCORM_2004_2 a fxs:StandardConformance ; skos:prefLabel "SCORM 2004 2nd Edition" .
+fxs:SCORM_2004_3 a fxs:StandardConformance ; skos:prefLabel "SCORM 2004 3rd Edition" .
+fxs:SCORM_2004_4 a fxs:StandardConformance ; skos:prefLabel "SCORM 2004 4th Edition" .
+fxs:cmi5 a fxs:StandardConformance ; skos:prefLabel "cmi5" .
+fxs:xAPI a fxs:StandardConformance ; skos:prefLabel "xAPI" .
+fxs:AICC a fxs:StandardConformance ; skos:prefLabel "AICC" .
+
+
+# -------- Interaction type individuals ---------------------------------
+
+fxs:MultipleChoice a fxs:InteractionType ; skos:prefLabel "Multiple Choice" .
+fxs:MultipleResponse a fxs:InteractionType ; skos:prefLabel "Multiple Response" .
+fxs:TrueFalse a fxs:InteractionType ; skos:prefLabel "True/False" .
+fxs:FillIn a fxs:InteractionType ; skos:prefLabel "Fill-in-the-Blank" .
+fxs:Matching a fxs:InteractionType ; skos:prefLabel "Matching" .
+fxs:Sequencing a fxs:InteractionType ; skos:prefLabel "Sequencing" .
+fxs:DragDrop a fxs:InteractionType ; skos:prefLabel "Drag and Drop" .
+fxs:Hotspot a fxs:InteractionType ; skos:prefLabel "Hotspot" .
+fxs:Likert a fxs:InteractionType ; skos:prefLabel "Likert" .
+fxs:Numeric a fxs:InteractionType ; skos:prefLabel "Numeric" .
+fxs:LongFill a fxs:InteractionType ; skos:prefLabel "Long Fill / Essay" .
+fxs:Performance a fxs:InteractionType ; skos:prefLabel "Performance" ;
+    skos:note "An open-ended task with multi-step evaluation." .
+
+
+# -------- Structural predicates ----------------------------------------
+
+fxs:hasOrganization a owl:ObjectProperty ;
+    rdfs:domain fxs:Package ;
+    rdfs:range fxs:Organization ;
+    rdfs:label "has organization" .
+
+fxs:defaultOrganization a owl:ObjectProperty ;
+    rdfs:domain fxs:Package ;
+    rdfs:range fxs:Organization ;
+    rdfs:subPropertyOf fxs:hasOrganization ;
+    rdfs:label "default organization" ;
+    rdfs:comment "The organization launched by default. Per SCORM, exactly one." .
+
+fxs:hasItem a owl:ObjectProperty ;
+    rdfs:label "has item" ;
+    rdfs:comment "A direct child Item of an Organization or Item." .
+
+fxs:hasChild a owl:ObjectProperty ;
+    rdfs:domain fxs:Item ;
+    rdfs:range fxs:Item ;
+    rdfs:subPropertyOf fxs:hasItem ;
+    rdfs:label "has child item" .
+
+fxs:hasResource a owl:ObjectProperty ;
+    rdfs:domain fxs:Item ;
+    rdfs:range fxs:Resource ;
+    rdfs:label "references resource" .
+
+fxs:identifiedBy a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "manifest identifier" ;
+    rdfs:comment "The identifier attribute from imsmanifest.xml. Required for round-tripping." .
+
+fxs:sequenceIndex a owl:DatatypeProperty ;
+    rdfs:domain fxs:Item ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:label "sequence index" ;
+    rdfs:comment "Position of an Item among its siblings, zero-indexed." .
+
+fxs:authoredWith a owl:ObjectProperty ;
+    rdfs:domain fxs:Package ;
+    rdfs:range fxs:AuthoringTool ;
+    rdfs:label "authored with" .
+
+fxs:standardConformance a owl:ObjectProperty ;
+    rdfs:domain fxs:Package ;
+    rdfs:range fxs:StandardConformance ;
+    rdfs:label "conforms to standard" .
+
+fxs:interactionType a owl:ObjectProperty ;
+    rdfs:domain fxs:Interaction ;
+    rdfs:range fxs:InteractionType ;
+    rdfs:label "interaction type" .
+
+fxs:fileLocator a owl:DatatypeProperty ;
+    rdfs:domain fxs:Resource ;
+    rdfs:range xsd:string ;
+    rdfs:label "file locator" ;
+    rdfs:comment "A locator string of the form 'package.zip!/path/to/file#fragment' identifying a file or fragment within the package archive. String-typed because the bang-path syntax is not a registered URI scheme; consumers may apply tighter shapes if they normalize to real URIs." .
+
+fxs:masteryScore a owl:DatatypeProperty ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "mastery score" ;
+    rdfs:comment "Normalized scaled score (0.0–1.0) required to consider a Resource mastered. SCORM-defined." .
+
+fxs:prerequisiteRule a owl:ObjectProperty ;
+    rdfs:domain fxs:Item ;
+    rdfs:range fxs:SequencingRule ;
+    rdfs:label "prerequisite rule" .
+
+fxs:rollupRule a owl:ObjectProperty ;
+    rdfs:domain fxs:Item ;
+    rdfs:range fxs:RollupRule ;
+    rdfs:label "rollup rule" .
+
+fxs:expression a owl:DatatypeProperty ;
+    rdfs:domain fxs:SequencingRule ;
+    rdfs:range xsd:string ;
+    rdfs:label "rule expression" ;
+    rdfs:comment "The original SCORM 2004 sequencing expression as serialized text." .
+
+fxs:hasInteraction a owl:ObjectProperty ;
+    rdfs:domain fxs:Resource ;
+    rdfs:range fxs:Interaction ;
+    rdfs:label "contains interaction" .
+
+fxs:correctResponsePattern a owl:DatatypeProperty ;
+    rdfs:domain fxs:Interaction ;
+    rdfs:range xsd:string ;
+    rdfs:label "correct response pattern" ;
+    rdfs:comment "The SCORM/xAPI response pattern string identifying correct answers." .
+
+fxs:duration a owl:DatatypeProperty ;
+    rdfs:range xsd:duration ;
+    rdfs:label "estimated duration" .
+
+fxs:embedsAsset a owl:ObjectProperty ;
+    rdfs:domain fxs:Resource ;
+    rdfs:range fxs:Asset ;
+    rdfs:label "embeds asset" .
+
+
+#################################################################
+#                                                               #
+#  STRATUM 2 — SEMANTIC (fxk:)                                  #
+#                                                               #
+#  Concepts, claims, pedagogical relations, OLKE/Peircean       #
+#  decomposition. Produced by enrichment passes; SHACL-         #
+#  validated; LLM-extracted with provenance back to fxs:.       #
+#                                                               #
+#################################################################
+
+
+# -------- Core classes -------------------------------------------------
+
+fxk:Concept a owl:Class ;
+    rdfs:subClassOf skos:Concept, prov:Entity ;
+    rdfs:label "Concept" ;
+    rdfs:comment "An atomic unit of knowledge extracted from content. A concept does not carry truth conditions; it is a topic, entity, procedure, or definitional unit. Compare fxk:Claim." .
+
+fxk:Claim a owl:Class ;
+    rdfs:subClassOf prov:Entity ;
+    rdfs:label "Claim" ;
+    rdfs:comment "A propositional assertion made by content. Distinct from a Concept because Claims have truth conditions and may contradict other Claims across sources." .
+
+fxk:Skill a owl:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Skill" ;
+    rdfs:comment "A capability that content purports to develop. Linked via fxk:fromFramework to external taxonomies (O*NET, ESCO, Lightcast, internal frameworks)." .
+
+fxk:LearningObjective a owl:Class ;
+    rdfs:label "Learning Objective" ;
+    rdfs:comment "What an Item or Resource claims to teach. Connects fxk:Concept (topic) to fxs:Item (locus)." .
+
+fxk:AssessmentItem a owl:Class ;
+    rdfs:label "Assessment Item" ;
+    rdfs:comment "Bridges fxs:Interaction (form) to fxk:Concept (function). One Interaction can produce multiple AssessmentItems if it tests multiple Concepts. Decomposes into Peircean sign/object/interpretant via fxk:hasSign / fxk:hasObject / fxk:hasInterpretant." .
+
+# -- Peircean triad: every sign-object-interpretant unit is realized
+#    as an instance whose three roles are concrete RDF nodes.
+
+fxk:Sign a owl:Class ;
+    rdfs:label "Sign (Peircean)" ;
+    rdfs:comment "The vehicle of signification — the form that stands for something. Typically realized as an fxs:Resource or fxs:Interaction." .
+
+fxk:Object a owl:Class ;
+    rdfs:label "Object (Peircean)" ;
+    rdfs:comment "What the sign denotes. Typically realized as an fxk:Concept or fxk:Claim." .
+
+fxk:Interpretant a owl:Class ;
+    rdfs:label "Interpretant (Peircean)" ;
+    rdfs:comment "The effect the sign produces on an interpreter — the explanation, rationale, or mental model. Typically realized as a textual or graph-structured artifact." .
+
+fxk:SkillFramework a owl:Class ;
+    rdfs:subClassOf skos:ConceptScheme ;
+    rdfs:label "Skill Framework" .
+
+
+# -------- Pedagogical relations ----------------------------------------
+
+fxk:prerequisiteOf a owl:ObjectProperty ;
+    rdfs:domain fxk:Concept ;
+    rdfs:range fxk:Concept ;
+    rdfs:label "prerequisite of" ;
+    rdfs:comment "A fxk:prerequisiteOf B means understanding A is required before B. Distinct from skos:broader: prerequisite relations cross conceptual hierarchies." .
+
+fxk:exemplifies a owl:ObjectProperty ;
+    rdfs:label "exemplifies" ;
+    rdfs:comment "A concrete instance of an abstract concept. Inverse: fxk:hasExemplar." .
+
+fxk:hasExemplar a owl:ObjectProperty ;
+    owl:inverseOf fxk:exemplifies ;
+    rdfs:label "has exemplar" .
+
+fxk:contradicts a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:domain fxk:Claim ;
+    rdfs:range fxk:Claim ;
+    rdfs:label "contradicts" ;
+    rdfs:comment "Two claims make incompatible assertions. Surfaced for MCP consumers to flag." .
+
+fxk:elaborates a owl:ObjectProperty ;
+    rdfs:domain fxk:Concept ;
+    rdfs:range fxk:Concept ;
+    rdfs:label "elaborates" ;
+    rdfs:comment "B says more about A without A being a prerequisite. Refinement without dependency." .
+
+fxk:cooccursWith a owl:ObjectProperty, owl:SymmetricProperty ;
+    rdfs:label "co-occurs with" ;
+    rdfs:comment "A weak statistical relation, typically derived from embedding similarity or co-citation. Use for soft edges where stronger pedagogical signal is unavailable." .
+
+fxk:supportedBy a owl:ObjectProperty ;
+    rdfs:domain fxk:Claim ;
+    rdfs:range fxk:Concept ;
+    rdfs:label "supported by" ;
+    rdfs:comment "A claim references or rests on a concept." .
+
+fxk:taughtIn a owl:ObjectProperty ;
+    rdfs:domain fxk:Concept ;
+    rdfs:range fxs:Item ;
+    rdfs:label "taught in" ;
+    rdfs:comment "Locus of pedagogy. Many-to-many: one concept may be taught in multiple Items across packages." .
+
+fxk:assessedBy a owl:ObjectProperty ;
+    rdfs:domain fxk:Concept ;
+    rdfs:range fxk:AssessmentItem ;
+    rdfs:label "assessed by" .
+
+fxk:assesses a owl:ObjectProperty ;
+    owl:inverseOf fxk:assessedBy ;
+    rdfs:domain fxk:AssessmentItem ;
+    rdfs:range fxk:Concept ;
+    rdfs:label "assesses" .
+
+fxk:declaresObjective a owl:ObjectProperty ;
+    rdfs:label "declares objective" ;
+    rdfs:comment "An Item or Resource declares this LearningObjective." .
+
+fxk:objectiveTopic a owl:ObjectProperty ;
+    rdfs:domain fxk:LearningObjective ;
+    rdfs:range fxk:Concept ;
+    rdfs:label "objective topic" .
+
+fxk:requiresSkill a owl:ObjectProperty ;
+    rdfs:range fxk:Skill ;
+    rdfs:label "requires skill" .
+
+fxk:developsSkill a owl:ObjectProperty ;
+    rdfs:range fxk:Skill ;
+    rdfs:label "develops skill" .
+
+fxk:fromFramework a owl:ObjectProperty ;
+    rdfs:domain fxk:Skill ;
+    rdfs:range fxk:SkillFramework ;
+    rdfs:label "from framework" .
+
+
+# -------- Peircean role predicates -------------------------------------
+
+fxk:hasSign a owl:ObjectProperty ;
+    rdfs:range fxk:Sign ;
+    rdfs:label "has sign" .
+
+fxk:hasObject a owl:ObjectProperty ;
+    rdfs:range fxk:Object ;
+    rdfs:label "has object" .
+
+fxk:hasInterpretant a owl:ObjectProperty ;
+    rdfs:range fxk:Interpretant ;
+    rdfs:label "has interpretant" .
+
+fxk:denotes a owl:ObjectProperty ;
+    rdfs:domain fxk:Sign ;
+    rdfs:range fxk:Object ;
+    rdfs:label "denotes" .
+
+fxk:isInterpretedAs a owl:ObjectProperty ;
+    rdfs:domain fxk:Sign ;
+    rdfs:range fxk:Interpretant ;
+    rdfs:label "is interpreted as" .
+
+
+# -------- Quality / confidence -----------------------------------------
+
+fxk:extractionConfidence a owl:DatatypeProperty ;
+    rdfs:range xsd:decimal ;
+    rdfs:label "extraction confidence" ;
+    rdfs:comment "Confidence (0.0–1.0) reported by the extractor for an inferred semantic triple. Used by MCP consumers for hedging." .
+
+fxk:reviewedBy a owl:ObjectProperty ;
+    rdfs:range prov:Agent ;
+    rdfs:label "reviewed by" ;
+    rdfs:comment "An agent (human or AI) that reviewed and validated the semantic triple." .
+
+
+#################################################################
+#                                                               #
+#  STRATUM 3 — BEHAVIORAL (fxa:)                                #
+#                                                               #
+#  Extends xAPI with AI-agent-as-learner constructs and         #
+#  closes the provenance loop between consumption and           #
+#  semantic extraction.                                         #
+#                                                               #
+#################################################################
+
+
+# -------- Core classes -------------------------------------------------
+
+fxa:AgentLearner a owl:Class ;
+    rdfs:subClassOf prov:Agent, foaf:Agent ;
+    rdfs:label "Agent Learner" ;
+    rdfs:comment "An AI agent acting in the role of learner within an LMS. Distinguished from human learners by fxa:operatedBy and fxa:representedBy." .
+
+fxa:HumanLearner a owl:Class ;
+    rdfs:subClassOf prov:Agent, foaf:Person ;
+    rdfs:label "Human Learner" .
+
+fxa:ConsumptionTrace a owl:Class ;
+    rdfs:subClassOf prov:Activity ;
+    rdfs:label "Consumption Trace" ;
+    rdfs:comment "An ordered sequence of xAPI statements emitted while an Agent consumed a single fxs:Item or contiguous Item subtree." .
+
+fxa:ExtractionEvent a owl:Class ;
+    rdfs:subClassOf prov:Activity ;
+    rdfs:label "Extraction Event" ;
+    rdfs:comment "A single act of producing a semantic-stratum entity (fxk:Concept, fxk:Claim, etc.) from a structural-stratum source. Closes the provenance loop." .
+
+fxa:CompetencySignal a owl:Class ;
+    rdfs:subClassOf skos:Concept ;
+    rdfs:label "Competency Signal" .
+
+# -- Competency signal individuals --
+fxa:Confirming a fxa:CompetencySignal ;
+    skos:prefLabel "Confirming" ;
+    skos:note "Agent's interaction outcome supports the underlying concept extraction." .
+fxa:Disconfirming a fxa:CompetencySignal ;
+    skos:prefLabel "Disconfirming" ;
+    skos:note "Agent's interaction outcome contradicts the extraction; flag for review." .
+fxa:Ambiguous a fxa:CompetencySignal ;
+    skos:prefLabel "Ambiguous" ;
+    skos:note "Insufficient signal to confirm or disconfirm." .
+
+
+# -------- Behavioral predicates ----------------------------------------
+
+fxa:operatedBy a owl:ObjectProperty ;
+    rdfs:domain fxa:AgentLearner ;
+    rdfs:range prov:Agent ;
+    rdfs:label "operated by" ;
+    rdfs:comment "The principal (human or organizational) who controls and is accountable for this agent." .
+
+fxa:representedBy a owl:ObjectProperty ;
+    rdfs:label "represented by" ;
+    rdfs:comment "Points to a WebID or DID identifying this agent in federation." .
+
+fxa:traversed a owl:ObjectProperty ;
+    rdfs:range fxs:Item ;
+    rdfs:label "traversed" .
+
+fxa:emittedStatement a owl:ObjectProperty ;
+    rdfs:label "emitted xAPI statement" .
+
+fxa:duringConsumption a owl:ObjectProperty ;
+    rdfs:domain fxa:ExtractionEvent ;
+    rdfs:range fxa:ConsumptionTrace ;
+    rdfs:label "during consumption" ;
+    rdfs:comment "Links an extraction event to the consumption trace that surfaced its source signal." .
+
+fxa:competencySignal a owl:ObjectProperty ;
+    rdfs:range fxa:CompetencySignal ;
+    rdfs:label "competency signal" .
+
+fxa:signalsFor a owl:ObjectProperty ;
+    rdfs:range fxk:Concept ;
+    rdfs:label "signals for" ;
+    rdfs:comment "The concept whose extraction quality this signal addresses." .
+
+fxa:traceStart a owl:DatatypeProperty ;
+    rdfs:domain fxa:ConsumptionTrace ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "trace start" .
+
+fxa:traceEnd a owl:DatatypeProperty ;
+    rdfs:domain fxa:ConsumptionTrace ;
+    rdfs:range xsd:dateTime ;
+    rdfs:label "trace end" .
+
+
+#################################################################
+#                                                               #
+#  SHACL SHAPES (fxsh:)                                         #
+#                                                               #
+#  Three shape categories:                                      #
+#    1. Structural integrity  — parser output                   #
+#    2. Semantic extraction   — LLM output                      #
+#    3. Federation            — context graph composition       #
+#                                                               #
+#################################################################
+
+
+# ===== 1. Structural integrity =========================================
+
+fxsh:PackageShape a sh:NodeShape ;
+    sh:targetClass fxs:Package ;
+    sh:property [
+        sh:path fxs:standardConformance ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:class fxs:StandardConformance ;
+        sh:message "A Package must declare exactly one standard conformance." ;
+    ] ;
+    sh:property [
+        sh:path fxs:hasOrganization ;
+        sh:minCount 1 ;
+        sh:class fxs:Organization ;
+        sh:message "A Package must have at least one Organization." ;
+    ] ;
+    sh:property [
+        sh:path fxs:defaultOrganization ;
+        sh:maxCount 1 ;
+        sh:message "A Package may declare at most one default Organization." ;
+    ] ;
+    sh:property [
+        sh:path fxs:authoredWith ;
+        sh:maxCount 1 ;
+        sh:class fxs:AuthoringTool ;
+    ] ;
+    sh:property [
+        sh:path dcterms:title ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+    ] .
+
+fxsh:ItemShape a sh:NodeShape ;
+    sh:targetClass fxs:Item ;
+    sh:or (
+        [ sh:property [ sh:path fxs:hasChild ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path fxs:hasResource ; sh:minCount 1 ] ]
+    ) ;
+    sh:message "Every Item must either have child Items or reference a Resource." ;
+    sh:property [
+        sh:path fxs:identifiedBy ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:string ;
+    ] .
+
+fxsh:ResourceShape a sh:NodeShape ;
+    sh:targetClass fxs:Resource ;
+    sh:property [
+        sh:path fxs:fileLocator ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "Every Resource must have at least one fileLocator." ;
+    ] ;
+    sh:property [
+        sh:path prov:wasDerivedFrom ;
+        sh:minCount 1 ;
+        sh:message "Every Resource must trace back via prov:wasDerivedFrom to its containing Package." ;
+    ] .
+
+fxsh:InteractionShape a sh:NodeShape ;
+    sh:targetClass fxs:Interaction ;
+    sh:property [
+        sh:path fxs:interactionType ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:class fxs:InteractionType ;
+    ] .
+
+
+# ===== 2. Semantic extraction ==========================================
+
+fxsh:ConceptShape a sh:NodeShape ;
+    sh:targetClass fxk:Concept ;
+    sh:property [
+        sh:path skos:prefLabel ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+        sh:minLength 1 ;
+        sh:message "Every Concept must have a non-empty prefLabel." ;
+    ] ;
+    sh:property [
+        sh:path prov:wasDerivedFrom ;
+        sh:minCount 1 ;
+        sh:message "Every Concept must trace back to at least one structural-stratum source." ;
+    ] ;
+    sh:property [
+        sh:path fxk:extractionConfidence ;
+        sh:maxCount 1 ;
+        sh:datatype xsd:decimal ;
+        sh:minInclusive 0.0 ;
+        sh:maxInclusive 1.0 ;
+    ] .
+
+fxsh:ClaimShape a sh:NodeShape ;
+    sh:targetClass fxk:Claim ;
+    sh:property [
+        sh:path skos:prefLabel ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+    ] ;
+    sh:property [
+        sh:path prov:wasDerivedFrom ;
+        sh:minCount 1 ;
+    ] ;
+    sh:property [
+        sh:path fxk:supportedBy ;
+        sh:minCount 1 ;
+        sh:class fxk:Concept ;
+        sh:message "Every Claim must reference at least one supporting Concept." ;
+    ] .
+
+# Acyclicity of the prerequisite relation, expressed via SPARQL.
+fxsh:PrerequisiteAcyclicShape a sh:NodeShape ;
+    sh:targetClass fxk:Concept ;
+    sh:sparql [
+        sh:message "fxk:prerequisiteOf must be acyclic — a Concept cannot be a prerequisite of itself, directly or transitively." ;
+        sh:prefixes <https://vocab.foxximediums.com/shapes> ;
+        sh:select """
+            PREFIX fxk: <https://vocab.foxximediums.com/knowledge#>
+            SELECT $this
+            WHERE {
+                $this fxk:prerequisiteOf+ $this .
+            }
+        """ ;
+    ] .
+
+fxsh:AssessmentItemShape a sh:NodeShape ;
+    sh:targetClass fxk:AssessmentItem ;
+    sh:property [
+        sh:path fxk:hasSign ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "An AssessmentItem must have exactly one Sign." ;
+    ] ;
+    sh:property [
+        sh:path fxk:hasObject ;
+        sh:minCount 1 ;
+        sh:message "An AssessmentItem must have at least one Object (the concept/claim being tested)." ;
+    ] ;
+    sh:property [
+        sh:path fxk:assesses ;
+        sh:minCount 1 ;
+        sh:class fxk:Concept ;
+    ] .
+
+
+# ===== 3. Federation ===================================================
+
+fxsh:FederationShape a sh:NodeShape ;
+    sh:targetClass fxk:Concept ;
+    sh:property [
+        sh:path skos:prefLabel ;
+        sh:minCount 1 ;
+    ] ;
+    sh:nodeKind sh:IRI ;
+    sh:message "Concepts must be IRI-named (no blank nodes) for stable cross-pod reference." .
+
+# Every named graph in the federation must declare its generator.
+fxsh:NamedGraphShape a sh:NodeShape ;
+    sh:targetClass prov:Entity ;
+    sh:property [
+        sh:path prov:wasGeneratedBy ;
+        sh:minCount 1 ;
+        sh:severity sh:Warning ;
+        sh:message "Federation-published graphs should declare prov:wasGeneratedBy with parser/extractor version." ;
+    ] .
+
+
+#################################################################
+#                                                               #
+#  WORKED EXAMPLES                                              #
+#                                                               #
+#  Four examples spanning all three strata:                     #
+#    A. A Storyline-authored SCORM 1.2 package on Python        #
+#    B. A quiz interaction with Peircean decomposition          #
+#    C. An agent consumption trace with extraction event        #
+#    D. A cross-source contradiction surfacing                  #
+#                                                               #
+#################################################################
+
+
+# ===== Example A: Storyline SCORM 1.2 package ==========================
+
+<https://example.foxximediums.com/pkg/intro-python> a fxs:Package ;
+    dcterms:title "Introduction to Python" ;
+    dcterms:creator "Foxxi Education Team" ;
+    fxs:standardConformance fxs:SCORM_1_2 ;
+    fxs:authoredWith fxs:ArticulateStoryline ;
+    fxs:hasOrganization <https://example.foxximediums.com/pkg/intro-python/org/main> ;
+    fxs:defaultOrganization <https://example.foxximediums.com/pkg/intro-python/org/main> ;
+    fxs:identifiedBy "INTRO-PYTHON-2026-01" ;
+    prov:wasGeneratedBy <https://example.foxximediums.com/parser/foxxi-scorm-core/0.1.0> .
+
+<https://example.foxximediums.com/pkg/intro-python/org/main> a fxs:Organization ;
+    dcterms:title "Introduction to Python — Main Track" ;
+    fxs:identifiedBy "ORG-MAIN" ;
+    fxs:hasItem <https://example.foxximediums.com/pkg/intro-python/item/1>, 
+                <https://example.foxximediums.com/pkg/intro-python/item/2>, 
+                <https://example.foxximediums.com/pkg/intro-python/item/3> .
+
+<https://example.foxximediums.com/pkg/intro-python/item/1> a fxs:Item ;
+    dcterms:title "Module 1: Getting Started" ;
+    fxs:identifiedBy "ITEM-1" ;
+    fxs:sequenceIndex 0 ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/intro-python/res/intro> .
+
+<https://example.foxximediums.com/pkg/intro-python/item/2> a fxs:Item ;
+    dcterms:title "Module 2: Variables and Expressions" ;
+    fxs:identifiedBy "ITEM-2" ;
+    fxs:sequenceIndex 1 ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/intro-python/res/vars> .
+
+<https://example.foxximediums.com/pkg/intro-python/res/intro> a fxs:SCO ;
+    dcterms:title "Welcome and Setup" ;
+    fxs:identifiedBy "RES-INTRO" ;
+    fxs:fileLocator "intro-python.zip!/lessons/1/index.html" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python> .
+
+<https://example.foxximediums.com/pkg/intro-python/res/vars> a fxs:SCO ;
+    dcterms:title "Variables and Expressions" ;
+    fxs:identifiedBy "RES-VARS" ;
+    fxs:fileLocator "intro-python.zip!/lessons/2/index.html" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python> .
+
+<https://example.foxximediums.com/pkg/intro-python/item/3> a fxs:Item ;
+    dcterms:title "Module 3: Data Types" ;
+    fxs:identifiedBy "ITEM-3" ;
+    fxs:sequenceIndex 2 ;
+    fxs:hasChild <https://example.foxximediums.com/pkg/intro-python/item/3.1>, 
+                 <https://example.foxximediums.com/pkg/intro-python/item/3.2> .
+
+<https://example.foxximediums.com/pkg/intro-python/item/3.1> a fxs:Item ;
+    dcterms:title "Numbers, Strings, Booleans" ;
+    fxs:identifiedBy "ITEM-3-1" ;
+    fxs:sequenceIndex 0 ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/intro-python/res/lesson-3-1> .
+
+<https://example.foxximediums.com/pkg/intro-python/res/lesson-3-1> a fxs:SCO ;
+    dcterms:title "Primitive Types" ;
+    fxs:identifiedBy "RES-LESSON-3-1" ;
+    fxs:fileLocator "intro-python.zip!/lessons/3.1/index.html" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python> .
+
+<https://example.foxximediums.com/pkg/intro-python/item/3.2> a fxs:Item ;
+    dcterms:title "Mutable vs Immutable Types" ;
+    fxs:identifiedBy "ITEM-3-2" ;
+    fxs:sequenceIndex 1 ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/intro-python/res/lesson-3-2>,
+                    <https://example.foxximediums.com/pkg/intro-python/res/quiz-3-2> .
+
+<https://example.foxximediums.com/pkg/intro-python/res/lesson-3-2> a fxs:SCO ;
+    dcterms:title "Lesson 3.2: Mutability" ;
+    fxs:identifiedBy "RES-LESSON-3-2" ;
+    fxs:fileLocator "intro-python.zip!/lessons/3.2/index.html" ;
+    fxs:duration "PT8M"^^xsd:duration ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python> .
+
+<https://example.foxximediums.com/pkg/intro-python/res/quiz-3-2> a fxs:Interaction, fxs:SCO ;
+    dcterms:title "Quiz 3.2: Mutability Check" ;
+    fxs:identifiedBy "RES-QUIZ-3-2" ;
+    fxs:interactionType fxs:MultipleChoice ;
+    fxs:fileLocator "intro-python.zip!/lessons/3.2/quiz.json#q1" ;
+    fxs:correctResponsePattern "c" ;
+    fxs:masteryScore 0.8 ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python> .
+
+
+# ===== Example B: Peircean decomposition of the quiz item ==============
+
+<https://example.foxximediums.com/concept/python-mutability> a fxk:Concept ;
+    skos:prefLabel "Mutability in Python" ;
+    skos:definition "The property of an object permitting in-place modification after creation." ;
+    fxk:taughtIn <https://example.foxximediums.com/pkg/intro-python/item/3.2> ;
+    fxk:extractionConfidence 0.94 ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python/res/lesson-3-2> ;
+    prov:wasGeneratedBy <https://example.foxximediums.com/extractor/foxxi-olke/0.1.0> .
+
+<https://example.foxximediums.com/concept/python-mutable-type> a fxk:Concept ;
+    skos:prefLabel "Mutable Type" ;
+    fxk:prerequisiteOf <https://example.foxximediums.com/concept/python-mutability> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python/res/lesson-3-2> .
+
+<https://example.foxximediums.com/concept/python-list> a fxk:Concept ;
+    skos:prefLabel "Python list" ;
+    fxk:exemplifies <https://example.foxximediums.com/concept/python-mutable-type> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python/res/lesson-3-2> .
+
+<https://example.foxximediums.com/concept/python-tuple> a fxk:Concept ;
+    skos:prefLabel "Python tuple" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python/res/lesson-3-2> .
+
+<https://example.foxximediums.com/claim/list-is-mutable> a fxk:Claim ;
+    skos:prefLabel "Python lists are mutable." ;
+    fxk:supportedBy <https://example.foxximediums.com/concept/python-list>, <https://example.foxximediums.com/concept/python-mutability> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python/res/quiz-3-2> .
+
+<https://example.foxximediums.com/claim/tuple-is-immutable> a fxk:Claim ;
+    skos:prefLabel "Python tuples are immutable." ;
+    fxk:supportedBy <https://example.foxximediums.com/concept/python-tuple>, <https://example.foxximediums.com/concept/python-mutability> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python/res/quiz-3-2> .
+
+# The AssessmentItem is the OLKE/Peircean decomposition of the quiz.
+<https://example.foxximediums.com/assess/quiz-3-2-q1> a fxk:AssessmentItem ;
+    fxk:assesses <https://example.foxximediums.com/concept/python-mutability> ;
+    fxk:hasSign <https://example.foxximediums.com/sign/quiz-3-2-q1> ;
+    fxk:hasObject <https://example.foxximediums.com/claim/list-is-mutable> ;
+    fxk:hasInterpretant <https://example.foxximediums.com/interp/quiz-3-2-q1-feedback> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python/res/quiz-3-2> .
+
+<https://example.foxximediums.com/sign/quiz-3-2-q1> a fxk:Sign ;
+    rdfs:label "Quiz item: 'Which is mutable? a) tuple b) string c) list d) frozenset'" ;
+    fxk:denotes <https://example.foxximediums.com/claim/list-is-mutable> ;
+    fxk:isInterpretedAs <https://example.foxximediums.com/interp/quiz-3-2-q1-feedback> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python/res/quiz-3-2> .
+
+<https://example.foxximediums.com/interp/quiz-3-2-q1-feedback> a fxk:Interpretant ;
+    rdfs:label "Lists can be modified after creation; the others cannot." ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/intro-python/res/quiz-3-2> .
+
+
+# ===== Example C: Agent consumption trace ==============================
+
+<https://example.foxximediums.com/agent/foxxi-learner-001> a fxa:AgentLearner ;
+    foaf:name "Foxxi Learner Agent 001" ;
+    fxa:representedBy <https://id.foxximediums.com/agents/learner-001#me> ;
+    fxa:operatedBy <https://id.foxximediums.com/markj/profile#me> .
+
+<https://example.foxximediums.com/trace/learner-001/2026-04-29/item-3-2> a fxa:ConsumptionTrace ;
+    prov:wasAssociatedWith <https://example.foxximediums.com/agent/foxxi-learner-001> ;
+    fxa:traversed <https://example.foxximediums.com/pkg/intro-python/item/3.2> ;
+    fxa:traceStart "2026-04-29T14:12:03Z"^^xsd:dateTime ;
+    fxa:traceEnd "2026-04-29T14:21:48Z"^^xsd:dateTime ;
+    fxa:emittedStatement <https://example.foxximediums.com/xapi/stmt/8c2f1e6a-...> .
+
+# Extraction event closes the loop: this concept was generated from
+# this resource during this consumption trace.
+<https://example.foxximediums.com/extraction/concept/python-mutability/v1> a fxa:ExtractionEvent ;
+    prov:generated <https://example.foxximediums.com/concept/python-mutability> ;
+    prov:used <https://example.foxximediums.com/pkg/intro-python/res/lesson-3-2> ;
+    fxa:duringConsumption <https://example.foxximediums.com/trace/learner-001/2026-04-29/item-3-2> ;
+    prov:wasAssociatedWith <https://example.foxximediums.com/extractor/foxxi-olke/0.1.0> ;
+    prov:atTime "2026-04-29T14:21:50Z"^^xsd:dateTime .
+
+# When the agent answered the quiz correctly, that produces a
+# confirming signal for the concept extraction's quality.
+<https://example.foxximediums.com/signal/concept/python-mutability/2026-04-29> a fxa:CompetencySignal ;
+    fxa:signalsFor <https://example.foxximediums.com/concept/python-mutability> ;
+    fxa:competencySignal fxa:Confirming ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/trace/learner-001/2026-04-29/item-3-2> .
+
+
+# ===== Example D: Cross-source contradiction ===========================
+
+# A second package — perhaps an outdated tutorial — claims something
+# inconsistent. The federation surfaces this contradiction.
+
+<https://example.foxximediums.com/pkg/legacy-python> a fxs:Package ;
+    dcterms:title "Python Basics (Legacy)" ;
+    fxs:standardConformance fxs:SCORM_1_2 ;
+    fxs:authoredWith fxs:Captivate ;
+    fxs:identifiedBy "LEGACY-PYTHON-2018" ;
+    fxs:hasOrganization <https://example.foxximediums.com/pkg/legacy-python/org/main> ;
+    fxs:defaultOrganization <https://example.foxximediums.com/pkg/legacy-python/org/main> .
+
+<https://example.foxximediums.com/pkg/legacy-python/org/main> a fxs:Organization ;
+    dcterms:title "Python Basics — Legacy Track" ;
+    fxs:identifiedBy "LEGACY-ORG-MAIN" ;
+    fxs:hasItem <https://example.foxximediums.com/pkg/legacy-python/item/tuples> .
+
+<https://example.foxximediums.com/pkg/legacy-python/item/tuples> a fxs:Item ;
+    dcterms:title "Tuples (Legacy)" ;
+    fxs:identifiedBy "LEGACY-ITEM-TUPLES" ;
+    fxs:sequenceIndex 0 ;
+    fxs:hasResource <https://example.foxximediums.com/pkg/legacy-python/res/lesson-tuples> .
+
+<https://example.foxximediums.com/pkg/legacy-python/res/lesson-tuples> a fxs:SCO ;
+    dcterms:title "Working with Tuples" ;
+    fxs:identifiedBy "LEGACY-RES-TUPLES" ;
+    fxs:fileLocator "legacy-python.zip!/tuples/index.html" ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/legacy-python> .
+
+# An incorrect claim from the legacy source.
+<https://example.foxximediums.com/claim/tuples-can-be-modified> a fxk:Claim ;
+    skos:prefLabel "Python tuples can be modified after creation." ;
+    fxk:supportedBy <https://example.foxximediums.com/concept/python-tuple> ;
+    prov:wasDerivedFrom <https://example.foxximediums.com/pkg/legacy-python/res/lesson-tuples> ;
+    fxk:extractionConfidence 0.71 .
+
+# The contradiction edge — symmetric, surfaces in both directions.
+<https://example.foxximediums.com/claim/tuples-can-be-modified> fxk:contradicts <https://example.foxximediums.com/claim/tuple-is-immutable> .
+
+# An MCP consumer querying for "what can I tell the learner about tuples?"
+# can detect this contradiction and surface both sources with provenance,
+# allowing the consumer (or a human reviewer) to disambiguate.
+
+
+#################################################################
+#  End of foxxi-content-graph.ttl v0.1                          #
+#################################################################

@@ -8,6 +8,76 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Foxxi content-intelligence vertical (third dual-audience pilot)
+
+Integrates the Foxxi eLearning content-intelligence system (originally
+built as standalone Python parsers + React dashboards + Foxximediums
+TTLs) as a first-class Interego vertical at
+[`applications/foxxi-content-intelligence/`](applications/foxxi-content-intelligence/).
+
+**What landed**:
+- [`applications/foxxi-content-intelligence/README.md`](applications/foxxi-content-intelligence/README.md)
+  — full vertical description, three-stratum vocabulary table, dual-
+  audience table, substrate-composition table.
+- [`affordances.ts`](applications/foxxi-content-intelligence/affordances.ts)
+  — 3 learner-side + 7 admin-side affordances, dual-audience split.
+  Action IRIs follow `urn:cg:action:foxxi:<verb>`; tool names follow
+  `foxxi.<verb>`.
+- [`src/publisher.ts`](applications/foxxi-content-intelligence/src/publisher.ts)
+  — substrate-side glue. `ingestContentPackage` emits three-stratum
+  descriptors (fxs structural / fxk knowledge / fxa activity-schema),
+  `publishAuthoringPolicy` declares accepted authoring tools +
+  standards, `assignAudience` binds courses to audience groups via
+  policy descriptors, `coverageQuery` composes the existing
+  aggregate-privacy ladder (v2 merkle-attested-opt-in / v3
+  zk-distribution histogram with per-bucket DP noise) for privacy-
+  respecting cohort coverage analysis.
+- [`bridge/server.ts`](applications/foxxi-content-intelligence/bridge/server.ts)
+  — MCP-named-tool surface. Supports `FOXXI_AUDIENCE=learner|admin|both`
+  split per [`docs/DEPLOYMENT-SPLIT.md`](docs/DEPLOYMENT-SPLIT.md).
+- [`ns/`](applications/foxxi-content-intelligence/ns/) — the
+  Foxximediums three-stratum vocabulary (fxs/fxk/fxa) preserved
+  as vertical-scoped TTLs.
+- [`imported/`](applications/foxxi-content-intelligence/imported/) —
+  authoritative Foxxi system files preserved as-is: Python parsers
+  (v0.1 / v0.2 / v0.3 with Whisper transcription + concept
+  morphology + Peircean Sign/Object/Interpretant tagging), dashboard
+  builders, admin payload generators, React admin + dashboard UIs,
+  sample ACME Utility tenant data (183 employees, full L&D state),
+  parsed lesson graphs (Inverter Controls / Inverter Basics).
+
+**Composition with existing substrate**:
+- SCORM unwrap → [`applications/_shared/scorm/`](applications/_shared/scorm/)
+- xAPI projection of consumption events → [`applications/lrs-adapter/`](applications/lrs-adapter/)
+- Coverage query without per-learner reveal → [`applications/_shared/aggregate-privacy/`](applications/_shared/aggregate-privacy/) v2 / v3 / v3-distribution
+- Per-action audit + compliance citation → [`integrations/compliance-overlay/`](integrations/compliance-overlay/)
+- LMS connectors (Cornerstone OnDemand, etc.) → [`src/connectors/`](src/connectors/)
+- Federated multi-course catalog → [`hyprcat:`](docs/ns/hyprcat.ttl)
+
+**Layering hygiene**: the `fxs:`/`fxk:`/`fxa:` prefixes are vertical-
+scoped (NOT L1/L2/L3); the vertical MUST NOT propose changes to core
+ontologies (per [`spec/LAYERS.md`](spec/LAYERS.md)) and doesn't —
+every descriptor it emits uses standard core facets + composes
+existing primitives.
+
+11 new contract tests in [`applications/foxxi-content-intelligence/tests/foxxi.test.ts`](applications/foxxi-content-intelligence/tests/foxxi.test.ts):
+- Affordance shape + naming convention enforcement
+- Dual-audience disjointness (no overlap between learner + admin
+  action IRIs)
+- MCP-tool-schema derivation completeness for every affordance
+- `coverageQuery` composition across all three privacy modes (abac
+  plain count, merkle-attested-opt-in bundle verification, zk-
+  distribution histogram with per-bucket counts validated)
+- zk-distribution required-args throws (epsilon missing, edges
+  missing)
+
+Originating Claude chat session preserved at
+`course/AI agent for LMS content consumption and knowledge graph
+building - Claude.pdf` (in the harness root, outside the
+context-graphs subproject).
+
+---
+
 ## 2026-05-16 — Privacy accountants: advanced composition + Rényi-DP
 
 Ships [`src/crypto/dp-accountant.ts`](src/crypto/dp-accountant.ts) — the

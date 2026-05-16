@@ -1,0 +1,4575 @@
+{
+  "package": {
+    "id": "_5qwmVc81kwm",
+    "title": "Lesson 2: Inverter Basics",
+    "standard": "SCORM_2004_4",
+    "authoring_tool": "Articulate Storyline",
+    "authoring_version": "3.104.35448.0",
+    "parser_version": "0.3.0",
+    "vocab_version": "0.2.0",
+    "course_id": "lesson2",
+    "course_label": "Lesson 2",
+    "federation_iri_base": "https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/courses/lesson2"
+  },
+  "stats": {
+    "manifest_items": 1,
+    "manifest_resources": 1,
+    "scenes": 2,
+    "slides": 15,
+    "audio_files": 28,
+    "transcripts": 28,
+    "audio_seconds": 736.1310625,
+    "concepts_total": 128,
+    "concepts_free_standing": 122,
+    "modifier_pairs": 32,
+    "prereq_edges": 323
+  },
+  "scenes": [
+    {
+      "id": "6RdIHQ8sw43",
+      "title": "Scene 1",
+      "scene_number": 1,
+      "slide_ids": [
+        "5mxvVHmgKIk",
+        "6ps7ro4Er5o",
+        "5zBRyvxOwou",
+        "6eVptVTR2Lx",
+        "5q1PTTjK3aS",
+        "6KhIqryeG83",
+        "5uUiVx1gsqw",
+        "6j4NfYacv8d",
+        "6MvgELbfFIH",
+        "64VkQoxpjPi",
+        "6JZsAHMHpvb",
+        "66RtiTQPuzj",
+        "5XHGBaZwOfD"
+      ]
+    },
+    {
+      "id": "5sFB072XEDS",
+      "title": "Scene 2",
+      "scene_number": 2,
+      "slide_ids": [
+        "6DAYZylYZ4Y",
+        "6IcYxMXh0mW"
+      ]
+    }
+  ],
+  "slides": [
+    {
+      "id": "5mxvVHmgKIk",
+      "title": "Welcome",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 0,
+      "lms_id": "Slide1",
+      "audio_count": 0,
+      "transcript_segments": [],
+      "transcript_combined": "",
+      "concept_ids": [],
+      "alt_text_corpus": "title.jpg; Use this title layout.\\nIt is ok to change the background image as long as the EPRI gradient overlay remains on this page prominently displayed.\\nRemove audio track if the course does not contain any other audio. You may replace with different audio, especially if you are branding a series of courses. \\nAdd prerequisite or recommended prior course work or knowledge to this slide if needed.\\n\\nStart Course \u2013 Trigger to jump to About This Course.\\n; Lesson 2: Inverter Basics; \u00a9 2025 Ele"
+    },
+    {
+      "id": "6ps7ro4Er5o",
+      "title": "Introduction",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 1,
+      "lms_id": "Slide2",
+      "audio_count": 2,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/6gaxzFMDakO_44100_48_0.mp3",
+          "duration": 28.52575,
+          "text": "To understand how inverter-based resources or IBRs interact with the grid, it's essential to start with the fundamentals of power electronics. In this lesson we'll begin by discussing inverter and plant controls along with control scheme timeframes. We'll then discuss in some detail various power electronic concepts, including switches, voltage and current source converters, pulse width modulation and output filters.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 6.5200000000000005,
+              "text": "To understand how inverter-based resources or IBRs interact with the grid, it's essential"
+            },
+            {
+              "start": 6.5200000000000005,
+              "end": 10.24,
+              "text": "to start with the fundamentals of power electronics."
+            },
+            {
+              "start": 10.24,
+              "end": 15.36,
+              "text": "In this lesson we'll begin by discussing inverter and plant controls along with control"
+            },
+            {
+              "start": 15.36,
+              "end": 17.12,
+              "text": "scheme timeframes."
+            },
+            {
+              "start": 17.12,
+              "end": 22.76,
+              "text": "We'll then discuss in some detail various power electronic concepts, including switches,"
+            },
+            {
+              "start": 22.76,
+              "end": 28.080000000000002,
+              "text": "voltage and current source converters, pulse width modulation and output filters."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/6Jq4l5JKCpB_44100_48_0.mp3",
+          "duration": 13.087375,
+          "text": "Upon completion of this lesson, you should be able to describe how different control layers interconnect and coordinate across time scales, and describe the differences between voltage and current source converters.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 5.5,
+              "text": "Upon completion of this lesson, you should be able to describe how different control layers"
+            },
+            {
+              "start": 5.5,
+              "end": 13.0,
+              "text": "interconnect and coordinate across time scales, and describe the differences between voltage and current source converters."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "To understand how inverter-based resources or IBRs interact with the grid, it's essential to start with the fundamentals of power electronics. In this lesson we'll begin by discussing inverter and plant controls along with control scheme timeframes. We'll then discuss in some detail various power electronic concepts, including switches, voltage and current source converters, pulse width modulation and output filters. Upon completion of this lesson, you should be able to describe how different control layers interconnect and coordinate across time scales, and describe the differences between voltage and current source converters.",
+      "concept_ids": [
+        "voltage-and-current",
+        "current-source-converters",
+        "how",
+        "power",
+        "inverter-and-plant",
+        "plant-controls-along",
+        "detail-various-power",
+        "various-power-electronic",
+        "power-electronic-concepts",
+        "electronic-concepts-including",
+        "concepts-including-switches",
+        "including-switches-voltage",
+        "source-converters-pulse",
+        "converters-pulse-width",
+        "pulse-width-modulation",
+        "modulation-and-output",
+        "output-filters-upon",
+        "interconnect-and-coordinate",
+        "coordinate-across-time",
+        "across-time-scales"
+      ],
+      "alt_text_corpus": ""
+    },
+    {
+      "id": "5zBRyvxOwou",
+      "title": "Energy Flow from IBRs to the Grid",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 2,
+      "lms_id": "Slide3",
+      "audio_count": 1,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/6hBXUhbxkTW_44100_48_0.mp3",
+          "duration": 12.74775,
+          "text": "Shown on the screen is a basic diagram of an IBR plant connection to the transmission system. Click each marker for an overview of the power flow from inverter-based resources to the power grid.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 6.0,
+              "text": "Shown on the screen is a basic diagram of an IBR plant connection to the transmission system."
+            },
+            {
+              "start": 6.0,
+              "end": 13.0,
+              "text": "Click each marker for an overview of the power flow from inverter-based resources to the power grid."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "Shown on the screen is a basic diagram of an IBR plant connection to the transmission system. Click each marker for an overview of the power flow from inverter-based resources to the power grid.",
+      "concept_ids": [
+        "flow-from",
+        "grid",
+        "power",
+        "energy-flow-from",
+        "flow-from-ibrs",
+        "ibr-plant-connection",
+        "power-flow-from",
+        "flow-from-inverter-based",
+        "basic-diagram",
+        "transmission-system",
+        "power-grid"
+      ],
+      "alt_text_corpus": "Rectangle 6; Image 18.emf; Rectangle 1"
+    },
+    {
+      "id": "6eVptVTR2Lx",
+      "title": "Inverter and Plant Controls",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 3,
+      "lms_id": "Slide4",
+      "audio_count": 4,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/6Hmxu0Rp7KI_44100_48_0.mp3",
+          "duration": 5.250625,
+          "text": "There are two layers of control, inverter and plant level control.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 5.0,
+              "text": "There are two layers of control, inverter and plant level control."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/5lc3L2JsW3q_44100_48_0.mp3",
+          "duration": 19.9314375,
+          "text": "The inverter level control system for one inverter is shown. Inverter controls are typically implemented in a nested loop structure. Controls in this system include an outer and inner control, pulse width modulation or PWM and phase locked loop or PLL.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 4.72,
+              "text": "The inverter level control system for one inverter is shown."
+            },
+            {
+              "start": 4.72,
+              "end": 9.200000000000001,
+              "text": "Inverter controls are typically implemented in a nested loop structure."
+            },
+            {
+              "start": 9.200000000000001,
+              "end": 13.120000000000001,
+              "text": "Controls in this system include an outer and inner control,"
+            },
+            {
+              "start": 13.120000000000001,
+              "end": 19.68,
+              "text": "pulse width modulation or PWM and phase locked loop or PLL."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/6f9fCQ5hQb4_44100_48_0.mp3",
+          "duration": 9.9526875,
+          "text": "Along with the inverter level control system, there is also a plant level control system, which generates control commands for inverter level control.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 5.6000000000000005,
+              "text": "Along with the inverter level control system, there is also a plant level control system,"
+            },
+            {
+              "start": 5.6000000000000005,
+              "end": 9.6,
+              "text": "which generates control commands for inverter level control."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/6LZHjtvbOOO_44100_48_0.mp3",
+          "duration": 30.1453125,
+          "text": "The plant level controller implements essential transmission grid code requirements at the point of measurement during normal and abnormal operating conditions. This is accomplished by sending control set points to each individual inverter. We assume in this course that the plant controller sends active and reactive power set points to inverter level control. The individual inverter controls output to achieve these set points. In this course, we'll look at how this is done.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 9.0,
+              "text": "The plant level controller implements essential transmission grid code requirements at the point of measurement during normal and abnormal operating conditions."
+            },
+            {
+              "start": 9.0,
+              "end": 14.0,
+              "text": "This is accomplished by sending control set points to each individual inverter."
+            },
+            {
+              "start": 14.0,
+              "end": 21.0,
+              "text": "We assume in this course that the plant controller sends active and reactive power set points to inverter level control."
+            },
+            {
+              "start": 21.0,
+              "end": 26.0,
+              "text": "The individual inverter controls output to achieve these set points."
+            },
+            {
+              "start": 26.0,
+              "end": 30.0,
+              "text": "In this course, we'll look at how this is done."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "There are two layers of control, inverter and plant level control. The inverter level control system for one inverter is shown. Inverter controls are typically implemented in a nested loop structure. Controls in this system include an outer and inner control, pulse width modulation or PWM and phase locked loop or PLL. Along with the inverter level control system, there is also a plant level control system, which generates control commands for inverter level control. The plant level controller implements essential transmission grid code requirements at the point of measurement during normal and abnormal operating conditions. This is accomplished by sending control set points to each individual inverter. We assume in this course that the plant controller sends active and reactive power set points to inverter level control. The individual inverter controls output to achieve these set points. In this course, we'll look at how this is done.",
+      "concept_ids": [
+        "level",
+        "inverter-level",
+        "level-control-system",
+        "plant",
+        "plant-level",
+        "set-points",
+        "inverter-and-plant",
+        "individual-inverter",
+        "controller",
+        "nested-loop-structure",
+        "outer-and-inner",
+        "inner-control-pulse",
+        "pulse-width-modulation",
+        "pwm-and-phase",
+        "phase-locked-loop",
+        "system-which-generates",
+        "generates-control-commands",
+        "commands-for-inverter"
+      ],
+      "alt_text_corpus": "Rectangle 5; Right Arrow 4; Rectangle 6; Right Arrow 2; Right Arrow 5; Rectangle 3; Image 22.emf; Right Arrow 3; Rectangle 2; Rectangle 7; Rectangle 8; Right Arrow 1; Rectangle 9; Rectangle 4; Rectangle 10; Rectangle 1; Right Arrow 6"
+    },
+    {
+      "id": "5q1PTTjK3aS",
+      "title": "Inverter and Plant Control Timeframes",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 4,
+      "lms_id": "Slide5",
+      "audio_count": 1,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/5zka3Y5AssZ_44100_48_0.mp3",
+          "duration": 62.3281875,
+          "text": "Simple response times of different layers of control are shown in the graph to the right. Notice the differences in the timeframes for the controllers. This separation in controller timeframes simplifies the control design problem. The individual inverter and plant level control schemes operate at different speeds with the individual unit controls acting faster and plant controller acting slower. In general, the lower layer controls in blue react in microseconds to milliseconds, handling fast electrical dynamics. The higher level plant and system responses shown in red operate in hundreds of milliseconds to seconds, managing broader grid support functions like frequency and voltage control. Inverter control is implemented in an nested loop structure without our controls being slower. Take some time to review the timeframes and then click Next for a discussion on power electronic converters and concepts associated within Verters.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 6.0,
+              "text": "Simple response times of different layers of control are shown in the graph to the right."
+            },
+            {
+              "start": 6.0,
+              "end": 9.0,
+              "text": "Notice the differences in the timeframes for the controllers."
+            },
+            {
+              "start": 9.0,
+              "end": 14.0,
+              "text": "This separation in controller timeframes simplifies the control design problem."
+            },
+            {
+              "start": 14.0,
+              "end": 19.0,
+              "text": "The individual inverter and plant level control schemes operate at different speeds"
+            },
+            {
+              "start": 19.0,
+              "end": 25.0,
+              "text": "with the individual unit controls acting faster and plant controller acting slower."
+            },
+            {
+              "start": 26.0,
+              "end": 31.0,
+              "text": "In general, the lower layer controls in blue react in microseconds to milliseconds,"
+            },
+            {
+              "start": 31.0,
+              "end": 34.0,
+              "text": "handling fast electrical dynamics."
+            },
+            {
+              "start": 34.0,
+              "end": 40.0,
+              "text": "The higher level plant and system responses shown in red operate in hundreds of milliseconds"
+            },
+            {
+              "start": 40.0,
+              "end": 46.0,
+              "text": "to seconds, managing broader grid support functions like frequency and voltage control."
+            },
+            {
+              "start": 46.0,
+              "end": 52.0,
+              "text": "Inverter control is implemented in an nested loop structure without our controls being slower."
+            },
+            {
+              "start": 52.0,
+              "end": 59.0,
+              "text": "Take some time to review the timeframes and then click Next for a discussion on power electronic converters"
+            },
+            {
+              "start": 59.0,
+              "end": 62.0,
+              "text": "and concepts associated within Verters."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "Simple response times of different layers of control are shown in the graph to the right. Notice the differences in the timeframes for the controllers. This separation in controller timeframes simplifies the control design problem. The individual inverter and plant level control schemes operate at different speeds with the individual unit controls acting faster and plant controller acting slower. In general, the lower layer controls in blue react in microseconds to milliseconds, handling fast electrical dynamics. The higher level plant and system responses shown in red operate in hundreds of milliseconds to seconds, managing broader grid support functions like frequency and voltage control. Inverter control is implemented in an nested loop structure without our controls being slower. Take some time to review the timeframes and then click Next for a discussion on power electronic converters and concepts associated within Verters.",
+      "concept_ids": [
+        "plant",
+        "inverter-and-plant",
+        "controller",
+        "level",
+        "plant-control-timeframes",
+        "timeframes-simple-response",
+        "simple-response-times",
+        "notice-the-differences",
+        "controllers-this-separation",
+        "controller-timeframes-simplifies",
+        "problem-the-individual",
+        "level-control-schemes",
+        "unit-controls-acting",
+        "faster-and-plant"
+      ],
+      "alt_text_corpus": "Rectangle 2; Triangle 1; Image 13.emf; Rectangle 1; Image 12.emf"
+    },
+    {
+      "id": "6KhIqryeG83",
+      "title": "Power Electronics Overview",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 5,
+      "lms_id": "Slide6",
+      "audio_count": 2,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/6clJAJkbqLU_44100_48_0.mp3",
+          "duration": 41.9265625,
+          "text": "Power electronic converters are used for IBRs such as photovoltaic arrays and wind and best resources. We'll focus on solar photovoltaic resources in this course. A solar panel generates direct current electricity and cannot be directly connected to the alternating current electric grid. Power electronic converters are used to transfer energy between PV arrays and the electric grid. This transfer is accomplished by synthesizing an output voltage based on the requirements of the grid, allowing safe and reliable energy transfer. In this course we'll look at how this voltage is synthesized by a power electronic converter.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 7.12,
+              "text": "Power electronic converters are used for IBRs such as photovoltaic arrays and wind and"
+            },
+            {
+              "start": 7.12,
+              "end": 8.76,
+              "text": "best resources."
+            },
+            {
+              "start": 8.76,
+              "end": 13.040000000000001,
+              "text": "We'll focus on solar photovoltaic resources in this course."
+            },
+            {
+              "start": 13.040000000000001,
+              "end": 18.36,
+              "text": "A solar panel generates direct current electricity and cannot be directly connected to the"
+            },
+            {
+              "start": 18.36,
+              "end": 21.04,
+              "text": "alternating current electric grid."
+            },
+            {
+              "start": 21.04,
+              "end": 26.560000000000002,
+              "text": "Power electronic converters are used to transfer energy between PV arrays and the electric"
+            },
+            {
+              "start": 26.560000000000002,
+              "end": 27.560000000000002,
+              "text": "grid."
+            },
+            {
+              "start": 27.560000000000002,
+              "end": 32.32,
+              "text": "This transfer is accomplished by synthesizing an output voltage based on the requirements"
+            },
+            {
+              "start": 32.32,
+              "end": 36.64,
+              "text": "of the grid, allowing safe and reliable energy transfer."
+            },
+            {
+              "start": 36.64,
+              "end": 41.480000000000004,
+              "text": "In this course we'll look at how this voltage is synthesized by a power electronic converter."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/5h9dgd9t9Du_44100_48_0.mp3",
+          "duration": 46.6024375,
+          "text": "Over the next several screens we'll look at 4 power electronic concepts in the context of PV inverters. Power electronic switches are the core components and controlling power flow for my BRs. Within this course when we refer to switches, we are talking about power electronic switches. First, we'll look at how these switches operate. Then, we'll compare voltage source converters with current source converters and discuss why voltage source converters are more common with her newable grid integration applications. We'll examine voltage source converter behavior and how it produces a desired voltage set point. And lastly, we'll look at pulse width modulation or PWM for synthesizing desired output.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 7.0,
+              "text": "Over the next several screens we'll look at 4 power electronic concepts in the context of PV inverters."
+            },
+            {
+              "start": 7.0,
+              "end": 13.0,
+              "text": "Power electronic switches are the core components and controlling power flow for my BRs."
+            },
+            {
+              "start": 13.0,
+              "end": 19.0,
+              "text": "Within this course when we refer to switches, we are talking about power electronic switches."
+            },
+            {
+              "start": 19.0,
+              "end": 22.0,
+              "text": "First, we'll look at how these switches operate."
+            },
+            {
+              "start": 22.0,
+              "end": 27.0,
+              "text": "Then, we'll compare voltage source converters with current source converters"
+            },
+            {
+              "start": 27.0,
+              "end": 33.0,
+              "text": "and discuss why voltage source converters are more common with her newable grid integration applications."
+            },
+            {
+              "start": 33.0,
+              "end": 39.0,
+              "text": "We'll examine voltage source converter behavior and how it produces a desired voltage set point."
+            },
+            {
+              "start": 39.0,
+              "end": 46.0,
+              "text": "And lastly, we'll look at pulse width modulation or PWM for synthesizing desired output."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "Power electronic converters are used for IBRs such as photovoltaic arrays and wind and best resources. We'll focus on solar photovoltaic resources in this course. A solar panel generates direct current electricity and cannot be directly connected to the alternating current electric grid. Power electronic converters are used to transfer energy between PV arrays and the electric grid. This transfer is accomplished by synthesizing an output voltage based on the requirements of the grid, allowing safe and reliable energy transfer. In this course we'll look at how this voltage is synthesized by a power electronic converter. Over the next several screens we'll look at 4 power electronic concepts in the context of PV inverters. Power electronic switches are the core components and controlling power flow for my BRs. Within this course when we refer to switches, we are talking about power electronic switches. First, we'll look at how these switches operate. Then, we'll compare voltage source converters with current source converters and discuss why voltage source converters are more common with her newable grid integration applications. We'll examine voltage source converter behavior and how it produces a desired voltage set point. And lastly, we'll look at pulse width modulation or PWM for synthesizing desired output.",
+      "concept_ids": [
+        "power-electronic",
+        "voltage",
+        "voltage-source",
+        "source-converters",
+        "grid",
+        "switches",
+        "power-electronic-converters",
+        "power-electronic-switches",
+        "voltage-source-converters",
+        "current",
+        "how",
+        "output"
+      ],
+      "alt_text_corpus": "PV arrays generate DC electricity; AdobeStock_1555366827.jpg; AdobeStock_1036839997.jpg; Power electronics switches \\nVoltage-sourced converter vs current-sourced converter\\nAnalysis of voltage-sourced converter \\nPulse-width modulation; Image 22.emf; Voltage-sourced converter vs current-sourced converter; Analysis of voltage-sourced converter; Electric grid requires AC electricity; Pulse-width modulation; Power electronics switches; Rectangle 1; PV arrays generate DC electricity\\nElectric grid "
+    },
+    {
+      "id": "5uUiVx1gsqw",
+      "title": "Power Electronic Switches",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 6,
+      "lms_id": "Slide7",
+      "audio_count": 3,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/6RyE4RqohXT_44100_48_0.mp3",
+          "duration": 13.16575,
+          "text": "Power electronics which is allowing Verters to rapidly switch DC input into controlled AC output. They enable precise control of power flow by turning on and off at high frequencies.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 2.46,
+              "text": "Power electronics which is allowing"
+            },
+            {
+              "start": 2.46,
+              "end": 7.140000000000001,
+              "text": "Verters to rapidly switch DC input into controlled AC output."
+            },
+            {
+              "start": 7.140000000000001,
+              "end": 12.82,
+              "text": "They enable precise control of power flow by turning on and off at high frequencies."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/60TUopY1aRY_44100_48_0.mp3",
+          "duration": 13.4791875,
+          "text": "Let's discuss two switch examples, a line commutated switch called a thyristor, and a controllable switch called an IGBT. Click on the images to learn more. Click continue when you're finished.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 9.0,
+              "text": "Let's discuss two switch examples, a line commutated switch called a thyristor, and a controllable switch called an IGBT."
+            },
+            {
+              "start": 9.0,
+              "end": 13.0,
+              "text": "Click on the images to learn more. Click continue when you're finished."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/6l8TlxwDCwG_44100_48_0.mp3",
+          "duration": 39.0269375,
+          "text": "So, which power electronic switch features are critically important for renewable energy integration? A switch should be able to turn on and off multiple times during each cycle of the fundamental frequency. Because switches are temperature sensitive, the current passing through the switch must be strictly controlled to prevent the switches from overheating. This would mean values between 1.1 and 1.5 per unit, depending on the type of switch. Traditional systems are designed for high-fault current contribution from classical synchronous generators. So the fact that IBRs are limited could present some issues for system protection.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 6.6000000000000005,
+              "text": "So, which power electronic switch features are critically important for renewable energy integration?"
+            },
+            {
+              "start": 6.6000000000000005,
+              "end": 12.8,
+              "text": "A switch should be able to turn on and off multiple times during each cycle of the fundamental frequency."
+            },
+            {
+              "start": 12.8,
+              "end": 20.900000000000002,
+              "text": "Because switches are temperature sensitive, the current passing through the switch must be strictly controlled to prevent the switches from overheating."
+            },
+            {
+              "start": 20.900000000000002,
+              "end": 27.1,
+              "text": "This would mean values between 1.1 and 1.5 per unit, depending on the type of switch."
+            },
+            {
+              "start": 27.1,
+              "end": 33.6,
+              "text": "Traditional systems are designed for high-fault current contribution from classical synchronous generators."
+            },
+            {
+              "start": 33.6,
+              "end": 38.6,
+              "text": "So the fact that IBRs are limited could present some issues for system protection."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "Power electronics which is allowing Verters to rapidly switch DC input into controlled AC output. They enable precise control of power flow by turning on and off at high frequencies. Let's discuss two switch examples, a line commutated switch called a thyristor, and a controllable switch called an IGBT. Click on the images to learn more. Click continue when you're finished. So, which power electronic switch features are critically important for renewable energy integration? A switch should be able to turn on and off multiple times during each cycle of the fundamental frequency. Because switches are temperature sensitive, the current passing through the switch must be strictly controlled to prevent the switches from overheating. This would mean values between 1.1 and 1.5 per unit, depending on the type of switch. Traditional systems are designed for high-fault current contribution from classical synchronous generators. So the fact that IBRs are limited could present some issues for system protection.",
+      "concept_ids": [
+        "power",
+        "power-electronic",
+        "switch-called",
+        "switches",
+        "current",
+        "power-electronic-switches",
+        "switches-power-electronics",
+        "input-into-controlled",
+        "output-they-enable",
+        "high-frequencies-let",
+        "commutated-switch-called",
+        "controllable-switch-called",
+        "power-electronic-switch",
+        "electronic-switch-features",
+        "features-are-critically",
+        "important-for-renewable"
+      ],
+      "alt_text_corpus": "For HVDC LCC, SVC, & large drive apps\\nSwitch On\\nLatches on, gate pulse can be removed\\nForward blocking region and gate pulse\\nia > 0\\nSwitch Off\\nWhen ia tries to go < 0\\nOne-way current flow; Provide strictly controlled current                                (between 1.1 and 1.5 per unit); Screenshot_16-10-2025_151748_app.box.com.jpg; Image 22.emf; Line Commutated: Thyristor; AdobeStock_1253354469.jpg; Controllable Switch: IGBT; CONTINUE; Common for PWM apps\\nSwitch On:\\nApplication of gate "
+    },
+    {
+      "id": "6j4NfYacv8d",
+      "title": "Voltage and Current Sources",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 7,
+      "lms_id": "Slide8",
+      "audio_count": 2,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/5jL0FEsO8pC_44100_48_0.mp3",
+          "duration": 16.1959375,
+          "text": "Recall that power electronic converters are used to transfer energy between the PV arrays and the electric grid. Their function is to regulate voltage magnitude, frequency and phase, so that power can be delivered reliably and in sync with the grid.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 7.0,
+              "text": "Recall that power electronic converters are used to transfer energy between the PV arrays and the electric grid."
+            },
+            {
+              "start": 7.0,
+              "end": 16.0,
+              "text": "Their function is to regulate voltage magnitude, frequency and phase, so that power can be delivered reliably and in sync with the grid."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/5ok1C58mJev_44100_48_0.mp3",
+          "duration": 37.06775,
+          "text": "This illustration reviews the concept of an ideal voltage source and an ideal current source. The power electronic interface provides the capability and flexibility to be operated as a voltage source or as a current source. By changing the control, you can implement both modes of operation. With an ideal voltage source, the interface controls voltage across its terminals and the current can be variable. With an ideal current source, the interface implements or controls the current output and the voltage across its terminal can be variable depending on grid condition.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 7.0,
+              "text": "This illustration reviews the concept of an ideal voltage source and an ideal current source."
+            },
+            {
+              "start": 7.0,
+              "end": 15.0,
+              "text": "The power electronic interface provides the capability and flexibility to be operated as a voltage source or as a current source."
+            },
+            {
+              "start": 15.0,
+              "end": 19.0,
+              "text": "By changing the control, you can implement both modes of operation."
+            },
+            {
+              "start": 19.0,
+              "end": 26.0,
+              "text": "With an ideal voltage source, the interface controls voltage across its terminals and the current can be variable."
+            },
+            {
+              "start": 26.0,
+              "end": 36.0,
+              "text": "With an ideal current source, the interface implements or controls the current output and the voltage across its terminal can be variable depending on grid condition."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "Recall that power electronic converters are used to transfer energy between the PV arrays and the electric grid. Their function is to regulate voltage magnitude, frequency and phase, so that power can be delivered reliably and in sync with the grid. This illustration reviews the concept of an ideal voltage source and an ideal current source. The power electronic interface provides the capability and flexibility to be operated as a voltage source or as a current source. By changing the control, you can implement both modes of operation. With an ideal voltage source, the interface controls voltage across its terminals and the current can be variable. With an ideal current source, the interface implements or controls the current output and the voltage across its terminal can be variable depending on grid condition.",
+      "concept_ids": [
+        "voltage",
+        "current",
+        "source",
+        "voltage-source",
+        "current-source",
+        "ideal-voltage-source",
+        "ideal-current-source",
+        "source-the-interface",
+        "power-electronic",
+        "voltage-across",
+        "grid",
+        "voltage-and-current",
+        "current-sources-recall",
+        "recall-that-power",
+        "power-electronic-converters",
+        "grid-their-function",
+        "regulate-voltage-magnitude",
+        "voltage-magnitude-frequency"
+      ],
+      "alt_text_corpus": "PV arrays generate DC electricity; PV arrays generate DC electricity\\nElectric grid requires AC electricity\\nPower electronic converters control the output voltage (magnitude, frequency, and phase) based on the grid; Image 22.emf; Voltage maintained at terminal despite current passing through ; Current maintained through terminals regardless of  voltage across device; Electric grid requires AC electricity; Power electronic converters control the output voltage (magnitude, frequency, and phase) b"
+    },
+    {
+      "id": "6MvgELbfFIH",
+      "title": "Voltage Source Converters (VSCs) vs. Current Source Converters (CSCs)",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 8,
+      "lms_id": "Slide9",
+      "audio_count": 2,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/6VWyKAHFS6G_44100_48_0.mp3",
+          "duration": 37.250625,
+          "text": "There are two primary physical structures for the power electronic interface, the voltage source converter or VSC and the current source converter or CSC. This classification is based on hardware design, not on control method or resource type. While VSCs and CSCs differ in design, both can be controlled to function as either a voltage source or a current source. For example, each can emulate an AC current source or regulate voltage at the point of interconnection. A VSC is more commonly used in renewables applications.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 5.2,
+              "text": "There are two primary physical structures for the power electronic interface,"
+            },
+            {
+              "start": 5.2,
+              "end": 11.48,
+              "text": "the voltage source converter or VSC and the current source converter or CSC."
+            },
+            {
+              "start": 11.48,
+              "end": 17.92,
+              "text": "This classification is based on hardware design, not on control method or resource type."
+            },
+            {
+              "start": 17.92,
+              "end": 23.84,
+              "text": "While VSCs and CSCs differ in design, both can be controlled to function as either a voltage"
+            },
+            {
+              "start": 23.84,
+              "end": 26.04,
+              "text": "source or a current source."
+            },
+            {
+              "start": 26.04,
+              "end": 31.439999999999998,
+              "text": "For example, each can emulate an AC current source or regulate voltage at the point of"
+            },
+            {
+              "start": 31.439999999999998,
+              "end": 32.44,
+              "text": "interconnection."
+            },
+            {
+              "start": 32.44,
+              "end": 36.68,
+              "text": "A VSC is more commonly used in renewables applications."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/6Yh9UfuJHd5_44100_48_0.mp3",
+          "duration": 10.9975625,
+          "text": "VSCs and CSCs are structurally different, but both can meet the same control objectives when properly configured. Click each type of converter to learn how they differ.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 7.5600000000000005,
+              "text": "VSCs and CSCs are structurally different, but both can meet the same control objectives when properly configured."
+            },
+            {
+              "start": 7.5600000000000005,
+              "end": 10.8,
+              "text": "Click each type of converter to learn how they differ."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "There are two primary physical structures for the power electronic interface, the voltage source converter or VSC and the current source converter or CSC. This classification is based on hardware design, not on control method or resource type. While VSCs and CSCs differ in design, both can be controlled to function as either a voltage source or a current source. For example, each can emulate an AC current source or regulate voltage at the point of interconnection. A VSC is more commonly used in renewables applications. VSCs and CSCs are structurally different, but both can meet the same control objectives when properly configured. Click each type of converter to learn how they differ.",
+      "concept_ids": [
+        "source",
+        "current-source",
+        "voltage-source",
+        "vscs-and-cscs",
+        "source-converters",
+        "source-converter",
+        "vsc",
+        "voltage-source-converters",
+        "source-converters-vscs",
+        "current-source-converters",
+        "source-converters-cscs",
+        "primary-physical-structures",
+        "power-electronic-interface",
+        "interface-the-voltage",
+        "voltage-source-converter",
+        "current-source-converter",
+        "csc-this-classification"
+      ],
+      "alt_text_corpus": "Image 35.emf; Voltage-Sourced Converter (VSC); Voltage Source Converters (VSCs) are commonly used in renewable energy applications. They use a DC capacitor behind its switches. A larger capacitance results in a stiffer voltage source.\\nCurrent Control: The VSC operates as a current source by using a high-bandwidth current control loop to synthesize terminal voltage, ensuring current follows a setpoint.\\nVoltage Control: The VSC mimics a voltage source using a nested control loop. The outer loop "
+    },
+    {
+      "id": "64VkQoxpjPi",
+      "title": "VSC Topology Samples",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 9,
+      "lms_id": "Slide10",
+      "audio_count": 1,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/5qwKpICBARX_44100_48_0.mp3",
+          "duration": 13.7665625,
+          "text": "Let's look at an example of a topology. In this case, a two-level three-phase voltage sourced converter. Click each labeled button to learn the basic structure and operation of this VSC.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 6.5200000000000005,
+              "text": "Let's look at an example of a topology. In this case, a two-level three-phase voltage"
+            },
+            {
+              "start": 6.5200000000000005,
+              "end": 11.92,
+              "text": "sourced converter. Click each labeled button to learn the basic structure and operation"
+            },
+            {
+              "start": 11.92,
+              "end": 13.16,
+              "text": "of this VSC."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "Let's look at an example of a topology. In this case, a two-level three-phase voltage sourced converter. Click each labeled button to learn the basic structure and operation of this VSC.",
+      "concept_ids": [
+        "vsc",
+        "vsc-topology-samples",
+        "topology-samples-let",
+        "two-level-three-phase-voltage",
+        "three-phase-voltage-sourced",
+        "voltage-sourced-converter",
+        "learn-the-basic",
+        "structure-and-operation",
+        "basic-structure"
+      ],
+      "alt_text_corpus": "Image 34.emf; Two-Level VSC: Consists of a six-pulse IGBT bridge with inverse-parallel diodes. The AC terminal voltage of each phase switches between the positive and negative DC terminal values\\n\\nThree-Phase Configuration: Involves three legs, each corresponding to one phase of the AC output.; Image 31.emf; Image 33.emf; PWM: Used to control the switching of IGBTs, allowing the converter to generate a desired AC waveform.\\n\\nAC side LC filter: Essential for maintaining the quality of the outpu"
+    },
+    {
+      "id": "6JZsAHMHpvb",
+      "title": "Pulse Width Modulation (PWM)",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 10,
+      "lms_id": "Slide11",
+      "audio_count": 5,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/6qsMyHCtA4X_44100_48_0.mp3",
+          "duration": 29.622875,
+          "text": "Pulse with modulation or PWM is used to synthesize an output voltage at the desired magnitude and frequency. The inverter control develops the voltage reference. We'll discuss this more in the next lesson. For now, let's examine how PWM synthesizes an output voltage in an ideal PWM scheme. We'll assume that the inverter control is perfect and that we have a voltage reference for the desired P and Q output.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 8.0,
+              "text": "Pulse with modulation or PWM is used to synthesize an output voltage at the desired magnitude and frequency."
+            },
+            {
+              "start": 8.0,
+              "end": 14.0,
+              "text": "The inverter control develops the voltage reference. We'll discuss this more in the next lesson."
+            },
+            {
+              "start": 14.0,
+              "end": 21.0,
+              "text": "For now, let's examine how PWM synthesizes an output voltage in an ideal PWM scheme."
+            },
+            {
+              "start": 21.0,
+              "end": 29.0,
+              "text": "We'll assume that the inverter control is perfect and that we have a voltage reference for the desired P and Q output."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/6nqB0KrYycX_44100_48_0.mp3",
+          "duration": 48.7445,
+          "text": "The control generates a low-level sinusoidal reference voltage which is sent to the modulator. The modulator then determines the pulse width supplied to switches S1 and S4 of phase A by comparing the sinusoidal reference voltage to a triangular waveform at the switching frequency. When the sinusoidal waveform is larger than the triangular waveform, a gate pulse for switch SA plus or S1 is generated and the gate pulse for switch SA minus is removed. By contrast, when the sinusoidal waveform is smaller than the triangular waveform, a gate pulse for switch SA minus is generated and the gate pulse for switch SA plus or S4 is removed. A similar scheme could be provided for phases B and C.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 6.0,
+              "text": "The control generates a low-level sinusoidal reference voltage which is sent to the modulator."
+            },
+            {
+              "start": 6.0,
+              "end": 12.4,
+              "text": "The modulator then determines the pulse width supplied to switches S1 and S4 of phase A"
+            },
+            {
+              "start": 12.4,
+              "end": 18.2,
+              "text": "by comparing the sinusoidal reference voltage to a triangular waveform at the switching frequency."
+            },
+            {
+              "start": 18.2,
+              "end": 22.8,
+              "text": "When the sinusoidal waveform is larger than the triangular waveform,"
+            },
+            {
+              "start": 22.8,
+              "end": 31.200000000000003,
+              "text": "a gate pulse for switch SA plus or S1 is generated and the gate pulse for switch SA minus is removed."
+            },
+            {
+              "start": 31.200000000000003,
+              "end": 36.2,
+              "text": "By contrast, when the sinusoidal waveform is smaller than the triangular waveform,"
+            },
+            {
+              "start": 36.2,
+              "end": 44.400000000000006,
+              "text": "a gate pulse for switch SA minus is generated and the gate pulse for switch SA plus or S4 is removed."
+            },
+            {
+              "start": 44.400000000000006,
+              "end": 48.400000000000006,
+              "text": "A similar scheme could be provided for phases B and C."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/5fwre3OlsP8_44100_48_0.mp3",
+          "duration": 29.1526875,
+          "text": "Showner the S1 pulse widths and S4 pulse widths for phase A. A triangular waveform is shown in the top graph. In the first cycles, the time that the S1 switch is on is reduced, generating the negative part of the waveform. In the next cycles, the gates are kept on the same amount of time, so the voltage is close to zero. Then, the S1 switch is kept on longer than the S4 switch, generating the positive part of the waveform.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 6.74,
+              "text": "Showner the S1 pulse widths and S4 pulse widths for phase A. A triangular waveform"
+            },
+            {
+              "start": 6.74,
+              "end": 13.280000000000001,
+              "text": "is shown in the top graph. In the first cycles, the time that the S1 switch is on is reduced,"
+            },
+            {
+              "start": 13.280000000000001,
+              "end": 18.04,
+              "text": "generating the negative part of the waveform. In the next cycles, the gates are kept"
+            },
+            {
+              "start": 18.04,
+              "end": 23.48,
+              "text": "on the same amount of time, so the voltage is close to zero. Then, the S1 switch is"
+            },
+            {
+              "start": 23.48,
+              "end": 30.48,
+              "text": "kept on longer than the S4 switch, generating the positive part of the waveform."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/64ewnC3lfyd_44100_48_0.mp3",
+          "duration": 20.819625,
+          "text": "The terminal voltage contains switching harmonics, which are at the same switching frequency and side bands of the switching frequency. 60 hertz is the fundamental frequency, and then there are several harmonics around the switching frequency. It's important that undesirable harmonics are eliminated using an output filter.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 8.0,
+              "text": "The terminal voltage contains switching harmonics, which are at the same switching frequency and side bands of the switching frequency."
+            },
+            {
+              "start": 8.0,
+              "end": 15.0,
+              "text": "60 hertz is the fundamental frequency, and then there are several harmonics around the switching frequency."
+            },
+            {
+              "start": 15.0,
+              "end": 20.0,
+              "text": "It's important that undesirable harmonics are eliminated using an output filter."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/6LYrmYZYMr9_44100_48_0.mp3",
+          "duration": 50.5991875,
+          "text": "NLC or inductor capacitor filter behaves like a low pass filter, and the cutoff frequency is such that the fundamental frequency component is maintained. The high frequency harmonics around the switching frequency are tamped down. NLCL or inductor capacitor inductor filter can also be used to decrease the size of the inductor. Use Lc and rely on the inductance of the grid to add the missing component of the filter. There is a trade-off with switching frequency and filter requirements. A higher switching frequency leads to higher order harmonics, which can be more easily filtered out using a more compact Lc filter. However, high switching frequency leads to more switching losses and reduced converter efficiency. Click next now for the lesson conclusion.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 6.8,
+              "text": "NLC or inductor capacitor filter behaves like a low pass filter, and the cutoff frequency"
+            },
+            {
+              "start": 6.8,
+              "end": 10.92,
+              "text": "is such that the fundamental frequency component is maintained."
+            },
+            {
+              "start": 10.92,
+              "end": 15.58,
+              "text": "The high frequency harmonics around the switching frequency are tamped down."
+            },
+            {
+              "start": 15.58,
+              "end": 21.400000000000002,
+              "text": "NLCL or inductor capacitor inductor filter can also be used to decrease the size of"
+            },
+            {
+              "start": 21.400000000000002,
+              "end": 22.64,
+              "text": "the inductor."
+            },
+            {
+              "start": 22.64,
+              "end": 28.48,
+              "text": "Use Lc and rely on the inductance of the grid to add the missing component of the filter."
+            },
+            {
+              "start": 28.48,
+              "end": 32.1,
+              "text": "There is a trade-off with switching frequency and filter requirements."
+            },
+            {
+              "start": 32.1,
+              "end": 37.72,
+              "text": "A higher switching frequency leads to higher order harmonics, which can be more easily filtered"
+            },
+            {
+              "start": 37.72,
+              "end": 40.480000000000004,
+              "text": "out using a more compact Lc filter."
+            },
+            {
+              "start": 40.480000000000004,
+              "end": 45.72,
+              "text": "However, high switching frequency leads to more switching losses and reduced converter"
+            },
+            {
+              "start": 45.72,
+              "end": 47.24,
+              "text": "efficiency."
+            },
+            {
+              "start": 47.24,
+              "end": 49.760000000000005,
+              "text": "Click next now for the lesson conclusion."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "Pulse with modulation or PWM is used to synthesize an output voltage at the desired magnitude and frequency. The inverter control develops the voltage reference. We'll discuss this more in the next lesson. For now, let's examine how PWM synthesizes an output voltage in an ideal PWM scheme. We'll assume that the inverter control is perfect and that we have a voltage reference for the desired P and Q output. The control generates a low-level sinusoidal reference voltage which is sent to the modulator. The modulator then determines the pulse width supplied to switches S1 and S4 of phase A by comparing the sinusoidal reference voltage to a triangular waveform at the switching frequency. When the sinusoidal waveform is larger than the triangular waveform, a gate pulse for switch SA plus or S1 is generated and the gate pulse for switch SA minus is removed. By contrast, when the sinusoidal waveform is smaller than the triangular waveform, a gate pulse for switch SA minus is generated and the gate pulse for switch SA plus or S4 is removed. A similar scheme could be provided for phases B and C. Showner the S1 pulse widths and S4 pulse widths for phase A. A triangular waveform is shown in the top graph. In the first cycles, the time that the S1 switch is on is reduced, generating the negative part of the waveform. In the next cycles, the gates are kept on the same amount of time, so the voltage is close to zero. Then, the S1 switch is kept on longer than the S4 switch, generating the positive part of the waveform. The terminal voltage contains switching harmonics, which are at the same switching frequency and side bands of the switching frequency. 60 hertz is the fundamental frequency, and then there are several harmonics around the switching frequency. It's important that undesirable harmonics are eliminated using an output filter. NLC or inductor capacitor filter behaves like a low pass filter, and the cutoff frequency is such that the fundamental frequency component is maintained. The high frequency harmonics around the switching frequency are tamped down. NLCL or inductor capacitor inductor filter can also be used to decrease the size of the inductor. Use Lc and rely on the inductance of the grid to add the missing component of the filter. There is a trade-off with switching frequency and filter requirements. A higher switching frequency leads to higher order harmonics, which can be more easily filtered out using a more compact Lc filter. However, high switching frequency leads to more switching losses and reduced converter efficiency. Click next now for the lesson conclusion.",
+      "concept_ids": [
+        "switching-frequency",
+        "voltage",
+        "pulse-for-switch",
+        "triangular-waveform",
+        "gate-pulse",
+        "output",
+        "sinusoidal-reference-voltage",
+        "around-the-switching",
+        "switching-frequency-leads",
+        "pulse-width",
+        "output-voltage",
+        "sinusoidal-waveform"
+      ],
+      "alt_text_corpus": "Rectangle 6; Rectangle 11; Higher Switching Frequency:; Note: Tradeoff between switching frequency and filter requirements; Rectangle 8; Rectangle 10; Rectangle 5; S4; Up Arrow 3; LPF applied to reduce high-frequency content; Higher order harmonics easily filter with compact LC filter; Up Arrow 4; More switching losses and reduced converter efficiency; Image 23.emf; Image 25.emf; Right Arrow 1; Rectangle 9; LCL (or LC + Lgrid) decreases the size of the L needed; Rectangle 1; Up Arrow 5; Rectangl"
+    },
+    {
+      "id": "66RtiTQPuzj",
+      "title": "Conclusion",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 11,
+      "lms_id": "Slide12",
+      "audio_count": 4,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/6c6h3gw7imQ_44100_48_0.mp3",
+          "duration": 6.791875,
+          "text": "You have now completed the second lesson of the inverter-based resources basics and operations course.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 7.0,
+              "text": "You have now completed the second lesson of the inverter-based resources basics and operations course."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/6cnvKgiVmjD_44100_48_0.mp3",
+          "duration": 13.1135,
+          "text": "You learned about some features of inverter and plant controls, and how the individual inverter and plant level controls schemes operate at different speeds, with the individual inverter controls acting faster.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 13.0,
+              "text": "You learned about some features of inverter and plant controls, and how the individual inverter and plant level controls schemes operate at different speeds, with the individual inverter controls acting faster."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/6Z8paIPGGjc_44100_48_0.mp3",
+          "duration": 14.5501875,
+          "text": "You then reviewed power electronic concepts pertinent to IBR integration with traditional power resources. These included switches, voltage and current sourced converters, pulse width modulation and output filters.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 5.8,
+              "text": "You then reviewed power electronic concepts pertinent to IBR integration with traditional"
+            },
+            {
+              "start": 5.8,
+              "end": 7.48,
+              "text": "power resources."
+            },
+            {
+              "start": 7.48,
+              "end": 12.96,
+              "text": "These included switches, voltage and current sourced converters, pulse width modulation"
+            },
+            {
+              "start": 12.96,
+              "end": 14.200000000000001,
+              "text": "and output filters."
+            }
+          ]
+        },
+        {
+          "audio_url": "story_content/5b3CG0SdgY6_44100_48_0.mp3",
+          "duration": 11.2588125,
+          "text": "You should now be able to describe how different control layers interconnect and coordinate across time scales and describe the differences between voltage and current sourced converters.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 5.28,
+              "text": "You should now be able to describe how different control layers interconnect and coordinate"
+            },
+            {
+              "start": 5.28,
+              "end": 10.120000000000001,
+              "text": "across time scales and describe the differences between voltage and current sourced"
+            },
+            {
+              "start": 10.120000000000001,
+              "end": 10.96,
+              "text": "converters."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "You have now completed the second lesson of the inverter-based resources basics and operations course. You learned about some features of inverter and plant controls, and how the individual inverter and plant level controls schemes operate at different speeds, with the individual inverter controls acting faster. You then reviewed power electronic concepts pertinent to IBR integration with traditional power resources. These included switches, voltage and current sourced converters, pulse width modulation and output filters. You should now be able to describe how different control layers interconnect and coordinate across time scales and describe the differences between voltage and current sourced converters.",
+      "concept_ids": [
+        "inverter-and-plant",
+        "voltage-and-current",
+        "current-sourced-converters",
+        "individual-inverter",
+        "how",
+        "power",
+        "inverter-based-resources-basics",
+        "basics-and-operations",
+        "how-the-individual",
+        "level-controls-schemes",
+        "inverter-controls-acting",
+        "reviewed-power-electronic",
+        "power-electronic-concepts",
+        "electronic-concepts-pertinent",
+        "integration-with-traditional",
+        "included-switches-voltage",
+        "sourced-converters-pulse",
+        "converters-pulse-width",
+        "pulse-width-modulation",
+        "modulation-and-output"
+      ],
+      "alt_text_corpus": "You have now completed Lesson 2: Inverter Basics; AdobeStock_1555366827.jpg; Image 13.emf; Image 12.emf"
+    },
+    {
+      "id": "5XHGBaZwOfD",
+      "title": "Thank You",
+      "scene_id": "6RdIHQ8sw43",
+      "sequence_index": 12,
+      "lms_id": "Slide13",
+      "audio_count": 1,
+      "transcript_segments": [
+        {
+          "audio_url": "story_content/5lCm0CvEUym_44100_48_0.mp3",
+          "duration": 60.029375,
+          "text": "Thank you.",
+          "segments": [
+            {
+              "start": 0.0,
+              "end": 29.84,
+              "text": "Thank you."
+            }
+          ]
+        }
+      ],
+      "transcript_combined": "Thank you.",
+      "concept_ids": [],
+      "alt_text_corpus": "Thank you for your participation in \\nLesson 2: Inverter Basics.\\n\\rSelect the Exit button to end this course.; Exit; EPRI training_editable backgrounds EXIT.jpg; Instructions for Developer:\\n\\nThis slide must be included in all courses.\\nThis slide must contain the course title, the EPRI U graphic, and an Exit button.\\nThe background image and other features can be changed to fit each course.\\nRemove the music if the course does not contain audio, or change the music if desired."
+    },
+    {
+      "id": "6DAYZylYZ4Y",
+      "title": "Navigating This Course",
+      "scene_id": "5sFB072XEDS",
+      "sequence_index": 0,
+      "lms_id": "Slide1",
+      "audio_count": 0,
+      "transcript_segments": [],
+      "transcript_combined": "",
+      "concept_ids": [],
+      "alt_text_corpus": "Submit.png; Adjustable Player Settings; Arrow 1; On the playbar, you can switch closed captioning on or off. This can be accomplished by selecting the closed captioning button once for on and a second time for off. \\n\\nNote: The closed captioning button will not be present if there is no audio or if the audio is not captioned.; CC.png; Close.png; instructions-bg.jpg; Glossary Navigation.png; Full Screen Toggle; Customize your learning experience by selecting the gear icon and changing the adjust"
+    },
+    {
+      "id": "6IcYxMXh0mW",
+      "title": "About This Course",
+      "scene_id": "5sFB072XEDS",
+      "sequence_index": 1,
+      "lms_id": "Slide2",
+      "audio_count": 0,
+      "transcript_segments": [],
+      "transcript_combined": "",
+      "concept_ids": [],
+      "alt_text_corpus": "Disclaimer; template3.jpg; About EPRI\\n\\nFounded in 1972, EPRI is the world\u2019s preeminent independent, non-profit energy research and development organization, with offices around the world. EPRI\u2019s trusted experts collaborate with more than 450 companies in 45 countries, driving innovation to ensure the public has clean, safe, reliable, affordable, and equitable access to electricity across the globe. Together, we are shaping the future of energy.\\n\\n; \\n\\nAcknowledgments\\n\\nEPRI would like to ac"
+    }
+  ],
+  "concepts": [
+    {
+      "id": "voltage-and-current",
+      "label": "voltage and current",
+      "confidence": 0.94,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "current",
+      "taught_in_slides": [
+        "6ps7ro4Er5o",
+        "6j4NfYacv8d",
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 5
+    },
+    {
+      "id": "inverter-and-plant",
+      "label": "inverter and plant",
+      "confidence": 0.94,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "plant",
+      "taught_in_slides": [
+        "6ps7ro4Er5o",
+        "6eVptVTR2Lx",
+        "5q1PTTjK3aS",
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 7
+    },
+    {
+      "id": "switches",
+      "label": "switches",
+      "confidence": 0.94,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "switches",
+      "taught_in_slides": [
+        "6KhIqryeG83",
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 7
+    },
+    {
+      "id": "how",
+      "label": "how",
+      "confidence": 0.94,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "how",
+      "taught_in_slides": [
+        "6ps7ro4Er5o",
+        "6KhIqryeG83",
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 7
+    },
+    {
+      "id": "plant",
+      "label": "plant",
+      "confidence": 0.94,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "plant",
+      "taught_in_slides": [
+        "6eVptVTR2Lx",
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 9
+    },
+    {
+      "id": "current-source",
+      "label": "current source",
+      "confidence": 0.94,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "source",
+      "taught_in_slides": [
+        "6j4NfYacv8d",
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 7
+    },
+    {
+      "id": "voltage-source",
+      "label": "voltage source",
+      "confidence": 0.94,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "source",
+      "taught_in_slides": [
+        "6KhIqryeG83",
+        "6j4NfYacv8d",
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 9
+    },
+    {
+      "id": "source",
+      "label": "source",
+      "confidence": 0.94,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "source",
+      "taught_in_slides": [
+        "6j4NfYacv8d",
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 13
+    },
+    {
+      "id": "source-converters",
+      "label": "source converters",
+      "confidence": 0.94,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "converters",
+      "taught_in_slides": [
+        "6KhIqryeG83",
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 5
+    },
+    {
+      "id": "power-electronic",
+      "label": "power electronic",
+      "confidence": 0.94,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "electronic",
+      "taught_in_slides": [
+        "6KhIqryeG83",
+        "5uUiVx1gsqw",
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 10
+    },
+    {
+      "id": "vsc",
+      "label": "vsc",
+      "confidence": 0.93,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "vsc",
+      "taught_in_slides": [
+        "6MvgELbfFIH",
+        "64VkQoxpjPi"
+      ],
+      "total_freq": 4
+    },
+    {
+      "id": "individual-inverter",
+      "label": "individual inverter",
+      "confidence": 0.93,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "inverter",
+      "taught_in_slides": [
+        "6eVptVTR2Lx",
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 4
+    },
+    {
+      "id": "controller",
+      "label": "controller",
+      "confidence": 0.93,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "controller",
+      "taught_in_slides": [
+        "6eVptVTR2Lx",
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 4
+    },
+    {
+      "id": "voltage-source-converters",
+      "label": "voltage source converters",
+      "confidence": 0.92,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "converters",
+      "taught_in_slides": [
+        "6KhIqryeG83",
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 3
+    },
+    {
+      "id": "power-electronic-converters",
+      "label": "power electronic converters",
+      "confidence": 0.92,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "converters",
+      "taught_in_slides": [
+        "6KhIqryeG83",
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 3
+    },
+    {
+      "id": "current-source-converters",
+      "label": "current source converters",
+      "confidence": 0.92,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "converters",
+      "taught_in_slides": [
+        "6ps7ro4Er5o",
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 3
+    },
+    {
+      "id": "pulse-width-modulation",
+      "label": "pulse width modulation",
+      "confidence": 0.92,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "modulation",
+      "taught_in_slides": [
+        "6ps7ro4Er5o",
+        "6eVptVTR2Lx",
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 3
+    },
+    {
+      "id": "power-electronic-switches",
+      "label": "power electronic switches",
+      "confidence": 0.92,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "switches",
+      "taught_in_slides": [
+        "6KhIqryeG83",
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 3
+    },
+    {
+      "id": "modulation-and-output",
+      "label": "modulation and output",
+      "confidence": 0.91,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "output",
+      "taught_in_slides": [
+        "6ps7ro4Er5o",
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "power-electronic-concepts",
+      "label": "power electronic concepts",
+      "confidence": 0.91,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "concepts",
+      "taught_in_slides": [
+        "6ps7ro4Er5o",
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "converters-pulse-width",
+      "label": "converters pulse width",
+      "confidence": 0.91,
+      "tier": 1,
+      "is_free_standing": true,
+      "head_word": "width",
+      "taught_in_slides": [
+        "6ps7ro4Er5o",
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "switching-frequency",
+      "label": "switching frequency",
+      "confidence": 0.73,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "frequency",
+      "taught_in_slides": [
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 8
+    },
+    {
+      "id": "pulse-for-switch",
+      "label": "pulse for switch",
+      "confidence": 0.72,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "switch",
+      "taught_in_slides": [
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 4
+    },
+    {
+      "id": "gate-pulse",
+      "label": "gate pulse",
+      "confidence": 0.72,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "pulse",
+      "taught_in_slides": [
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 4
+    },
+    {
+      "id": "triangular-waveform",
+      "label": "triangular waveform",
+      "confidence": 0.72,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "waveform",
+      "taught_in_slides": [
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 4
+    },
+    {
+      "id": "inverter-level",
+      "label": "inverter level",
+      "confidence": 0.72,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "level",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 4
+    },
+    {
+      "id": "level-control-system",
+      "label": "level control system",
+      "confidence": 0.71,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "system",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 3
+    },
+    {
+      "id": "set-points",
+      "label": "set points",
+      "confidence": 0.71,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "points",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 3
+    },
+    {
+      "id": "plant-level",
+      "label": "plant level",
+      "confidence": 0.71,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "level",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 3
+    },
+    {
+      "id": "source-converter",
+      "label": "source converter",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "converter",
+      "taught_in_slides": [
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "output-voltage",
+      "label": "output voltage",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "voltage",
+      "taught_in_slides": [
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "ideal-current-source",
+      "label": "ideal current source",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "source",
+      "taught_in_slides": [
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "sinusoidal-reference-voltage",
+      "label": "sinusoidal reference voltage",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "voltage",
+      "taught_in_slides": [
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "pulse-width",
+      "label": "pulse width",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "width",
+      "taught_in_slides": [
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "ideal-voltage-source",
+      "label": "ideal voltage source",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "source",
+      "taught_in_slides": [
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "flow-from",
+      "label": "flow from",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "from",
+      "taught_in_slides": [
+        "5zBRyvxOwou"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "current-sourced-converters",
+      "label": "current sourced converters",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "converters",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "voltage-across",
+      "label": "voltage across",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "across",
+      "taught_in_slides": [
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "source-the-interface",
+      "label": "source the interface",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "interface",
+      "taught_in_slides": [
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "vscs-and-cscs",
+      "label": "vscs and cscs",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "cscs",
+      "taught_in_slides": [
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "sinusoidal-waveform",
+      "label": "sinusoidal waveform",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "waveform",
+      "taught_in_slides": [
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "switch-called",
+      "label": "switch called",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "called",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "switching-frequency-leads",
+      "label": "switching frequency leads",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "leads",
+      "taught_in_slides": [
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "around-the-switching",
+      "label": "around the switching",
+      "confidence": 0.7,
+      "tier": 2,
+      "is_free_standing": true,
+      "head_word": "switching",
+      "taught_in_slides": [
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 2
+    },
+    {
+      "id": "source-converters-pulse",
+      "label": "source converters pulse",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "pulse",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "unit-controls-acting",
+      "label": "unit controls acting",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "acting",
+      "taught_in_slides": [
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "timeframes-simple-response",
+      "label": "timeframes simple response",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "response",
+      "taught_in_slides": [
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "included-switches-voltage",
+      "label": "included switches voltage",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "voltage",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "switches-power-electronics",
+      "label": "switches power electronics",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "electronics",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "csc-this-classification",
+      "label": "csc this classification",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "classification",
+      "taught_in_slides": [
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "level-control-schemes",
+      "label": "level control schemes",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "schemes",
+      "taught_in_slides": [
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "high-frequencies-let",
+      "label": "high frequencies let",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "let",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "learn-the-basic",
+      "label": "learn the basic",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "basic",
+      "taught_in_slides": [
+        "64VkQoxpjPi"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "interface-the-voltage",
+      "label": "interface the voltage",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "voltage",
+      "taught_in_slides": [
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "inverter-controls-acting",
+      "label": "inverter controls acting",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "acting",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "inverter-based-resources-basics",
+      "label": "inverter-based resources basics",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "basics",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "plant-controls-along",
+      "label": "plant controls along",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "along",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "generates-control-commands",
+      "label": "generates control commands",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "commands",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "nested-loop-structure",
+      "label": "nested loop structure",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "structure",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "coordinate-across-time",
+      "label": "coordinate across time",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "time",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "power-electronic-switch",
+      "label": "power electronic switch",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "switch",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "system-which-generates",
+      "label": "system which generates",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "generates",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "basic-structure",
+      "label": "basic structure",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "structure",
+      "taught_in_slides": [
+        "64VkQoxpjPi"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "output-filters-upon",
+      "label": "output filters upon",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "upon",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "notice-the-differences",
+      "label": "notice the differences",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "differences",
+      "taught_in_slides": [
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "detail-various-power",
+      "label": "detail various power",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "power",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "flow-from-inverter-based",
+      "label": "flow from inverter-based",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "inverter-based",
+      "taught_in_slides": [
+        "5zBRyvxOwou"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "faster-and-plant",
+      "label": "faster and plant",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "plant",
+      "taught_in_slides": [
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "basics-and-operations",
+      "label": "basics and operations",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "operations",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "ibr-plant-connection",
+      "label": "ibr plant connection",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "connection",
+      "taught_in_slides": [
+        "5zBRyvxOwou"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "electronic-concepts-pertinent",
+      "label": "electronic concepts pertinent",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "pertinent",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "voltage-magnitude-frequency",
+      "label": "voltage magnitude frequency",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "frequency",
+      "taught_in_slides": [
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "three-phase-voltage-sourced",
+      "label": "three-phase voltage sourced",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "sourced",
+      "taught_in_slides": [
+        "64VkQoxpjPi"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "concepts-including-switches",
+      "label": "concepts including switches",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "switches",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "problem-the-individual",
+      "label": "problem the individual",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "individual",
+      "taught_in_slides": [
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "plant-control-timeframes",
+      "label": "plant control timeframes",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "timeframes",
+      "taught_in_slides": [
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "important-for-renewable",
+      "label": "important for renewable",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "renewable",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "voltage-sourced-converter",
+      "label": "voltage sourced converter",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "converter",
+      "taught_in_slides": [
+        "64VkQoxpjPi"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "basic-diagram",
+      "label": "basic diagram",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "diagram",
+      "taught_in_slides": [
+        "5zBRyvxOwou"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "reviewed-power-electronic",
+      "label": "reviewed power electronic",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "electronic",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "sourced-converters-pulse",
+      "label": "sourced converters pulse",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "pulse",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "how-the-individual",
+      "label": "how the individual",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "individual",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "electronic-switch-features",
+      "label": "electronic switch features",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "features",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "level-controls-schemes",
+      "label": "level controls schemes",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "schemes",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "output-they-enable",
+      "label": "output they enable",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "enable",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "topology-samples-let",
+      "label": "topology samples let",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "let",
+      "taught_in_slides": [
+        "64VkQoxpjPi"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "power-grid",
+      "label": "power grid",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "grid",
+      "taught_in_slides": [
+        "5zBRyvxOwou"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "transmission-system",
+      "label": "transmission system",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "system",
+      "taught_in_slides": [
+        "5zBRyvxOwou"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "commands-for-inverter",
+      "label": "commands for inverter",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "inverter",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "voltage-source-converter",
+      "label": "voltage source converter",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "converter",
+      "taught_in_slides": [
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "primary-physical-structures",
+      "label": "primary physical structures",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "structures",
+      "taught_in_slides": [
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "power-electronic-interface",
+      "label": "power electronic interface",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "interface",
+      "taught_in_slides": [
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "outer-and-inner",
+      "label": "outer and inner",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "inner",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "power-flow-from",
+      "label": "power flow from",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "from",
+      "taught_in_slides": [
+        "5zBRyvxOwou"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "commutated-switch-called",
+      "label": "commutated switch called",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "called",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "electronic-concepts-including",
+      "label": "electronic concepts including",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "including",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "inner-control-pulse",
+      "label": "inner control pulse",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "pulse",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "current-sources-recall",
+      "label": "current sources recall",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "recall",
+      "taught_in_slides": [
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "structure-and-operation",
+      "label": "structure and operation",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "operation",
+      "taught_in_slides": [
+        "64VkQoxpjPi"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "interconnect-and-coordinate",
+      "label": "interconnect and coordinate",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "coordinate",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "flow-from-ibrs",
+      "label": "flow from ibrs",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "ibrs",
+      "taught_in_slides": [
+        "5zBRyvxOwou"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "including-switches-voltage",
+      "label": "including switches voltage",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "voltage",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "regulate-voltage-magnitude",
+      "label": "regulate voltage magnitude",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "magnitude",
+      "taught_in_slides": [
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "controllers-this-separation",
+      "label": "controllers this separation",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "separation",
+      "taught_in_slides": [
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "input-into-controlled",
+      "label": "input into controlled",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "controlled",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "controller-timeframes-simplifies",
+      "label": "controller timeframes simplifies",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "simplifies",
+      "taught_in_slides": [
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "simple-response-times",
+      "label": "simple response times",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "times",
+      "taught_in_slides": [
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "energy-flow-from",
+      "label": "energy flow from",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "from",
+      "taught_in_slides": [
+        "5zBRyvxOwou"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "current-source-converter",
+      "label": "current source converter",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "converter",
+      "taught_in_slides": [
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "various-power-electronic",
+      "label": "various power electronic",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "electronic",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "two-level-three-phase-voltage",
+      "label": "two-level three-phase voltage",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "voltage",
+      "taught_in_slides": [
+        "64VkQoxpjPi"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "grid-their-function",
+      "label": "grid their function",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "function",
+      "taught_in_slides": [
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "phase-locked-loop",
+      "label": "phase locked loop",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "loop",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "vsc-topology-samples",
+      "label": "vsc topology samples",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "samples",
+      "taught_in_slides": [
+        "64VkQoxpjPi"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "features-are-critically",
+      "label": "features are critically",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "critically",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "integration-with-traditional",
+      "label": "integration with traditional",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "traditional",
+      "taught_in_slides": [
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "recall-that-power",
+      "label": "recall that power",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "power",
+      "taught_in_slides": [
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "source-converters-vscs",
+      "label": "source converters vscs",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "vscs",
+      "taught_in_slides": [
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "source-converters-cscs",
+      "label": "source converters cscs",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "cscs",
+      "taught_in_slides": [
+        "6MvgELbfFIH"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "across-time-scales",
+      "label": "across time scales",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "scales",
+      "taught_in_slides": [
+        "6ps7ro4Er5o"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "pwm-and-phase",
+      "label": "pwm and phase",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "phase",
+      "taught_in_slides": [
+        "6eVptVTR2Lx"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "controllable-switch-called",
+      "label": "controllable switch called",
+      "confidence": 0.49,
+      "tier": 3,
+      "is_free_standing": true,
+      "head_word": "called",
+      "taught_in_slides": [
+        "5uUiVx1gsqw"
+      ],
+      "total_freq": 1
+    },
+    {
+      "id": "voltage",
+      "label": "voltage",
+      "confidence": 0.91,
+      "tier": 1,
+      "is_free_standing": false,
+      "head_word": "voltage",
+      "taught_in_slides": [
+        "6KhIqryeG83",
+        "6j4NfYacv8d",
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 21
+    },
+    {
+      "id": "level",
+      "label": "level",
+      "confidence": 0.91,
+      "tier": 1,
+      "is_free_standing": false,
+      "head_word": "level",
+      "taught_in_slides": [
+        "6eVptVTR2Lx",
+        "5q1PTTjK3aS"
+      ],
+      "total_freq": 9
+    },
+    {
+      "id": "grid",
+      "label": "grid",
+      "confidence": 0.91,
+      "tier": 1,
+      "is_free_standing": false,
+      "head_word": "grid",
+      "taught_in_slides": [
+        "5zBRyvxOwou",
+        "6KhIqryeG83",
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 9
+    },
+    {
+      "id": "power",
+      "label": "power",
+      "confidence": 0.91,
+      "tier": 1,
+      "is_free_standing": false,
+      "head_word": "power",
+      "taught_in_slides": [
+        "6ps7ro4Er5o",
+        "5zBRyvxOwou",
+        "5uUiVx1gsqw",
+        "66RtiTQPuzj"
+      ],
+      "total_freq": 10
+    },
+    {
+      "id": "output",
+      "label": "output",
+      "confidence": 0.91,
+      "tier": 1,
+      "is_free_standing": false,
+      "head_word": "output",
+      "taught_in_slides": [
+        "6KhIqryeG83",
+        "6JZsAHMHpvb"
+      ],
+      "total_freq": 6
+    },
+    {
+      "id": "current",
+      "label": "current",
+      "confidence": 0.91,
+      "tier": 1,
+      "is_free_standing": false,
+      "head_word": "current",
+      "taught_in_slides": [
+        "6KhIqryeG83",
+        "5uUiVx1gsqw",
+        "6j4NfYacv8d"
+      ],
+      "total_freq": 11
+    }
+  ],
+  "prereq_edges": [
+    {
+      "from": "inverter-and-plant",
+      "to": "inverter-level",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "level-control-system",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "plant",
+      "confidence": 0.9
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "plant-level",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "set-points",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "individual-inverter",
+      "confidence": 0.9
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "controller",
+      "confidence": 0.9
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "nested-loop-structure",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "outer-and-inner",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "inner-control-pulse",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "pwm-and-phase",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "phase-locked-loop",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "system-which-generates",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "generates-control-commands",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "commands-for-inverter",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "inverter-level",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "level-control-system",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "plant",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "plant-level",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "set-points",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "individual-inverter",
+      "confidence": 0.9
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "controller",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "nested-loop-structure",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "outer-and-inner",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "inner-control-pulse",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "pwm-and-phase",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "phase-locked-loop",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "system-which-generates",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "generates-control-commands",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "commands-for-inverter",
+      "confidence": 0.65
+    },
+    {
+      "from": "plant",
+      "to": "plant-control-timeframes",
+      "confidence": 0.65
+    },
+    {
+      "from": "plant",
+      "to": "timeframes-simple-response",
+      "confidence": 0.65
+    },
+    {
+      "from": "plant",
+      "to": "simple-response-times",
+      "confidence": 0.65
+    },
+    {
+      "from": "plant",
+      "to": "notice-the-differences",
+      "confidence": 0.65
+    },
+    {
+      "from": "plant",
+      "to": "controllers-this-separation",
+      "confidence": 0.65
+    },
+    {
+      "from": "plant",
+      "to": "controller-timeframes-simplifies",
+      "confidence": 0.65
+    },
+    {
+      "from": "plant",
+      "to": "problem-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "plant",
+      "to": "level-control-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "plant",
+      "to": "unit-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "plant",
+      "to": "faster-and-plant",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "plant-control-timeframes",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "timeframes-simple-response",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "simple-response-times",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "notice-the-differences",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "controllers-this-separation",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "controller-timeframes-simplifies",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "problem-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "level-control-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "unit-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "faster-and-plant",
+      "confidence": 0.65
+    },
+    {
+      "from": "controller",
+      "to": "plant-control-timeframes",
+      "confidence": 0.65
+    },
+    {
+      "from": "controller",
+      "to": "timeframes-simple-response",
+      "confidence": 0.65
+    },
+    {
+      "from": "controller",
+      "to": "simple-response-times",
+      "confidence": 0.65
+    },
+    {
+      "from": "controller",
+      "to": "notice-the-differences",
+      "confidence": 0.65
+    },
+    {
+      "from": "controller",
+      "to": "controllers-this-separation",
+      "confidence": 0.65
+    },
+    {
+      "from": "controller",
+      "to": "controller-timeframes-simplifies",
+      "confidence": 0.65
+    },
+    {
+      "from": "controller",
+      "to": "problem-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "controller",
+      "to": "level-control-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "controller",
+      "to": "unit-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "controller",
+      "to": "faster-and-plant",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "power-electronic",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "voltage-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "source-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "switches",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "power-electronic-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "power-electronic-switches",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "voltage-source-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "switch-called",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "switches-power-electronics",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "input-into-controlled",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "output-they-enable",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "high-frequencies-let",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "commutated-switch-called",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "controllable-switch-called",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "power-electronic-switch",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "electronic-switch-features",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "features-are-critically",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "important-for-renewable",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "switch-called",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "switches-power-electronics",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "input-into-controlled",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "output-they-enable",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "high-frequencies-let",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "commutated-switch-called",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "controllable-switch-called",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "power-electronic-switch",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "electronic-switch-features",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "features-are-critically",
+      "confidence": 0.65
+    },
+    {
+      "from": "switches",
+      "to": "important-for-renewable",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "switch-called",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "switches-power-electronics",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "input-into-controlled",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "output-they-enable",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "high-frequencies-let",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "commutated-switch-called",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "controllable-switch-called",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "power-electronic-switch",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "electronic-switch-features",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "features-are-critically",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-switches",
+      "to": "important-for-renewable",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "source",
+      "confidence": 0.9
+    },
+    {
+      "from": "voltage-source",
+      "to": "current-source",
+      "confidence": 0.9
+    },
+    {
+      "from": "voltage-source",
+      "to": "ideal-voltage-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "ideal-current-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "source-the-interface",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "voltage-across",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "current-sources-recall",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "recall-that-power",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "grid-their-function",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "regulate-voltage-magnitude",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "voltage-magnitude-frequency",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "source",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "current-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "ideal-voltage-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "ideal-current-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "source-the-interface",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "voltage-across",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "current-sources-recall",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "recall-that-power",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "grid-their-function",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "regulate-voltage-magnitude",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic",
+      "to": "voltage-magnitude-frequency",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "source",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "voltage-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "current-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "ideal-voltage-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "ideal-current-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "source-the-interface",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "power-electronic",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "voltage-across",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "current-sources-recall",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "recall-that-power",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "power-electronic-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "grid-their-function",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "regulate-voltage-magnitude",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "voltage-magnitude-frequency",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "source",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "current-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "ideal-voltage-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "ideal-current-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "source-the-interface",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "voltage-across",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "current-sources-recall",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "recall-that-power",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "grid-their-function",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "regulate-voltage-magnitude",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-converters",
+      "to": "voltage-magnitude-frequency",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "vscs-and-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "vsc",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "source-converters-vscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "source-converters-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "primary-physical-structures",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "power-electronic-interface",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "interface-the-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "voltage-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "current-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "source",
+      "to": "csc-this-classification",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "vscs-and-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "vsc",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "source-converters-vscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "source-converters-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "primary-physical-structures",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "power-electronic-interface",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "interface-the-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "voltage-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "current-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source",
+      "to": "csc-this-classification",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "vscs-and-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "vsc",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "source-converters-vscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "source-converters-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "primary-physical-structures",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "power-electronic-interface",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "interface-the-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "voltage-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "current-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source",
+      "to": "csc-this-classification",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "source",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "current-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "vscs-and-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "vsc",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "source-converters-vscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "source-converters-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "primary-physical-structures",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "power-electronic-interface",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "interface-the-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "voltage-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "current-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "source-converters",
+      "to": "csc-this-classification",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "source",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "current-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "vscs-and-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "vsc",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "source-converters-vscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "source-converters-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "primary-physical-structures",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "power-electronic-interface",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "interface-the-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "voltage-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "current-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-source-converters",
+      "to": "csc-this-classification",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "source",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "current-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "voltage-source",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "vscs-and-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "source-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "vsc",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "voltage-source-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "source-converters-vscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "source-converters-cscs",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "primary-physical-structures",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "power-electronic-interface",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "interface-the-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "voltage-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "current-source-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "current-source-converters",
+      "to": "csc-this-classification",
+      "confidence": 0.65
+    },
+    {
+      "from": "vsc",
+      "to": "vsc-topology-samples",
+      "confidence": 0.65
+    },
+    {
+      "from": "vsc",
+      "to": "topology-samples-let",
+      "confidence": 0.65
+    },
+    {
+      "from": "vsc",
+      "to": "two-level-three-phase-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "vsc",
+      "to": "three-phase-voltage-sourced",
+      "confidence": 0.65
+    },
+    {
+      "from": "vsc",
+      "to": "voltage-sourced-converter",
+      "confidence": 0.65
+    },
+    {
+      "from": "vsc",
+      "to": "learn-the-basic",
+      "confidence": 0.65
+    },
+    {
+      "from": "vsc",
+      "to": "structure-and-operation",
+      "confidence": 0.65
+    },
+    {
+      "from": "vsc",
+      "to": "basic-structure",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "current-sourced-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "inverter-based-resources-basics",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "basics-and-operations",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "how-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "level-controls-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "inverter-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "reviewed-power-electronic",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "electronic-concepts-pertinent",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "integration-with-traditional",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "included-switches-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "inverter-and-plant",
+      "to": "sourced-converters-pulse",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "current-sourced-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "individual-inverter",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "inverter-based-resources-basics",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "basics-and-operations",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "how-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "level-controls-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "inverter-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "reviewed-power-electronic",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "electronic-concepts-pertinent",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "integration-with-traditional",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "included-switches-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "voltage-and-current",
+      "to": "sourced-converters-pulse",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "current-sourced-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "inverter-based-resources-basics",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "basics-and-operations",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "how-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "level-controls-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "inverter-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "reviewed-power-electronic",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "electronic-concepts-pertinent",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "integration-with-traditional",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "included-switches-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "individual-inverter",
+      "to": "sourced-converters-pulse",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "current-sourced-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "individual-inverter",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "inverter-based-resources-basics",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "basics-and-operations",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "how-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "level-controls-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "inverter-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "reviewed-power-electronic",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "electronic-concepts-pertinent",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "integration-with-traditional",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "included-switches-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "how",
+      "to": "sourced-converters-pulse",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "current-sourced-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "individual-inverter",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "inverter-based-resources-basics",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "basics-and-operations",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "how-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "level-controls-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "inverter-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "reviewed-power-electronic",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "electronic-concepts-pertinent",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "integration-with-traditional",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "included-switches-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "power-electronic-concepts",
+      "to": "sourced-converters-pulse",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "current-sourced-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "individual-inverter",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "inverter-based-resources-basics",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "basics-and-operations",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "how-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "level-controls-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "inverter-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "reviewed-power-electronic",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "electronic-concepts-pertinent",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "integration-with-traditional",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "included-switches-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "converters-pulse-width",
+      "to": "sourced-converters-pulse",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "current-sourced-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "inverter-based-resources-basics",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "basics-and-operations",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "how-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "level-controls-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "inverter-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "reviewed-power-electronic",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "electronic-concepts-pertinent",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "integration-with-traditional",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "included-switches-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "pulse-width-modulation",
+      "to": "sourced-converters-pulse",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "current-sourced-converters",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "individual-inverter",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "inverter-based-resources-basics",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "basics-and-operations",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "how-the-individual",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "level-controls-schemes",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "inverter-controls-acting",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "reviewed-power-electronic",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "electronic-concepts-pertinent",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "integration-with-traditional",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "included-switches-voltage",
+      "confidence": 0.65
+    },
+    {
+      "from": "modulation-and-output",
+      "to": "sourced-converters-pulse",
+      "confidence": 0.65
+    }
+  ],
+  "modifier_pairs": [
+    {
+      "modifier": "output-voltage",
+      "target": "voltage"
+    },
+    {
+      "modifier": "included-switches-voltage",
+      "target": "voltage"
+    },
+    {
+      "modifier": "interface-the-voltage",
+      "target": "voltage"
+    },
+    {
+      "modifier": "sinusoidal-reference-voltage",
+      "target": "voltage"
+    },
+    {
+      "modifier": "including-switches-voltage",
+      "target": "voltage"
+    },
+    {
+      "modifier": "two-level-three-phase-voltage",
+      "target": "voltage"
+    },
+    {
+      "modifier": "voltage-source-converter",
+      "target": "source-converter"
+    },
+    {
+      "modifier": "current-source-converter",
+      "target": "source-converter"
+    },
+    {
+      "modifier": "voltage-and-current",
+      "target": "current"
+    },
+    {
+      "modifier": "modulation-and-output",
+      "target": "output"
+    },
+    {
+      "modifier": "plant-level",
+      "target": "level"
+    },
+    {
+      "modifier": "inverter-level",
+      "target": "level"
+    },
+    {
+      "modifier": "detail-various-power",
+      "target": "power"
+    },
+    {
+      "modifier": "recall-that-power",
+      "target": "power"
+    },
+    {
+      "modifier": "faster-and-plant",
+      "target": "plant"
+    },
+    {
+      "modifier": "inverter-and-plant",
+      "target": "plant"
+    },
+    {
+      "modifier": "concepts-including-switches",
+      "target": "switches"
+    },
+    {
+      "modifier": "power-electronic-switches",
+      "target": "switches"
+    },
+    {
+      "modifier": "current-source",
+      "target": "source"
+    },
+    {
+      "modifier": "voltage-source",
+      "target": "source"
+    },
+    {
+      "modifier": "ideal-current-source",
+      "target": "current-source"
+    },
+    {
+      "modifier": "ideal-voltage-source",
+      "target": "voltage-source"
+    },
+    {
+      "modifier": "voltage-source-converters",
+      "target": "source-converters"
+    },
+    {
+      "modifier": "current-source-converters",
+      "target": "source-converters"
+    },
+    {
+      "modifier": "converters-pulse-width",
+      "target": "pulse-width"
+    },
+    {
+      "modifier": "reviewed-power-electronic",
+      "target": "power-electronic"
+    },
+    {
+      "modifier": "various-power-electronic",
+      "target": "power-electronic"
+    },
+    {
+      "modifier": "power-flow-from",
+      "target": "flow-from"
+    },
+    {
+      "modifier": "energy-flow-from",
+      "target": "flow-from"
+    },
+    {
+      "modifier": "power-grid",
+      "target": "grid"
+    },
+    {
+      "modifier": "commutated-switch-called",
+      "target": "switch-called"
+    },
+    {
+      "modifier": "controllable-switch-called",
+      "target": "switch-called"
+    }
+  ]
+}
