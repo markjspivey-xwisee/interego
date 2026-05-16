@@ -31,9 +31,12 @@ import {
   buildCommittedContribution,
   buildAttestedHomomorphicSum,
   verifyAttestedHomomorphicSum,
+  signedBoundsMessage, verifySignedBounds,
   type ParticipationHit,
+  type CommittedContribution,
 } from '../aggregate-privacy/index.js';
 import type { IRI } from '../../../src/index.js';
+import { Wallet } from 'ethers';
 
 const COHORT = 'urn:lpc:cohort:aws-saa-q2-2026' as IRI;
 const AGGREGATOR = 'did:web:learning.acme.example' as IRI;
@@ -317,5 +320,160 @@ describe('aggregate-privacy v3: homomorphic Pedersen sum + DP-Laplace noise', ()
     expect(verifyAttestedHomomorphicSum(badE).valid).toBe(false);
     const badS = { ...bundle, sensitivity: -1 };
     expect(verifyAttestedHomomorphicSum(badS).valid).toBe(false);
+  });
+});
+
+describe('aggregate-privacy v3.1: aggregator-side cheat protection', () => {
+  const bounds = { min: 0n, max: 100n };
+
+  it('aggregator REJECTS a contribution whose value is outside the declared bounds (the client-side check was bypassed)', () => {
+    // Simulate a malicious contributor that DID the commit but
+    // skipped buildCommittedContribution's own bounds check by
+    // constructing the contribution directly.
+    const honest = buildCommittedContribution({
+      contributorPodUrl: 'https://a.example/', value: 50n, bounds,
+      blindingSeed: 'a', blindingLabel: 'l',
+    });
+    // Build a synthetic "malicious" contribution: same commitment +
+    // bounds, but value pretends to be 999 (out of bounds).
+    const malicious: CommittedContribution = {
+      ...honest,
+      value: 999n,
+    };
+    expect(() => buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [honest, malicious], epsilon: 1.0,
+    })).toThrow(/outside declared bounds.*refuses to inflate/);
+  });
+
+  it('aggregator accepts honest contributions with values exactly at the bounds (min and max)', () => {
+    const atMin = buildCommittedContribution({
+      contributorPodUrl: 'https://min.example/', value: 0n, bounds,
+      blindingSeed: 'min', blindingLabel: 'l',
+    });
+    const atMax = buildCommittedContribution({
+      contributorPodUrl: 'https://max.example/', value: 100n, bounds,
+      blindingSeed: 'max', blindingLabel: 'l',
+    });
+    const bundle = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [atMin, atMax], epsilon: 1.0,
+      includeAuditFields: true,
+    });
+    expect(bundle.trueSum).toBe(100n);
+    expect(verifyAttestedHomomorphicSum(bundle).valid).toBe(true);
+  });
+});
+
+describe('aggregate-privacy v3.1: signed-bounds attestations', () => {
+  const bounds = { min: 0n, max: 100n };
+
+  it('signedBoundsMessage is the documented canonical format', () => {
+    const contrib = buildCommittedContribution({
+      contributorPodUrl: 'https://x.example/', value: 42n, bounds,
+      blindingSeed: 'x', blindingLabel: 'l',
+    });
+    const did = 'did:ethr:0xDEADbeef' as IRI;
+    const msg = signedBoundsMessage({
+      commitment: contrib.commitment, bounds, contributorDid: did,
+    });
+    expect(msg).toBe(`interego/v1/aggregate/signed-bounds|${contrib.commitment.bytes}|0|100|${did}`);
+  });
+
+  it('verifySignedBounds accepts an honest signature', async () => {
+    const wallet = Wallet.createRandom();
+    const did = `did:ethr:${wallet.address}` as IRI;
+    const contrib = buildCommittedContribution({
+      contributorPodUrl: 'https://y.example/', value: 70n, bounds,
+      blindingSeed: 'y', blindingLabel: 'l',
+    });
+    const msg = signedBoundsMessage({
+      commitment: contrib.commitment, bounds, contributorDid: did,
+    });
+    const signature = await wallet.signMessage(msg);
+    const r = verifySignedBounds({
+      commitment: contrib.commitment, bounds,
+      attestation: { contributorDid: did, signature },
+    });
+    expect(r.valid).toBe(true);
+    expect(r.recoveredAddress?.toLowerCase()).toBe(wallet.address.toLowerCase());
+  });
+
+  it('verifySignedBounds REJECTS a signature over a different commitment', async () => {
+    const wallet = Wallet.createRandom();
+    const did = `did:ethr:${wallet.address}` as IRI;
+    const c1 = buildCommittedContribution({
+      contributorPodUrl: 'https://z1.example/', value: 50n, bounds,
+      blindingSeed: 'z1', blindingLabel: 'l',
+    });
+    const c2 = buildCommittedContribution({
+      contributorPodUrl: 'https://z2.example/', value: 60n, bounds,
+      blindingSeed: 'z2', blindingLabel: 'l',
+    });
+    // Signature is over c1's commitment; verifying against c2's commitment must fail.
+    const msg1 = signedBoundsMessage({
+      commitment: c1.commitment, bounds, contributorDid: did,
+    });
+    const signature = await wallet.signMessage(msg1);
+    const r = verifySignedBounds({
+      commitment: c2.commitment, bounds,
+      attestation: { contributorDid: did, signature },
+    });
+    expect(r.valid).toBe(false);
+  });
+
+  it('verifySignedBounds REJECTS a signature whose recovered address does not appear in the DID', async () => {
+    const realWallet = Wallet.createRandom();
+    const decoyDid = 'did:ethr:0x0000000000000000000000000000000000000000' as IRI;
+    const contrib = buildCommittedContribution({
+      contributorPodUrl: 'https://w.example/', value: 25n, bounds,
+      blindingSeed: 'w', blindingLabel: 'l',
+    });
+    const msg = signedBoundsMessage({
+      commitment: contrib.commitment, bounds, contributorDid: decoyDid,
+    });
+    const signature = await realWallet.signMessage(msg);
+    const r = verifySignedBounds({
+      commitment: contrib.commitment, bounds,
+      attestation: { contributorDid: decoyDid, signature },
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/not present in contributorDid/);
+  });
+
+  it('requireSignedBounds mode REJECTS contributions without an attestation', async () => {
+    const contrib = buildCommittedContribution({
+      contributorPodUrl: 'https://p.example/', value: 30n, bounds,
+      blindingSeed: 'p', blindingLabel: 'l',
+    });
+    // No signedBounds attached
+    expect(() => buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [contrib], epsilon: 1.0,
+      requireSignedBounds: true,
+    })).toThrow(/no signedBounds attestation/);
+  });
+
+  it('requireSignedBounds mode ACCEPTS contributions with valid attestations', async () => {
+    const wallet = Wallet.createRandom();
+    const did = `did:ethr:${wallet.address}` as IRI;
+    const c = buildCommittedContribution({
+      contributorPodUrl: 'https://q.example/', value: 30n, bounds,
+      blindingSeed: 'q', blindingLabel: 'l',
+    });
+    const msg = signedBoundsMessage({
+      commitment: c.commitment, bounds, contributorDid: did,
+    });
+    const signature = await wallet.signMessage(msg);
+    const cWithSig: CommittedContribution = {
+      ...c,
+      signedBounds: { contributorDid: did, signature },
+    };
+    const bundle = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [cWithSig], epsilon: 1.0,
+      requireSignedBounds: true,
+    });
+    expect(bundle.contributorCount).toBe(1);
   });
 });
