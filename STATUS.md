@@ -91,7 +91,7 @@ Design discipline: [`docs/DUAL-AUDIENCE.md`](docs/DUAL-AUDIENCE.md).
 ## Test + validation hygiene
 
 - **`npx tsc -p tsconfig.json --noEmit`** — currently clean across the repo + each sub-project (mcp-server, deploy/identity, etc.).
-- **`npx vitest run`** — **1421/1421 passing**, 29 skipped (network / external dependencies).
+- **`npx vitest run`** — **1422/1422 passing**, 29 skipped (network / external dependencies). The walkthrough regression test (`tests/walkthrough-v4-partial-vss.test.ts`) runs the v4-partial narrative end-to-end as a child process to catch any drift in the composed primitives.
 - **`node tools/ontology-lint.mjs`** — every owned-namespace reference in TS is defined in the corresponding `docs/ns/<prefix>.ttl` or allowlisted. CI-gated.
 - **`node tools/smoke-try-flow.mjs`** — 12-check end-to-end contract test of the `/try → claim` activation funnel against any live deployment.
 - **`npx tsx tools/walkthrough-v4-partial-vss.ts`** — single-process narrative walkthrough of the v4-partial+VSS + committee attestation flow. Pure protocol-layer demo, no pod or network required. Living documentation: 7 phases from contributor commit → operator threshold-reveal → committee reconstruction → chain-of-custody attestation → tampering simulation.
