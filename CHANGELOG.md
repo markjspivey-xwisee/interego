@@ -8,6 +8,63 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Privacy accountants: advanced composition + Rényi-DP
+
+Ships [`src/crypto/dp-accountant.ts`](src/crypto/dp-accountant.ts) — the
+"substrate-level distribution-shaped cumulative-budget composition
+theorems" layer. Tighter cumulative-ε tracking than the naive
+sequential summation that `EpsilonBudget` ships today.
+
+**The problem.** Under basic sequential composition, k mechanisms
+each ε-DP give the joint mechanism k·ε-DP. This is worst-case tight
+but pessimistic — running many small-ε queries quickly exhausts a
+per-cohort cap even though the actual cumulative privacy loss is
+much smaller.
+
+**Two accountants.**
+
+1. `AdvancedCompositionAccountant` — Dwork-Rothblum-Vadhan 2010.
+   At each consume(), tracks the naive sum. On demand:
+     ε' = √(2k ln(1/δ)) · ε_max + k · ε_max · (e^{ε_max} − 1)
+   gives the tightened (ε', δ)-DP at the caller's chosen δ. For
+   small ε this is roughly √k · ε rather than k · ε.
+
+2. `RenyiAccountant` — Mironov 2017. Tracks Rényi divergence at a
+   fixed order α. For pure-DP mechanisms:
+     ρ_α ≤ (1/(α−1)) · log( α/(2α−1) · e^{(α−1)ε} + (α−1)/(2α−1) · e^{−αε} )
+   Conversion at session close-out:
+     ε = ρ + log(1/δ) / (α − 1)
+   Helper `sweepRenyiBestEpsilon` runs the conversion across a grid
+   of α's and picks the tightest. Tightest in most practical
+   regimes.
+
+**Common interface.** Both implement `PrivacyAccountant`:
+`consume({queryDescription, epsilon})`, `canAfford(epsilon)`,
+`spent`, `maxEpsilon`, `log`. The existing aggregate primitives'
+`epsilonBudget?` slot can be widened to accept any accountant in a
+follow-up wiring step; for now the accountants are usable directly
+by the caller (compute the tighter ε' end-of-session; verify
+against the cohort cap).
+
+16 new contract tests in `tests/dp-accountant.test.ts`:
+- AdvancedCompositionAccountant: naive-sum tracking, overflow throw,
+  DRV closed-form match, smaller-than-naive for k=50 small queries,
+  zero-queries returns 0, invalid-input throws
+- RenyiAccountant: ρ-monotonicity in ε, ρ-positivity across α
+  values, cumulative tracking + overflow throw, convertToEpsilonDelta
+  formula match, canAfford honors maxRho, invalid-input throws
+- sweepRenyiBestEpsilon: best-α selection at target δ, custom α
+  grid, invalid-δ throw
+- Headline: both tighter accountants beat naive sum for k=100
+  small queries
+
+Substrate-pure: no new crypto primitives, no new ontology terms.
+Just the mathematical accounting layer the user asked about.
+
+Tests: 1522/1522 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — v6 distributed values + distributed blindings (operator sees neither)
 
 Doubles the v5 composition: contributors VSS-split BOTH values AND
