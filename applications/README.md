@@ -23,6 +23,15 @@ Concretely, a vertical in this directory:
 
 The transplant test from [`spec/LAYERS.md`](../spec/LAYERS.md): "would this claim still make sense transplanted into a completely different domain or stack?" — if no, it belongs in a vertical, not in the protocol.
 
+## Pilot verticals (2026-05)
+
+Two verticals are designated **pilots** for the dual-audience design discipline ([`../docs/DUAL-AUDIENCE.md`](../docs/DUAL-AUDIENCE.md)) — the principle that every Interego vertical has at least two first-class audiences (the protagonist whose data it is, and the institutional operator) and gives each its own distinct affordances over the same underlying descriptors:
+
+- **Learning** — [`learner-performer-companion/`](learner-performer-companion/) + [`lrs-adapter/`](lrs-adapter/), serving **the learner / performer** (their portable wallet, grounded chat, xAPI history pulled from any institutional LRS) AND **the enterprise edtech professional** (authoritative content publication, cohort credential issuance, aggregate-privacy queries, LRS projection — all bilateral with learner consent). The standards layer (IEEE LERS / ADL TLA / xAPI 2.0 / W3C VC / Open Badges 3.0 / IMS CLR 2.0) lets the two audiences interop with the broader edtech ecosystem.
+- **Organizational working memory** — [`organizational-working-memory/`](organizational-working-memory/), serving **the knowledge worker / individual contributor** (their slice of org memory — decisions they're in, projects they own, notes they captured) AND **the org-level operator** (aggregate dashboards over decision lineage, project health, framework-cited compliance evidence, board-facing audit trails). ABAC + per-graph `share_with` + aggregate-privacy queries are the boundary tech.
+
+The other verticals below remain useful examples but are not pilots — they demonstrate composability without yet articulating a dual-audience contract.
+
 ## Current verticals
 
 | Vertical | What it does |

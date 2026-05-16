@@ -8,10 +8,12 @@
 
 An adapter — not a vertical with its own framework. It does one thing: translate between **xAPI Statements** (the rigid actor / verb / object / result / context / timestamp shape used by every LRS) and **Interego Context Descriptors** (RDF 1.2 with seven facets and modal status).
 
-Two directions:
+Two directions, **each serving a different audience** of the dual-audience learning vertical (see [`../../docs/DUAL-AUDIENCE.md`](../../docs/DUAL-AUDIENCE.md)):
 
-- **Statement → Descriptor** — ingest xAPI Statements from an LRS (or a TLA-compliant Learning Activity Provider Index) into the user's pod as `cg:ContextDescriptor` instances with `cg:ProvenanceFacet` capturing the LRS source.
-- **Descriptor → Statement** — project Interego descriptors out to a target LRS as xAPI Statements, for organizations whose compliance / reporting / dashboards are LRS-anchored.
+- **Statement → Descriptor** (the **learner / performer** read path) — a learner's agent connects to any institutional LRS the learner has read access to, pulls the learner's own xAPI Statements (or a TLA-compliant Learning Activity Provider Index entry), and writes them into the learner's pod as `cg:ContextDescriptor` instances with `cg:ProvenanceFacet` capturing the LRS source. The learner's wallet ([`../learner-performer-companion/`](../learner-performer-companion/)) now has a permanent, portable, queryable copy. The institution still has its LRS; the learner gains independent reach to their own history.
+- **Descriptor → Statement** (the **enterprise edtech professional** projection path) — institution-side: with the learner's per-graph consent, project Interego descriptors out to a target LRS as xAPI Statements, for organizations whose compliance / reporting / dashboards are LRS-anchored. The institution does not get to mint Statements about a learner without the learner's consent descriptor on the source graph; this is enforced at the projection boundary.
+
+Both directions are **lossy at the boundary** — the next section explains why.
 
 ## Why this is an adapter, not a vertical
 

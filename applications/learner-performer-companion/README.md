@@ -1,4 +1,4 @@
-# Learner / Performer Companion — human-protagonist vertical
+# Learner / Performer Companion — learning vertical (dual-audience)
 
 > **Vertical application of Interego — NOT part of the protocol, NOT a reference implementation of the protocol.** One specific use case among many possible. The Interego protocol does not depend on any of this; multiple alternative verticals could exist over the same substrate. Vocabulary in this document (`lpc:` namespace) is vertical-scoped, non-normative, and lives in [`ontology/lpc.ttl`](ontology/lpc.ttl).
 >
@@ -6,9 +6,30 @@
 
 ## What this is
 
-A vertical for **humans** — learners and workers — to keep a **portable, queryable wallet** of their training history, credentials, and performance records, and to **chat with their learning and performance systems** through an Interego-grounded AI assistant.
+A vertical for **two first-class audiences** — the **learner / performer** whose history this is, and the **enterprise edtech professional** running the institutional surface. Both get explicit, distinct affordances over the same underlying descriptors on the learner's pod; neither one is reduced to data exhaust for the other. This is the dual-audience design discipline ([`docs/DUAL-AUDIENCE.md`](../../docs/DUAL-AUDIENCE.md)) applied to the learning vertical.
 
-The human is the protagonist. The Interego agent is the assistant. This is meaningfully different from [`../agent-development-practice/`](../agent-development-practice/), where the AI agent is the *subject* being managed.
+The learner is the protagonist of their record. The Interego agent is their assistant. The institution (employer, training vendor, certification body, regulator-facing L&D function) is a *peer* — it publishes authoritative content + cohort credentials to its own pod, and consumes aggregate views over learners' pods through ABAC + per-graph `share_with` + aggregate-privacy queries. The pod is the learner's; the institution does not have control of the pod, but it does have first-class affordances.
+
+This is meaningfully different from [`../agent-development-practice/`](../agent-development-practice/), where the AI agent is the *subject* being managed.
+
+## The two audiences and what each gets
+
+| | Learner / performer (or their agent) | Enterprise edtech professional |
+|---|---|---|
+| **Owns** | Their own pod, including auth-methods.jsonld, credentials, xAPI history, performance records, IDP / OKR plans. | The institution's own pod for authoritative training content, cohort credential templates, compliance policies, and aggregate dashboard descriptors. |
+| **Reads** | The full contents of their own wallet. Any descriptors institutions or peers have shared with them via `share_with`. | Aggregate-privacy queries over consenting learners' pods (counts / proofs / thresholds, not individuals). Individual records ONLY when the learner has explicitly issued a `share_with`. |
+| **Writes** | New learning experiences (xAPI ingest), accepted credentials, self-assessments, goal updates, grounded-chat citation responses. | Training content (`lpc:TrainingContent`), credential templates, performance review issuances (attributed to the issuing manager), framework-compliance descriptors. |
+| **Standards-side surface** | Open Badges 3.0 / IMS CLR 2.0 / IEEE LERS-shaped VCs in the wallet; xAPI 2.0 history pulled from any institutional LRS via [`../lrs-adapter/`](../lrs-adapter/). | IEEE LERS Recognition Records as the cross-institution portable claim; ADL TLA Learning Activity Provider catalogs as the authoritative-content surface; xAPI 2.0 Statements projected outbound to existing LRS systems (Watershed, Veracity, SCORM Cloud, Yet Analytics) via [`../lrs-adapter/`](../lrs-adapter/) for institutional reporting. |
+| **Modal honesty** | The assistant's grounded responses ARE the learner's own — Asserted only when verbatim citation supports them; Hypothetical when the assistant is inferring. | Cohort dashboards and predictive analytics published as Hypothetical with the model + confidence inline. The institution doesn't get to silently upgrade institutional inferences into facts about a learner. |
+| **Compliance posture** | The learner can run their own `nist-rmf:` / `eu-ai-act:` queries over how AI was used in *their* learning. | The institution publishes `compliance: true` descriptors citing the controls the institution is itself subject to. Both sides query the same audit trail in their own vocabulary. |
+
+The principle: same underlying descriptors, different affordance surfaces. The institution does not seize control of the pod; the learner is not reduced to data exhaust for the institution.
+
+## Composing existing standards (not inventing new ones)
+
+The original framing — and still accurate for the learner side: a portable, queryable wallet of training history, credentials, and performance records, with an Interego-grounded AI assistant that chats with the learner about their own data. On the institutional side: a peer-pod for authoritative content and credential templates, with an aggregate view that doesn't require seizing the learners' pods.
+
+Both sides compose existing open standards instead of inventing new ones:
 
 The vertical composes existing open standards instead of inventing new ones:
 
