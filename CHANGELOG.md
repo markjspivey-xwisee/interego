@@ -8,6 +8,31 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy: publishable encrypted share distribution
+
+Closes the distribution loop. Operators can now publish encrypted
+shares as normal pod descriptors instead of an out-of-band channel;
+recipients discover them via standard pod-discovery flows and
+decrypt via their own X25519 keypair.
+
+NEW in `applications/_shared/aggregate-privacy/index.ts`:
+- `publishEncryptedShareDistribution({distribution,
+  bundleSumCommitment, operatorDid, podUrl})` — writes the
+  EncryptedShareDistribution as a `cg:ContextDescriptor` on the
+  operator's pod. Content-addressed on (bundleSumCommitment,
+  recipientDid) so republish is idempotent.
+- `fetchPublishedEncryptedShareDistribution({graphUrl})` — recipient-
+  side fetch + JSON.parse. The recipient then calls
+  `decryptShareForRecipient` with their own keypair.
+
+1 new contract test (78 total in aggregate-privacy.test.ts): publish
+→ fetch → decrypt round-trip via the same mock-fetch pattern used by
+the bundle / budget-log / committee-attestation publish helpers.
+
+Tests: 1410/1410 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy: encrypted share distribution
 
 Closes the "how does the operator actually distribute shares to

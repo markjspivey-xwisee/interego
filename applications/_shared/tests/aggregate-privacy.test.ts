@@ -45,6 +45,8 @@ import {
   encryptShareForRecipient,
   decryptShareForRecipient,
   encryptSharesForCommittee,
+  publishEncryptedShareDistribution,
+  fetchPublishedEncryptedShareDistribution,
   type CommitteeReconstructionAttestation,
   type CommitteeMemberSignature,
   type ParticipationHit,
@@ -1538,5 +1540,61 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
     };
     const verified = verifyCommitteeReconstruction({ attestation });
     expect(verified.valid).toBe(true);
+  });
+
+  it('publish + fetch + decrypt: encrypted share survives the Turtle ↔ JSON escape boundary', async () => {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const bundle = mkBundle();
+    const recipient = generateKeyPair();
+    const sender = generateKeyPair();
+    const distribution = encryptShareForRecipient({
+      share: bundle.thresholdShares![0]!,
+      recipientDid: 'did:test:recipient-published' as IRI,
+      recipientPublicKey: recipient.publicKey,
+      senderKeyPair: sender,
+    });
+
+    const stored = new Map<string, string>();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'PUT' && typeof init?.body === 'string') {
+        stored.set(url, init.body);
+        return new Response('', { status: 201 });
+      }
+      if (method === 'POST' && typeof init?.body === 'string') return new Response('', { status: 200 });
+      if (method === 'GET') {
+        const body = stored.get(url);
+        if (body) return new Response(body, { status: 200, headers: { 'content-type': 'text/turtle' } });
+        return new Response('', { status: 404 });
+      }
+      return new Response('', { status: 405 });
+    }) as typeof fetch;
+
+    try {
+      const published = await publishEncryptedShareDistribution({
+        distribution,
+        bundleSumCommitment: bundle.sumCommitment.bytes,
+        operatorDid: AGGREGATOR,
+        podUrl: 'https://mock-pod.example/operator/',
+      });
+      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+
+      const refetched = await fetchPublishedEncryptedShareDistribution({ graphUrl: published.graphUrl });
+      expect(refetched).not.toBeNull();
+      expect(refetched!.recipientDid).toBe('did:test:recipient-published');
+
+      // Recipient can decrypt the fetched envelope.
+      const recoveredShare = decryptShareForRecipient({
+        distribution: refetched!,
+        recipientKeyPair: recipient,
+      });
+      expect(recoveredShare).not.toBeNull();
+      expect(recoveredShare!.x).toBe(bundle.thresholdShares![0]!.x);
+      expect(recoveredShare!.y).toBe(bundle.thresholdShares![0]!.y);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

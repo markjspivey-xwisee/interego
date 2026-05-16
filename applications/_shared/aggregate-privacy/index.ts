@@ -1482,6 +1482,77 @@ export async function publishCommitteeReconstructionAttestation(args: {
 }
 
 /**
+ * Publish a single EncryptedShareDistribution as a pod descriptor.
+ * Lets the operator distribute encrypted shares through standard
+ * pod-discovery flows instead of an out-of-band channel — the
+ * recipient finds the descriptor on the operator's pod, fetches the
+ * graph, decrypts via their own X25519 keypair.
+ *
+ * Content-addressed on (bundleSumCommitment, recipientDid) so re-
+ * publishing the same share is idempotent. The descriptor's
+ * provenance agent is the operator (passed via `operatorDid`); the
+ * recipient is recorded in the JSON body, not at the descriptor level.
+ *
+ * Bigint y survives the JSON-in-envelope round-trip via the same
+ * `__bigint` wrapper used by the publishable bundle JSON encoder.
+ */
+export async function publishEncryptedShareDistribution(args: {
+  distribution: EncryptedShareDistribution;
+  bundleSumCommitment: string;
+  operatorDid: IRI;
+  podUrl: string;
+}): Promise<PublishedBundle> {
+  const seed = sha256(`encrypted-share|${args.bundleSumCommitment}|${args.distribution.recipientDid}`).slice(0, 16);
+  const { iri, graphIri } = bundleIris(seed);
+  const json = JSON.stringify(args.distribution);
+  const now = new Date().toISOString();
+  const ttl = `@prefix agg: <${AGGREGATE_NS}> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<${graphIri}> a agg:EncryptedShareDistribution ;
+  agg:bundleJson """${escapeTtl(json)}""" ;
+  prov:wasAttributedTo <${args.operatorDid}> ;
+  dct:issued "${now}" .`;
+  const built = ContextDescriptor.create(iri)
+    .describes(graphIri)
+    .agent(args.operatorDid)
+    .generatedBy(args.operatorDid, { onBehalfOf: args.operatorDid, endedAt: now })
+    .temporal({ validFrom: now })
+    .asserted(0.95)
+    .verified(args.operatorDid)
+    .build();
+  const r = await publish(built, ttl, args.podUrl);
+  return { iri, descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl };
+}
+
+/**
+ * Fetch a published EncryptedShareDistribution graph and JSON.parse
+ * it. Recipient then runs `decryptShareForRecipient` to recover the
+ * share. Returns null on fetch error or missing body.
+ */
+export async function fetchPublishedEncryptedShareDistribution(args: {
+  graphUrl: string;
+}): Promise<EncryptedShareDistribution | null> {
+  const fetchFn = globalThis.fetch as unknown as (url: string, init?: { headers?: Record<string, string> }) => Promise<{ ok: boolean; text(): Promise<string> }>;
+  try {
+    const r = await fetchFn(args.graphUrl, { headers: { Accept: 'text/turtle, application/trig' } });
+    if (!r.ok) return null;
+    const ttl = await r.text();
+    const m = ttl.match(/agg:bundleJson\s+"""([\s\S]*?)"""/);
+    if (!m || !m[1]) return null;
+    const unescaped = m[1]
+      .replace(/\\t/g, '\t')
+      .replace(/\\r/g, '\r')
+      .replace(/\\n/g, '\n')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+    return JSON.parse(unescaped) as EncryptedShareDistribution;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch a published CommitteeReconstructionAttestation graph and
  * JSON.parse it with the bigint reviver, ready for
  * `verifyCommitteeReconstruction`. Returns null on fetch error or
