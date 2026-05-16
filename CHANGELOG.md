@@ -8,6 +8,56 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — DKG primitive (removes the v4-partial trusted-dealer caveat)
+
+Ships [`src/crypto/dkg.ts`](src/crypto/dkg.ts) — a Distributed Key
+Generation protocol (Pedersen 1991 / Gennaro et al 1999 variant) over
+the ristretto255 scalar field. Composes existing `feldman-vss.ts`
+directly: each participant runs Feldman VSS as the dealer for their
+own random polynomial, the COLLECTIVE polynomial is the sum, and no
+single participant ever learns the collective secret.
+
+This removes the v4-partial threshold-reveal protocol's trusted-dealer
+caveat: where v4-partial+VSS still has the operator running the split
+(and therefore knowing every polynomial coefficient), DKG ensures NO
+party — operator or pseudo-aggregator — sees the collective polynomial.
+
+NEW exports:
+- `dkgRound1({index, n, t})` — generate the party's random polynomial
+  + Feldman commitments + per-recipient shares.
+- `dkgRound2({recipientIndex, received})` — verify each received share
+  against the sender's broadcast commitments; return qualified +
+  rejected sender sets.
+- `dkgRound3({recipientIndex, t, qualifiedReceived})` — combine the
+  qualified shares into this party's share of the COLLECTIVE
+  polynomial; compute the collective coefficient commitments + public
+  key as the per-coefficient point-sum across qualified senders.
+- `simulateDKG({n, t})` — single-process end-to-end honest run for
+  tests + walkthrough. Returns the n final states with each party's
+  combined share + collective public key.
+- `DKGParticipantState`, `DKGReceivedShare`, `DKGRound2Result`,
+  `DKGFinalState` types exported.
+
+13 new contract tests in `tests/dkg.test.ts`:
+- round 1: produces n shares + t commitments; rejects out-of-range
+  index/threshold; every party's own shares verify against own
+  commitments
+- round 2: qualifies honest, rejects tampered y, rejects wrong-x
+- round 3: combined share verifies against collective commitments;
+  throws on empty input; throws on wrong commitment count
+- end-to-end simulation: every participant agrees on PK + QUAL;
+  every combined share verifies; any t-of-n combined shares Lagrange-
+  interpolate to the collective secret; t-1 shares insufficient;
+  collective PK equals the sum of each party's a_{i,0} · G
+
+Wiring DKG into `buildAttestedHomomorphicSum`'s thresholdReveal path
+is the remaining integration step — substrate-pure (composes existing
+feldman-vss + shamir without new ontology terms).
+
+Tests: 1460/1460 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy v3 distribution: publishable + compliance bridge
 
 Completes the zk-distribution layer parity with v3 zk-aggregate.
