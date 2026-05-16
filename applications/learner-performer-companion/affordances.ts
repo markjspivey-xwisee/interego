@@ -116,7 +116,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
 export const lpcAffordances = LPC_AFFORDANCES;
 
 // ─────────────────────────────────────────────────────────────────────
-//  Enterprise edtech professional — declared affordance surface
+//  Enterprise edtech professional — implemented affordance surface
 // ─────────────────────────────────────────────────────────────────────
 //
 // The dual-audience design discipline (docs/DUAL-AUDIENCE.md) names two
@@ -125,20 +125,22 @@ export const lpcAffordances = LPC_AFFORDANCES;
 // institutional surface — L&D leader, edtech vendor, certification
 // body, IEEE LERS / ADL TLA implementer.
 //
-// The affordances below describe the institutional side of the surface
-// in design. They are DECLARED but NOT YET wired into the bridge —
-// `lpcAffordances` (above) is the auto-registered set; this constant is
-// the next-implementer hand-off. When an institutional bridge ships,
-// these IRIs and input schemas are the contract.
+// The affordances below describe the institutional side of the surface.
+// They are now WIRED INTO THE BRIDGE — the bridge concatenates
+// `lpcAffordances` (above) + `lpcEnterpriseAffordances` (this constant)
+// into one auto-registered set and dispatches handlers from
+// `src/institutional-publisher.ts`.
 //
 // All four respect the substrate's bilateral primitives:
 //   - Institutional content lives on the institution's OWN pod
 //     (different from the learner-side `lpc.ingest_training_content`
 //     which writes to the learner's pod). Learners' agents discover
 //     via federation and pull selectively per their own consent.
-//   - Aggregate queries use src/crypto/'s ZK primitives + the
-//     spec/AGGREGATE-PRIVACY.md mechanism — counts / thresholds /
-//     proofs without exposing individuals.
+//   - Aggregate queries v1 use the substrate's ABAC + per-graph
+//     share_with as the privacy boundary (each result includes
+//     `privacyMode: 'abac'`). v2 will swap in src/crypto/'s ZK
+//     primitives + spec/AGGREGATE-PRIVACY.md for counts / thresholds
+//     / proofs over non-shared descriptors.
 //   - Cohort credentials are publish-then-claim: institution issues a
 //     SIGNED template; the learner's agent accepts the issuance into
 //     their wallet (cf. existing lpc.import_credential).
@@ -206,10 +208,11 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
 ];
 
 /**
- * Declared (not yet implemented) affordance surface for the enterprise
- * edtech professional audience. The bridge does NOT auto-register these
- * — adding them to `lpcAffordances` (above) would create tools that
- * 404. Until an institutional bridge ships, these IRIs and input
- * schemas are the design contract for the next implementer.
+ * Implemented affordance surface for the enterprise edtech professional
+ * audience. The bridge concatenates `lpcAffordances` (above) +
+ * `lpcEnterpriseAffordances` (this constant) into one auto-registered
+ * set; handlers live in `src/institutional-publisher.ts`. Requires the
+ * `LPC_INSTITUTION_POD_URL` + `LPC_INSTITUTION_ISSUER_DID` env vars
+ * (or `institution_pod_url` + `issuer_did` per-call args).
  */
 export const lpcEnterpriseAffordances = LPC_ENTERPRISE_AFFORDANCES;

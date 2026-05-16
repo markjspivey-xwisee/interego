@@ -191,7 +191,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
 export const owmAffordances = OWM_AFFORDANCES;
 
 // ─────────────────────────────────────────────────────────────────────
-//  Org-level operator — declared affordance surface
+//  Org-level operator — implemented affordance surface
 // ─────────────────────────────────────────────────────────────────────
 //
 // The dual-audience design discipline (docs/DUAL-AUDIENCE.md) names two
@@ -200,16 +200,18 @@ export const owmAffordances = OWM_AFFORDANCES;
 // the org-level operator (PM lead, ops, exec, board-facing compliance
 // manager).
 //
-// The affordances below describe the operator side of the surface in
-// design. They are DECLARED but NOT YET wired into the bridge —
-// `owmAffordances` (above) is the auto-registered set; this constant is
-// the next-implementer hand-off. When an operator bridge ships, these
-// IRIs and input schemas are the contract.
+// The affordances below describe the operator side of the surface.
+// They are now WIRED INTO THE BRIDGE — the bridge concatenates
+// `owmAffordances` (above) + `owmOperatorAffordances` (this constant)
+// into one auto-registered set and dispatches handlers from
+// `src/operator-publisher.ts`.
 //
 // All four respect the substrate's bilateral primitives:
-//   - Aggregate queries return counts / proofs / thresholds via the
-//     spec/AGGREGATE-PRIVACY.md mechanism + src/crypto/ ZK primitives;
-//     refuse to expose individual descriptors under ABAC restriction.
+//   - Aggregate queries v1 use the substrate's ABAC + per-graph
+//     share_with as the privacy boundary (each result includes
+//     `privacyMode: 'abac'`). v2 will swap in src/crypto/'s ZK
+//     primitives + spec/AGGREGATE-PRIVACY.md for counts / thresholds
+//     / proofs over non-shared descriptors.
 //   - Org-policy descriptors are signed by an org-authority key and
 //     published to the org pod; contributors discover via federated
 //     read on their own ABAC scope.
@@ -276,10 +278,11 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
 ];
 
 /**
- * Declared (not yet implemented) affordance surface for the org-level
- * operator audience. The bridge does NOT auto-register these — adding
- * them to `owmAffordances` (above) would create tools that 404. Until
- * an operator bridge ships, these IRIs and input schemas are the
- * design contract for the next implementer.
+ * Implemented affordance surface for the org-level operator audience.
+ * The bridge concatenates `owmAffordances` (above) +
+ * `owmOperatorAffordances` (this constant) into one auto-registered
+ * set; handlers live in `src/operator-publisher.ts`. Requires the
+ * `OWM_DEFAULT_AUTHORITY_DID` env var (or `authority_did` per-call arg)
+ * — the org-authority signing key is distinct from a contributor's DID.
  */
 export const owmOperatorAffordances = OWM_OPERATOR_AFFORDANCES;

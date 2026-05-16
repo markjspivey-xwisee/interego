@@ -25,7 +25,7 @@
  */
 
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
-import { owmAffordances } from '../affordances.js';
+import { owmAffordances, owmOperatorAffordances } from '../affordances.js';
 import {
   upsertPerson, upsertProject, recordDecision, queueFollowup,
   recordNote, listOverdueFollowups, discoverSubgraph,
@@ -34,6 +34,13 @@ import {
   type QueueFollowupArgs, type RecordNoteArgs,
   type OverdueFollowupsArgs, type DiscoverSubgraphArgs,
 } from '../src/pod-publisher.js';
+import {
+  aggregateDecisionsQuery, projectHealthSummary,
+  publishOrgPolicy, publishComplianceEvidence,
+  type OperatorCtx,
+  type AggregateDecisionsQueryArgs, type ProjectHealthSummaryArgs,
+  type PublishOrgPolicyArgs, type PublishComplianceEvidenceArgs,
+} from '../src/operator-publisher.js';
 import { AdapterRegistry, type NavigationVerb } from '../source-adapters/index.js';
 import { webAdapter } from '../source-adapters/web.js';
 import type { IRI } from '../../../src/index.js';
@@ -44,6 +51,14 @@ function ctx(args: Record<string, unknown>): PodCtx {
   if (!podUrl) throw new Error('pod_url is required (or set OWM_DEFAULT_POD_URL)');
   if (!orgDid) throw new Error('org_did is required (or set OWM_DEFAULT_ORG_DID)');
   return { podUrl, orgDid };
+}
+
+function operatorCtx(args: Record<string, unknown>): OperatorCtx {
+  const orgPodUrl = (args['org_pod_url'] as string | undefined) ?? process.env['OWM_DEFAULT_POD_URL'];
+  const authorityDid = ((args['authority_did'] as string | undefined) ?? process.env['OWM_DEFAULT_AUTHORITY_DID'] ?? process.env['OWM_DEFAULT_ORG_DID']) as IRI | undefined;
+  if (!orgPodUrl) throw new Error('org_pod_url is required (or set OWM_DEFAULT_POD_URL)');
+  if (!authorityDid) throw new Error('authority_did is required (or set OWM_DEFAULT_AUTHORITY_DID / OWM_DEFAULT_ORG_DID)');
+  return { orgPodUrl, authorityDid };
 }
 
 // Source-adapter registry — wire reference adapters here. Operators
@@ -101,12 +116,30 @@ const handlers = {
   },
 
   'owm.list_sources': async () => sourceRegistry.list(),
+
+  // ── Operator-side affordances (dual-audience: org-level operator) ──
+  // Counterparts to the contributor-side handlers above. See
+  // docs/DUAL-AUDIENCE.md and src/operator-publisher.ts.
+
+  'owm.aggregate_decisions_query': async (args: Record<string, unknown>) =>
+    aggregateDecisionsQuery(args as unknown as AggregateDecisionsQueryArgs, operatorCtx(args)),
+
+  'owm.project_health_summary': async (args: Record<string, unknown>) =>
+    projectHealthSummary(args as unknown as ProjectHealthSummaryArgs, operatorCtx(args)),
+
+  'owm.publish_org_policy': async (args: Record<string, unknown>) =>
+    publishOrgPolicy(args as unknown as PublishOrgPolicyArgs, operatorCtx(args)),
+
+  'owm.publish_compliance_evidence': async (args: Record<string, unknown>) =>
+    publishComplianceEvidence(args as unknown as PublishComplianceEvidenceArgs, operatorCtx(args)),
 };
+
+const allAffordances = [...owmAffordances, ...owmOperatorAffordances];
 
 const PORT = parseInt(process.env['PORT'] ?? '6060', 10);
 const app = createVerticalBridge({
   verticalName: 'organizational-working-memory',
-  affordances: owmAffordances,
+  affordances: allAffordances,
   handlers,
   defaultPodUrl: process.env['OWM_DEFAULT_POD_URL'],
 });
@@ -116,5 +149,5 @@ app.listen(PORT, () => {
   console.log(`  MCP endpoint:        http://localhost:${PORT}/mcp`);
   console.log(`  Affordance manifest: http://localhost:${PORT}/affordances`);
   console.log(`  Source adapters:     ${sourceRegistry.list().map(s => s.key).join(', ')}`);
-  console.log(`  ${owmAffordances.length} affordances available`);
+  console.log(`  ${allAffordances.length} affordances available (${owmAffordances.length} contributor + ${owmOperatorAffordances.length} operator)`);
 });

@@ -43,16 +43,16 @@ Verbs are uniform across sources:
 
 Whatever the source returns becomes addressable as a typed descriptor at write time (`record_note` / `record_decision` / etc.) — the substrate is the persistence layer, the source is the observation surface.
 
-## Org-operator affordance surface (declared, implementation-staged)
+## Org-operator affordance surface (implemented)
 
-The current bridge ships the entity + navigation surface for the contributor side. The org-operator side is declared in design ([`affordances.ts`](affordances.ts) future companion `owmOperatorAffordances`) and includes:
+The bridge ships BOTH the contributor entity + navigation surface AND the org-operator surface — concatenating `owmAffordances` + `owmOperatorAffordances` from [`affordances.ts`](affordances.ts) and dispatching operator handlers from [`src/operator-publisher.ts`](src/operator-publisher.ts). Set `OWM_DEFAULT_AUTHORITY_DID` (or pass `authority_did` per call) so the org-authority signing key is distinct from a contributor's DID. The four operator affordances:
 
-- **`owm.aggregate_decisions_query`** — counts / thresholds / lineage-summary over decision descriptors without exposing individual decision text where ABAC restricts. Returns "47 decisions in Q2; mean revision count 1.3; 8 decisions superseded ≥3 times" — not the decisions themselves.
+- **`owm.aggregate_decisions_query`** — counts / thresholds / lineage-summary over decision descriptors. v1 privacy boundary = the substrate's existing ABAC + per-graph `share_with` (response includes `privacyMode: 'abac'`); v2 will add ZK aggregate-privacy. Returns "47 decisions in Q2; mean revision count 1.3; 8 decisions superseded ≥3 times" — not the decisions themselves.
 - **`owm.project_health_summary`** — per-project rollup of follow-up flow, decision recency, contributor breadth. Aggregate-shaped; individual descriptors only via explicit `share_with`.
 - **`owm.publish_org_policy`** — sign and publish org-level policy descriptors (retention windows, decision-promotion thresholds, framework-compliance attestations). Authored by org-authority keys; visible to all contributors.
 - **`owm.publish_compliance_evidence`** — wrap org-level operational events (deploy, access change, key rotation, incident, quarterly review) as `compliance: true` descriptors citing the relevant control IRIs (`soc2:CC6.1`, etc.). Composes [`src/ops/`](../../src/ops/) and [`integrations/compliance-overlay/`](../../integrations/compliance-overlay/).
 
-These four operator affordances are the dual-audience contract for the next implementer. They go in `owmOperatorAffordances` (not the auto-registered `owmAffordances`) until the bridge ships their handlers.
+These four operator affordances ship in `owmOperatorAffordances` and are concatenated into the bridge's tool surface alongside `owmAffordances`. Tools list reports them as one set; the affordance manifest (`GET /affordances`) declares all of them.
 
 ## Demo
 
@@ -64,7 +64,7 @@ Demo 15 in [`demos/scenarios/`](../../demos/scenarios/) walks the closed loop: a
 - **Not a SaaS multi-tenancy story.** The org pod is sovereign; "tenant" doesn't appear in the L1 spec.
 - **Not a panopticon.** The org-operator surface is bounded by ABAC + aggregate-privacy. An operator who wants individual-level visibility needs the contributor's explicit `share_with` — there is no admin-bypass.
 - **Not a Notion / Linear / Asana replacement.** Those are full products with UI, automation, integrations. OWM is the substrate that makes "what's the org's memory of X?" answerable across any of them — typically composed alongside them, not in place of.
-- **Not finished.** The contributor entity + navigation surface ships; the operator surface is declared and pending implementation. See `affordances.ts`.
+- **Not finished — but ships both audiences.** The contributor entity + navigation surface AND the org-operator surface (aggregate queries, policy publish, compliance evidence) both ship from this bridge today. The v1 privacy boundary on aggregate queries is the substrate's existing ABAC + per-graph `share_with`; full ZK aggregate-privacy proofs (per `spec/AGGREGATE-PRIVACY.md`) are a v2.
 
 ## See also
 
