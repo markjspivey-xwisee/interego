@@ -805,6 +805,108 @@ export function reconstructThresholdRevealAndVerify(args: {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+//  v4-partial — Encrypted share distribution
+// ─────────────────────────────────────────────────────────────────────
+//
+// The bundle's `thresholdShares` are sensitive: a share + the matching
+// VSS commitments are enough for a pseudo-aggregator to verify their
+// piece of trueBlinding, but if shares leak in transit to the wrong
+// recipient, the leak undermines the t-of-n threshold guarantee.
+// Composes the existing X25519 / nacl envelope primitives in
+// src/crypto/encryption.ts to encrypt each share for its intended
+// pseudo-aggregator recipient — the share material is recoverable only
+// by the holder of the matching private key.
+//
+// No new ontology terms; the encrypted share is a plain EncryptedEnvelope
+// the substrate already understands. Auditors who later want to
+// re-verify the distribution can confirm each envelope decrypts to the
+// expected share via openEncryptedEnvelope (when granted the recipient's
+// keys, e.g., during a regulator audit).
+
+import {
+  createEncryptedEnvelope, openEncryptedEnvelope,
+  type EncryptedEnvelope, type EncryptionKeyPair,
+} from '../../../src/crypto/encryption.js';
+
+export interface EncryptedShareDistribution {
+  /** Recipient pseudo-aggregator DID. */
+  readonly recipientDid: IRI;
+  /** Recipient's X25519 public key (base64) — used as the envelope's wrappedKey target. */
+  readonly recipientPublicKey: string;
+  /** Encrypted share envelope. */
+  readonly envelope: EncryptedEnvelope;
+}
+
+/**
+ * Encrypt a VerifiableShamirShare for a specific pseudo-aggregator
+ * recipient. The share + the share's metadata (x, y, threshold) are
+ * serialized to JSON, then wrapped in an X25519 / nacl envelope keyed
+ * to the recipient's public key. The operator (or coordinator) holds
+ * the sender keypair; the recipient uses their own keypair to open.
+ *
+ * Bigint y is serialized via the same `__bigint` wrapper used by the
+ * publishable bundle JSON encoder so the envelope payload round-trips
+ * losslessly.
+ */
+export function encryptShareForRecipient(args: {
+  share: VerifiableShamirShare;
+  recipientDid: IRI;
+  recipientPublicKey: string;
+  senderKeyPair: EncryptionKeyPair;
+}): EncryptedShareDistribution {
+  const payload = JSON.stringify(args.share, (_, v) =>
+    typeof v === 'bigint' ? { __bigint: v.toString() } : v,
+  );
+  const envelope = createEncryptedEnvelope(payload, [args.recipientPublicKey], args.senderKeyPair);
+  return {
+    recipientDid: args.recipientDid,
+    recipientPublicKey: args.recipientPublicKey,
+    envelope,
+  };
+}
+
+/**
+ * Decrypt an EncryptedShareDistribution back into a
+ * VerifiableShamirShare. Returns null if the recipient is not
+ * authorized (no wrapped key for their public key) or if the
+ * envelope fails to decrypt.
+ */
+export function decryptShareForRecipient(args: {
+  distribution: EncryptedShareDistribution;
+  recipientKeyPair: EncryptionKeyPair;
+}): VerifiableShamirShare | null {
+  const plaintext = openEncryptedEnvelope(args.distribution.envelope, args.recipientKeyPair);
+  if (plaintext === null) return null;
+  try {
+    return JSON.parse(plaintext, bigintReviver) as VerifiableShamirShare;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Encrypt a full share set (one envelope per recipient) in lockstep
+ * with the bundle's thresholdShares. The order of `recipients` MUST
+ * match the order of `shares` — recipients[i] receives shares[i].
+ * Validates the lengths agree; throws on mismatch.
+ */
+export function encryptSharesForCommittee(args: {
+  shares: readonly VerifiableShamirShare[];
+  recipients: readonly { recipientDid: IRI; recipientPublicKey: string }[];
+  senderKeyPair: EncryptionKeyPair;
+}): EncryptedShareDistribution[] {
+  if (args.shares.length !== args.recipients.length) {
+    throw new Error(`encryptSharesForCommittee: shares (${args.shares.length}) and recipients (${args.recipients.length}) must have the same length`);
+  }
+  return args.shares.map((share, i) => encryptShareForRecipient({
+    share,
+    recipientDid: args.recipients[i]!.recipientDid,
+    recipientPublicKey: args.recipients[i]!.recipientPublicKey,
+    senderKeyPair: args.senderKeyPair,
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────────────
 //  v4-partial — Committee reconstruction attestation (chain-of-custody)
 // ─────────────────────────────────────────────────────────────────────
 //

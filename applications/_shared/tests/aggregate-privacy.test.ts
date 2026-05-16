@@ -42,6 +42,9 @@ import {
   verifyCommitteeReconstruction,
   publishCommitteeReconstructionAttestation,
   fetchPublishedCommitteeReconstructionAttestation,
+  encryptShareForRecipient,
+  decryptShareForRecipient,
+  encryptSharesForCommittee,
   type CommitteeReconstructionAttestation,
   type CommitteeMemberSignature,
   type ParticipationHit,
@@ -1378,5 +1381,162 @@ describe('aggregate-privacy v4-partial: committee-reconstruction attestation (ch
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
+  const bounds = { min: 0n, max: 100n };
+
+  function mkBundle() {
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://e1/', value: 10n, bounds, blindingSeed: 'e1', blindingLabel: 'l' }),
+      buildCommittedContribution({ contributorPodUrl: 'https://e2/', value: 20n, bounds, blindingSeed: 'e2', blindingLabel: 'l' }),
+    ];
+    return buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0,
+      includeAuditFields: true,
+      thresholdReveal: { n: 3, t: 2 },
+    });
+  }
+
+  it('encrypts a single share for a recipient + decrypts round-trip preserves the share', async () => {
+    // Use generateKeyPair from the encryption module via dynamic import
+    // — keeps the test file's static imports focused on the public surface.
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const bundle = mkBundle();
+    const recipient = generateKeyPair();
+    const sender = generateKeyPair();
+
+    const distribution = encryptShareForRecipient({
+      share: bundle.thresholdShares![0]!,
+      recipientDid: 'did:test:recipient' as IRI,
+      recipientPublicKey: recipient.publicKey,
+      senderKeyPair: sender,
+    });
+    expect(distribution.recipientDid).toBe('did:test:recipient');
+    expect(distribution.envelope.wrappedKeys.length).toBe(1);
+
+    const recovered = decryptShareForRecipient({ distribution, recipientKeyPair: recipient });
+    expect(recovered).not.toBeNull();
+    expect(recovered!.x).toBe(bundle.thresholdShares![0]!.x);
+    expect(recovered!.y).toBe(bundle.thresholdShares![0]!.y); // bigint preserved
+    expect(recovered!.threshold).toBe(bundle.thresholdShares![0]!.threshold);
+  });
+
+  it('REFUSES to decrypt for a non-recipient keypair (no wrapped key for them)', async () => {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const bundle = mkBundle();
+    const intended = generateKeyPair();
+    const outsider = generateKeyPair();
+    const sender = generateKeyPair();
+
+    const distribution = encryptShareForRecipient({
+      share: bundle.thresholdShares![0]!,
+      recipientDid: 'did:test:intended' as IRI,
+      recipientPublicKey: intended.publicKey,
+      senderKeyPair: sender,
+    });
+    const recovered = decryptShareForRecipient({ distribution, recipientKeyPair: outsider });
+    expect(recovered).toBeNull();
+  });
+
+  it('encryptSharesForCommittee distributes shares 1:1 to recipients in order', async () => {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const bundle = mkBundle();
+    const sender = generateKeyPair();
+    const recipients = bundle.thresholdShares!.map((_, i) => ({
+      recipientDid: `did:test:committee-${i}` as IRI,
+      keyPair: generateKeyPair(),
+    }));
+    const distributions = encryptSharesForCommittee({
+      shares: bundle.thresholdShares!,
+      recipients: recipients.map(r => ({ recipientDid: r.recipientDid, recipientPublicKey: r.keyPair.publicKey })),
+      senderKeyPair: sender,
+    });
+    expect(distributions.length).toBe(bundle.thresholdShares!.length);
+    // Each recipient can decrypt their own share AND ONLY their own share.
+    for (let i = 0; i < distributions.length; i++) {
+      const own = decryptShareForRecipient({ distribution: distributions[i]!, recipientKeyPair: recipients[i]!.keyPair });
+      expect(own).not.toBeNull();
+      expect(own!.x).toBe(bundle.thresholdShares![i]!.x);
+      // Cross-recipient attempt — must fail.
+      const otherIdx = (i + 1) % distributions.length;
+      const cross = decryptShareForRecipient({ distribution: distributions[i]!, recipientKeyPair: recipients[otherIdx]!.keyPair });
+      expect(cross).toBeNull();
+    }
+  });
+
+  it('THROWS when shares.length != recipients.length', async () => {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const bundle = mkBundle();
+    const sender = generateKeyPair();
+    expect(() => encryptSharesForCommittee({
+      shares: bundle.thresholdShares!,
+      recipients: [{ recipientDid: 'did:test:only' as IRI, recipientPublicKey: generateKeyPair().publicKey }],
+      senderKeyPair: sender,
+    })).toThrow(/same length/);
+  });
+
+  it('end-to-end: encrypt → distribute → decrypt → reconstruct → committee attestation', async () => {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const bundle = mkBundle();
+    const sender = generateKeyPair();
+
+    // 3 committee members, each with their own X25519 keypair + ETH wallet.
+    const members = await Promise.all([0, 1, 2].map(async i => {
+      const enc = generateKeyPair();
+      const wallet = await createWallet('agent', `e2e-${i}`);
+      return {
+        encKeyPair: enc,
+        wallet,
+        did: `did:ethr:${wallet.address.toLowerCase()}` as IRI,
+      };
+    }));
+    // Distribute the bundle's 3 shares (n=3 in mkBundle) to the 3 members.
+    const distributions = encryptSharesForCommittee({
+      shares: bundle.thresholdShares!,
+      recipients: members.map(m => ({ recipientDid: m.did, recipientPublicKey: m.encKeyPair.publicKey })),
+      senderKeyPair: sender,
+    });
+
+    // Each member decrypts their own share.
+    const recovered = members.map((m, i) => decryptShareForRecipient({
+      distribution: distributions[i]!,
+      recipientKeyPair: m.encKeyPair,
+    })!);
+    expect(recovered.every(s => s !== null)).toBe(true);
+
+    // Committee of t=2 reconstructs.
+    const reconstruction = reconstructThresholdRevealAndVerify({
+      bundle,
+      shares: [recovered[0]!, recovered[1]!],
+      claimedTrueSum: bundle.trueSum!,
+    });
+    expect(reconstruction.valid).toBe(true);
+    expect(reconstruction.verifiedShareCount).toBe(2);
+
+    // Committee signs the attestation.
+    const reconstructedAt = new Date().toISOString();
+    const committeeDids = [members[0]!.did, members[1]!.did];
+    const signatures = await Promise.all([0, 1].map(i =>
+      signCommitteeReconstruction({
+        bundleSumCommitment: bundle.sumCommitment.bytes,
+        claimedTrueSum: bundle.trueSum!,
+        committeeDids,
+        reconstructedAt,
+        signerWallet: members[i]!.wallet as unknown as Wallet,
+        signerDid: members[i]!.did,
+      }),
+    ));
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids,
+      reconstructedAt,
+      signatures,
+    };
+    const verified = verifyCommitteeReconstruction({ attestation });
+    expect(verified.valid).toBe(true);
   });
 });

@@ -8,6 +8,38 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy: encrypted share distribution
+
+Closes the "how does the operator actually distribute shares to
+pseudo-aggregators securely" gap left in the v4-partial protocol.
+The substrate now ships an encrypt-share-for-recipient primitive that
+composes the existing X25519/nacl envelope machinery — no out-of-band
+distribution protocol required.
+
+NEW in `applications/_shared/aggregate-privacy/index.ts`:
+- `encryptShareForRecipient({share, recipientDid, recipientPublicKey,
+  senderKeyPair})` — serializes the VerifiableShamirShare to JSON
+  (bigint y preserved via `__bigint` wrapper) and wraps it in an
+  X25519/nacl envelope keyed to the recipient's public key.
+- `decryptShareForRecipient({distribution, recipientKeyPair})` —
+  recipient unwraps + JSON.parses with the bigint reviver. Returns
+  null if the recipient is not authorized or the envelope fails to
+  decrypt.
+- `encryptSharesForCommittee({shares, recipients, senderKeyPair})` —
+  1:1 lockstep distribution. Throws on length mismatch. Each recipient
+  can decrypt ONLY their own share.
+- `EncryptedShareDistribution` type exported.
+
+5 new contract tests (77 total in aggregate-privacy.test.ts): honest
+encrypt/decrypt round-trip with bigint preservation, non-recipient
+rejection, 1:1 committee distribution (cross-decrypt fails), length-
+mismatch throw, end-to-end (encrypt → distribute → decrypt →
+reconstruct → committee attestation).
+
+Tests: 1409/1409 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Compliance-overlay bridge for v4-partial committee attestation
 
 Extends the compliance-overlay aggregate-bridge with a fourth wrapper:
