@@ -224,7 +224,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
     action: 'urn:cg:action:owm:aggregate-decisions-query' as IRI,
     toolName: 'owm.aggregate_decisions_query',
     title: '[operator] Aggregate-privacy query over decision lineage',
-    description: 'Org-operator-side: return counts / thresholds / lineage summaries over owm:Decision descriptors without exposing individual decision text where ABAC restricts. Returns "47 decisions in Q2; mean revision count 1.3; 8 decisions superseded ≥3 times" — not the decisions themselves. Refuses any query that would reveal an individual contributor\'s descriptor under their ABAC scope. Uses src/crypto/ ZK primitives + spec/AGGREGATE-PRIVACY.md.',
+    description: 'Org-operator-side: return counts / thresholds / lineage summaries over owm:Decision descriptors. Five privacy modes layered on the same surface: v1 abac (default) | v2 merkle-attested-opt-in (verifiable count + Merkle inclusion proofs over contributing descriptor URLs) | v3 zk-aggregate (homomorphic Pedersen sum + DP-Laplace noise) | v3.1 + require_signed_bounds (regulator-grade attribution) | v3.2 + epsilon_budget_max (cumulative ε discipline). Distribution-shaped metrics (mean-revision / supersession-distribution / contributor-breadth) work under v1/v2; v3 supports decision-count only. Returns the underlying count + the chosen mode\'s attestation bundle.',
     method: 'POST',
     targetTemplate: '{base}/owm/aggregate_decisions_query',
     inputs: [
@@ -232,6 +232,9 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'period_to', type: 'string', required: true, description: 'ISO 8601 upper bound.' },
       { name: 'scope_iri', type: 'string', required: false, description: 'Optional scope (project, team, decision class) to narrow the aggregate.' },
       { name: 'metric', type: 'string', required: true, description: 'One of: decision-count | mean-revision-count | supersession-distribution | contributor-breadth.' },
+      { name: 'privacy_mode', type: 'string', required: false, description: 'One of: abac (default v1) | merkle-attested-opt-in (v2) | zk-aggregate (v3). The bundle returned in the response advertises which path was taken.' },
+      { name: 'epsilon', type: 'number', required: false, description: 'DP ε budget for zk-aggregate mode. Required when privacy_mode = zk-aggregate.' },
+      { name: 'epsilon_budget_max', type: 'number', required: false, description: 'v3.2: declare a cumulative ε cap for this query session. The operator constructs a per-call EpsilonBudget and refuses to run if cumulative consumption would exceed cap.' },
     ],
   },
   {

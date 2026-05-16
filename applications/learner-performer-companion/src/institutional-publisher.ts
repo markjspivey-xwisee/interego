@@ -31,6 +31,7 @@ import { projectDescriptorToLrs } from '../../lrs-adapter/src/pod-publisher.js';
 import {
   gatherParticipations, buildAttestedAggregateResult,
   buildAttestedHomomorphicSum, buildCommittedContribution,
+  EpsilonBudget,
   type AttestedAggregateResult,
   type AttestedHomomorphicSumResult,
 } from '../../_shared/aggregate-privacy/index.js';
@@ -228,6 +229,21 @@ export interface AggregateCohortQueryArgs {
   privacy_mode?: 'abac' | 'merkle-attested-opt-in' | 'zk-aggregate';
   /** DP ε budget for 'zk-aggregate' mode. Required when privacy_mode='zk-aggregate'. */
   epsilon?: number;
+  /**
+   * v3.1 regulator-grade attribution: when true, every contribution
+   * must carry a valid `SignedBoundsAttestation` or the aggregate is
+   * refused. Used with privacy_mode='zk-aggregate'.
+   */
+  require_signed_bounds?: boolean;
+  /**
+   * v3.2: cumulative ε cap for this query session. When supplied,
+   * the aggregator constructs an EpsilonBudget per-call and refuses
+   * to run if (epsilon + previously-consumed-in-this-session) would
+   * exceed the cap. For persistent cross-call budgets, the caller
+   * passes a serialized EpsilonBudget snapshot via the in-process
+   * library API (this affordance arg is for one-shot caps only).
+   */
+  epsilon_budget_max?: number;
 }
 
 export interface AggregateCohortQueryResult {
@@ -309,12 +325,21 @@ export async function aggregateCohortQuery(
         blindingLabel: 'lpc-cohort/contribution',
       }));
       if (contributions.length > 0) {
+        // v3.2: when caller supplied a one-shot ε cap, build a budget
+        // tracker; pre-flight consume inside buildAttestedHomomorphicSum
+        // will throw if the request would exceed it. For session-spanning
+        // budgets the caller must use the in-process EpsilonBudget API.
+        const epsilonBudget = args.epsilon_budget_max
+          ? new EpsilonBudget({ cohortIri: args.cohort_iri as IRI, maxEpsilon: args.epsilon_budget_max })
+          : undefined;
         homomorphic = buildAttestedHomomorphicSum({
           cohortIri: args.cohort_iri as IRI,
           aggregatorDid: ctx.issuerDid,
           contributions,
           epsilon: args.epsilon,
           includeAuditFields: true,
+          ...(args.require_signed_bounds ? { requireSignedBounds: true } : {}),
+          ...(epsilonBudget ? { epsilonBudget, queryDescription: `lpc.aggregate_cohort_query|${args.metric}` } : {}),
         });
       }
     }
