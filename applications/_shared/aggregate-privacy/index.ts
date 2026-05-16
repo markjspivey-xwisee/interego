@@ -937,6 +937,51 @@ export function verifyCommitteeAuthorization(args: {
 }
 
 /**
+ * Cross-check that the operator actually distributed shares to the
+ * authorized committee. Catches: operator authorizes 5 DIDs in
+ * `CommitteeAuthorization` but only ships shares to 3 sock-puppets;
+ * operator ships shares to DIDs the authorization didn't name;
+ * operator ships fewer shares than the authorization's n.
+ *
+ * Returns valid only when:
+ *   - the authorization itself verifies
+ *   - distributions.length matches authorization.threshold.n
+ *   - every distribution.recipientDid is in authorization.authorizedDids
+ *   - every authorization.authorizedDids member has a matching
+ *     distribution (no silently-dropped recipient)
+ */
+export function verifyShareDistributionsMatchAuthorization(args: {
+  authorization: CommitteeAuthorization;
+  distributions: readonly EncryptedShareDistribution[];
+}): { valid: boolean; reason?: string } {
+  const authCheck = verifyCommitteeAuthorization({ authorization: args.authorization });
+  if (!authCheck.valid) {
+    return { valid: false, reason: `authorization signature invalid: ${authCheck.reason}` };
+  }
+  if (args.distributions.length !== args.authorization.threshold.n) {
+    return { valid: false, reason: `distributions.length (${args.distributions.length}) != authorization.threshold.n (${args.authorization.threshold.n})` };
+  }
+  const authorizedSet = new Set(args.authorization.authorizedDids.map(d => d.toLowerCase()));
+  const distributedSet = new Set<string>();
+  for (const dist of args.distributions) {
+    const lower = dist.recipientDid.toLowerCase();
+    if (!authorizedSet.has(lower)) {
+      return { valid: false, reason: `distribution shipped to ${dist.recipientDid} which is NOT in the authorized list` };
+    }
+    if (distributedSet.has(lower)) {
+      return { valid: false, reason: `duplicate distribution to ${dist.recipientDid}` };
+    }
+    distributedSet.add(lower);
+  }
+  for (const did of args.authorization.authorizedDids) {
+    if (!distributedSet.has(did.toLowerCase())) {
+      return { valid: false, reason: `authorized DID ${did} has no matching distribution` };
+    }
+  }
+  return { valid: true };
+}
+
+/**
  * Cross-check the actual reveal committee (from a
  * CommitteeReconstructionAttestation) against the operator's earlier
  * authorization. Returns valid only when:

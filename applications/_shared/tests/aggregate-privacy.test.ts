@@ -51,6 +51,7 @@ import {
   signCommitteeAuthorization,
   verifyCommitteeAuthorization,
   verifyCommitteeMatchesAuthorization,
+  verifyShareDistributionsMatchAuthorization,
   publishCommitteeAuthorization,
   fetchPublishedCommitteeAuthorization,
   type CommitteeReconstructionAttestation,
@@ -1772,6 +1773,120 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('verifyShareDistributionsMatchAuthorization: honest 1:1 distribution accepts', async () => {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const bundle = mkBundle();
+    const operatorWallet = await createWallet('agent', 'op-dist-match');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    const sender = generateKeyPair();
+    const recipients = [0, 1, 2].map(i => ({
+      did: `did:test:dist-honest-${i}` as IRI,
+      keyPair: generateKeyPair(),
+    }));
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      authorizedDids: recipients.map(r => r.did),
+      threshold: { n: 3, t: 2 },
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as Wallet,
+    });
+    const distributions = encryptSharesForCommittee({
+      shares: bundle.thresholdShares!,
+      recipients: recipients.map(r => ({ recipientDid: r.did, recipientPublicKey: r.keyPair.publicKey })),
+      senderKeyPair: sender,
+    });
+    const r = verifyShareDistributionsMatchAuthorization({ authorization, distributions });
+    expect(r.valid).toBe(true);
+  });
+
+  it('REJECTS when an EncryptedShareDistribution targets a DID outside the authorization', async () => {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const bundle = mkBundle();
+    const operatorWallet = await createWallet('agent', 'op-sock');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    const sender = generateKeyPair();
+    const authorizedDids = ['did:test:auth-a' as IRI, 'did:test:auth-b' as IRI, 'did:test:auth-c' as IRI];
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      authorizedDids,
+      threshold: { n: 3, t: 2 },
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as Wallet,
+    });
+    // Operator authorized A,B,C — but ships to A,B,SOCKPUPPET (skipping C).
+    const distributions = encryptSharesForCommittee({
+      shares: bundle.thresholdShares!,
+      recipients: [
+        { recipientDid: 'did:test:auth-a' as IRI, recipientPublicKey: generateKeyPair().publicKey },
+        { recipientDid: 'did:test:auth-b' as IRI, recipientPublicKey: generateKeyPair().publicKey },
+        { recipientDid: 'did:test:sockpuppet' as IRI, recipientPublicKey: generateKeyPair().publicKey },
+      ],
+      senderKeyPair: sender,
+    });
+    const r = verifyShareDistributionsMatchAuthorization({ authorization, distributions });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/NOT in the authorized list/);
+  });
+
+  it('REJECTS when distributions.length differs from authorization.threshold.n', async () => {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const bundle = mkBundle();
+    const operatorWallet = await createWallet('agent', 'op-count-mismatch');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    const sender = generateKeyPair();
+    const authorizedDids = ['did:test:cm-a' as IRI, 'did:test:cm-b' as IRI, 'did:test:cm-c' as IRI];
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      authorizedDids,
+      threshold: { n: 3, t: 2 },
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as Wallet,
+    });
+    // Ships to only 2 of the 3 authorized recipients.
+    const distributions = encryptSharesForCommittee({
+      shares: bundle.thresholdShares!.slice(0, 2),
+      recipients: [
+        { recipientDid: 'did:test:cm-a' as IRI, recipientPublicKey: generateKeyPair().publicKey },
+        { recipientDid: 'did:test:cm-b' as IRI, recipientPublicKey: generateKeyPair().publicKey },
+      ],
+      senderKeyPair: sender,
+    });
+    const r = verifyShareDistributionsMatchAuthorization({ authorization, distributions });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/distributions\.length .* != authorization\.threshold\.n/);
+  });
+
+  it('REJECTS when an authorized recipient has no matching distribution (silently dropped)', async () => {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const bundle = mkBundle();
+    const operatorWallet = await createWallet('agent', 'op-drop');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    const sender = generateKeyPair();
+    const authorizedDids = ['did:test:drop-a' as IRI, 'did:test:drop-b' as IRI, 'did:test:drop-c' as IRI];
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      authorizedDids,
+      threshold: { n: 3, t: 2 },
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as Wallet,
+    });
+    // Three distributions, but two go to drop-a (drop-c silently absent),
+    // matching distributions.length but not coverage.
+    const distributions = encryptSharesForCommittee({
+      shares: bundle.thresholdShares!,
+      recipients: [
+        { recipientDid: 'did:test:drop-a' as IRI, recipientPublicKey: generateKeyPair().publicKey },
+        { recipientDid: 'did:test:drop-b' as IRI, recipientPublicKey: generateKeyPair().publicKey },
+        { recipientDid: 'did:test:drop-a' as IRI, recipientPublicKey: generateKeyPair().publicKey },
+      ],
+      senderKeyPair: sender,
+    });
+    const r = verifyShareDistributionsMatchAuthorization({ authorization, distributions });
+    expect(r.valid).toBe(false);
+    // Could match either "duplicate distribution" or "has no matching distribution".
+    expect(r.reason).toMatch(/duplicate distribution|has no matching distribution/);
   });
 
   it('publish + fetch + verify: committee authorization survives the Turtle ↔ JSON escape boundary', async () => {

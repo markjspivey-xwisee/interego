@@ -8,6 +8,33 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy: distribution-vs-authorization cross-check
+
+Closes the "operator authorizes 5 DIDs but ships shares to 3 sock-
+puppets" cheat — the prior verifyCommitteeMatchesAuthorization
+checks the reveal-time committee against the authorization, but
+nothing checked the share-distribution phase against it. Now both
+are covered.
+
+NEW in `applications/_shared/aggregate-privacy/index.ts`:
+- `verifyShareDistributionsMatchAuthorization({authorization,
+  distributions})` — confirms:
+    - the authorization signature verifies
+    - distributions.length matches authorization.threshold.n
+    - every distribution.recipientDid is in
+      authorization.authorizedDids
+    - every authorization.authorizedDids member has a matching
+      distribution (no silently-dropped recipient)
+    - no duplicate distributions to the same recipient
+
+4 new contract tests (90 total in aggregate-privacy.test.ts):
+honest 1:1 distribution acceptance, sock-puppet recipient rejection,
+count-mismatch rejection, silently-dropped-recipient rejection.
+
+Tests: 1426/1426 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy: publishable committee authorization + compliance bridge
 
 Closes the full v4-partial audit chain. The operator's pre-reveal
