@@ -42,6 +42,7 @@ describe('walkthrough-v3-distribution: end-to-end narrative regression protectio
     expect(out).toContain('Forged counts REJECTED: true');
 
     // The publishable noisyBucketCounts vector is shown.
-    expect(out).toMatch(/\[\d+(?:, \d+)+\] — this is what the regulator sees/);
+    // Each bucket count is a bigint after Laplace noise — may be negative if noise underflows.
+    expect(out).toMatch(/\[-?\d+(?:, -?\d+)+\] — this is what the regulator sees/);
   }, 90_000);
 });
