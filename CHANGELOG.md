@@ -8,6 +8,40 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy: publishable committee authorization + compliance bridge
+
+Closes the full v4-partial audit chain. The operator's pre-reveal
+authorization is now a fetchable pod artifact + a compliance-grade
+descriptor — a regulator can walk the entire chain: authorization →
+reveal attestation → cross-check → reconstruction → compliance
+descriptors.
+
+NEW in `applications/_shared/aggregate-privacy/index.ts`:
+- `publishCommitteeAuthorization({authorization, podUrl})` —
+  content-addressed on (bundleSumCommitment, operatorDid) for
+  idempotent re-publish.
+- `fetchPublishedCommitteeAuthorization({graphUrl})` — auditor side.
+
+NEW in `integrations/compliance-overlay/src/aggregate-bridge.ts`:
+- `buildCommitteeAuthorizationComplianceDescriptor({authorization,
+  citation, toolName?})` — embeds bundleSumCommitment + sorted
+  authorizedDids + (n, t) + operatorDid + issuedAt. Signature stays
+  in the pod artifact (not the descriptor body) — same pattern as
+  the committee reconstruction bridge.
+- Default toolName: `aggregate-privacy.committee-authorization`.
+- Re-exported from `integrations/compliance-overlay/src/index.ts`.
+
+4 new contract tests:
+- 1 in aggregate-privacy.test.ts (86 total): publish + fetch +
+  re-verify round-trip via mock fetch.
+- 3 in compliance-overlay aggregate-bridge.test.ts (14 total):
+  embedding shape (sum-commitment, n, t, operator, DIDs), signature-
+  non-leakage, default toolName.
+
+Tests: 1421/1421 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy: operator-signed committee authorization (pre-reveal binding)
 
 Closes the "operator forms a sock-puppet committee at reveal time"

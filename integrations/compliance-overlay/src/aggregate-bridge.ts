@@ -34,6 +34,7 @@ import type {
   AttestedAggregateResult,
   SignedBudgetAuditLog,
   CommitteeReconstructionAttestation,
+  CommitteeAuthorization,
 } from '../../../applications/_shared/aggregate-privacy/index.js';
 
 /**
@@ -245,5 +246,53 @@ export function buildCommitteeReconstructionComplianceDescriptor(args: {
     outcome: 'success',
     startedAt: args.attestation.reconstructedAt,
     endedAt: args.attestation.reconstructedAt,
+  }, cited);
+}
+
+/**
+ * Wrap a v4-partial CommitteeAuthorization as a compliance descriptor.
+ * The operator's pre-reveal binding to a specific committee + threshold
+ * is the audit record a regulator compares the actual reveal committee
+ * against. Embeds bundleSumCommitment + sorted authorizedDids + (n, t)
+ * + operatorDid + issuedAt; the signature itself is NOT embedded in the
+ * descriptor body (it lives in the published pod artifact for
+ * cryptographic re-verification — same pattern as the reconstruction
+ * attestation bridge).
+ *
+ * Default toolName: `aggregate-privacy.committee-authorization`.
+ */
+export function buildCommitteeAuthorizationComplianceDescriptor(args: {
+  authorization: CommitteeAuthorization;
+  citation: ComplianceCitation;
+  toolName?: string;
+}): BuildEventResult {
+  const cited: ComplianceCitation = {
+    framework: args.citation.framework,
+    controls: (args.citation.controls && args.citation.controls.length > 0
+      ? args.citation.controls
+      : defaultAggregateControls(args.citation.framework)) as ComplianceCitation['controls'],
+  };
+
+  const resultSummary = JSON.stringify({
+    bundleSumCommitment: args.authorization.bundleSumCommitment,
+    authorizedDids: [...args.authorization.authorizedDids].sort(),
+    authorizedCount: args.authorization.authorizedDids.length,
+    thresholdN: args.authorization.threshold.n,
+    thresholdT: args.authorization.threshold.t,
+    operatorDid: args.authorization.operatorDid,
+    issuedAt: args.authorization.issuedAt,
+  });
+
+  return buildAgentActionDescriptor({
+    toolName: args.toolName ?? 'aggregate-privacy.committee-authorization',
+    args: {
+      bundleSumCommitment: args.authorization.bundleSumCommitment,
+      thresholdN: args.authorization.threshold.n,
+      thresholdT: args.authorization.threshold.t,
+    },
+    resultSummary,
+    outcome: 'success',
+    startedAt: args.authorization.issuedAt,
+    endedAt: args.authorization.issuedAt,
   }, cited);
 }

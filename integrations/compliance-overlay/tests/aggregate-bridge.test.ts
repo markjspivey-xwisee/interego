@@ -27,6 +27,7 @@ import {
   buildMerkleAttestationComplianceDescriptor,
   buildBudgetAuditComplianceDescriptor,
   buildCommitteeReconstructionComplianceDescriptor,
+  buildCommitteeAuthorizationComplianceDescriptor,
 } from '../src/index.js';
 import {
   buildCommittedContribution,
@@ -34,6 +35,7 @@ import {
   buildAttestedAggregateResult,
   signBudgetAuditLog,
   signCommitteeReconstruction,
+  signCommitteeAuthorization,
   EpsilonBudget,
   participationDescriptorIri,
   participationGraphIri,
@@ -271,5 +273,66 @@ describe('compliance-aggregate bridge: v4-partial committee reconstruction attes
       citation: { framework: 'nist-rmf' },
     });
     expect(r.graphContent).toContain('aggregate-privacy.committee-threshold-reveal');
+  });
+});
+
+describe('compliance-aggregate bridge: v4-partial committee authorization → compliance descriptor', () => {
+  it('embeds authorized DIDs + threshold + operator + issuedAt; cites framework defaults', async () => {
+    const operatorWallet = await createWallet('agent', 'comp-bridge-auth-op');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    const dids = ['did:test:m1' as IRI, 'did:test:m2' as IRI, 'did:test:m3' as IRI];
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: 'abcdef0123456789' + '00'.repeat(24),
+      authorizedDids: dids,
+      threshold: { n: 3, t: 2 },
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as import('ethers').Wallet,
+    });
+    const r = buildCommitteeAuthorizationComplianceDescriptor({
+      authorization,
+      citation: { framework: 'eu-ai-act' },
+    });
+    expect(r.cited).toContain('eu-ai-act:Article12');
+    expect(r.graphContent).toContain(authorization.bundleSumCommitment);
+    expect(r.graphContent).toContain('\\"thresholdN\\":3');
+    expect(r.graphContent).toContain('\\"thresholdT\\":2');
+    expect(r.graphContent).toContain(operatorDid);
+    for (const did of dids) {
+      expect(r.graphContent).toContain(did);
+    }
+  });
+
+  it('does NOT embed the signature in the descriptor body (lives in pod artifact)', async () => {
+    const operatorWallet = await createWallet('agent', 'comp-bridge-auth-sig');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: 'fedcba9876543210' + '00'.repeat(24),
+      authorizedDids: ['did:test:x' as IRI, 'did:test:y' as IRI],
+      threshold: { n: 2, t: 2 },
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as import('ethers').Wallet,
+    });
+    const r = buildCommitteeAuthorizationComplianceDescriptor({
+      authorization,
+      citation: { framework: 'soc2' },
+    });
+    expect(r.graphContent).not.toContain(authorization.signature);
+  });
+
+  it('default toolName is the committee-authorization tool', async () => {
+    const operatorWallet = await createWallet('agent', 'comp-bridge-auth-tool');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: 'aa' + '00'.repeat(30),
+      authorizedDids: ['did:test:p' as IRI, 'did:test:q' as IRI],
+      threshold: { n: 2, t: 2 },
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as import('ethers').Wallet,
+    });
+    const r = buildCommitteeAuthorizationComplianceDescriptor({
+      authorization,
+      citation: { framework: 'nist-rmf' },
+    });
+    expect(r.graphContent).toContain('aggregate-privacy.committee-authorization');
   });
 });

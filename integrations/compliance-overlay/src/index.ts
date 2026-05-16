@@ -40,4 +40,5 @@ export {
   buildMerkleAttestationComplianceDescriptor,
   buildBudgetAuditComplianceDescriptor,
   buildCommitteeReconstructionComplianceDescriptor,
+  buildCommitteeAuthorizationComplianceDescriptor,
 } from './aggregate-bridge.js';

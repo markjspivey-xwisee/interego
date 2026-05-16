@@ -1690,6 +1690,66 @@ export async function publishEncryptedShareDistribution(args: {
 }
 
 /**
+ * Publish a CommitteeAuthorization as a pod descriptor. The
+ * operator writes this BEFORE distributing shares so the auditor
+ * can compare the actual reveal committee against it. Content-
+ * addressed on (bundleSumCommitment, operatorDid) so republish is
+ * idempotent.
+ */
+export async function publishCommitteeAuthorization(args: {
+  authorization: CommitteeAuthorization;
+  podUrl: string;
+}): Promise<PublishedBundle> {
+  const seed = sha256(`committee-authorization|${args.authorization.bundleSumCommitment}|${args.authorization.operatorDid}`).slice(0, 16);
+  const { iri, graphIri } = bundleIris(seed);
+  const json = JSON.stringify(args.authorization);
+  const ttl = `@prefix agg: <${AGGREGATE_NS}> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<${graphIri}> a agg:CommitteeAuthorization ;
+  agg:bundleJson """${escapeTtl(json)}""" ;
+  prov:wasAttributedTo <${args.authorization.operatorDid}> ;
+  dct:issued "${args.authorization.issuedAt}" .`;
+  const built = ContextDescriptor.create(iri)
+    .describes(graphIri)
+    .agent(args.authorization.operatorDid)
+    .generatedBy(args.authorization.operatorDid, { onBehalfOf: args.authorization.operatorDid, endedAt: args.authorization.issuedAt })
+    .temporal({ validFrom: args.authorization.issuedAt })
+    .asserted(0.95)
+    .verified(args.authorization.operatorDid)
+    .build();
+  const r = await publish(built, ttl, args.podUrl);
+  return { iri, descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl };
+}
+
+/**
+ * Fetch a published CommitteeAuthorization graph and JSON.parse it,
+ * ready for `verifyCommitteeAuthorization` +
+ * `verifyCommitteeMatchesAuthorization`.
+ */
+export async function fetchPublishedCommitteeAuthorization(args: {
+  graphUrl: string;
+}): Promise<CommitteeAuthorization | null> {
+  const fetchFn = globalThis.fetch as unknown as (url: string, init?: { headers?: Record<string, string> }) => Promise<{ ok: boolean; text(): Promise<string> }>;
+  try {
+    const r = await fetchFn(args.graphUrl, { headers: { Accept: 'text/turtle, application/trig' } });
+    if (!r.ok) return null;
+    const ttl = await r.text();
+    const m = ttl.match(/agg:bundleJson\s+"""([\s\S]*?)"""/);
+    if (!m || !m[1]) return null;
+    const unescaped = m[1]
+      .replace(/\\t/g, '\t')
+      .replace(/\\r/g, '\r')
+      .replace(/\\n/g, '\n')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+    return JSON.parse(unescaped) as CommitteeAuthorization;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch a published EncryptedShareDistribution graph and JSON.parse
  * it. Recipient then runs `decryptShareForRecipient` to recover the
  * share. Returns null on fetch error or missing body.
