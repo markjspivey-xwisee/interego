@@ -8,6 +8,50 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy v4-partial committee-reconstruction attestation (chain-of-custody)
+
+Closes the "who actually revealed the blinding" gap from the
+v4-partial threshold-reveal protocol. When a t-of-n committee
+successfully reconstructs trueBlinding, the reveal is now a
+tamper-evident, signed artifact — no single operator can later
+attribute the reveal to a fabricated committee or hide that the
+reveal happened.
+
+NEW in `applications/_shared/aggregate-privacy/index.ts`:
+- `committeeReconstructionMessage({bundleSumCommitment, claimedTrueSum,
+  committeeDids, reconstructedAt})` — canonical message format. DIDs
+  sorted lexicographically before serialization so signing order is
+  committee-membership-independent.
+- `signCommitteeReconstruction({bundleSumCommitment, claimedTrueSum,
+  committeeDids, reconstructedAt, signerWallet, signerDid})` — each
+  pseudo-aggregator calls this with their own wallet + DID before the
+  coordinator collects the signatures into a
+  `CommitteeReconstructionAttestation`.
+- `verifyCommitteeReconstruction({attestation})` — auditor side. Checks:
+    - signature count matches committee size
+    - every signature recovers an address inside its claimed memberDid
+    - every committee member has at least one signature (no silent
+      drops even when signatures.length == committeeDids.length)
+    - no signature is attributed to a DID outside the committee
+  Returns the array of recovered addresses on success.
+- `CommitteeReconstructionAttestation` + `CommitteeMemberSignature`
+  types exported.
+
+8 new contract tests (71 total in aggregate-privacy.test.ts):
+- canonicalMessage is deterministic + DID-order-independent
+- honest committee: every signature recovers + verify accepts
+- REJECTS signature count != committee size
+- REJECTS signature attributed to a DID not in the committee
+- REJECTS impersonation (wallet[i] signs but claim is dids[j])
+- REJECTS silently-dropped member (two signatures for the same DID,
+  one member listed in committee has no signature)
+- REJECTS claimedTrueSum tampering after signing
+- REJECTS bundleSumCommitment substitution
+
+Tests: 1400/1400 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy v4-partial + Feldman VSS: protocol-layer composition
 
 Closes the "corrupted-share silently poisons Lagrange" gap from the

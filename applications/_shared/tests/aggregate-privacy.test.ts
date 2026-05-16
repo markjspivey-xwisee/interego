@@ -37,6 +37,11 @@ import {
   publishAttestedHomomorphicSum, publishSignedBudgetAuditLog,
   fetchPublishedHomomorphicSum, bigintReviver,
   reconstructThresholdRevealAndVerify,
+  committeeReconstructionMessage,
+  signCommitteeReconstruction,
+  verifyCommitteeReconstruction,
+  type CommitteeReconstructionAttestation,
+  type CommitteeMemberSignature,
   type ParticipationHit,
   type CommittedContribution,
 } from '../aggregate-privacy/index.js';
@@ -1063,5 +1068,251 @@ describe('aggregate-privacy v4-partial + Feldman VSS: verifiable threshold revea
       claimedTrueSum: round.trueSum,
     });
     expect(r.valid).toBe(true);
+  });
+});
+
+describe('aggregate-privacy v4-partial: committee-reconstruction attestation (chain-of-custody)', () => {
+  const bounds = { min: 0n, max: 100n };
+
+  async function mkCommittee(size: number): Promise<{ wallets: Wallet[]; dids: IRI[] }> {
+    const wallets: Wallet[] = [];
+    const dids: IRI[] = [];
+    for (let i = 0; i < size; i++) {
+      const w = await createWallet('agent', `committee-member-${i}`);
+      // ethers Wallet shape via type-compatibility; the createWallet here
+      // returns the same Wallet object signMessageRaw accepts.
+      wallets.push(w as unknown as Wallet);
+      dids.push(`did:ethr:${w.address.toLowerCase()}` as IRI);
+    }
+    return { wallets, dids };
+  }
+
+  function mkBundle() {
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://c1/', value: 10n, bounds, blindingSeed: 'c1', blindingLabel: 'l' }),
+      buildCommittedContribution({ contributorPodUrl: 'https://c2/', value: 20n, bounds, blindingSeed: 'c2', blindingLabel: 'l' }),
+    ];
+    return buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0,
+      includeAuditFields: true,
+      thresholdReveal: { n: 3, t: 2 },
+    });
+  }
+
+  it('committeeReconstructionMessage is deterministic + sorts committee DIDs canonically', () => {
+    const a = committeeReconstructionMessage({
+      bundleSumCommitment: 'abc',
+      claimedTrueSum: 30n,
+      committeeDids: ['did:ethr:0xbbb' as IRI, 'did:ethr:0xaaa' as IRI, 'did:ethr:0xccc' as IRI],
+      reconstructedAt: '2026-05-16T00:00:00Z',
+    });
+    const b = committeeReconstructionMessage({
+      bundleSumCommitment: 'abc',
+      claimedTrueSum: 30n,
+      committeeDids: ['did:ethr:0xccc' as IRI, 'did:ethr:0xaaa' as IRI, 'did:ethr:0xbbb' as IRI],
+      reconstructedAt: '2026-05-16T00:00:00Z',
+    });
+    expect(a).toBe(b);
+    expect(a).toContain('did:ethr:0xaaa,did:ethr:0xbbb,did:ethr:0xccc');
+  });
+
+  it('honest committee: every signature recovers correctly + verify accepts', async () => {
+    const bundle = mkBundle();
+    const { wallets, dids } = await mkCommittee(2);
+    const reconstructedAt = new Date().toISOString();
+    const signatures = await Promise.all(dids.map((did, i) =>
+      signCommitteeReconstruction({
+        bundleSumCommitment: bundle.sumCommitment.bytes,
+        claimedTrueSum: bundle.trueSum!,
+        committeeDids: dids,
+        reconstructedAt,
+        signerWallet: wallets[i]!,
+        signerDid: did,
+      }),
+    ));
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signatures,
+    };
+    const r = verifyCommitteeReconstruction({ attestation });
+    expect(r.valid).toBe(true);
+    expect(r.recoveredAddresses).toBeDefined();
+    expect(r.recoveredAddresses!.length).toBe(2);
+  });
+
+  it('REJECTS attestation where signature count does not match committee size', async () => {
+    const bundle = mkBundle();
+    const { wallets, dids } = await mkCommittee(2);
+    const reconstructedAt = new Date().toISOString();
+    const onlyOne = await signCommitteeReconstruction({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signerWallet: wallets[0]!,
+      signerDid: dids[0]!,
+    });
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signatures: [onlyOne], // missing the second
+    };
+    const r = verifyCommitteeReconstruction({ attestation });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/signature count.*committee size/);
+  });
+
+  it('REJECTS attestation where a signature is attributed to a DID not in the committee', async () => {
+    const bundle = mkBundle();
+    const { wallets, dids } = await mkCommittee(2);
+    const reconstructedAt = new Date().toISOString();
+    const honest = await signCommitteeReconstruction({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signerWallet: wallets[0]!,
+      signerDid: dids[0]!,
+    });
+    const outsider: CommitteeMemberSignature = {
+      memberDid: 'did:ethr:0xdeadbeef' as IRI, // not in dids
+      signature: honest.signature,
+    };
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signatures: [honest, outsider],
+    };
+    const r = verifyCommitteeReconstruction({ attestation });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/not in committee/);
+  });
+
+  it('REJECTS attestation where a signature was made by a wallet other than the claimed memberDid', async () => {
+    const bundle = mkBundle();
+    const { wallets, dids } = await mkCommittee(2);
+    const reconstructedAt = new Date().toISOString();
+    // wallets[0] signs but we attribute it to dids[1] — recovery
+    // recovers wallets[0]'s address, which is NOT in dids[1].
+    const swapped = await signCommitteeReconstruction({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signerWallet: wallets[0]!,
+      signerDid: dids[1]!, // LIE
+    });
+    const honest = await signCommitteeReconstruction({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signerWallet: wallets[0]!,
+      signerDid: dids[0]!,
+    });
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signatures: [honest, swapped],
+    };
+    const r = verifyCommitteeReconstruction({ attestation });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/not present in memberDid/);
+  });
+
+  it('REJECTS attestation where a committee member has no matching signature (silently dropped)', async () => {
+    const bundle = mkBundle();
+    const { wallets, dids } = await mkCommittee(2);
+    const reconstructedAt = new Date().toISOString();
+    // Both signatures are by wallets[0] under dids[0] — dids[1] has
+    // no signature, even though signatures.length == committeeDids.length.
+    const dup1 = await signCommitteeReconstruction({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signerWallet: wallets[0]!,
+      signerDid: dids[0]!,
+    });
+    const dup2 = await signCommitteeReconstruction({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signerWallet: wallets[0]!,
+      signerDid: dids[0]!,
+    });
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signatures: [dup1, dup2],
+    };
+    const r = verifyCommitteeReconstruction({ attestation });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/no matching signature/);
+  });
+
+  it('REJECTS attestation where claimedTrueSum was tampered after signing (signature no longer recovers)', async () => {
+    const bundle = mkBundle();
+    const { wallets, dids } = await mkCommittee(2);
+    const reconstructedAt = new Date().toISOString();
+    const signatures = await Promise.all(dids.map((did, i) =>
+      signCommitteeReconstruction({
+        bundleSumCommitment: bundle.sumCommitment.bytes,
+        claimedTrueSum: bundle.trueSum!,
+        committeeDids: dids,
+        reconstructedAt,
+        signerWallet: wallets[i]!,
+        signerDid: did,
+      }),
+    ));
+    const tampered: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum! + 1n, // off-by-one
+      committeeDids: dids,
+      reconstructedAt,
+      signatures,
+    };
+    const r = verifyCommitteeReconstruction({ attestation: tampered });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/not present in memberDid/);
+  });
+
+  it('REJECTS attestation where bundleSumCommitment was substituted for a different bundle', async () => {
+    const bundle = mkBundle();
+    const { wallets, dids } = await mkCommittee(2);
+    const reconstructedAt = new Date().toISOString();
+    const signatures = await Promise.all(dids.map((did, i) =>
+      signCommitteeReconstruction({
+        bundleSumCommitment: bundle.sumCommitment.bytes,
+        claimedTrueSum: bundle.trueSum!,
+        committeeDids: dids,
+        reconstructedAt,
+        signerWallet: wallets[i]!,
+        signerDid: did,
+      }),
+    ));
+    const swapped: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: 'deadbeefcafe' + bundle.sumCommitment.bytes.slice(12), // different bytes
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signatures,
+    };
+    const r = verifyCommitteeReconstruction({ attestation: swapped });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/not present in memberDid/);
   });
 });

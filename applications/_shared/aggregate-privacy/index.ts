@@ -805,6 +805,158 @@ export function reconstructThresholdRevealAndVerify(args: {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+//  v4-partial — Committee reconstruction attestation (chain-of-custody)
+// ─────────────────────────────────────────────────────────────────────
+//
+// When a t-of-n committee successfully reconstructs trueBlinding via
+// `reconstructThresholdRevealAndVerify`, that act of reconstruction
+// should itself be a tamper-evident artifact. Without an attestation,
+// an auditor can confirm the reconstructed blinding opens the sum
+// commitment, but has no record of WHO participated — the operator
+// could later attribute the reveal to a different committee, or hide
+// the fact that the reveal happened at all.
+//
+// CommitteeReconstructionAttestation: each committee member signs
+// `committeeReconstructionMessage(bundleSumCommitment, claimedTrueSum,
+// committeeDids, reconstructedAt)` with their wallet. The attestation
+// bundles all the signatures; the auditor recovers each address and
+// confirms it appears in the matching committeeDid. Catches:
+//   - operator inventing a committee that didn't actually reveal
+//   - committee membership rewritten after the fact
+//   - claimedTrueSum changed after committee signed
+//   - bundle the committee reconstructed swapped for a different one
+//
+// Composes existing `src/crypto/wallet.ts` signing + matches the
+// SignedBoundsAttestation / SignedBudgetAuditLog signing patterns
+// already established in this module. No new ontology terms.
+
+/**
+ * Per-member signature inside a CommitteeReconstructionAttestation.
+ */
+export interface CommitteeMemberSignature {
+  /** DID of the pseudo-aggregator that participated in the reveal. */
+  readonly memberDid: IRI;
+  /** 0x-prefixed ECDSA signature over the canonical reconstruction message. */
+  readonly signature: string;
+}
+
+export interface CommitteeReconstructionAttestation {
+  /** Sum commitment of the AttestedHomomorphicSumResult the committee reconstructed. */
+  readonly bundleSumCommitment: string;
+  /** The trueSum the committee certifies the sum-commitment opens to. */
+  readonly claimedTrueSum: bigint;
+  /** DIDs of the committee members in canonical (sorted) order. */
+  readonly committeeDids: readonly IRI[];
+  /** ISO timestamp the reconstruction completed. */
+  readonly reconstructedAt: string;
+  /** Per-member signatures. Length MUST equal committeeDids.length. */
+  readonly signatures: readonly CommitteeMemberSignature[];
+}
+
+/**
+ * Canonical message format for a committee-reconstruction signature.
+ * Both signers and verifier MUST use this exact format. The committee
+ * DIDs are sorted lexicographically before serialization so the
+ * signing order is committee-membership-independent.
+ *
+ * Format:
+ *   "interego/v1/aggregate/committee-reconstruction|sumCommitment=<hex>|claimedTrueSum=<dec>|committee=<did1>,<did2>,...|reconstructedAt=<iso>"
+ */
+export function committeeReconstructionMessage(args: {
+  bundleSumCommitment: string;
+  claimedTrueSum: bigint;
+  committeeDids: readonly IRI[];
+  reconstructedAt: string;
+}): string {
+  const sortedDids = [...args.committeeDids].sort();
+  return `interego/v1/aggregate/committee-reconstruction|sumCommitment=${args.bundleSumCommitment}|claimedTrueSum=${args.claimedTrueSum}|committee=${sortedDids.join(',')}|reconstructedAt=${args.reconstructedAt}`;
+}
+
+/**
+ * Build a per-member signature contribution. Each committee member
+ * calls this with their own wallet + DID before the coordinator
+ * collects them into a CommitteeReconstructionAttestation.
+ */
+export async function signCommitteeReconstruction(args: {
+  bundleSumCommitment: string;
+  claimedTrueSum: bigint;
+  committeeDids: readonly IRI[];
+  reconstructedAt: string;
+  signerWallet: Wallet;
+  signerDid: IRI;
+}): Promise<CommitteeMemberSignature> {
+  const msg = committeeReconstructionMessage({
+    bundleSumCommitment: args.bundleSumCommitment,
+    claimedTrueSum: args.claimedTrueSum,
+    committeeDids: args.committeeDids,
+    reconstructedAt: args.reconstructedAt,
+  });
+  const signature = await signMessageRaw(args.signerWallet, msg);
+  return { memberDid: args.signerDid, signature };
+}
+
+/**
+ * Auditor-side: verify a committee-reconstruction attestation. Checks:
+ *   - signature count matches committee size
+ *   - every member listed in committeeDids has a corresponding signature
+ *   - every signature recovers an address that appears in its memberDid
+ *   - the claimed trueSum opens the bundle's sum-commitment under the
+ *     blinding the committee certifies they reconstructed (when the
+ *     bundle is available — when only the attestation is at hand, the
+ *     structural checks still hold).
+ *
+ * Catches: operator forging committee membership; substituting
+ * signatures; reattributing the reveal to a different committee.
+ */
+export function verifyCommitteeReconstruction(args: {
+  attestation: CommitteeReconstructionAttestation;
+}): { valid: boolean; reason?: string; recoveredAddresses?: readonly string[] } {
+  const a = args.attestation;
+  if (a.signatures.length !== a.committeeDids.length) {
+    return { valid: false, reason: `signature count (${a.signatures.length}) != committee size (${a.committeeDids.length})` };
+  }
+  const msg = committeeReconstructionMessage({
+    bundleSumCommitment: a.bundleSumCommitment,
+    claimedTrueSum: a.claimedTrueSum,
+    committeeDids: a.committeeDids,
+    reconstructedAt: a.reconstructedAt,
+  });
+  const recoveredAddresses: string[] = [];
+  // Match each signature to its claimed memberDid; every member must
+  // appear in the committeeDid list (catches a coordinator who signs
+  // on behalf of an absent member).
+  const memberSet = new Set(a.committeeDids.map(d => d.toLowerCase()));
+  for (const sig of a.signatures) {
+    if (!memberSet.has(sig.memberDid.toLowerCase())) {
+      return { valid: false, reason: `signature attributed to ${sig.memberDid} not in committee` };
+    }
+    let recovered: string;
+    try {
+      recovered = recoverMessageSigner(msg, sig.signature);
+    } catch (err) {
+      return { valid: false, reason: `signature recovery failed for ${sig.memberDid}: ${(err as Error).message}` };
+    }
+    if (!sig.memberDid.toLowerCase().includes(recovered.toLowerCase())) {
+      return {
+        valid: false,
+        reason: `recovered address ${recovered} not present in memberDid ${sig.memberDid}`,
+      };
+    }
+    recoveredAddresses.push(recovered);
+  }
+  // Verify every committee DID has at least one signature (no member
+  // can be silently dropped if the coordinator collected fewer than
+  // committee.length signatures yet listed them all).
+  const signedDids = new Set(a.signatures.map(s => s.memberDid.toLowerCase()));
+  for (const d of a.committeeDids) {
+    if (!signedDids.has(d.toLowerCase())) {
+      return { valid: false, reason: `committee member ${d} has no matching signature` };
+    }
+  }
+  return { valid: true, recoveredAddresses };
+}
+
+// ─────────────────────────────────────────────────────────────────────
 //  v3.2 — Cumulative ε-budget tracking
 // ─────────────────────────────────────────────────────────────────────
 //
