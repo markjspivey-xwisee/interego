@@ -27,6 +27,7 @@ import type { IRI, ContextDescriptorData, ManifestEntry, ComplianceFramework } f
 import {
   buildAttestedAggregateResult,
   buildAttestedHomomorphicSum, buildCommittedContribution,
+  EpsilonBudget,
   type ParticipationHit,
   type AttestedAggregateResult,
   type AttestedHomomorphicSumResult,
@@ -72,6 +73,13 @@ export interface AggregateDecisionsQueryArgs {
   privacy_mode?: 'abac' | 'merkle-attested-opt-in' | 'zk-aggregate';
   /** DP ε budget for 'zk-aggregate' mode. Required when privacy_mode='zk-aggregate'. */
   epsilon?: number;
+  /**
+   * v3.2: optional cumulative ε cap for this query. The aggregator
+   * constructs an EpsilonBudget per-call and refuses to run if the
+   * request would exceed the cap. For cross-call budgets the caller
+   * uses the in-process EpsilonBudget API.
+   */
+  epsilon_budget_max?: number;
 }
 
 export interface AggregateDecisionsQueryResult {
@@ -193,12 +201,17 @@ export async function aggregateDecisionsQuery(
       blindingLabel: 'owm-decisions/contribution',
     }));
     if (contributions.length > 0) {
+      const cohortIri = (args.scope_iri ?? `urn:owm:scope:all:${args.period_from}|${args.period_to}`) as IRI;
+      const epsilonBudget = args.epsilon_budget_max
+        ? new EpsilonBudget({ cohortIri, maxEpsilon: args.epsilon_budget_max })
+        : undefined;
       homomorphic = buildAttestedHomomorphicSum({
-        cohortIri: (args.scope_iri ?? `urn:owm:scope:all:${args.period_from}|${args.period_to}`) as IRI,
+        cohortIri,
         aggregatorDid: ctx.authorityDid,
         contributions,
         epsilon: args.epsilon,
         includeAuditFields: true,
+        ...(epsilonBudget ? { epsilonBudget, queryDescription: `owm.aggregate_decisions_query|${args.metric}` } : {}),
       });
       // Replace the aggregate value with the DP-noised one.
       value = Number(homomorphic.noisySum);

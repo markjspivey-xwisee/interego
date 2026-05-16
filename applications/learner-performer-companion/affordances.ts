@@ -195,7 +195,7 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
     action: 'urn:cg:action:lpc:aggregate-cohort-query' as IRI,
     toolName: 'lpc.aggregate_cohort_query',
     title: '[institutional] Run an aggregate-privacy query over a cohort',
-    description: 'Institution-side: query aggregate metrics over consenting learners\' pods — completion counts, score distributions, competency-coverage thresholds — without seeing individuals. Uses src/crypto/ ZK proofs + spec/AGGREGATE-PRIVACY.md. Returns counts / proofs / threshold-met booleans. Refuses any query that would expose an individual record. Learners control participation via per-graph share_with on a cohort-aggregation policy descriptor.',
+    description: 'Institution-side: query aggregate metrics over consenting learners\' pods — completion counts, score distributions, competency-coverage thresholds — without seeing individuals. Five privacy modes layered on the same surface: v1 abac (default) | v2 merkle-attested-opt-in (verifiable count + Merkle inclusion proofs) | v3 zk-aggregate (homomorphic Pedersen sum + DP-Laplace noise) | v3.1 + require_signed_bounds (regulator-grade attribution) | v3.2 + epsilon_budget_max (cumulative ε discipline). See applications/_shared/aggregate-privacy/. Refuses any query that would expose an individual record under the chosen mode.',
     method: 'POST',
     targetTemplate: '{base}/lpc/aggregate_cohort_query',
     inputs: [
@@ -203,6 +203,10 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'metric', type: 'string', required: true, description: 'One of: completion-count | score-distribution | competency-threshold-met | credential-coverage.' },
       { name: 'predicate', type: 'object', required: false, description: 'Optional SHACL-shaped filter (e.g., "score >= 0.8"). The query returns the count / proof of how many learners satisfy; not which.' },
       { name: 'institution_pod_url', type: 'string', required: true, description: 'Pod URL of the querying institution (used for authorization + result publication).' },
+      { name: 'privacy_mode', type: 'string', required: false, description: 'One of: abac (default v1) | merkle-attested-opt-in (v2) | zk-aggregate (v3). The bundle returned in the response advertises which path was taken.' },
+      { name: 'epsilon', type: 'number', required: false, description: 'DP ε budget for zk-aggregate mode. Required when privacy_mode = zk-aggregate.' },
+      { name: 'require_signed_bounds', type: 'boolean', required: false, description: 'v3.1: when true, every contribution must carry a SignedBoundsAttestation. Aggregator refuses contributions without a valid signature. Default false.' },
+      { name: 'epsilon_budget_max', type: 'number', required: false, description: 'v3.2: declare a cumulative ε cap for this cohort. The aggregator constructs a per-call EpsilonBudget and refuses to run if cumulative consumption would exceed cap. For persistent cross-call budgets, persist the EpsilonBudget snapshot via lpc.publish_authoritative_content or a sibling pattern.' },
     ],
   },
 

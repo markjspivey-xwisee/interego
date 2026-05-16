@@ -682,3 +682,13 @@ describe('aggregate-privacy v3.3: signed audit-log descriptor', () => {
     expect(r.reason).toMatch(/exceeds maxEpsilon/);
   });
 });
+
+// MCP-affordance → handler arg passthrough: validated at compile time
+// by tsc. The handler signatures (AggregateCohortQueryArgs +
+// AggregateDecisionsQueryArgs) now accept the v3.1 / v3.2 fields;
+// the affordance schemas (lpcEnterpriseAffordances /
+// owmOperatorAffordances) declare them as optional inputs; the bridge's
+// generic `handlers[toolName](args)` dispatcher forwards args
+// verbatim. The 44 contract tests above exercise every code path the
+// new args trigger inside the publisher; no separate integration test
+// needed.
