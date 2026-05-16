@@ -8,6 +8,35 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Python verifier: first slice of the second-language story
+
+Ships [`integrations/python-verifier/`](integrations/python-verifier/) —
+a Python reference implementation of the v3.3 SignedBudgetAuditLog
+verifier. Proves Interego's audit artifacts are language-portable:
+regulators with Python tooling can re-verify the canonical signed
+audit log without depending on the TS runtime.
+
+Files:
+- `verify_budget_audit.py` — module + CLI. Implements
+  `canonicalize_budget_for_signing` (byte-for-byte mirror of the TS
+  `canonicalizeBudgetForSigning`) + `verify_signed_budget_audit_log`
+  (mirrors `verifyBudgetAuditLog`).
+- `README.md` — usage, dependencies (only `eth-account`),
+  cross-implementation contract notes.
+
+Three checks (identical to the TS implementation):
+1. Signature recovers an address present in `signerDid`.
+2. Log entries sum to `snapshot.spent` (within 1e-9 rounding).
+3. `snapshot.spent <= snapshot.maxEpsilon`.
+
+A full Python port of the substrate is multi-month multi-person work,
+properly tracked separately. This slice is the demonstration that
+the audit interface is interoperable today — adopters porting other
+primitives (Pedersen verification, Merkle inclusion, etc.) follow
+the same pattern.
+
+---
+
 ## 2026-05-16 — ZK range proofs (Chaum-Pedersen OR + bit-decomposition)
 
 Ships [`src/crypto/range-proof.ts`](src/crypto/range-proof.ts) — non-
