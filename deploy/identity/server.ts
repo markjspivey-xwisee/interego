@@ -981,51 +981,49 @@ const LANDING_HTML = `<!doctype html>
 </style>
 </head>
 <body>
-<h1>Try Interego</h1>
-<p class="tag">Verifiable, federated memory and identity for AI agents — owned by you, portable everywhere. No password, no email, no account database.</p>
+<h1>Persistent memory for AI agents</h1>
+<p class="tag">Owned by you, portable across runtimes, signed by construction. Drop the relay into any MCP-speaking agent.</p>
+<p class="muted" style="margin-top:-0.8em;margin-bottom:1.6em;font-size:0.88rem">Reference implementation, hosted on the maintainer's free Azure instance. Fine for evaluation; self-host before you depend on it.</p>
 
-<p>Interego gives an agent (and the human behind it) a <strong>pod</strong>: a place its memory and identity live as signed, provenance-stamped records. Switch machines, switch runtimes, hand work to another agent — the context comes with you, and anyone can verify where it came from.</p>
+<h2 style="margin-top:1.2em">60-second setup</h2>
+<p>Add this to your MCP client config — <code>~/.claude.json</code>, <code>.cursor/mcp.json</code>, the Codex equivalent, anything that speaks MCP:</p>
+<pre>{
+  "mcpServers": {
+    "interego": {
+      "url": "${RELAY_URL}/sse"
+    }
+  }
+}</pre>
+<p>First tool call opens a browser tab for passkey / wallet enrollment (~30 seconds, no email, no password — your key never leaves the device). Your DID and pod are minted from the credential. After that, the agent stores and recalls context across sessions, devices, and runtimes.</p>
 
+<h2>What this unlocks (one concrete shape)</h2>
+<p>An agent debugs an issue and stores the findings on your pod. Tomorrow — different session, different machine, possibly a different agent — the next call discovers the same findings and avoids redoing the work. Hand the link to a teammate's agent and theirs can verify the trail back to the signer.</p>
 <div class="what">
-  <div><strong>Verifiable</strong><span>Every record is cryptographically signed — who wrote it, when, on whose behalf.</span></div>
-  <div><strong>Portable</strong><span>Pod-rooted, not machine-rooted. Survives a device or runtime change.</span></div>
-  <div><strong>Federated</strong><span>Agents share context across pods — no central server, no lock-in.</span></div>
+  <div><strong>Persistent</strong><span>Memory survives session, device, and runtime changes. The pod is the source of truth.</span></div>
+  <div><strong>Verifiable</strong><span>Every record is cryptographically signed — who wrote it, when, on whose behalf. Auditable end-to-end.</span></div>
+  <div><strong>Federated</strong><span>Agents share context across pods on demand — no central server, no membership list.</span></div>
 </div>
 
-<h2>Pick your path</h2>
+<h2>Already enrolled, or just want to look around?</h2>
 <div class="tracks">
   <div class="track">
-    <h3>I'm a person</h3>
-    <p class="who">You want your own identity + pod, or you're trying it hands-on.</p>
-    <p>Enroll with a <strong>passkey</strong> (Touch ID / Windows Hello / Yubikey) or an <strong>Ethereum wallet</strong>. It takes about 30 seconds — your key never leaves your device, and your DID + pod are minted from it automatically.</p>
-    <a class="btn" href="/connect">Create my identity &rarr;</a>
-    <a class="btn ghost" href="/dashboard">I'm already enrolled</a>
+    <h3>Open your dashboard</h3>
+    <p class="who">See your DID, pod URL, registered credentials, and the descriptors your agents have published.</p>
+    <a class="btn" href="/dashboard">Dashboard &rarr;</a>
+    <a class="btn ghost" href="/connect">Enroll a credential</a>
   </div>
   <div class="track">
-    <h3>I'm setting up an agent</h3>
-    <p class="who">You run a Hermes bot, an OpenClaw / Claude / Cursor agent, or anything MCP-speaking.</p>
-    <p>Point your MCP client at the hosted <strong>relay</strong>. The first tool call walks you through enrollment automatically (the passkey/wallet picker above, in your browser) and issues your agent a token.</p>
-    <pre>MCP relay URL:
-${RELAY_URL}</pre>
-    <a class="btn ghost" href="${REPO_URL}/blob/main/docs/integrations/agent-runtime-integration.md">Integration guide &rarr;</a>
+    <h3>Tighter integrations</h3>
+    <p class="who">The MCP path above works with everything. These runtimes also have a native memory-slot plugin if you want it tighter.</p>
+    <ul style="margin:0.4em 0 0 -0.5em">
+      <li><a href="${REPO_URL}/tree/main/integrations/hermes-memory">Hermes</a> — <code>hermes memory setup</code>, pick <code>interego</code>.</li>
+      <li><a href="${REPO_URL}/tree/main/integrations/openclaw-memory">OpenClaw</a> — <code>@interego/openclaw-memory</code> plugin claims the memory slot.</li>
+      <li><a href="${REPO_URL}/tree/main/integrations/compliance-overlay">Compliance overlay</a> — wraps any agent action into a signed, framework-cited evidence record.</li>
+    </ul>
   </div>
 </div>
-<p class="muted">Want it on your own machine instead of this hosted instance? Everything here is open source and runs locally — see the repo. This deployment is the maintainer's reference instance, free to try.</p>
 
-<h2>Connect a specific runtime</h2>
-<ul>
-  <li><strong>Hermes Agent</strong> — drop in the <a href="${REPO_URL}/tree/main/integrations/hermes-memory">interego memory provider</a>; <code>hermes memory setup</code>, pick <code>interego</code>. Pod-rooted memory with a HATEOAS tool surface.</li>
-  <li><strong>OpenClaw</strong> — the <a href="${REPO_URL}/tree/main/integrations/openclaw-memory">@interego/openclaw-memory</a> plugin claims the memory slot; same HATEOAS surface.</li>
-  <li><strong>Any MCP client</strong> (Claude Code/Desktop, Cursor, Codex…) — add the relay URL above as an MCP server. <a href="${REPO_URL}/blob/main/docs/integrations/agent-runtimes-mcp.md">MCP path</a>.</li>
-  <li>New here? The <a href="${REPO_URL}/blob/main/docs/FIRST-HOUR.md">first-hour walkthrough</a> takes you end to end.</li>
-</ul>
-
-<h2>What happens when you enroll</h2>
-<ol>
-  <li>You sign a one-time challenge with a passkey or wallet. <strong>No transaction, no gas, no cost.</strong> The credential never leaves your device.</li>
-  <li>Your DID and pod are derived from that credential — the server never accepts a user-supplied identity.</li>
-  <li>You (or your agent) get a bearer token. From there, memory and context flow through the substrate, signed and provenance-stamped.</li>
-</ol>
+<p class="muted">Run it on your own infra instead? Everything is open source — see <a href="${REPO_URL}/tree/main/examples/personal-bridge">examples/personal-bridge</a> for the local-first deployment (laptop / Pi / NAS). New here? The <a href="${REPO_URL}/blob/main/docs/FIRST-HOUR.md">first-hour walkthrough</a> takes you end to end.</p>
 
 <footer>
 Open source · <a href="${REPO_URL}">github.com/markjspivey-xwisee/interego</a> ·

@@ -1,15 +1,33 @@
 # @interego/core
 
-**Interego is the verifiable, federated substrate AI agents share** — typed context, signed provenance, and coordination across organizations, all on by default. Three pillars over one cryptographic root:
+**Persistent, verifiable, federated memory for AI agents** — owned by you, portable across runtimes, signed by construction.
 
-- **Typed context** — typed Context Descriptors (seven facets), composition algebra, modal status, `cg:supersedes` chains, the PGSL content-addressed lattice. The L1 protocol underneath is [**Context Graphs 1.0**](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html).
-- **Verifiable identity** — wallet-rooted DIDs, capability passports that survive infrastructure migration, public agent-attestation registries, attribute-based access control over typed attributes.
-- **Coordination** — multi-axis attestation, self-amending constitutional policies, federated saga transactions, Nostr-style p2p relays, and a growing surface of vertical applications.
+Drop the MCP relay into any agent that speaks MCP (Claude Code, Cursor, Codex, Windsurf, Cline, Hermes, OpenClaw, …) and the agent gets context that survives sessions and machines, that other agents can read and verify, and that you control end-to-end.
 
-Wrapped in real cryptography — NaCl envelopes, secp256k1 signatures, ZK commitments, IPFS anchoring — and federated across Solid pods by default. This repository is the reference implementation; `@interego/core` is the L1 library, `@interego/mcp` is the stdio MCP server, [`examples/personal-bridge/`](examples/personal-bridge/) is the local-first deployment, and [`applications/`](applications/) holds independent vertical packages that compose the substrate.
+```json
+// ~/.claude.json / .cursor/mcp.json / .codex/config.toml equivalent
+{
+  "mcpServers": {
+    "interego": {
+      "url": "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/sse"
+    }
+  }
+}
+```
+
+The first tool call walks you through a passkey or wallet enrollment in the browser, mints your DID + pod, and issues a bearer token. Subsequent calls reuse the same identity from any device.
+
+> **Status: reference implementation.** Hosted on the maintainer's free Azure instance for evaluation. Self-host (`examples/personal-bridge/`) before you depend on it. The compliance + audit-trail work in this repo is *infrastructure for* SOC 2 / EU AI Act / NIST RMF evidence — it is not an attested control environment by itself.
 
 **Author:** Mark Spivey
 **License:** MIT
+
+<details>
+<summary>What's underneath (for readers who want the protocol view)</summary>
+
+The MCP surface above is a thin ergonomic wrapper on three pillars over one cryptographic root: **typed context** (Context Descriptors with seven facets, a composition algebra, modal status, `cg:supersedes` chains, the PGSL content-addressed lattice — the L1 protocol is [Context Graphs 1.0](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)), **verifiable identity** (wallet-rooted DIDs, capability passports that survive infrastructure migration, attribute-based access control), and **coordination** (multi-axis attestation, federated saga transactions, Nostr-style p2p relays). Wrapped in NaCl envelopes, secp256k1 signatures, ZK commitments, IPFS anchoring. Federated across Solid pods by default.
+
+</details>
 
 ---
 
@@ -19,7 +37,7 @@ Wrapped in real cryptography — NaCl envelopes, secp256k1 signatures, ZK commit
 |---|---|
 | Use Interego from an AI coding agent right now (Claude Code / Cursor / Windsurf / Cline) | [Recipe: add the MCP server](#-im-an-ai-coding-agent-claude-code-cursor-windsurf-cline--protocol-level-access) |
 | Try the hosted reference deployment without running anything | [The deployed Azure surfaces](#hosted-vs-self-hosted-which-path-is-right-for-you) |
-| Mount Interego under an OpenClaw / Hermes / Codex runtime | [Agent-runtime integration paths](docs/integrations/agent-runtime-integration.md) — pick Path 1 (MCP), 2 (OpenClaw memory plugin), 3 (skills), 4 (compliance overlay), or 5 (Hermes memory provider) |
+| Mount Interego under an OpenClaw / Hermes / Codex runtime | The MCP path above is the default. OpenClaw and Hermes also have native memory-slot plugins ([`integrations/openclaw-memory/`](integrations/openclaw-memory/), [`integrations/hermes-memory/`](integrations/hermes-memory/)) when you want it tighter than MCP. Compliance teams add [`integrations/compliance-overlay/`](integrations/compliance-overlay/) on top. Full map: [docs/integrations/agent-runtime-integration.md](docs/integrations/agent-runtime-integration.md). |
 | Build a TypeScript app on top of the substrate | [Developer entry point](#-im-a-developer-building-a-typescript-app) |
 | Build a vertical (LRS adapter, agent collective, organizational memory) | [Vertical applications](applications/README.md) |
 | Run a live demo of multi-agent emergent coordination | [`demos/`](demos/README.md) — 23 end-to-end scenarios |
@@ -38,7 +56,7 @@ Anything built on Interego inherits five properties without writing them itself:
 2. **Belief revision as a primitive** — `cg:modalStatus` (Asserted / Hypothetical / Counterfactual) plus `cg:supersedes` chains make claim history and reversal first-class.
 3. **Composition on typed data** — union / intersection / restriction / override operators on descriptors, plus PGSL meet/pullback at the atom layer, give structural — not heuristic — answers to "what do these views agree on."
 4. **Identity portability** — capability passports survive pod migrations, framework changes, and wallet rotations.
-5. **Audit by construction** — every regulatory framework with an L3 mapping (`eu-ai-act:`, `nist-rmf:`, `soc2:`) queries the same descriptors with its own vocabulary. The substrate IS the audit trail.
+5. **Audit by construction** — every action that goes through `publish_context` produces a signed, timestamped, lineage-walkable descriptor. Regulatory frameworks with an L3 mapping ([`eu-ai-act:`](docs/ns/eu-ai-act.ttl), [`nist-rmf:`](docs/ns/nist-rmf.ttl), [`soc2:`](docs/ns/soc2.ttl)) let compliance teams query that audit trail in their own vocabulary. The mappings are *infrastructure for* compliance evidence; they are not themselves an attestation that any deployment meets the standard.
 
 The verticals under [`applications/`](applications/) are intentionally separate packages, each demonstrating a different shape of product riding the substrate. The most product-shaped of the bunch — [`applications/organizational-working-memory/`](applications/organizational-working-memory/) — turns the substrate into a typed people / projects / decisions / follow-ups surface with per-source navigation isolated behind uniform verbs so the consuming agent's context never sees the per-source noise. The [10-minute quickstart](quickstart/README.md) brings it up via `docker compose`.
 
