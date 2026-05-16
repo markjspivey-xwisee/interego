@@ -95,6 +95,7 @@ Design discipline: [`docs/DUAL-AUDIENCE.md`](docs/DUAL-AUDIENCE.md).
 | Evaluating without signup | https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io → "Try it now" |
 | Designing a new vertical | [`docs/DUAL-AUDIENCE.md`](docs/DUAL-AUDIENCE.md) + [`applications/README.md`](applications/README.md) |
 | Implementing Interego in another language | [`spec/STABILITY.md`](spec/STABILITY.md) §"How a second implementation validates" |
-| Auditing the v2 aggregate-privacy contract | [`applications/_shared/aggregate-privacy/index.ts`](applications/_shared/aggregate-privacy/index.ts) + the 12 contract tests |
+| Choosing between aggregate-privacy modes (v1-v3.3) | [`docs/AGGREGATE-PRIVACY-MODES.md`](docs/AGGREGATE-PRIVACY-MODES.md) — adopter's field guide with the "which mode for which threat model" table |
+| Auditing the v2 aggregate-privacy contract | [`applications/_shared/aggregate-privacy/index.ts`](applications/_shared/aggregate-privacy/index.ts) + the 44 contract tests |
 | Looking at compliance evidence patterns | [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) + [`spec/OPS-RUNBOOK.md`](spec/OPS-RUNBOOK.md) |
 | Wondering "is this stable enough to depend on?" | [`spec/STABILITY.md`](spec/STABILITY.md) — read the 12-month commitment + the path to CR |
