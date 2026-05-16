@@ -49,9 +49,13 @@ import {
   type PedersenCommitment,
 } from '../../../src/crypto/pedersen.js';
 import {
-  splitSecret, reconstructSecret,
+  reconstructSecret,
   type ShamirShare,
 } from '../../../src/crypto/shamir.js';
+import {
+  splitSecretWithCommitments, filterVerifiedShares,
+  type FeldmanCommitments, type VerifiableShamirShare,
+} from '../../../src/crypto/feldman-vss.js';
 import { ContextDescriptor, publish, discover } from '../../../src/index.js';
 import type { IRI, ManifestEntry } from '../../../src/index.js';
 import { verifyMessage } from 'ethers';
@@ -508,10 +512,25 @@ export interface AttestedHomomorphicSumResult {
    * reconstructedTrueBlinding). The trueBlinding is OMITTED from
    * the audit fields when threshold reveal is in use — that's the
    * point: no single party (including the auditor) knows it.
+   *
+   * v4-partial+VSS: shares are emitted as VerifiableShamirShare so the
+   * recipient can verify against `coefficientCommitments` before
+   * participating in reconstruction. Structurally compatible with
+   * ShamirShare (same x/y/threshold fields).
    */
-  readonly thresholdShares?: readonly ShamirShare[];
+  readonly thresholdShares?: readonly VerifiableShamirShare[];
   /** Present alongside thresholdShares. */
   readonly threshold?: { n: number; t: number };
+  /**
+   * v4-partial + Feldman VSS: per-polynomial-coefficient commitments
+   * `C_i = c_i · G` so a recipient can verify their share before
+   * participating in reconstruction. Default behaviour: the
+   * thresholdReveal path emits this automatically (using
+   * src/crypto/feldman-vss.ts) so corrupted shares are detectable.
+   * The verifier path (reconstructThresholdRevealAndVerify) filters
+   * shares against these commitments BEFORE Lagrange interpolation.
+   */
+  readonly coefficientCommitments?: FeldmanCommitments;
 }
 
 /**
@@ -624,14 +643,22 @@ export function buildAttestedHomomorphicSum(args: {
   const noise = sampleLaplaceInt(sensitivity, args.epsilon);
   const noisySum = trueSum + BigInt(noise);
 
-  // v4-partial: split trueBlinding via Shamir when threshold reveal
-  // is requested. The shares ARE the bundle's blinding material in
-  // this mode; the single-aggregator trueBlinding audit field is
-  // omitted (no single party including the auditor should know it).
-  let thresholdShares: readonly ShamirShare[] | undefined;
+  // v4-partial + Feldman VSS: split trueBlinding via Shamir AND emit
+  // per-polynomial-coefficient commitments so any recipient can verify
+  // their share is on the dealer's actual polynomial BEFORE participating
+  // in reconstruction. Without VSS, a corrupted share silently poisons
+  // the Lagrange interpolation; with VSS, the verifier filters bad
+  // shares first via filterVerifiedShares. The shares ARE the bundle's
+  // blinding material in this mode; the single-aggregator trueBlinding
+  // audit field is omitted (no single party — including the auditor —
+  // should know it).
+  let thresholdShares: readonly VerifiableShamirShare[] | undefined;
+  let coefficientCommitments: FeldmanCommitments | undefined;
   if (args.thresholdReveal) {
     const { n, t } = args.thresholdReveal;
-    thresholdShares = splitSecret({ secret: trueBlinding, totalShares: n, threshold: t });
+    const split = splitSecretWithCommitments({ secret: trueBlinding, totalShares: n, threshold: t });
+    thresholdShares = split.shares;
+    coefficientCommitments = split.commitments;
   }
 
   // Compose audit fields: when threshold reveal is in use, trueBlinding
@@ -657,6 +684,7 @@ export function buildAttestedHomomorphicSum(args: {
     privacyMode: 'zk-aggregate',
     ...auditFields,
     ...(thresholdShares ? { thresholdShares, threshold: args.thresholdReveal! } : {}),
+    ...(coefficientCommitments ? { coefficientCommitments } : {}),
   };
   return result;
 }
@@ -720,18 +748,50 @@ export function verifyAttestedHomomorphicSum(r: AttestedHomomorphicSumResult): {
  */
 export function reconstructThresholdRevealAndVerify(args: {
   bundle: AttestedHomomorphicSumResult;
-  shares: readonly ShamirShare[];
+  shares: readonly (ShamirShare | VerifiableShamirShare)[];
   claimedTrueSum: bigint;
-}): { valid: boolean; reason?: string; reconstructedTrueBlinding?: bigint } {
+}): { valid: boolean; reason?: string; reconstructedTrueBlinding?: bigint; verifiedShareCount?: number; rejectedShareCount?: number } {
   if (!args.bundle.thresholdShares || !args.bundle.threshold) {
     return { valid: false, reason: 'bundle is not in threshold-reveal mode (no thresholdShares)' };
   }
   if (args.shares.length < args.bundle.threshold.t) {
     return { valid: false, reason: `insufficient shares: need ${args.bundle.threshold.t}, got ${args.shares.length}` };
   }
-  const reconstructed = reconstructSecret(args.shares);
+
+  // v4-partial + VSS: when the bundle carries Feldman VSS commitments,
+  // filter the supplied shares against them BEFORE Lagrange reconstruction.
+  // A single tampered share silently poisons Lagrange interpolation —
+  // VSS verification catches it instead. Bundles without coefficient
+  // commitments (legacy / v4-partial-only) fall through to the
+  // unguarded path; the caller accepts the corrupted-share risk.
+  let sharesForReconstruction: readonly (ShamirShare | VerifiableShamirShare)[] = args.shares;
+  let verifiedShareCount = args.shares.length;
+  let rejectedShareCount = 0;
+  if (args.bundle.coefficientCommitments) {
+    // The filter expects VerifiableShamirShare; legacy ShamirShare has
+    // the same structural fields (x, y, threshold), so the runtime
+    // verifier treats them interchangeably.
+    const verifiable = args.shares as readonly VerifiableShamirShare[];
+    const verified = filterVerifiedShares({
+      shares: verifiable,
+      commitments: args.bundle.coefficientCommitments,
+    });
+    verifiedShareCount = verified.length;
+    rejectedShareCount = args.shares.length - verified.length;
+    if (verified.length < args.bundle.threshold.t) {
+      return {
+        valid: false,
+        reason: `after VSS verification, only ${verified.length} share(s) remain (need ${args.bundle.threshold.t}); ${rejectedShareCount} share(s) rejected as tampered`,
+        verifiedShareCount,
+        rejectedShareCount,
+      };
+    }
+    sharesForReconstruction = verified;
+  }
+
+  const reconstructed = reconstructSecret(sharesForReconstruction as readonly ShamirShare[]);
   if (reconstructed === null) {
-    return { valid: false, reason: 'Lagrange reconstruction failed (invalid share set)' };
+    return { valid: false, reason: 'Lagrange reconstruction failed (invalid share set)', verifiedShareCount, rejectedShareCount };
   }
   // Confirm the sum-commitment opens to (claimedTrueSum, reconstructed)
   // via Pedersen. This is the structural verification the substrate's
@@ -739,9 +799,9 @@ export function reconstructThresholdRevealAndVerify(args: {
   // distributed who knows the blinding.
   const ok = verifyHomomorphicSum(args.bundle.contributorCommitments, args.claimedTrueSum, reconstructed);
   if (!ok) {
-    return { valid: false, reason: 'sumCommitment does not open to (claimedTrueSum, reconstructedTrueBlinding) — either the claimed sum is wrong or the share set was tampered' };
+    return { valid: false, reason: 'sumCommitment does not open to (claimedTrueSum, reconstructedTrueBlinding) — either the claimed sum is wrong or the share set was tampered', verifiedShareCount, rejectedShareCount };
   }
-  return { valid: true, reconstructedTrueBlinding: reconstructed };
+  return { valid: true, reconstructedTrueBlinding: reconstructed, verifiedShareCount, rejectedShareCount };
 }
 
 // ─────────────────────────────────────────────────────────────────────

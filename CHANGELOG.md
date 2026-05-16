@@ -8,6 +8,61 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy v4-partial + Feldman VSS: protocol-layer composition
+
+Closes the "corrupted-share silently poisons Lagrange" gap from the
+v4-partial Shamir-only path. The threshold-reveal protocol now uses
+Feldman Verifiable Secret Sharing under the hood: the bundle carries
+per-polynomial-coefficient commitments alongside the shares, and the
+verifier filters bad shares BEFORE Lagrange reconstruction instead of
+catching the corruption only via the after-the-fact sum-commitment
+check (which a malicious tampering of just-enough-shares could still
+defeat in the unguarded path).
+
+CHANGED in `applications/_shared/aggregate-privacy/index.ts`:
+- `buildAttestedHomomorphicSum`'s `thresholdReveal` branch now calls
+  `splitSecretWithCommitments` (not plain `splitSecret`) from the
+  new `src/crypto/feldman-vss.ts` module. The bundle emits
+  `coefficientCommitments: FeldmanCommitments` alongside the
+  existing `thresholdShares`. Shares are typed as
+  `VerifiableShamirShare` (structurally compatible with `ShamirShare`).
+- `AttestedHomomorphicSumResult.coefficientCommitments?: FeldmanCommitments`
+  field added; serializes through the same publish/fetch helpers
+  (JSON round-trip is preserved — `bigintReviver` doesn't touch the
+  hex-encoded points).
+- `reconstructThresholdRevealAndVerify` accepts both `ShamirShare` and
+  `VerifiableShamirShare` (same fields). When the bundle carries
+  `coefficientCommitments`, it filters the supplied shares via
+  `filterVerifiedShares` BEFORE Lagrange; if the verified subset is
+  smaller than `t`, it returns `valid: false` with the rejection
+  count. New return fields: `verifiedShareCount` + `rejectedShareCount`.
+- Backward compatible: bundles without `coefficientCommitments`
+  (legacy / stripped) fall through to the unguarded path. The
+  caller accepts the corrupted-share risk.
+
+7 new contract tests (63 total in aggregate-privacy.test.ts now: 12
+v2 + 9 v3 + 8 v3.1 + 9 v3.2 + 6 v3.3 + 3 publishable + 8 v4-partial + 7
+v4-partial+VSS, plus 1 cohort-IRI):
+- emits `coefficientCommitments` (one per coefficient = `t`) alongside
+  `thresholdShares` when `thresholdReveal` is requested
+- NO `coefficientCommitments` when threshold reveal is not requested
+- honest VSS-composed flow: shares verify, reconstruction succeeds,
+  zero rejected
+- REJECTS a tampered share via VSS BEFORE Lagrange poisons the result
+  (4 supplied, 1 rejected, 3 verified → still meets threshold,
+  reconstruction valid)
+- REJECTS when too many shares are tampered to meet threshold (1
+  verified < t=3 → reason mentions "after VSS verification")
+- every t-subset of n VSS shares converges on the same blinding
+- legacy bundles without `coefficientCommitments` fall through to the
+  unguarded path
+- VSS commitments survive JSON round-trip through the publishable
+  bundle helpers (bigint reviver doesn't disturb hex-encoded points)
+
+Tests: 1392/1392 passing, 29 skipped (network / external).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy v3.3: signed audit-log descriptor
 
 Closes the "honest accounting vs tamper-evident" gap from v3.2. The

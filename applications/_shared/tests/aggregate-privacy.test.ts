@@ -916,3 +916,152 @@ describe('aggregate-privacy v4-partial: Shamir threshold reveal', () => {
     for (const r of reconstructions) expect(r).toBe(first);
   });
 });
+
+describe('aggregate-privacy v4-partial + Feldman VSS: verifiable threshold reveal', () => {
+  const L = 7237005577332262213973186563042994240857116359379907606001950938285454250989n;
+  const bounds = { min: 0n, max: 100n };
+  const mkVssBundle = (n: number, t: number) => {
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://v1/', value: 11n, bounds, blindingSeed: 'v1', blindingLabel: 'l' }),
+      buildCommittedContribution({ contributorPodUrl: 'https://v2/', value: 22n, bounds, blindingSeed: 'v2', blindingLabel: 'l' }),
+      buildCommittedContribution({ contributorPodUrl: 'https://v3/', value: 33n, bounds, blindingSeed: 'v3', blindingLabel: 'l' }),
+    ];
+    return buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0,
+      includeAuditFields: true,
+      thresholdReveal: { n, t },
+    });
+  };
+
+  it('emits coefficientCommitments alongside thresholdShares when thresholdReveal is requested', () => {
+    const bundle = mkVssBundle(5, 3);
+    expect(bundle.coefficientCommitments).toBeDefined();
+    // One commitment per polynomial coefficient = threshold (= t).
+    expect(bundle.coefficientCommitments!.points.length).toBe(3);
+    expect(bundle.coefficientCommitments!.threshold).toBe(3);
+    // Shares still emitted alongside.
+    expect(bundle.thresholdShares!.length).toBe(5);
+  });
+
+  it('NO coefficientCommitments when threshold reveal is not requested', () => {
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://x1/', value: 5n, bounds, blindingSeed: 'x1', blindingLabel: 'l' }),
+      buildCommittedContribution({ contributorPodUrl: 'https://x2/', value: 6n, bounds, blindingSeed: 'x2', blindingLabel: 'l' }),
+    ];
+    const bundle = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0,
+      includeAuditFields: true,
+    });
+    expect(bundle.coefficientCommitments).toBeUndefined();
+    expect(bundle.thresholdShares).toBeUndefined();
+  });
+
+  it('honest VSS-composed flow: shares verify, reconstruction succeeds, no shares rejected', () => {
+    const bundle = mkVssBundle(5, 3);
+    const r = reconstructThresholdRevealAndVerify({
+      bundle,
+      shares: bundle.thresholdShares!.slice(0, 3),
+      claimedTrueSum: bundle.trueSum!,
+    });
+    expect(r.valid).toBe(true);
+    expect(r.verifiedShareCount).toBe(3);
+    expect(r.rejectedShareCount).toBe(0);
+    expect(r.reconstructedTrueBlinding).toBeDefined();
+  });
+
+  it('REJECTS a tampered share via VSS BEFORE Lagrange poisons the result', () => {
+    const bundle = mkVssBundle(5, 3);
+    // Flip one share's y. Without VSS, this would silently poison
+    // the Lagrange interpolation and return a wrong blinding (the
+    // sum-commitment check would catch it after the fact). With VSS,
+    // filterVerifiedShares drops the tampered share BEFORE reconstruction.
+    const tampered = { ...bundle.thresholdShares![1]!, y: (bundle.thresholdShares![1]!.y + 1n) % L };
+    const mixed = [bundle.thresholdShares![0]!, tampered, bundle.thresholdShares![2]!, bundle.thresholdShares![3]!];
+    const r = reconstructThresholdRevealAndVerify({
+      bundle,
+      shares: mixed,
+      claimedTrueSum: bundle.trueSum!,
+    });
+    // With 4 supplied and 1 rejected, 3 verified — still meets threshold.
+    expect(r.valid).toBe(true);
+    expect(r.verifiedShareCount).toBe(3);
+    expect(r.rejectedShareCount).toBe(1);
+  });
+
+  it('REJECTS reconstruction when too many shares are tampered to meet threshold', () => {
+    const bundle = mkVssBundle(5, 3);
+    // Tamper with 3 of 4 supplied shares; only 1 honest share remains, < t=3.
+    const t1 = { ...bundle.thresholdShares![1]!, y: (bundle.thresholdShares![1]!.y + 1n) % L };
+    const t2 = { ...bundle.thresholdShares![2]!, y: (bundle.thresholdShares![2]!.y + 2n) % L };
+    const t3 = { ...bundle.thresholdShares![3]!, y: (bundle.thresholdShares![3]!.y + 3n) % L };
+    const mostlyBad = [bundle.thresholdShares![0]!, t1, t2, t3];
+    const r = reconstructThresholdRevealAndVerify({
+      bundle,
+      shares: mostlyBad,
+      claimedTrueSum: bundle.trueSum!,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/after VSS verification/);
+    expect(r.verifiedShareCount).toBe(1);
+    expect(r.rejectedShareCount).toBe(3);
+  });
+
+  it('every t-subset of n VSS shares reconstructs the same blinding (composition is consistent)', () => {
+    const bundle = mkVssBundle(5, 3);
+    const shares = bundle.thresholdShares!;
+    const reconstructions: bigint[] = [];
+    for (let i = 0; i < shares.length; i++) {
+      for (let j = i + 1; j < shares.length; j++) {
+        for (let k = j + 1; k < shares.length; k++) {
+          const r = reconstructThresholdRevealAndVerify({
+            bundle,
+            shares: [shares[i]!, shares[j]!, shares[k]!],
+            claimedTrueSum: bundle.trueSum!,
+          });
+          expect(r.valid).toBe(true);
+          reconstructions.push(r.reconstructedTrueBlinding!);
+        }
+      }
+    }
+    const first = reconstructions[0]!;
+    for (const r of reconstructions) expect(r).toBe(first);
+  });
+
+  it('legacy bundles WITHOUT coefficientCommitments fall through to the unguarded path', () => {
+    // Simulate a bundle from a pre-VSS aggregator (or a deserialized
+    // bundle whose coefficientCommitments were stripped). The verifier
+    // must still accept honest shares — backward compatibility for the
+    // wire format.
+    const bundle = mkVssBundle(5, 3);
+    const legacyBundle = { ...bundle, coefficientCommitments: undefined };
+    const r = reconstructThresholdRevealAndVerify({
+      bundle: legacyBundle,
+      shares: legacyBundle.thresholdShares!.slice(0, 3),
+      claimedTrueSum: legacyBundle.trueSum!,
+    });
+    expect(r.valid).toBe(true);
+    expect(r.verifiedShareCount).toBe(3);
+    expect(r.rejectedShareCount).toBe(0);
+  });
+
+  it('VSS commitments survive JSON round-trip through the publishable bundle helpers', () => {
+    const bundle = mkVssBundle(4, 2);
+    // Serialize via the same bigint encoder publishAttestedHomomorphicSum uses.
+    const json = JSON.stringify(bundle, (_, v) =>
+      typeof v === 'bigint' ? { __bigint: v.toString() } : v,
+    );
+    const round = JSON.parse(json, bigintReviver);
+    expect(round.coefficientCommitments).toBeDefined();
+    expect(round.coefficientCommitments.points.length).toBe(2);
+    expect(round.coefficientCommitments.threshold).toBe(2);
+    // Reconstruction with the round-tripped bundle works end-to-end.
+    const r = reconstructThresholdRevealAndVerify({
+      bundle: round,
+      shares: round.thresholdShares.slice(0, 2),
+      claimedTrueSum: round.trueSum,
+    });
+    expect(r.valid).toBe(true);
+  });
+});
