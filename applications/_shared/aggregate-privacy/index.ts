@@ -805,6 +805,170 @@ export function reconstructThresholdRevealAndVerify(args: {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+//  v4-partial — Operator-signed committee authorization (pre-reveal)
+// ─────────────────────────────────────────────────────────────────────
+//
+// Closes the "the operator could form a sock-puppet committee" audit
+// gap. Before distributing shares, the operator signs an authorization
+// that names the n pseudo-aggregator DIDs they intend to include in
+// the committee + the t threshold. The authorization is published as a
+// pod descriptor; the regulator (at audit time) compares the actual
+// reveal committee (from CommitteeReconstructionAttestation) against
+// the authorized committee (from this descriptor) and rejects any
+// mismatch:
+//   - committee members the operator didn't authorize → unauthorized
+//     committee
+//   - members the operator authorized but never showed up → not a
+//     cheat per se, but the audit log shows the gap
+//   - reveal performed under different (n, t) than authorized → policy
+//     violation
+//
+// Composes existing `src/crypto/wallet.ts` signing + matches the
+// SignedBoundsAttestation / SignedBudgetAuditLog / CommitteeReconstruction
+// patterns. No new ontology terms.
+
+export interface CommitteeAuthorization {
+  /** Sum commitment of the AttestedHomomorphicSumResult this authorization is for. */
+  readonly bundleSumCommitment: string;
+  /** Pseudo-aggregator DIDs the operator authorizes; sorted lexicographically. */
+  readonly authorizedDids: readonly IRI[];
+  /** Threshold (n, t). */
+  readonly threshold: { n: number; t: number };
+  /** Operator DID — the signer the auditor recovers from the signature. */
+  readonly operatorDid: IRI;
+  /** ISO timestamp the authorization was issued. */
+  readonly issuedAt: string;
+  /** 0x-prefixed ECDSA signature over committeeAuthorizationMessage(...). */
+  readonly signature: string;
+}
+
+/**
+ * Canonical message format for a committee authorization. Authorized
+ * DIDs are sorted lexicographically before serialization so the
+ * signing order is membership-independent.
+ *
+ * Format:
+ *   "interego/v1/aggregate/committee-authorization|sumCommitment=<hex>|n=<num>|t=<num>|authorizedDids=<did1>,<did2>,...|operatorDid=<did>|issuedAt=<iso>"
+ */
+export function committeeAuthorizationMessage(args: {
+  bundleSumCommitment: string;
+  authorizedDids: readonly IRI[];
+  threshold: { n: number; t: number };
+  operatorDid: IRI;
+  issuedAt: string;
+}): string {
+  const sorted = [...args.authorizedDids].sort();
+  return `interego/v1/aggregate/committee-authorization|sumCommitment=${args.bundleSumCommitment}|n=${args.threshold.n}|t=${args.threshold.t}|authorizedDids=${sorted.join(',')}|operatorDid=${args.operatorDid}|issuedAt=${args.issuedAt}`;
+}
+
+/**
+ * Operator-side: build + sign a committee authorization. Call this
+ * BEFORE distributing shares — the authorization is the operator's
+ * binding commitment to which pseudo-aggregators are allowed to
+ * participate in this aggregate query's reveal.
+ */
+export async function signCommitteeAuthorization(args: {
+  bundleSumCommitment: string;
+  authorizedDids: readonly IRI[];
+  threshold: { n: number; t: number };
+  operatorDid: IRI;
+  operatorWallet: Wallet;
+  issuedAt?: string;
+}): Promise<CommitteeAuthorization> {
+  const issuedAt = args.issuedAt ?? new Date().toISOString();
+  if (args.authorizedDids.length !== args.threshold.n) {
+    throw new Error(`signCommitteeAuthorization: authorizedDids.length (${args.authorizedDids.length}) must equal threshold.n (${args.threshold.n})`);
+  }
+  if (args.threshold.t < 1 || args.threshold.t > args.threshold.n) {
+    throw new Error(`signCommitteeAuthorization: threshold.t (${args.threshold.t}) must be in [1, n=${args.threshold.n}]`);
+  }
+  const msg = committeeAuthorizationMessage({
+    bundleSumCommitment: args.bundleSumCommitment,
+    authorizedDids: args.authorizedDids,
+    threshold: args.threshold,
+    operatorDid: args.operatorDid,
+    issuedAt,
+  });
+  const signature = await signMessageRaw(args.operatorWallet, msg);
+  return {
+    bundleSumCommitment: args.bundleSumCommitment,
+    authorizedDids: args.authorizedDids,
+    threshold: args.threshold,
+    operatorDid: args.operatorDid,
+    issuedAt,
+    signature,
+  };
+}
+
+/**
+ * Auditor-side: verify the operator's signature on an authorization.
+ * Confirms:
+ *   - signature recovers an address that appears in operatorDid
+ *   - threshold (n, t) is internally consistent
+ *   - authorizedDids.length matches n
+ */
+export function verifyCommitteeAuthorization(args: {
+  authorization: CommitteeAuthorization;
+}): { valid: boolean; reason?: string; recoveredAddress?: string } {
+  const a = args.authorization;
+  if (a.authorizedDids.length !== a.threshold.n) {
+    return { valid: false, reason: `authorizedDids.length (${a.authorizedDids.length}) != threshold.n (${a.threshold.n})` };
+  }
+  if (a.threshold.t < 1 || a.threshold.t > a.threshold.n) {
+    return { valid: false, reason: `threshold.t (${a.threshold.t}) out of range [1, ${a.threshold.n}]` };
+  }
+  let recovered: string;
+  try {
+    const msg = committeeAuthorizationMessage({
+      bundleSumCommitment: a.bundleSumCommitment,
+      authorizedDids: a.authorizedDids,
+      threshold: a.threshold,
+      operatorDid: a.operatorDid,
+      issuedAt: a.issuedAt,
+    });
+    recovered = recoverMessageSigner(msg, a.signature);
+  } catch (err) {
+    return { valid: false, reason: `signature recovery failed: ${(err as Error).message}` };
+  }
+  if (!a.operatorDid.toLowerCase().includes(recovered.toLowerCase())) {
+    return { valid: false, reason: `recovered address ${recovered} not present in operatorDid ${a.operatorDid}`, recoveredAddress: recovered };
+  }
+  return { valid: true, recoveredAddress: recovered };
+}
+
+/**
+ * Cross-check the actual reveal committee (from a
+ * CommitteeReconstructionAttestation) against the operator's earlier
+ * authorization. Returns valid only when:
+ *   - the authorization itself verifies
+ *   - the actual committee size is >= the authorization's threshold.t
+ *   - every actual-committee DID appears in the authorized list
+ *   - the bundleSumCommitment matches between the two artifacts
+ */
+export function verifyCommitteeMatchesAuthorization(args: {
+  authorization: CommitteeAuthorization;
+  attestation: CommitteeReconstructionAttestation;
+}): { valid: boolean; reason?: string } {
+  const authCheck = verifyCommitteeAuthorization({ authorization: args.authorization });
+  if (!authCheck.valid) {
+    return { valid: false, reason: `authorization signature invalid: ${authCheck.reason}` };
+  }
+  if (args.authorization.bundleSumCommitment !== args.attestation.bundleSumCommitment) {
+    return { valid: false, reason: `bundle mismatch: authorization is for ${args.authorization.bundleSumCommitment.slice(0, 16)}…, attestation is for ${args.attestation.bundleSumCommitment.slice(0, 16)}…` };
+  }
+  if (args.attestation.committeeDids.length < args.authorization.threshold.t) {
+    return { valid: false, reason: `reveal committee (${args.attestation.committeeDids.length}) smaller than authorized threshold t=${args.authorization.threshold.t}` };
+  }
+  const authorizedSet = new Set(args.authorization.authorizedDids.map(d => d.toLowerCase()));
+  for (const did of args.attestation.committeeDids) {
+    if (!authorizedSet.has(did.toLowerCase())) {
+      return { valid: false, reason: `reveal-committee member ${did} not in authorized list` };
+    }
+  }
+  return { valid: true };
+}
+
+// ─────────────────────────────────────────────────────────────────────
 //  v4-partial — Encrypted share distribution
 // ─────────────────────────────────────────────────────────────────────
 //

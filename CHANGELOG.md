@@ -8,6 +8,42 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy: operator-signed committee authorization (pre-reveal binding)
+
+Closes the "operator forms a sock-puppet committee at reveal time"
+audit gap. The operator now signs a CommitteeAuthorization BEFORE
+distributing shares that binds them to the n authorized
+pseudo-aggregator DIDs + the (n, t) threshold. The regulator
+cross-checks the actual reveal committee (from the
+CommitteeReconstructionAttestation) against this earlier
+authorization and rejects any drift.
+
+NEW in `applications/_shared/aggregate-privacy/index.ts`:
+- `committeeAuthorizationMessage(...)` — canonical message format
+  (authorized DIDs sorted lexicographically; signing order is
+  membership-independent).
+- `signCommitteeAuthorization({bundleSumCommitment, authorizedDids,
+  threshold, operatorDid, operatorWallet, issuedAt?})` — throws when
+  authorizedDids.length != threshold.n OR when threshold.t is out
+  of range [1, n].
+- `verifyCommitteeAuthorization({authorization})` — auditor-side
+  signature check + structural consistency.
+- `verifyCommitteeMatchesAuthorization({authorization, attestation})`
+  — cross-check: rejects unauthorized members, rejects
+  bundleSumCommitment mismatch, rejects reveal-committee smaller
+  than authorized threshold t.
+- `CommitteeAuthorization` type exported.
+
+7 new contract tests (85 total in aggregate-privacy.test.ts):
+canonical-message DID-sort independence, honest sign/verify +
+cross-check, n-mismatch throw, t-out-of-range throw,
+unauthorized-member rejection (sock-puppet), bundle-mismatch
+rejection, t-too-small rejection.
+
+Tests: 1417/1417 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy: publishable encrypted share distribution
 
 Closes the distribution loop. Operators can now publish encrypted

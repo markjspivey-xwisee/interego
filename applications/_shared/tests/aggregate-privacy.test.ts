@@ -47,8 +47,13 @@ import {
   encryptSharesForCommittee,
   publishEncryptedShareDistribution,
   fetchPublishedEncryptedShareDistribution,
+  committeeAuthorizationMessage,
+  signCommitteeAuthorization,
+  verifyCommitteeAuthorization,
+  verifyCommitteeMatchesAuthorization,
   type CommitteeReconstructionAttestation,
   type CommitteeMemberSignature,
+  type CommitteeAuthorization,
   type ParticipationHit,
   type CommittedContribution,
 } from '../aggregate-privacy/index.js';
@@ -1540,6 +1545,175 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
     };
     const verified = verifyCommitteeReconstruction({ attestation });
     expect(verified.valid).toBe(true);
+  });
+
+  it('committee authorization sign + verify + cross-check with reveal committee', async () => {
+    const bundle = mkBundle();
+    const operatorWallet = await createWallet('agent', 'operator-auth');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+
+    // Three authorized pseudo-aggregator DIDs (n=3 to match the mkBundle thresholdReveal config).
+    const m1 = await createWallet('agent', 'auth-m1');
+    const m2 = await createWallet('agent', 'auth-m2');
+    const m3 = await createWallet('agent', 'auth-m3');
+    const authorizedDids = [
+      `did:ethr:${m1.address.toLowerCase()}` as IRI,
+      `did:ethr:${m2.address.toLowerCase()}` as IRI,
+      `did:ethr:${m3.address.toLowerCase()}` as IRI,
+    ];
+
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      authorizedDids,
+      threshold: { n: 3, t: 2 },
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as Wallet,
+    });
+
+    const authCheck = verifyCommitteeAuthorization({ authorization });
+    expect(authCheck.valid).toBe(true);
+
+    // A reveal attestation by 2 of the authorized members.
+    const reconstructedAt = new Date().toISOString();
+    const revealDids = [authorizedDids[0]!, authorizedDids[1]!];
+    const sigs = [
+      await signCommitteeReconstruction({
+        bundleSumCommitment: bundle.sumCommitment.bytes,
+        claimedTrueSum: bundle.trueSum!,
+        committeeDids: revealDids,
+        reconstructedAt,
+        signerWallet: m1 as unknown as Wallet,
+        signerDid: revealDids[0]!,
+      }),
+      await signCommitteeReconstruction({
+        bundleSumCommitment: bundle.sumCommitment.bytes,
+        claimedTrueSum: bundle.trueSum!,
+        committeeDids: revealDids,
+        reconstructedAt,
+        signerWallet: m2 as unknown as Wallet,
+        signerDid: revealDids[1]!,
+      }),
+    ];
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: revealDids,
+      reconstructedAt,
+      signatures: sigs,
+    };
+
+    const cross = verifyCommitteeMatchesAuthorization({ authorization, attestation });
+    expect(cross.valid).toBe(true);
+  });
+
+  it('REJECTS authorization where authorizedDids.length != threshold.n', async () => {
+    const operatorWallet = await createWallet('agent', 'operator-bad-n');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    await expect(signCommitteeAuthorization({
+      bundleSumCommitment: 'abc',
+      authorizedDids: ['did:test:a' as IRI, 'did:test:b' as IRI],
+      threshold: { n: 3, t: 2 }, // mismatch
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as Wallet,
+    })).rejects.toThrow(/must equal threshold\.n/);
+  });
+
+  it('REJECTS authorization with t out of range', async () => {
+    const operatorWallet = await createWallet('agent', 'operator-bad-t');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    await expect(signCommitteeAuthorization({
+      bundleSumCommitment: 'abc',
+      authorizedDids: ['did:test:a' as IRI, 'did:test:b' as IRI],
+      threshold: { n: 2, t: 3 }, // t > n
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as Wallet,
+    })).rejects.toThrow(/threshold\.t/);
+  });
+
+  it('REJECTS cross-check when reveal-committee contains an UNAUTHORIZED member', async () => {
+    const bundle = mkBundle();
+    const operatorWallet = await createWallet('agent', 'operator-cross');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    const dids = [`did:test:a` as IRI, `did:test:b` as IRI, `did:test:c` as IRI];
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      authorizedDids: dids,
+      threshold: { n: 3, t: 2 },
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as Wallet,
+    });
+    // Sock-puppet reveal attestation: claims dids[0] + 'did:test:sockpuppet'.
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: [dids[0]!, 'did:test:sockpuppet' as IRI],
+      reconstructedAt: new Date().toISOString(),
+      signatures: [],
+    };
+    const cross = verifyCommitteeMatchesAuthorization({ authorization, attestation });
+    expect(cross.valid).toBe(false);
+    expect(cross.reason).toMatch(/not in authorized list/);
+  });
+
+  it('REJECTS cross-check when bundleSumCommitment differs between authorization and attestation', async () => {
+    const bundle = mkBundle();
+    const operatorWallet = await createWallet('agent', 'operator-bundle-mismatch');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    const dids = [`did:test:a` as IRI, `did:test:b` as IRI];
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      authorizedDids: dids,
+      threshold: { n: 2, t: 2 },
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as Wallet,
+    });
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: 'deadbeef' + bundle.sumCommitment.bytes.slice(8), // tampered
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt: new Date().toISOString(),
+      signatures: [],
+    };
+    const cross = verifyCommitteeMatchesAuthorization({ authorization, attestation });
+    expect(cross.valid).toBe(false);
+    expect(cross.reason).toMatch(/bundle mismatch/);
+  });
+
+  it('REJECTS cross-check when reveal-committee is smaller than authorized threshold t', async () => {
+    const bundle = mkBundle();
+    const operatorWallet = await createWallet('agent', 'operator-t-small');
+    const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+    const dids = [`did:test:a` as IRI, `did:test:b` as IRI, `did:test:c` as IRI];
+    const authorization = await signCommitteeAuthorization({
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      authorizedDids: dids,
+      threshold: { n: 3, t: 3 }, // need all 3
+      operatorDid,
+      operatorWallet: operatorWallet as unknown as Wallet,
+    });
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: [dids[0]!, dids[1]!], // only 2 of 3
+      reconstructedAt: new Date().toISOString(),
+      signatures: [],
+    };
+    const cross = verifyCommitteeMatchesAuthorization({ authorization, attestation });
+    expect(cross.valid).toBe(false);
+    expect(cross.reason).toMatch(/smaller than authorized threshold/);
+  });
+
+  it('committeeAuthorizationMessage is deterministic + sorts authorized DIDs canonically', () => {
+    const a = committeeAuthorizationMessage({
+      bundleSumCommitment: 'abc', authorizedDids: ['did:b' as IRI, 'did:a' as IRI, 'did:c' as IRI],
+      threshold: { n: 3, t: 2 }, operatorDid: 'did:op' as IRI, issuedAt: '2026-05-16T00:00:00Z',
+    });
+    const b = committeeAuthorizationMessage({
+      bundleSumCommitment: 'abc', authorizedDids: ['did:c' as IRI, 'did:a' as IRI, 'did:b' as IRI],
+      threshold: { n: 3, t: 2 }, operatorDid: 'did:op' as IRI, issuedAt: '2026-05-16T00:00:00Z',
+    });
+    expect(a).toBe(b);
+    expect(a).toContain('authorizedDids=did:a,did:b,did:c');
   });
 
   it('publish + fetch + decrypt: encrypted share survives the Turtle ↔ JSON escape boundary', async () => {
