@@ -63,6 +63,7 @@ import {
 import { ContextDescriptor, publish, discover } from '../../../src/index.js';
 import type { IRI, ManifestEntry } from '../../../src/index.js';
 import { verifyMessage } from 'ethers';
+import { ristretto255 } from '@noble/curves/ed25519.js';
 
 // ─────────────────────────────────────────────────────────────────────
 //  Content-addressed IRIs
@@ -2306,4 +2307,421 @@ export async function fetchPublishedCommitteeReconstructionAttestation(args: {
   } catch {
     return null;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  v5 — Contributor-distributed blinding sharing
+//  (operator never sees blindings; no trusted dealer)
+// ─────────────────────────────────────────────────────────────────────
+//
+// Removes the v3 / v4-partial trusted-aggregator caveat — the operator
+// no longer knows trueBlinding because contributors never reveal
+// their blindings to the operator. Instead, each contributor secret-
+// shares their OWN blinding b_i via Feldman VSS to the pseudo-
+// aggregator committee. Pseudo-aggregator j receives shares
+// {b_1^{(j)}, b_2^{(j)}, ..., b_m^{(j)}} (one per contributor) and
+// computes their COMBINED share s_j = Σ_i b_i^{(j)}.
+//
+// Mathematical core: Shamir is additively homomorphic. If each
+// contributor's polynomial is f_i(x) with f_i(0) = b_i, the combined
+// polynomial F(x) = Σ_i f_i(x) has F(0) = Σ_i b_i = trueBlinding.
+// Pseudo-aggregator j's combined share is F(j) = Σ_i f_i(j) = s_j.
+// Lagrange interpolation across any t pseudo-aggregator s_j values
+// recovers F(0) = trueBlinding — but no party can do this alone.
+//
+// Combined VSS commitments: if contributor i's Feldman commitments
+// are {C_i^{(k)} = c_i^{(k)} · G}_{k=0..t-1}, the combined polynomial's
+// coefficient commitments are {Σ_i C_i^{(k)}}_{k=0..t-1} (per-
+// coefficient point-sum). Any party can verify pseudo-aggregator j's
+// combined share s_j against these combined commitments using the
+// standard Feldman check — the same primitive used in v4-partial.
+//
+// Cleartext values: in this iteration, contributors STILL reveal v_i
+// to the operator (so the operator can compute trueSum + add DP noise).
+// The blinding is what's protected. Hiding individual values requires
+// an additional layer (additive secret-sharing of v_i too); that's a
+// natural v6 extension on top of v5. For now, v5 closes the deeper
+// gap: even an audited operator with full cleartext-value access
+// cannot reconstruct sumCommitment without committee cooperation.
+//
+// Composition: pedersen.commit + feldman-vss.splitSecretWithCommitments
+// + encryption.createEncryptedEnvelope + the existing
+// reconstructThresholdRevealAndVerify (with combined VSS commitments
+// derived inline). No new ontology terms; just a new protocol
+// topology over the same primitives.
+
+/**
+ * A contributor's v5 contribution: a Pedersen commitment + Feldman
+ * VSS shares of their blinding distributed (encrypted) to the
+ * pseudo-aggregator committee. Published as a pod artifact; the
+ * operator + each pseudo-aggregator + the auditor all consume it.
+ */
+export interface DistributedContribution {
+  readonly contributorPodUrl: string;
+  /** Pedersen commitment c_i = v_i·G + b_i·H. PUBLIC. */
+  readonly commitment: PedersenCommitment;
+  /**
+   * Cleartext value v_i. Revealed to the operator (so the operator
+   * can compute trueSum + add DP noise). A future v6 can replace
+   * this with additive secret-shares of v_i to hide individual
+   * values too.
+   */
+  readonly value: bigint;
+  /** Bounds [min, max] the contributor consented to. */
+  readonly bounds: { min: bigint; max: bigint };
+  /**
+   * Feldman VSS commitments to the contributor's blinding polynomial
+   * f_i(x) where f_i(0) = b_i. PUBLIC. Used to (a) verify each
+   * pseudo-aggregator's received share before participation, AND
+   * (b) construct the COMBINED polynomial's coefficient commitments
+   * for verification of the eventually-reconstructed trueBlinding.
+   */
+  readonly blindingCommitments: FeldmanCommitments;
+  /**
+   * One encrypted share envelope per pseudo-aggregator. encryptedShares[j-1]
+   * is the share for pseudo-aggregator j (1-indexed share x-coordinate
+   * matches the array's 1-based positional intent; we use 0-based
+   * array indexing here for ergonomics).
+   *
+   * Each envelope contains the JSON of the VerifiableShamirShare
+   * (with bigint y preserved via __bigint wrapper).
+   */
+  readonly encryptedShares: readonly EncryptedShareDistribution[];
+  /** Optional ZK range proof — same shape as v3.4. */
+  readonly rangeProof?: RangeProof;
+}
+
+/**
+ * Contributor-side: build a v5 distributed contribution. The
+ * contributor picks v_i + b_i, commits via Pedersen, splits b_i via
+ * Feldman VSS to the pseudo-aggregator committee, encrypts each
+ * share for its recipient. The operator never sees b_i.
+ */
+export function buildDistributedContribution(args: {
+  contributorPodUrl: string;
+  value: bigint;
+  bounds: { min: bigint; max: bigint };
+  committee: readonly { recipientDid: IRI; recipientPublicKey: string }[];
+  threshold: number;
+  contributorSenderKeyPair: EncryptionKeyPair;
+  blindingSeed?: string;
+  blindingLabel?: string;
+  withRangeProof?: boolean;
+}): DistributedContribution {
+  if (args.value < args.bounds.min || args.value > args.bounds.max) {
+    throw new Error(`buildDistributedContribution: value ${args.value} outside declared bounds [${args.bounds.min}, ${args.bounds.max}]`);
+  }
+  if (args.threshold < 1 || args.threshold > args.committee.length) {
+    throw new Error(`buildDistributedContribution: threshold ${args.threshold} must be in [1, committee.length=${args.committee.length}]`);
+  }
+  const blinding = args.blindingSeed
+    ? deriveBlinding(args.blindingSeed, args.blindingLabel ?? 'pedersen/distributed-contribution')
+    : randomBlinding();
+  const commitment = commit(args.value, blinding);
+
+  // VSS-split the blinding to the committee.
+  const split = splitSecretWithCommitments({
+    secret: blinding,
+    totalShares: args.committee.length,
+    threshold: args.threshold,
+  });
+
+  // Encrypt each share for its recipient pseudo-aggregator.
+  const encryptedShares = encryptSharesForCommittee({
+    shares: split.shares,
+    recipients: args.committee.map(c => ({ recipientDid: c.recipientDid, recipientPublicKey: c.recipientPublicKey })),
+    senderKeyPair: args.contributorSenderKeyPair,
+  });
+
+  const rangeProof = args.withRangeProof
+    ? proveRange({ commitment, value: args.value, blinding, min: args.bounds.min, max: args.bounds.max })
+    : undefined;
+
+  return {
+    contributorPodUrl: args.contributorPodUrl,
+    commitment,
+    value: args.value,
+    bounds: args.bounds,
+    blindingCommitments: split.commitments,
+    encryptedShares,
+    ...(rangeProof ? { rangeProof } : {}),
+  };
+}
+
+/**
+ * Pseudo-aggregator side: given the set of all contributions, decrypt
+ * each one's share intended for this pseudo-aggregator (index j,
+ * 1-based), verify each share against the contributor's published
+ * Feldman commitments, and sum the verified shares to produce this
+ * pseudo-aggregator's COMBINED share of trueBlinding.
+ *
+ * Returns the combined share s_j as a VerifiableShamirShare. The
+ * combined share's y is Σ_i b_i^{(j)} (mod L); its x is j; its
+ * threshold matches the cohort's threshold. s_j alone reveals
+ * nothing about trueBlinding (a single Shamir share at degree t-1
+ * is information-theoretically random).
+ *
+ * Rejects (throws) if any received share fails VSS verification
+ * against its contributor's commitments. This catches a malicious
+ * contributor trying to corrupt the protocol.
+ */
+export function aggregatePseudoAggregatorShares(args: {
+  contributions: readonly DistributedContribution[];
+  pseudoAggregatorIndex: number; // 1-based
+  ownKeyPair: EncryptionKeyPair;
+}): VerifiableShamirShare {
+  if (args.contributions.length === 0) {
+    throw new Error('aggregatePseudoAggregatorShares: no contributions');
+  }
+  if (args.pseudoAggregatorIndex < 1) {
+    throw new Error(`aggregatePseudoAggregatorShares: pseudoAggregatorIndex ${args.pseudoAggregatorIndex} must be >= 1`);
+  }
+  const firstThreshold = args.contributions[0]!.blindingCommitments.threshold;
+  let combinedY = 0n;
+  for (const contrib of args.contributions) {
+    if (contrib.blindingCommitments.threshold !== firstThreshold) {
+      throw new Error(`aggregatePseudoAggregatorShares: contribution from ${contrib.contributorPodUrl} has threshold ${contrib.blindingCommitments.threshold}, cohort agreed on ${firstThreshold}`);
+    }
+    const dist = contrib.encryptedShares[args.pseudoAggregatorIndex - 1];
+    if (!dist) {
+      throw new Error(`aggregatePseudoAggregatorShares: contribution from ${contrib.contributorPodUrl} has no share for pseudo-aggregator ${args.pseudoAggregatorIndex}`);
+    }
+    const share = decryptShareForRecipient({ distribution: dist, recipientKeyPair: args.ownKeyPair });
+    if (!share) {
+      throw new Error(`aggregatePseudoAggregatorShares: decryption failed for contribution from ${contrib.contributorPodUrl}`);
+    }
+    if (share.x !== args.pseudoAggregatorIndex) {
+      throw new Error(`aggregatePseudoAggregatorShares: decrypted share for ${contrib.contributorPodUrl} has x=${share.x}, expected ${args.pseudoAggregatorIndex}`);
+    }
+    // VSS verification: the share must lie on the contributor's published polynomial.
+    if (!filterVerifiedShares({ shares: [share], commitments: contrib.blindingCommitments }).length) {
+      throw new Error(`aggregatePseudoAggregatorShares: share for contribution from ${contrib.contributorPodUrl} failed VSS verification`);
+    }
+    combinedY = (combinedY + share.y) % L_AGG;
+  }
+  return {
+    x: args.pseudoAggregatorIndex,
+    y: combinedY < 0n ? combinedY + L_AGG : combinedY,
+    threshold: firstThreshold,
+    totalShares: args.contributions[0]!.encryptedShares.length,
+  };
+}
+
+/** Ristretto255 scalar field order, re-used here for the modular reduction. */
+const L_AGG = 7237005577332262213973186563042994240857116359379907606001950938285454250989n;
+
+/**
+ * v5 result bundle. Headline difference vs v3: no `trueBlinding` field
+ * EVER (the operator never knew it), and the COMBINED Feldman
+ * commitments are published so the t-of-n committee + the auditor can
+ * verify reconstructed shares.
+ */
+export interface AttestedHomomorphicSumV5Result {
+  readonly cohortIri: IRI;
+  readonly aggregatorDid: IRI;
+  readonly computedAt: string;
+  readonly contributorCount: number;
+  readonly trueSum?: bigint; // present when includeAuditFields=true
+  readonly noisySum: bigint;
+  readonly noise: number;
+  readonly sensitivity: number;
+  readonly epsilon: number;
+  /** Σ_i c_i — the homomorphic sum commitment. Opens to (trueSum, trueBlinding). */
+  readonly sumCommitment: PedersenCommitment;
+  /** Per-contributor Pedersen commitments. */
+  readonly contributorCommitments: readonly PedersenCommitment[];
+  /**
+   * COMBINED Feldman commitments — per-coefficient point-sum of every
+   * contributor's blindingCommitments. The combined polynomial's
+   * coefficient commitments. Pseudo-aggregator combined shares verify
+   * against these via the standard Feldman check.
+   */
+  readonly combinedBlindingCommitments: FeldmanCommitments;
+  readonly threshold: { n: number; t: number };
+  readonly privacyMode: 'zk-aggregate-v5-no-trusted-dealer';
+  /** Optional per-contributor range proofs (v3.4 composition). */
+  readonly contributorRangeProofs?: readonly RangeProof[];
+}
+
+/**
+ * Operator-side v5: build the bundle WITHOUT ever knowing trueBlinding.
+ * The operator collects DistributedContribution objects from
+ * contributors (published as pod artifacts), computes trueSum from
+ * the cleartext values, sums commitments homomorphically, adds DP
+ * noise, sums per-contributor Feldman commitments to derive the
+ * COMBINED VSS commitments, publishes the bundle.
+ *
+ * What the operator does NOT do: see any individual blinding,
+ * see trueBlinding, see any pseudo-aggregator's share s_j.
+ *
+ * What the operator DOES do (in this iteration): see individual
+ * cleartext values. Hiding those is a v6 layer.
+ */
+export function buildAttestedHomomorphicSumV5(args: {
+  cohortIri: IRI;
+  aggregatorDid: IRI;
+  contributions: readonly DistributedContribution[];
+  epsilon: number;
+  includeAuditFields?: boolean;
+  epsilonBudget?: EpsilonBudget;
+  queryDescription?: string;
+  /** Required: the committee size n + threshold t the contributors used. */
+  threshold: { n: number; t: number };
+}): AttestedHomomorphicSumV5Result {
+  if (args.contributions.length === 0) {
+    throw new Error('buildAttestedHomomorphicSumV5: at least one contribution required');
+  }
+  const first = args.contributions[0]!;
+  for (const c of args.contributions) {
+    if (c.bounds.min !== first.bounds.min || c.bounds.max !== first.bounds.max) {
+      throw new Error(`buildAttestedHomomorphicSumV5: contributions disagree on bounds (${c.contributorPodUrl})`);
+    }
+    if (c.value < c.bounds.min || c.value > c.bounds.max) {
+      throw new Error(`buildAttestedHomomorphicSumV5: contribution from ${c.contributorPodUrl} has value ${c.value} outside [${c.bounds.min}, ${c.bounds.max}]`);
+    }
+    if (c.blindingCommitments.threshold !== args.threshold.t) {
+      throw new Error(`buildAttestedHomomorphicSumV5: contribution from ${c.contributorPodUrl} declares threshold ${c.blindingCommitments.threshold}, cohort agreed on ${args.threshold.t}`);
+    }
+    if (c.encryptedShares.length !== args.threshold.n) {
+      throw new Error(`buildAttestedHomomorphicSumV5: contribution from ${c.contributorPodUrl} has ${c.encryptedShares.length} encrypted shares, cohort agreed on n=${args.threshold.n}`);
+    }
+  }
+  const sensitivity = Number(first.bounds.max - first.bounds.min);
+  if (!(sensitivity > 0)) throw new Error('buildAttestedHomomorphicSumV5: non-positive sensitivity');
+
+  if (args.epsilonBudget) {
+    args.epsilonBudget.consume({
+      queryDescription: args.queryDescription ?? `homomorphic-sum-v5 on ${args.cohortIri}`,
+      epsilon: args.epsilon,
+    });
+  }
+
+  const trueSum = args.contributions.reduce((acc, c) => acc + c.value, 0n);
+  const sumCommitment = addCommitments(args.contributions.map(c => c.commitment));
+  const noise = sampleLaplaceInt(sensitivity, args.epsilon);
+  const noisySum = trueSum + BigInt(noise);
+
+  // Combine per-contributor VSS commitments via per-coefficient point-sum.
+  // (Composes the same logic dkgRound3 uses internally.)
+  const combinedBlindingCommitments = combineFeldmanCommitments(
+    args.contributions.map(c => c.blindingCommitments),
+    args.threshold.t,
+  );
+
+  const result: AttestedHomomorphicSumV5Result = {
+    cohortIri: args.cohortIri,
+    aggregatorDid: args.aggregatorDid,
+    computedAt: new Date().toISOString(),
+    contributorCount: args.contributions.length,
+    noisySum,
+    noise,
+    sensitivity,
+    epsilon: args.epsilon,
+    sumCommitment,
+    contributorCommitments: args.contributions.map(c => c.commitment),
+    combinedBlindingCommitments,
+    threshold: args.threshold,
+    privacyMode: 'zk-aggregate-v5-no-trusted-dealer',
+    ...(args.includeAuditFields ? { trueSum } : {}),
+    ...(args.contributions.every(c => c.rangeProof)
+      ? { contributorRangeProofs: args.contributions.map(c => c.rangeProof!) }
+      : {}),
+  };
+  return result;
+}
+
+/**
+ * Per-coefficient point-sum of N FeldmanCommitments. Mirrors the
+ * combination dkgRound3 performs internally; lifted out here so v5
+ * can use the same composition for contributor-distributed sharing.
+ */
+function combineFeldmanCommitments(
+  perContributor: readonly FeldmanCommitments[],
+  threshold: number,
+): FeldmanCommitments {
+  const sumPoints: ReturnType<typeof ristretto255.Point.fromBytes>[] = [];
+  for (let k = 0; k < threshold; k++) sumPoints.push(ristretto255.Point.ZERO);
+  for (const fc of perContributor) {
+    if (fc.points.length !== threshold) {
+      throw new Error(`combineFeldmanCommitments: contributor has ${fc.points.length} points, expected ${threshold}`);
+    }
+    for (let k = 0; k < threshold; k++) {
+      const p = ristretto255.Point.fromBytes(hexToBytesAgg(fc.points[k]!));
+      sumPoints[k] = sumPoints[k]!.add(p);
+    }
+  }
+  const hex = sumPoints.map(p => bytesToHexAgg(p.toBytes()));
+  return { points: hex, threshold };
+}
+
+function hexToBytesAgg(h: string): Uint8Array {
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+function bytesToHexAgg(b: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < b.length; i++) s += b[i]!.toString(16).padStart(2, '0');
+  return s;
+}
+
+/**
+ * v5 audit-time reveal. Any t-of-n pseudo-aggregator committee gathers
+ * their combined shares {s_j} (from aggregatePseudoAggregatorShares)
+ * and the operator's claimed trueSum. This function:
+ *
+ *   1. Filters the provided shares against the bundle's
+ *      combinedBlindingCommitments (catches tampered shares BEFORE
+ *      Lagrange poisons the result — same VSS guard the v4-partial
+ *      verifier uses).
+ *   2. Lagrange-interpolates the verified shares to recover
+ *      trueBlinding = Σ_i b_i.
+ *   3. Verifies the bundle's sumCommitment opens to (claimedTrueSum,
+ *      reconstructedTrueBlinding).
+ *
+ * Returns valid + reconstructedTrueBlinding + verifiedShareCount +
+ * rejectedShareCount on success; descriptive reason on any failure.
+ */
+export function reconstructAndVerifyV5(args: {
+  bundle: AttestedHomomorphicSumV5Result;
+  committeeShares: readonly VerifiableShamirShare[];
+  claimedTrueSum: bigint;
+}): { valid: boolean; reason?: string; reconstructedTrueBlinding?: bigint; verifiedShareCount?: number; rejectedShareCount?: number } {
+  if (args.committeeShares.length < args.bundle.threshold.t) {
+    return { valid: false, reason: `insufficient shares: need ${args.bundle.threshold.t}, got ${args.committeeShares.length}` };
+  }
+  // VSS verification against the COMBINED commitments — catches tampered shares.
+  const verified = filterVerifiedShares({
+    shares: args.committeeShares,
+    commitments: args.bundle.combinedBlindingCommitments,
+  });
+  const rejected = args.committeeShares.length - verified.length;
+  if (verified.length < args.bundle.threshold.t) {
+    return {
+      valid: false,
+      reason: `after combined-VSS verification, only ${verified.length} share(s) remain (need ${args.bundle.threshold.t}); ${rejected} share(s) rejected`,
+      verifiedShareCount: verified.length,
+      rejectedShareCount: rejected,
+    };
+  }
+  const reconstructed = reconstructSecret(verified as readonly ShamirShare[]);
+  if (reconstructed === null) {
+    return { valid: false, reason: 'Lagrange reconstruction failed', verifiedShareCount: verified.length, rejectedShareCount: rejected };
+  }
+  const ok = verifyHomomorphicSum(args.bundle.contributorCommitments, args.claimedTrueSum, reconstructed);
+  if (!ok) {
+    return {
+      valid: false,
+      reason: 'sumCommitment does not open to (claimedTrueSum, reconstructedTrueBlinding)',
+      verifiedShareCount: verified.length,
+      rejectedShareCount: rejected,
+    };
+  }
+  return {
+    valid: true,
+    reconstructedTrueBlinding: reconstructed,
+    verifiedShareCount: verified.length,
+    rejectedShareCount: rejected,
+  };
 }

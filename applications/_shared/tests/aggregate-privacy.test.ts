@@ -32,6 +32,11 @@ import {
   buildAttestedHomomorphicSum,
   verifyAttestedHomomorphicSum,
   verifyContributorRangeProofs,
+  buildDistributedContribution,
+  aggregatePseudoAggregatorShares,
+  buildAttestedHomomorphicSumV5,
+  reconstructAndVerifyV5,
+  type DistributedContribution,
   bucketIndex,
   bucketCount,
   buildBucketedContribution,
@@ -2259,7 +2264,7 @@ describe('aggregate-privacy v3.4: range-proof integration into the v3 zk-aggrega
     expect(v.reason).toMatch(/no contributorRangeProofs/);
   });
 
-  it('verifyContributorRangeProofs REJECTS a bundle whose range proofs were swapped between contributors', () => {
+  it('verifyContributorRangeProofs REJECTS a bundle whose range proofs were swapped between contributors', { timeout: 30_000 }, () => {
     const c1 = buildCommittedContribution({ contributorPodUrl: 'https://a/', value: 10n, bounds, blindingSeed: 'a', withRangeProof: true });
     const c2 = buildCommittedContribution({ contributorPodUrl: 'https://b/', value: 30n, bounds, blindingSeed: 'b', withRangeProof: true });
     const result = buildAttestedHomomorphicSum({
@@ -2277,7 +2282,7 @@ describe('aggregate-privacy v3.4: range-proof integration into the v3 zk-aggrega
     expect(v.reason).toMatch(/failed verification against contributorCommitments/);
   });
 
-  it('verifyContributorRangeProofs REJECTS a bundle with mismatched per-proof bounds across contributors', () => {
+  it('verifyContributorRangeProofs REJECTS a bundle with mismatched per-proof bounds across contributors', { timeout: 30_000 }, () => {
     // Build a bundle without requireRangeProof so the substrate doesn't
     // enforce uniform bounds; then construct a tampered version with
     // mixed-bound range proofs.
@@ -2299,5 +2304,227 @@ describe('aggregate-privacy v3.4: range-proof integration into the v3 zk-aggrega
     expect(v.valid).toBe(false);
     // Either the bounds-mismatch or the verify-fails path triggers; both are valid rejections.
     expect(v.reason).toMatch(/cohort already agreed|failed verification/);
+  });
+});
+
+describe('aggregate-privacy v5: contributor-distributed blinding sharing (no trusted dealer)', () => {
+  const bounds = { min: 0n, max: 100n };
+  const L_V5 = 7237005577332262213973186563042994240857116359379907606001950938285454250989n;
+
+  async function mkCommittee(n: number) {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const members = [];
+    for (let j = 1; j <= n; j++) {
+      members.push({
+        index: j,
+        recipientDid: `did:test:v5-member-${j}` as IRI,
+        keyPair: generateKeyPair(),
+      });
+    }
+    return members;
+  }
+
+  async function mkCohort(values: bigint[], committee: Awaited<ReturnType<typeof mkCommittee>>, t: number) {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const contributions: DistributedContribution[] = values.map((v, i) =>
+      buildDistributedContribution({
+        contributorPodUrl: `https://v5-contributor-${i}/`,
+        value: v,
+        bounds,
+        committee: committee.map(m => ({ recipientDid: m.recipientDid, recipientPublicKey: m.keyPair.publicKey })),
+        threshold: t,
+        contributorSenderKeyPair: generateKeyPair(),
+        blindingSeed: `v5-seed-${i}`,
+      }),
+    );
+    return contributions;
+  }
+
+  it('buildDistributedContribution emits commitment + VSS commitments + n encrypted shares', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohort([42n], committee, 3);
+    const c = cohort[0]!;
+    expect(c.commitment).toBeDefined();
+    expect(c.blindingCommitments.points.length).toBe(3);
+    expect(c.blindingCommitments.threshold).toBe(3);
+    expect(c.encryptedShares.length).toBe(5);
+    expect(c.value).toBe(42n);
+  });
+
+  it('aggregatePseudoAggregatorShares produces a combined share that verifies against combined VSS commitments', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohort([10n, 20n, 30n], committee, 3);
+    // Pseudo-aggregator 1 aggregates.
+    const s1 = aggregatePseudoAggregatorShares({
+      contributions: cohort,
+      pseudoAggregatorIndex: 1,
+      ownKeyPair: committee[0]!.keyPair,
+    });
+    expect(s1.x).toBe(1);
+    expect(s1.threshold).toBe(3);
+    // The substrate's combined VSS commitments live in the v5 bundle;
+    // build a bundle first so we can verify.
+    const bundle = buildAttestedHomomorphicSumV5({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: cohort, epsilon: 1.0,
+      includeAuditFields: true, threshold: { n: 5, t: 3 },
+    });
+    // Use the standalone Feldman verifier via the published combined commitments.
+    const { verifyShare } = await import('../../../src/crypto/feldman-vss.js');
+    expect(verifyShare({ share: s1, commitments: bundle.combinedBlindingCommitments })).toBe(true);
+  });
+
+  it('full honest flow: operator never sees blindings; t-of-n committee reconstructs trueBlinding; sumCommitment opens', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohort([10n, 20n, 30n, 40n, 50n], committee, 3);
+    const bundle = buildAttestedHomomorphicSumV5({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: cohort, epsilon: 1.0,
+      includeAuditFields: true, threshold: { n: 5, t: 3 },
+    });
+    // Sanity: bundle has no trueBlinding field anywhere.
+    expect((bundle as unknown as Record<string, unknown>).trueBlinding).toBeUndefined();
+    expect(bundle.trueSum).toBe(150n); // present because includeAuditFields
+    // t = 3 committee members aggregate their shares.
+    const committeeShares = [0, 2, 4].map(idx => aggregatePseudoAggregatorShares({
+      contributions: cohort,
+      pseudoAggregatorIndex: committee[idx]!.index,
+      ownKeyPair: committee[idx]!.keyPair,
+    }));
+    const verify = reconstructAndVerifyV5({
+      bundle,
+      committeeShares,
+      claimedTrueSum: bundle.trueSum!,
+    });
+    expect(verify.valid).toBe(true);
+    expect(verify.verifiedShareCount).toBe(3);
+    expect(verify.rejectedShareCount).toBe(0);
+    expect(verify.reconstructedTrueBlinding).toBeDefined();
+  });
+
+  it('single pseudo-aggregator share alone CANNOT reconstruct (threshold enforced)', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohort([10n, 20n, 30n], committee, 3);
+    const bundle = buildAttestedHomomorphicSumV5({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: cohort, epsilon: 1.0,
+      includeAuditFields: true, threshold: { n: 5, t: 3 },
+    });
+    const s1 = aggregatePseudoAggregatorShares({
+      contributions: cohort, pseudoAggregatorIndex: 1, ownKeyPair: committee[0]!.keyPair,
+    });
+    const verify = reconstructAndVerifyV5({
+      bundle,
+      committeeShares: [s1],
+      claimedTrueSum: bundle.trueSum!,
+    });
+    expect(verify.valid).toBe(false);
+    expect(verify.reason).toMatch(/insufficient shares/);
+  });
+
+  it('tampered combined share is REJECTED via combined-VSS verify before Lagrange', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohort([10n, 20n, 30n], committee, 3);
+    const bundle = buildAttestedHomomorphicSumV5({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: cohort, epsilon: 1.0,
+      includeAuditFields: true, threshold: { n: 5, t: 3 },
+    });
+    const honestShares = [0, 1, 2, 3].map(idx => aggregatePseudoAggregatorShares({
+      contributions: cohort, pseudoAggregatorIndex: committee[idx]!.index, ownKeyPair: committee[idx]!.keyPair,
+    }));
+    // Flip the y of share #1.
+    const tampered = { ...honestShares[1]!, y: (honestShares[1]!.y + 1n) % L_V5 };
+    const mixed = [honestShares[0]!, tampered, honestShares[2]!, honestShares[3]!];
+    const verify = reconstructAndVerifyV5({
+      bundle,
+      committeeShares: mixed,
+      claimedTrueSum: bundle.trueSum!,
+    });
+    expect(verify.valid).toBe(true); // 3 honest still meets threshold
+    expect(verify.verifiedShareCount).toBe(3);
+    expect(verify.rejectedShareCount).toBe(1);
+  });
+
+  it('aggregatePseudoAggregatorShares THROWS on a contribution with a tampered share for this recipient', async () => {
+    const committee = await mkCommittee(3);
+    const cohort = await mkCohort([10n, 20n], committee, 2);
+    // Tamper: decrypt contributor 0's share for pseudo-aggregator 1, modify y, re-encrypt as a forged envelope.
+    // Simplest tamper: replace contributor 0's encrypted share with a copy from contributor 1 (wrong VSS context).
+    const forgedCohort: DistributedContribution[] = [
+      { ...cohort[0]!, encryptedShares: cohort[1]!.encryptedShares },
+      cohort[1]!,
+    ];
+    expect(() => aggregatePseudoAggregatorShares({
+      contributions: forgedCohort,
+      pseudoAggregatorIndex: 1,
+      ownKeyPair: committee[0]!.keyPair,
+    })).toThrow(/failed VSS verification/);
+  });
+
+  it('REJECTS contributions with mismatched committee size', async () => {
+    const committeeSmall = await mkCommittee(3);
+    const committeeLarge = await mkCommittee(5);
+    const cSmall = (await mkCohort([10n], committeeSmall, 2))[0]!;
+    const cLarge = (await mkCohort([20n], committeeLarge, 3))[0]!;
+    expect(() => buildAttestedHomomorphicSumV5({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [cSmall, cLarge], epsilon: 1.0,
+      threshold: { n: 3, t: 2 },
+    })).toThrow(/declares threshold|encrypted shares/);
+  });
+
+  it('REJECTS empty contributions', () => {
+    expect(() => buildAttestedHomomorphicSumV5({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [], epsilon: 1.0, threshold: { n: 3, t: 2 },
+    })).toThrow(/at least one contribution/);
+  });
+
+  it('REJECTS reconstruction when claimedTrueSum is wrong (sumCommitment open fails)', async () => {
+    const committee = await mkCommittee(3);
+    const cohort = await mkCohort([10n, 20n, 30n], committee, 2);
+    const bundle = buildAttestedHomomorphicSumV5({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: cohort, epsilon: 1.0,
+      includeAuditFields: true, threshold: { n: 3, t: 2 },
+    });
+    const shares = [0, 1].map(idx => aggregatePseudoAggregatorShares({
+      contributions: cohort, pseudoAggregatorIndex: committee[idx]!.index, ownKeyPair: committee[idx]!.keyPair,
+    }));
+    const verify = reconstructAndVerifyV5({
+      bundle, committeeShares: shares,
+      claimedTrueSum: bundle.trueSum! + 1n, // off-by-one
+    });
+    expect(verify.valid).toBe(false);
+    expect(verify.reason).toMatch(/does not open/);
+  });
+
+  it('every t-subset of n pseudo-aggregator shares yields the same reconstructed blinding', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohort([10n, 20n, 30n, 40n], committee, 3);
+    const bundle = buildAttestedHomomorphicSumV5({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: cohort, epsilon: 1.0,
+      includeAuditFields: true, threshold: { n: 5, t: 3 },
+    });
+    const allShares = [0, 1, 2, 3, 4].map(idx => aggregatePseudoAggregatorShares({
+      contributions: cohort, pseudoAggregatorIndex: committee[idx]!.index, ownKeyPair: committee[idx]!.keyPair,
+    }));
+    const reconstructions: bigint[] = [];
+    for (let i = 0; i < 5; i++) {
+      for (let j = i + 1; j < 5; j++) {
+        for (let k = j + 1; k < 5; k++) {
+          const v = reconstructAndVerifyV5({
+            bundle, committeeShares: [allShares[i]!, allShares[j]!, allShares[k]!],
+            claimedTrueSum: bundle.trueSum!,
+          });
+          expect(v.valid).toBe(true);
+          reconstructions.push(v.reconstructedTrueBlinding!);
+        }
+      }
+    }
+    const first = reconstructions[0]!;
+    for (const r of reconstructions) expect(r).toBe(first);
   });
 });

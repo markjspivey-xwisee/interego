@@ -8,6 +8,82 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — v5 contributor-distributed blinding sharing (no trusted dealer)
+
+Solves the trusted-aggregator problem at the protocol layer. Where v3
+/ v4-partial / v4-partial+VSS all had the operator KNOWING
+`trueBlinding = Σ contributor_blindings` (contributors revealed their
+blindings to the operator for the homomorphic sum), v5 ships a fresh
+protocol where contributors split their OWN blindings via Feldman VSS
+to a pseudo-aggregator committee. The operator never sees any blinding.
+
+**Emergent composition.** The protocol assembles entirely from
+existing primitives — no new crypto, no new ontology terms, no
+trusted setup:
+- Pedersen commitments (existing) for `c_i = v_i·G + b_i·H`
+- Feldman VSS (existing) for each contributor's polynomial
+- X25519/nacl envelopes (existing) for share distribution
+- DKG-style per-coefficient point-sum (existing `dkgRound3` logic,
+  extracted as `combineFeldmanCommitments` for v5 reuse) for the
+  COMBINED VSS commitments
+- Shamir's additive homomorphism: each pseudo-aggregator's combined
+  share s_j = Σ_i b_i^{(j)} IS a Shamir share of `Σ_i b_i =
+  trueBlinding` under the combined polynomial F(x) = Σ_i f_i(x)
+- Lagrange reconstruction (existing) at audit time
+
+NEW exports in `applications/_shared/aggregate-privacy/index.ts`:
+- `buildDistributedContribution({contributorPodUrl, value, bounds,
+  committee, threshold, contributorSenderKeyPair, blindingSeed?,
+  withRangeProof?})` — contributor side. Pedersen-commits +
+  VSS-splits own blinding + encrypts each share for its recipient
+  pseudo-aggregator.
+- `aggregatePseudoAggregatorShares({contributions,
+  pseudoAggregatorIndex, ownKeyPair})` — pseudo-aggregator j
+  decrypts received shares, verifies each against contributor's VSS
+  commitments, sums into combined share s_j. Throws on any tampered
+  share.
+- `buildAttestedHomomorphicSumV5({cohortIri, aggregatorDid,
+  contributions, epsilon, threshold, includeAuditFields?,
+  epsilonBudget?, queryDescription?})` — operator side. Computes
+  trueSum + sumCommitment + DP noise + COMBINED VSS commitments.
+  Operator never sees blindings. Bundle's `privacyMode` is
+  `'zk-aggregate-v5-no-trusted-dealer'`.
+- `reconstructAndVerifyV5({bundle, committeeShares,
+  claimedTrueSum})` — audit-time t-of-n reveal. VSS-filters
+  combined shares against combinedBlindingCommitments, Lagrange-
+  interpolates trueBlinding, verifies sumCommitment opens.
+- `DistributedContribution` + `AttestedHomomorphicSumV5Result` types.
+
+10 new contract tests (124 total in aggregate-privacy.test.ts):
+- buildDistributedContribution emission shape
+- combined-share verifies against combined VSS commitments
+- full honest flow (operator-never-sees-blinding asserted)
+- single pseudo-aggregator share insufficient (threshold enforced)
+- tampered combined share rejected via combined-VSS BEFORE Lagrange
+- aggregatePseudoAggregatorShares throws on tampered contribution share
+- mismatched committee size / scheme rejection
+- empty contributions throw
+- wrong claimedTrueSum rejection via sumCommitment opening
+- every t-subset converges on the same trueBlinding
+
+Live walkthrough at
+[`tools/walkthrough-v5-distributed-blinding.ts`](tools/walkthrough-v5-distributed-blinding.ts)
+demonstrates the full 7-phase flow including trust-analysis
+print-out (what each party sees and does NOT see). Regression-
+protected via
+[`tests/walkthrough-v5-distributed-blinding.test.ts`](tests/walkthrough-v5-distributed-blinding.test.ts).
+
+**Trust model improvement.** v5 reduces the operator's trust
+assumption to honest-but-curious about CLEARTEXT VALUES only; the
+blinding-side of the privacy boundary is fully distributed across
+the committee with no single trusted party. Hiding cleartext values
+from the operator (additive secret-sharing of v_i too) is the
+natural v6 layer — the substrate primitives for that already exist.
+
+Tests: 1497/1497 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — v3.4: ZK range proofs wired into the v3 zk-aggregate path
 
 Integration of the `proveRange` / `verifyRange` primitives (shipped at
