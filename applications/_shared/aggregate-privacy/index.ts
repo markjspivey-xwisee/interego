@@ -56,6 +56,10 @@ import {
   splitSecretWithCommitments, filterVerifiedShares,
   type FeldmanCommitments, type VerifiableShamirShare,
 } from '../../../src/crypto/feldman-vss.js';
+import {
+  proveRange, verifyRange,
+  type RangeProof,
+} from '../../../src/crypto/range-proof.js';
 import { ContextDescriptor, publish, discover } from '../../../src/index.js';
 import type { IRI, ManifestEntry } from '../../../src/index.js';
 import { verifyMessage } from 'ethers';
@@ -396,6 +400,15 @@ export interface CommittedContribution {
   readonly bounds: { min: bigint; max: bigint };
   /** Optional signed-bounds attestation. v3.1 enhancement. */
   readonly signedBounds?: SignedBoundsAttestation;
+  /**
+   * Optional non-interactive ZK range proof that `value ∈ [bounds.min,
+   * bounds.max]`. v3.4 enhancement — when present, the AUDITOR (not
+   * just the aggregator) can verify the contribution was in bounds
+   * without seeing the cleartext value. The aggregator still sees
+   * cleartext for trueSum computation; the range proof is the audit-
+   * surface guarantee.
+   */
+  readonly rangeProof?: RangeProof;
 }
 
 /**
@@ -463,6 +476,14 @@ export function buildCommittedContribution(args: {
   bounds: { min: bigint; max: bigint };
   blindingSeed?: string;
   blindingLabel?: string;
+  /**
+   * v3.4: when true, also emit a non-interactive ZK range proof that
+   * `value ∈ [bounds.min, bounds.max]`. The proof is bit-decomposition
+   * over O(log(max-min)) Chaum-Pedersen OR proofs — adds ~O(log
+   * range) ms per contribution. Worth it when the auditor needs to
+   * verify bounds without seeing the value.
+   */
+  withRangeProof?: boolean;
 }): CommittedContribution {
   if (args.value < args.bounds.min || args.value > args.bounds.max) {
     throw new Error(`Pedersen contribution: value ${args.value} outside declared bounds [${args.bounds.min}, ${args.bounds.max}]`);
@@ -471,12 +492,16 @@ export function buildCommittedContribution(args: {
     ? deriveBlinding(args.blindingSeed, args.blindingLabel ?? 'pedersen/contribution')
     : randomBlinding();
   const commitment = commit(args.value, blinding);
+  const rangeProof = args.withRangeProof
+    ? proveRange({ commitment, value: args.value, blinding, min: args.bounds.min, max: args.bounds.max })
+    : undefined;
   return {
     contributorPodUrl: args.contributorPodUrl,
     commitment,
     blinding,
     value: args.value,
     bounds: args.bounds,
+    ...(rangeProof ? { rangeProof } : {}),
   };
 }
 
@@ -794,6 +819,15 @@ export interface AttestedHomomorphicSumResult {
    * ShamirShare (same x/y/threshold fields).
    */
   readonly thresholdShares?: readonly VerifiableShamirShare[];
+  /**
+   * v3.4: per-contributor ZK range proofs (one per
+   * contributorCommitments entry, in matching order). Present only
+   * when the bundle was built with `requireRangeProof: true` AND every
+   * contribution carried a rangeProof. The auditor verifies each
+   * proof against the matching contributorCommitment + the
+   * proof's declared min/max via `verifyContributorRangeProofs`.
+   */
+  readonly contributorRangeProofs?: readonly RangeProof[];
   /** Present alongside thresholdShares. */
   readonly threshold?: { n: number; t: number };
   /**
@@ -833,6 +867,18 @@ export function buildAttestedHomomorphicSum(args: {
    * Default false (v3 trust-the-client mode).
    */
   requireSignedBounds?: boolean;
+  /**
+   * v3.4: when true, every contribution MUST carry a `rangeProof`
+   * that verifies against the contribution's commitment + declared
+   * bounds. The aggregator's existing cleartext bounds re-check
+   * still runs (the aggregator does see values in v3); the range
+   * proof's value is that the published bundle can be audited
+   * end-to-end WITHOUT the auditor needing to trust the aggregator's
+   * bounds claim. Each contribution's `rangeProof` is propagated
+   * into the bundle's `contributorRangeProofs` field for the
+   * auditor to re-verify via `verifyContributorRangeProofs`.
+   */
+  requireRangeProof?: boolean;
   /**
    * Optional cumulative ε-budget tracker (v3.2). When supplied, the
    * function calls `epsilonBudget.consume(...)` BEFORE building the
@@ -894,6 +940,20 @@ export function buildAttestedHomomorphicSum(args: {
       });
       if (!v.valid) {
         throw new Error(`buildAttestedHomomorphicSum: signed-bounds attestation for ${c.contributorPodUrl} failed verification: ${v.reason}`);
+      }
+    }
+    // v3.4: enforce ZK range proofs.
+    if (args.requireRangeProof) {
+      if (!c.rangeProof) {
+        throw new Error(`buildAttestedHomomorphicSum: requireRangeProof=true but contribution from ${c.contributorPodUrl} has no rangeProof`);
+      }
+      const proofMinOk = BigInt(c.rangeProof.min) === c.bounds.min;
+      const proofMaxOk = BigInt(c.rangeProof.max) === c.bounds.max;
+      if (!proofMinOk || !proofMaxOk) {
+        throw new Error(`buildAttestedHomomorphicSum: rangeProof for ${c.contributorPodUrl} declares bounds [${c.rangeProof.min}, ${c.rangeProof.max}] but contribution declares [${c.bounds.min}, ${c.bounds.max}]`);
+      }
+      if (!verifyRange({ commitment: c.commitment, proof: c.rangeProof })) {
+        throw new Error(`buildAttestedHomomorphicSum: rangeProof for ${c.contributorPodUrl} failed verification against the commitment + declared bounds`);
       }
     }
   }
@@ -960,6 +1020,9 @@ export function buildAttestedHomomorphicSum(args: {
     ...auditFields,
     ...(thresholdShares ? { thresholdShares, threshold: args.thresholdReveal! } : {}),
     ...(coefficientCommitments ? { coefficientCommitments } : {}),
+    ...(args.requireRangeProof
+      ? { contributorRangeProofs: args.contributions.map(c => c.rangeProof!) }
+      : {}),
   };
   return result;
 }
@@ -1006,6 +1069,65 @@ export function verifyAttestedHomomorphicSum(r: AttestedHomomorphicSumResult): {
   if (!(r.epsilon > 0)) return { valid: false, reason: 'epsilon must be > 0' };
   if (!(r.sensitivity > 0)) return { valid: false, reason: 'sensitivity must be > 0' };
   return { valid: true };
+}
+
+/**
+ * v3.4 auditor-side: verify every per-contributor range proof in a
+ * bundle that was built with `requireRangeProof: true`. Confirms each
+ * `contributorRangeProofs[i]` verifies against `contributorCommitments[i]`
+ * AND all proofs declare the same [min, max] bounds (so the cohort's
+ * sensitivity claim is honest — every contributor was in the same range).
+ *
+ * Returns the agreed bounds on success so the auditor can cross-check
+ * against the published `sensitivity` field.
+ */
+export function verifyContributorRangeProofs(r: AttestedHomomorphicSumResult): {
+  valid: boolean;
+  reason?: string;
+  bounds?: { min: bigint; max: bigint };
+} {
+  if (!r.contributorRangeProofs) {
+    return { valid: false, reason: 'bundle has no contributorRangeProofs (was it built with requireRangeProof: true?)' };
+  }
+  if (r.contributorRangeProofs.length !== r.contributorCommitments.length) {
+    return {
+      valid: false,
+      reason: `contributorRangeProofs length (${r.contributorRangeProofs.length}) != contributorCommitments length (${r.contributorCommitments.length})`,
+    };
+  }
+  let agreedMin: bigint | null = null;
+  let agreedMax: bigint | null = null;
+  for (let i = 0; i < r.contributorRangeProofs.length; i++) {
+    const proof = r.contributorRangeProofs[i]!;
+    const commitment = r.contributorCommitments[i]!;
+    let pMin: bigint, pMax: bigint;
+    try {
+      pMin = BigInt(proof.min);
+      pMax = BigInt(proof.max);
+    } catch {
+      return { valid: false, reason: `range proof ${i}: malformed bounds (${proof.min}, ${proof.max})` };
+    }
+    if (agreedMin === null) {
+      agreedMin = pMin; agreedMax = pMax;
+    } else if (pMin !== agreedMin || pMax !== agreedMax) {
+      return {
+        valid: false,
+        reason: `range proof ${i} declares bounds [${pMin}, ${pMax}] but cohort already agreed on [${agreedMin}, ${agreedMax}]`,
+      };
+    }
+    if (!verifyRange({ commitment, proof })) {
+      return { valid: false, reason: `range proof ${i} failed verification against contributorCommitments[${i}]` };
+    }
+  }
+  // Cross-check: the bundle's sensitivity must equal Number(max - min).
+  const expectedSensitivity = Number(agreedMax! - agreedMin!);
+  if (expectedSensitivity !== r.sensitivity) {
+    return {
+      valid: false,
+      reason: `published sensitivity (${r.sensitivity}) != bounds-derived sensitivity (${expectedSensitivity})`,
+    };
+  }
+  return { valid: true, bounds: { min: agreedMin!, max: agreedMax! } };
 }
 
 /**

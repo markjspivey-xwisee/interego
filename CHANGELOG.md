@@ -8,6 +8,61 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — v3.4: ZK range proofs wired into the v3 zk-aggregate path
+
+Integration of the `proveRange` / `verifyRange` primitives (shipped at
+`953ced8`) into the v3 zk-aggregate protocol. The auditor can now
+verify per-contributor bounds end-to-end WITHOUT seeing cleartext
+values — closes the prior gap where the bundle's `sensitivity` claim
+had to be trusted at audit time.
+
+CHANGED in `applications/_shared/aggregate-privacy/index.ts`:
+- `buildCommittedContribution({withRangeProof: true})` emits a
+  `rangeProof: RangeProof` field on the returned contribution.
+- `CommittedContribution.rangeProof?: RangeProof` field added.
+- `buildAttestedHomomorphicSum({requireRangeProof: true})` enforces
+  that every contribution carries a rangeProof AND that the proof's
+  declared bounds match the contribution's declared bounds AND that
+  the proof verifies against the commitment. Throws on any failure.
+- `AttestedHomomorphicSumResult.contributorRangeProofs?: RangeProof[]`
+  field added; populated 1:1 with contributorCommitments when the
+  bundle is built with requireRangeProof.
+- NEW `verifyContributorRangeProofs(bundle)` — auditor-side cross-
+  check. Confirms every per-contributor proof verifies against the
+  matching contributorCommitment, every contributor agreed on the
+  same cohort bounds, and the bundle's published `sensitivity`
+  equals the bounds-derived `Number(max - min)`. Returns the agreed
+  bounds on success.
+
+7 new contract tests (114 total in aggregate-privacy.test.ts):
+- buildCommittedContribution + withRangeProof emits rangeProof
+- buildAttestedHomomorphicSum + requireRangeProof emits
+  contributorRangeProofs; verifier accepts honest bundle
+- REJECTS contributions missing rangeProofs when requireRangeProof
+- REJECTS contributions whose proof bounds mismatch declared bounds
+- verifyContributorRangeProofs rejects bundle without proofs
+- verifyContributorRangeProofs rejects swapped-proofs (i vs j)
+- verifyContributorRangeProofs rejects mixed-bound proofs across
+  contributors
+
+Substrate-pure: composes the existing range-proof + pedersen
+primitives. No new ontology terms.
+
+Honest framing on the DKG side: the v3 protocol fundamentally has
+the operator KNOWING `trueBlinding = Σ contributor_blindings`
+(contributors reveal blindings for the homomorphic sum). The
+v4-partial trusted-dealer caveat is that the operator runs the
+Shamir split; swapping that for DKG doesn't change the fact that
+the operator already knew the secret. Full removal needs a fresh
+protocol design where contributors blind with derivations of a
+committee-collective secret the operator never sees — that's
+research, not wiring. The DKG primitive ships ready for any future
+protocol that needs it.
+
+Tests: 1486/1486 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Per-vertical bridge audience split (operator-only deployments)
 
 Closes the "per-vertical operator-side bridges as standalone

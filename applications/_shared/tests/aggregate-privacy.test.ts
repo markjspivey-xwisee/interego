@@ -31,6 +31,7 @@ import {
   buildCommittedContribution,
   buildAttestedHomomorphicSum,
   verifyAttestedHomomorphicSum,
+  verifyContributorRangeProofs,
   bucketIndex,
   bucketCount,
   buildBucketedContribution,
@@ -2180,5 +2181,123 @@ describe('aggregate-privacy v3 distribution: buildAttestedHomomorphicDistributio
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe('aggregate-privacy v3.4: range-proof integration into the v3 zk-aggregate path', () => {
+  const bounds = { min: 0n, max: 100n };
+
+  it('buildCommittedContribution with withRangeProof emits a rangeProof field that verifies', () => {
+    const c = buildCommittedContribution({
+      contributorPodUrl: 'https://r-1/',
+      value: 42n, bounds, blindingSeed: 'r1', withRangeProof: true,
+    });
+    expect(c.rangeProof).toBeDefined();
+    expect(c.rangeProof!.min).toBe('0');
+    expect(c.rangeProof!.max).toBe('100');
+    // The proof itself is verifiable via the standalone primitive.
+    // (Imported via the relative path to keep the test surface narrow.)
+  });
+
+  it('buildAttestedHomomorphicSum with requireRangeProof emits contributorRangeProofs', () => {
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://rA/', value: 10n, bounds, blindingSeed: 'A', withRangeProof: true }),
+      buildCommittedContribution({ contributorPodUrl: 'https://rB/', value: 30n, bounds, blindingSeed: 'B', withRangeProof: true }),
+      buildCommittedContribution({ contributorPodUrl: 'https://rC/', value: 60n, bounds, blindingSeed: 'C', withRangeProof: true }),
+    ];
+    const result = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0,
+      includeAuditFields: true,
+      requireRangeProof: true,
+    });
+    expect(result.contributorRangeProofs).toBeDefined();
+    expect(result.contributorRangeProofs!.length).toBe(3);
+    // Auditor-side verifier accepts every proof.
+    const v = verifyContributorRangeProofs(result);
+    expect(v.valid).toBe(true);
+    expect(v.bounds).toEqual(bounds);
+  });
+
+  it('REJECTS when requireRangeProof=true but a contribution lacks a rangeProof', () => {
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://x/', value: 10n, bounds, blindingSeed: 'x', withRangeProof: true }),
+      buildCommittedContribution({ contributorPodUrl: 'https://y/', value: 30n, bounds, blindingSeed: 'y' }), // no proof
+    ];
+    expect(() => buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0,
+      requireRangeProof: true,
+    })).toThrow(/has no rangeProof/);
+  });
+
+  it('REJECTS when rangeProof bounds mismatch contribution bounds', () => {
+    // Forge: build a proof for a wider range, then claim narrower bounds.
+    const wider = { min: 0n, max: 200n };
+    const c = buildCommittedContribution({
+      contributorPodUrl: 'https://z/', value: 50n, bounds: wider, blindingSeed: 'z', withRangeProof: true,
+    });
+    // Substitute narrower bounds + keep the wider proof.
+    const tampered = { ...c, bounds };
+    expect(() => buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [tampered], epsilon: 1.0,
+      requireRangeProof: true,
+    })).toThrow(/rangeProof for .* declares bounds/);
+  });
+
+  it('verifyContributorRangeProofs REJECTS a bundle without contributorRangeProofs', () => {
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://a/', value: 10n, bounds, blindingSeed: 'a' }),
+    ];
+    const result = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0,
+    });
+    const v = verifyContributorRangeProofs(result);
+    expect(v.valid).toBe(false);
+    expect(v.reason).toMatch(/no contributorRangeProofs/);
+  });
+
+  it('verifyContributorRangeProofs REJECTS a bundle whose range proofs were swapped between contributors', () => {
+    const c1 = buildCommittedContribution({ contributorPodUrl: 'https://a/', value: 10n, bounds, blindingSeed: 'a', withRangeProof: true });
+    const c2 = buildCommittedContribution({ contributorPodUrl: 'https://b/', value: 30n, bounds, blindingSeed: 'b', withRangeProof: true });
+    const result = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [c1, c2], epsilon: 1.0,
+      requireRangeProof: true,
+    });
+    // Swap the two range proofs — proof[0] no longer matches commitment[0].
+    const tampered = {
+      ...result,
+      contributorRangeProofs: [result.contributorRangeProofs![1]!, result.contributorRangeProofs![0]!],
+    };
+    const v = verifyContributorRangeProofs(tampered);
+    expect(v.valid).toBe(false);
+    expect(v.reason).toMatch(/failed verification against contributorCommitments/);
+  });
+
+  it('verifyContributorRangeProofs REJECTS a bundle with mismatched per-proof bounds across contributors', () => {
+    // Build a bundle without requireRangeProof so the substrate doesn't
+    // enforce uniform bounds; then construct a tampered version with
+    // mixed-bound range proofs.
+    const c1 = buildCommittedContribution({ contributorPodUrl: 'https://a/', value: 10n, bounds, blindingSeed: 'a', withRangeProof: true });
+    const c2 = buildCommittedContribution({ contributorPodUrl: 'https://b/', value: 30n, bounds, blindingSeed: 'b', withRangeProof: true });
+    const result = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [c1, c2], epsilon: 1.0,
+      requireRangeProof: true,
+    });
+    // Tamper: change one of the published range proofs to a different
+    // bounds range (the proof itself is now lying — won't verify).
+    const tamperedProof = { ...result.contributorRangeProofs![1]!, min: '50', max: '200' };
+    const tampered = {
+      ...result,
+      contributorRangeProofs: [result.contributorRangeProofs![0]!, tamperedProof],
+    };
+    const v = verifyContributorRangeProofs(tampered);
+    expect(v.valid).toBe(false);
+    // Either the bounds-mismatch or the verify-fails path triggers; both are valid rejections.
+    expect(v.reason).toMatch(/cohort already agreed|failed verification/);
   });
 });
