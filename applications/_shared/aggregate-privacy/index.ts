@@ -50,6 +50,7 @@ import {
 } from '../../../src/crypto/pedersen.js';
 import { ContextDescriptor, publish, discover } from '../../../src/index.js';
 import type { IRI, ManifestEntry } from '../../../src/index.js';
+import { verifyMessage } from 'ethers';
 
 // ─────────────────────────────────────────────────────────────────────
 //  Content-addressed IRIs
@@ -352,6 +353,29 @@ export function verifyAttestedAggregateResult(result: AttestedAggregateResult): 
 //     pair with a v2 range proof (proveConfidenceAboveThreshold
 //     for [0,1] values) as a second layer.
 
+/**
+ * Signed-bounds attestation. Binds a contributor (by DID) to a specific
+ * (commitment, bounds) pair. The contributor signs the message
+ *
+ *     "interego/v1/aggregate/signed-bounds|<commitment-hex>|<min>|<max>|<contributorDid>"
+ *
+ * with their wallet. Auditors verify the signature recovers an address
+ * matching the contributorDid; this catches an aggregator who tries to
+ * claim a contributor consented to wider bounds than they actually did,
+ * or who tries to attribute a commitment to a different contributor.
+ *
+ * Optional in v3 (not present = the aggregator vouches for the bounds
+ * client-side via buildCommittedContribution + sum-time bounds re-check).
+ * Required for "regulator-grade" v3 deployments where the aggregator is
+ * also under audit.
+ */
+export interface SignedBoundsAttestation {
+  /** Contributor DID — the signer the auditor recovers from the signature. */
+  readonly contributorDid: IRI;
+  /** 0x-prefixed ECDSA signature (ethers-compatible). */
+  readonly signature: string;
+}
+
 export interface CommittedContribution {
   readonly contributorPodUrl: string;
   /** Pedersen commitment to the value. */
@@ -362,6 +386,58 @@ export interface CommittedContribution {
   readonly value: bigint;
   /** Bounds [min, max] the contributor consented to. */
   readonly bounds: { min: bigint; max: bigint };
+  /** Optional signed-bounds attestation. v3.1 enhancement. */
+  readonly signedBounds?: SignedBoundsAttestation;
+}
+
+/**
+ * Canonical message format for the signed-bounds attestation. Both
+ * signer and verifier MUST use this exact format; any drift breaks
+ * signature verification.
+ */
+export function signedBoundsMessage(args: {
+  commitment: PedersenCommitment;
+  bounds: { min: bigint; max: bigint };
+  contributorDid: IRI;
+}): string {
+  return `interego/v1/aggregate/signed-bounds|${args.commitment.bytes}|${args.bounds.min}|${args.bounds.max}|${args.contributorDid}`;
+}
+
+/**
+ * Verify a signed-bounds attestation: the signature must recover an
+ * address that matches the contributorDid. The DID format is
+ * `did:pkh:eip155:<chainId>:<address>` or
+ * `did:ethr:<address>` or simply an Ethereum-address-shaped string —
+ * matching is loose (case-insensitive substring of the recovered
+ * address inside the DID), which catches the common DID shapes
+ * without committing to a specific DID-method parser here.
+ */
+export function verifySignedBounds(args: {
+  commitment: PedersenCommitment;
+  bounds: { min: bigint; max: bigint };
+  attestation: SignedBoundsAttestation;
+}): { valid: boolean; reason?: string; recoveredAddress?: string } {
+  let recovered: string;
+  try {
+    const msg = signedBoundsMessage({
+      commitment: args.commitment,
+      bounds: args.bounds,
+      contributorDid: args.attestation.contributorDid,
+    });
+    recovered = verifyMessage(msg, args.attestation.signature);
+  } catch (err) {
+    return { valid: false, reason: `signature recovery failed: ${(err as Error).message}` };
+  }
+  const recoveredLower = recovered.toLowerCase();
+  const didLower = args.attestation.contributorDid.toLowerCase();
+  if (!didLower.includes(recoveredLower)) {
+    return {
+      valid: false,
+      reason: `recovered address ${recovered} not present in contributorDid ${args.attestation.contributorDid}`,
+      recoveredAddress: recovered,
+    };
+  }
+  return { valid: true, recoveredAddress: recovered };
 }
 
 /**
@@ -438,6 +514,14 @@ export function buildAttestedHomomorphicSum(args: {
   epsilon: number;
   /** When true, include the trueSum + trueBlinding in the bundle for audit (not for publication). */
   includeAuditFields?: boolean;
+  /**
+   * When true (v3.1 regulator-grade mode), require every contribution
+   * to carry a `signedBounds` attestation whose signature recovers
+   * the declared contributorDid against the canonical signedBoundsMessage.
+   * Catches: aggregator inflating a contributor's bounds; impersonation.
+   * Default false (v3 trust-the-client mode).
+   */
+  requireSignedBounds?: boolean;
 }): AttestedHomomorphicSumResult {
   if (args.contributions.length === 0) {
     throw new Error('buildAttestedHomomorphicSum: at least one contribution required');
@@ -448,6 +532,32 @@ export function buildAttestedHomomorphicSum(args: {
   for (const c of args.contributions) {
     if (c.bounds.min !== first.bounds.min || c.bounds.max !== first.bounds.max) {
       throw new Error(`buildAttestedHomomorphicSum: contributions disagree on bounds (${c.contributorPodUrl})`);
+    }
+    // v3.1 cheat-protection: aggregator re-checks the value against
+    // the contributor's declared bounds. `buildCommittedContribution`
+    // does the same check on the contributor's side, but a malicious
+    // contributor that bypasses their own client-side check could
+    // submit a value outside the declared bounds and inflate the
+    // sum (their commitment still opens correctly, but the noisy
+    // sum leaks information). The aggregator MUST NOT trust the
+    // contributor's self-bounds-check; this is the
+    // sensitivity-invariant guard that makes the DP claim sound.
+    if (c.value < c.bounds.min || c.value > c.bounds.max) {
+      throw new Error(`buildAttestedHomomorphicSum: contribution from ${c.contributorPodUrl} has value ${c.value} outside declared bounds [${c.bounds.min}, ${c.bounds.max}] — aggregator refuses to inflate the noisy sum`);
+    }
+    // v3.1 regulator-grade mode: enforce signed-bounds attestations.
+    if (args.requireSignedBounds) {
+      if (!c.signedBounds) {
+        throw new Error(`buildAttestedHomomorphicSum: requireSignedBounds=true but contribution from ${c.contributorPodUrl} has no signedBounds attestation`);
+      }
+      const v = verifySignedBounds({
+        commitment: c.commitment,
+        bounds: c.bounds,
+        attestation: c.signedBounds,
+      });
+      if (!v.valid) {
+        throw new Error(`buildAttestedHomomorphicSum: signed-bounds attestation for ${c.contributorPodUrl} failed verification: ${v.reason}`);
+      }
     }
   }
   const sensitivity = Number(first.bounds.max - first.bounds.min);

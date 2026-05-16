@@ -8,6 +8,74 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy v3.1: aggregator-side bounds enforcement + signed-bounds attestations
+
+Closes the "lying contributor" cheat that v3 alone could not catch.
+v3 ships with the contributor's own client-side bounds check in
+`buildCommittedContribution`. A malicious contributor that skipped or
+hand-rolled around that check could publish a value outside their
+declared `[min, max]` and inflate the noisy sum (the Pedersen
+commitment still opens correctly; the verifier sees a clean bundle
+that's nevertheless leaking information about that contributor).
+
+Two layered fixes:
+
+1. **Aggregator-side bounds re-check** in `buildAttestedHomomorphicSum`.
+   Per contribution: `if (c.value < c.bounds.min || c.value > c.bounds.max) throw`.
+   The aggregator NEVER trusts the contributor's self-bounds-check;
+   the sensitivity invariant the DP claim rests on is now enforced
+   at sum-time. Default v3 behaviour now includes this guard.
+
+2. **Optional `SignedBoundsAttestation`** on each contribution.
+   Canonical message:
+     `interego/v1/aggregate/signed-bounds|<commitment-hex>|<min>|<max>|<contributorDid>`
+   signed by the contributor's wallet. New `verifySignedBounds` helper
+   uses ethers' message-signature recovery + a loose DID-address
+   containment check. With `requireSignedBounds: true` on the build
+   call, the aggregator refuses any contribution that lacks a valid
+   attestation — regulator-grade mode where the aggregator is also
+   under audit and cannot be trusted to attribute commitments
+   correctly.
+
+8 new contract tests in `applications/_shared/tests/aggregate-privacy.test.ts`
+(29 total in that file now: 12 v2 + 9 v3 + 8 v3.1):
+- aggregator REJECTS a contribution whose value is outside the
+  declared bounds (the bypassed-client-side-check threat)
+- aggregator ACCEPTS contributions with values exactly at min and
+  exactly at max (boundary case)
+- `signedBoundsMessage` matches the documented canonical format
+- `verifySignedBounds` accepts honest signatures
+- `verifySignedBounds` REJECTS a signature over a different
+  commitment (cross-cohort replay)
+- `verifySignedBounds` REJECTS a signature whose recovered address
+  does not appear in the claimed contributorDid (impersonation)
+- `requireSignedBounds: true` REJECTS contributions without an
+  attestation
+- `requireSignedBounds: true` ACCEPTS contributions with valid
+  attestations
+
+Validation: full vitest suite **1317/1317 passing** (1309 prior + 8
+new); `tsc -p tsconfig.json --noEmit` clean.
+
+STATUS.md updated: v3.1 row added to the aggregate-privacy ladder
+with the bounds-enforcement + signed-bounds story. The earlier
+"per-contribution range proofs" item in remaining-work moves to a
+future v3.2 entry (non-interactive ZK range proofs for
+"verify-without-revealing-value" — useful when the aggregator is
+itself partially trusted).
+
+Trust ladder is now:
+
+  v1 'abac'                              → ABAC-bounded count
+  v2 'merkle-attested-opt-in'            → verifiable count + opt-in
+  v3 'zk-aggregate'                      → homomorphic sum + DP noise
+  v3.1 + requireSignedBounds: true       → regulator-grade attribution
+
+Each step composes the previous; no breaking changes to the affordance
+signatures (the new field on CommittedContribution is optional).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy v3: real homomorphic Pedersen sum + DP-Laplace noise (zk-aggregate mode live)
 
 Closes the last item from the prior PM-eval-driven session arc: v3 of
