@@ -49,9 +49,12 @@ import {
   reconstructThresholdRevealAndVerify,
   signCommitteeReconstruction,
   verifyCommitteeReconstruction,
+  encryptSharesForCommittee,
+  decryptShareForRecipient,
   type CommitteeReconstructionAttestation,
 } from '../applications/_shared/aggregate-privacy/index.js';
 import { createWallet } from '../src/index.js';
+import { generateKeyPair } from '../src/crypto/encryption.js';
 import type { IRI } from '../src/index.js';
 import type { Wallet } from 'ethers';
 
@@ -122,24 +125,49 @@ async function main(): Promise<void> {
   ok(`coefficientCommitments.threshold = ${bundle.coefficientCommitments!.threshold}`);
 
   // ────────────────────────────────────────────────────────────────
-  // PHASE 3 — Distribute shares to pseudo-aggregator wallets.
+  // PHASE 3 — Distribute encrypted shares to pseudo-aggregator wallets.
   // ────────────────────────────────────────────────────────────────
-  header('PHASE 3 — Distribute 5 shares to 5 pseudo-aggregators (simulated)');
+  header('PHASE 3 — Encrypt + distribute 5 shares to 5 pseudo-aggregators');
   const wallets: Wallet[] = [];
   const dids: IRI[] = [];
+  const encKeyPairs = [];
   for (let i = 0; i < 5; i++) {
     const w = await createWallet('agent', `pseudo-aggregator-${i}`);
     wallets.push(w as unknown as Wallet);
     dids.push(`did:ethr:${w.address.toLowerCase()}` as IRI);
-    ok(`Member ${i}: ${dids[i]!.slice(0, 32)}… → holds share x=${bundle.thresholdShares![i]!.x}`);
+    encKeyPairs.push(generateKeyPair());
+    ok(`Member ${i}: ${dids[i]!.slice(0, 32)}… (X25519 pub ${encKeyPairs[i]!.publicKey.slice(0, 16)}…)`);
   }
+
+  step(1, 'Operator encrypts each share for its recipient via X25519/nacl envelopes');
+  const senderKeyPair = generateKeyPair();
+  const distributions = encryptSharesForCommittee({
+    shares: bundle.thresholdShares!,
+    recipients: dids.map((did, i) => ({ recipientDid: did, recipientPublicKey: encKeyPairs[i]!.publicKey })),
+    senderKeyPair,
+  });
+  ok(`${distributions.length} encrypted share envelopes produced (one per recipient)`);
+
+  step(2, 'Each pseudo-aggregator decrypts their own share (and ONLY their own)');
+  const decryptedShares = distributions.map((dist, i) => {
+    const share = decryptShareForRecipient({ distribution: dist, recipientKeyPair: encKeyPairs[i]! });
+    if (share === null) throw new Error(`Member ${i} failed to decrypt their share`);
+    return share;
+  });
+  for (let i = 0; i < decryptedShares.length; i++) {
+    ok(`Member ${i} decrypted share x=${decryptedShares[i]!.x} (y bigint preserved)`);
+  }
+
+  step(3, 'Cross-decrypt attempt: member 0 tries to read member 1\'s envelope');
+  const crossAttempt = decryptShareForRecipient({ distribution: distributions[1]!, recipientKeyPair: encKeyPairs[0]! });
+  ok(`Cross-decrypt rejected: ${crossAttempt === null ? 'YES (no wrapped key for member 0)' : 'NO (BUG)'}`);
 
   // ────────────────────────────────────────────────────────────────
   // PHASE 4 — A committee of 3 reconstructs trueBlinding.
   // ────────────────────────────────────────────────────────────────
-  header('PHASE 4 — Committee of 3 reconstructs trueBlinding');
+  header('PHASE 4 — Committee of 3 reconstructs trueBlinding from DECRYPTED shares');
   const committeeIdx = [0, 2, 4];
-  const committeeShares = committeeIdx.map(i => bundle.thresholdShares![i]!);
+  const committeeShares = committeeIdx.map(i => decryptedShares[i]!);
   const committeeDids = committeeIdx.map(i => dids[i]!);
   const committeeWallets = committeeIdx.map(i => wallets[i]!);
   ok(`Committee members: ${committeeIdx.map(i => `#${i}`).join(', ')} (any t=3 of n=5)`);
@@ -225,7 +253,8 @@ async function main(): Promise<void> {
   header('Walkthrough complete');
   info('Every primitive composed cleanly:');
   info('  Pedersen commit → homomorphic sum → DP noise → Shamir split');
-  info('  → Feldman VSS commitments → committee reconstruction');
+  info('  → Feldman VSS commitments → X25519/nacl share encryption');
+  info('  → per-recipient decryption → committee reconstruction');
   info('  → chain-of-custody attestation → auditor verification');
   info('No new ontology terms introduced; all building blocks pre-existed in src/crypto/.');
   console.log();
