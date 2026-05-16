@@ -8,6 +8,48 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — ZK range proofs (Chaum-Pedersen OR + bit-decomposition)
+
+Ships [`src/crypto/range-proof.ts`](src/crypto/range-proof.ts) — non-
+interactive zero-knowledge proofs that a Pedersen commitment opens to
+a value in a declared range, without revealing the value. Closes the
+v3.1 "lying contributor" cheat at the cryptographic layer.
+
+Two primitives:
+
+1. **proveBit / verifyBit** — Chaum-Pedersen OR proof for {0, 1}. The
+   proof convinces a verifier that a Pedersen commitment C = vG + bH
+   opens to either v=0 or v=1, without revealing which. Statement:
+   ∃ b such that C = bH OR C - G = bH. Standard NIZK OR proof via
+   Fiat-Shamir.
+
+2. **proveRange / verifyRange** — bit-decomposition range proof for
+   arbitrary [min, max]. Decompose v - min into n bits, commit to
+   each bit separately, emit an OR proof per bit. Verifier checks
+   each OR proof + that Σ 2^i · C_i ≡ C - min·G (the bit
+   decomposition reconstructs the shifted commitment).
+
+19 new contract tests in `tests/range-proof.test.ts`:
+- Bit proof: honest-0/1 accept, forged-from-wrong-blinding reject,
+  non-bit throw, cross-commitment reject, tampered-component reject,
+  zero-knowledge shape parity (proof shape independent of bit value)
+- Range proof: honest in-range / value=min / value=max / shifted
+  range [50,150]; throws on below-min / above-max / max<min;
+  tampered bit-commitment reject, tampered bit-proof reject,
+  cross-commitment reject, trivial range (min=max, 1 bit), wider
+  range (1000 values, ~10 bits)
+
+Substrate-pure: composes existing pedersen + sha256 (Fiat-Shamir)
+primitives. No new ontology terms.
+
+Wiring `proveRange` into `buildCommittedContribution` +
+`buildAttestedHomomorphicSum`'s bounds re-check as an optional
+`requireRangeProof` mode is the remaining v3.4 integration step.
+
+Tests: 1479/1479 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — DKG primitive (removes the v4-partial trusted-dealer caveat)
 
 Ships [`src/crypto/dkg.ts`](src/crypto/dkg.ts) — a Distributed Key
