@@ -1,6 +1,6 @@
 # Choosing an aggregate-privacy mode
 
-The Interego aggregate-privacy ladder ships ten layered modes. Each
+The Interego aggregate-privacy ladder ships eleven layered modes. Each
 composes the previous; none replaces it. This page is the adopter's
 field guide — which mode to pick for which threat model, and how to
 upgrade in place when the threat model shifts.
@@ -12,7 +12,7 @@ The implementations all live in
 [`src/crypto/feldman-vss.ts`](../src/crypto/feldman-vss.ts); contract
 tests pin every cheat path in
 [`applications/_shared/tests/aggregate-privacy.test.ts`](../applications/_shared/tests/aggregate-privacy.test.ts)
-(86 tests, all green).
+(90 tests, all green).
 
 Want to see the full v4-partial flow without standing up a pod?
 Run `npx tsx tools/walkthrough-v4-partial-vss.ts` — an 8-phase
@@ -54,6 +54,7 @@ simulation. Regression-protected via
 | **Committee reconstruction attestation** (`signCommitteeReconstruction` + `verifyCommitteeReconstruction`) | When a t-of-n committee successfully reconstructs trueBlinding, each member signs the canonical `committeeReconstructionMessage(bundleSumCommitment, claimedTrueSum, committeeDids, reconstructedAt)`. The coordinator bundles signatures into a `CommitteeReconstructionAttestation`; `publishCommitteeReconstructionAttestation` writes it as a pod descriptor. | Catches: forged committee membership; substituted bundle; tampered claimedTrueSum; impersonated member; silently-dropped member. Regulator can fetch the attestation from the pod and see exactly who participated, when, and on which bundle. | A malicious operator that NEVER signs the committee attestation isn't caught by the verifier — same enforcement story as v3.3 (institutional policy + `passport:` machinery). |
 | **Encrypted share distribution** (`encryptSharesForCommittee` + `publishEncryptedShareDistribution`) | Each VerifiableShamirShare is wrapped in an X25519/nacl envelope keyed to its intended pseudo-aggregator recipient. The operator publishes each envelope as a normal `cg:ContextDescriptor`; the recipient discovers it via standard pod-discovery flows and decrypts with their own X25519 keypair. | Catches: share leaking to the wrong recipient; share substitution in transit; replay across recipients. Composes the substrate's existing X25519 / nacl envelope machinery — no new ontology terms. Bigint y survives the JSON-in-envelope round-trip via the same `__bigint` wrapper used by the publishable bundle JSON encoder. | Doesn't prevent the operator from publishing the SAME share to multiple recipients (which would defeat threshold privacy) — that's a per-share auditing problem the recipient discovers when they see another envelope at the same content-addressed slot. |
 | **Operator-signed committee authorization** (`signCommitteeAuthorization` + `publishCommitteeAuthorization` + `verifyCommitteeMatchesAuthorization`) | The operator signs a `CommitteeAuthorization` BEFORE distributing shares, naming the n authorized DIDs + the (n, t) threshold. The authorization is published as a pod descriptor; at audit time the regulator cross-checks the actual reveal committee (from the chain-of-custody attestation) against this earlier authorization via `verifyCommitteeMatchesAuthorization`. | Catches: operator forms a sock-puppet committee at reveal time; operator silently changes the threshold; reveal-time committee membership doesn't match the operator's prior commitment; bundleSumCommitment swapped between authorization and reveal. Closes the "operator improvises a committee" cheat that the reveal-side chain-of-custody attestation alone could not catch. | Doesn't prevent the operator from never publishing an authorization at all — that's the same institutional-policy enforcement story as v3.3 (institution publishes a policy saying "all threshold reveals MUST be preceded by a published authorization" + binds operators via `passport:`). |
+| **Distribution-vs-authorization cross-check** (`verifyShareDistributionsMatchAuthorization`) | Confirms the actual share distributions match the authorization at the SHARE-SHIPPING phase, not just the reveal phase. Catches: operator authorizes 5 DIDs but ships shares to 3 sock-puppets; operator ships more/fewer shares than authorized; duplicate distribution to the same recipient; authorized DID with no matching distribution. | Composes the existing `CommitteeAuthorization` + `EncryptedShareDistribution` machinery — no new primitives required. The regulator now has full audit coverage across the entire reveal lifecycle: pre-reveal authorization → distribution → reveal → cross-check. | Doesn't address the scenario where the operator never publishes the distributions at all — same institutional-policy enforcement story as the other "publish or be flagged" controls. |
 
 ## Upgrading in place
 
