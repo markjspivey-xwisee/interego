@@ -235,8 +235,8 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'privacy_mode', type: 'string', required: false, description: 'One of: abac (default v1) | merkle-attested-opt-in (v2) | zk-aggregate (v3). The bundle returned in the response advertises which path was taken.' },
       { name: 'epsilon', type: 'number', required: false, description: 'DP ε budget for zk-aggregate mode. Required when privacy_mode = zk-aggregate.' },
       { name: 'epsilon_budget_max', type: 'number', required: false, description: 'v3.2: declare a cumulative ε cap for this query session. The operator constructs a per-call EpsilonBudget and refuses to run if cumulative consumption would exceed cap.' },
-      { name: 'threshold_reveal_n', type: 'number', required: false, description: 'v4-partial: total pseudo-aggregators in the threshold-reveal committee for trueBlinding. When set with privacy_mode=zk-aggregate, the aggregator emits Shamir shares + omits trueBlinding from audit fields.' },
-      { name: 'threshold_reveal_t', type: 'number', required: false, description: 'v4-partial: threshold for reconstruction. Required when threshold_reveal_n is supplied.' },
+      { name: 'threshold_reveal_n', type: 'number', required: false, description: 'v4-partial+VSS: total pseudo-aggregators in the threshold-reveal committee for trueBlinding. When set with privacy_mode=zk-aggregate, the aggregator emits Shamir shares + Feldman VSS `coefficientCommitments` (tampered shares caught BEFORE Lagrange reconstruction) + omits trueBlinding from audit fields.' },
+      { name: 'threshold_reveal_t', type: 'number', required: false, description: 'v4-partial+VSS: threshold for reconstruction. Required when threshold_reveal_n is supplied. After a successful t-of-n reconstruction, the committee signs a CommitteeReconstructionAttestation (chain-of-custody) via signCommitteeReconstruction + publishCommitteeReconstructionAttestation.' },
     ],
   },
   {
