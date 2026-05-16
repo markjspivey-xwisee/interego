@@ -244,6 +244,20 @@ export interface AggregateCohortQueryArgs {
    * library API (this affordance arg is for one-shot caps only).
    */
   epsilon_budget_max?: number;
+  /**
+   * v4-partial: Shamir threshold reveal. When `threshold_reveal_n`
+   * + `threshold_reveal_t` are both supplied with privacy_mode =
+   * 'zk-aggregate', the bundle emits Shamir shares of the
+   * trueBlinding (split via the ristretto255-scalar-field
+   * primitive in src/crypto/shamir.ts) and OMITS trueBlinding
+   * from audit fields. Any t-of-n committee can later call
+   * reconstructThresholdRevealAndVerify on the bundle to recover
+   * trueBlinding and verify the sum-commitment opens to the
+   * claimed trueSum. Trusted-dealer caveat: the operator running
+   * this query knows the polynomial during the split.
+   */
+  threshold_reveal_n?: number;
+  threshold_reveal_t?: number;
 }
 
 export interface AggregateCohortQueryResult {
@@ -332,6 +346,9 @@ export async function aggregateCohortQuery(
         const epsilonBudget = args.epsilon_budget_max
           ? new EpsilonBudget({ cohortIri: args.cohort_iri as IRI, maxEpsilon: args.epsilon_budget_max })
           : undefined;
+        const thresholdReveal = (args.threshold_reveal_n && args.threshold_reveal_t)
+          ? { n: args.threshold_reveal_n, t: args.threshold_reveal_t }
+          : undefined;
         homomorphic = buildAttestedHomomorphicSum({
           cohortIri: args.cohort_iri as IRI,
           aggregatorDid: ctx.issuerDid,
@@ -340,6 +357,7 @@ export async function aggregateCohortQuery(
           includeAuditFields: true,
           ...(args.require_signed_bounds ? { requireSignedBounds: true } : {}),
           ...(epsilonBudget ? { epsilonBudget, queryDescription: `lpc.aggregate_cohort_query|${args.metric}` } : {}),
+          ...(thresholdReveal ? { thresholdReveal } : {}),
         });
       }
     }

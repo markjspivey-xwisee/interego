@@ -207,6 +207,8 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'epsilon', type: 'number', required: false, description: 'DP ε budget for zk-aggregate mode. Required when privacy_mode = zk-aggregate.' },
       { name: 'require_signed_bounds', type: 'boolean', required: false, description: 'v3.1: when true, every contribution must carry a SignedBoundsAttestation. Aggregator refuses contributions without a valid signature. Default false.' },
       { name: 'epsilon_budget_max', type: 'number', required: false, description: 'v3.2: declare a cumulative ε cap for this cohort. The aggregator constructs a per-call EpsilonBudget and refuses to run if cumulative consumption would exceed cap. For persistent cross-call budgets, persist the EpsilonBudget snapshot via lpc.publish_authoritative_content or a sibling pattern.' },
+      { name: 'threshold_reveal_n', type: 'number', required: false, description: 'v4-partial: total number of pseudo-aggregators in the threshold-reveal committee. When set with privacy_mode=zk-aggregate, the trueBlinding is Shamir-split into n shares and emitted in the bundle; trueBlinding is omitted from audit fields (no single party including the auditor knows it). Trusted-dealer caveat: the aggregator running the query knows the polynomial during the split; full DKG is the remaining v4 piece.' },
+      { name: 'threshold_reveal_t', type: 'number', required: false, description: 'v4-partial: threshold for reconstruction. Any t-of-n committee can reconstruct trueBlinding via Lagrange + reconstructThresholdRevealAndVerify; any t-1 shares reveal nothing. Required when threshold_reveal_n is supplied.' },
     ],
   },
 

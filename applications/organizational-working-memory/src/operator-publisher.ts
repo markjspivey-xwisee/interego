@@ -80,6 +80,9 @@ export interface AggregateDecisionsQueryArgs {
    * uses the in-process EpsilonBudget API.
    */
   epsilon_budget_max?: number;
+  /** v4-partial: Shamir threshold reveal — total committee size + reconstruction threshold. */
+  threshold_reveal_n?: number;
+  threshold_reveal_t?: number;
 }
 
 export interface AggregateDecisionsQueryResult {
@@ -205,6 +208,9 @@ export async function aggregateDecisionsQuery(
       const epsilonBudget = args.epsilon_budget_max
         ? new EpsilonBudget({ cohortIri, maxEpsilon: args.epsilon_budget_max })
         : undefined;
+      const thresholdReveal = (args.threshold_reveal_n && args.threshold_reveal_t)
+        ? { n: args.threshold_reveal_n, t: args.threshold_reveal_t }
+        : undefined;
       homomorphic = buildAttestedHomomorphicSum({
         cohortIri,
         aggregatorDid: ctx.authorityDid,
@@ -212,6 +218,7 @@ export async function aggregateDecisionsQuery(
         epsilon: args.epsilon,
         includeAuditFields: true,
         ...(epsilonBudget ? { epsilonBudget, queryDescription: `owm.aggregate_decisions_query|${args.metric}` } : {}),
+        ...(thresholdReveal ? { thresholdReveal } : {}),
       });
       // Replace the aggregate value with the DP-noised one.
       value = Number(homomorphic.noisySum);
