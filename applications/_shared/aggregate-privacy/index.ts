@@ -522,6 +522,16 @@ export function buildAttestedHomomorphicSum(args: {
    * Default false (v3 trust-the-client mode).
    */
   requireSignedBounds?: boolean;
+  /**
+   * Optional cumulative ε-budget tracker (v3.2). When supplied, the
+   * function calls `epsilonBudget.consume(...)` BEFORE building the
+   * bundle — the consume() call throws if the cumulative ε would
+   * exceed the declared cap. Mutates the tracker; auditors replay
+   * the tracker's log to verify total leakage stayed under cap.
+   */
+  epsilonBudget?: EpsilonBudget;
+  /** Optional description recorded in the EpsilonBudget log entry. */
+  queryDescription?: string;
 }): AttestedHomomorphicSumResult {
   if (args.contributions.length === 0) {
     throw new Error('buildAttestedHomomorphicSum: at least one contribution required');
@@ -562,6 +572,17 @@ export function buildAttestedHomomorphicSum(args: {
   }
   const sensitivity = Number(first.bounds.max - first.bounds.min);
   if (!(sensitivity > 0)) throw new Error('buildAttestedHomomorphicSum: non-positive sensitivity');
+
+  // v3.2: ε-budget pre-flight. Consume BEFORE building the bundle so
+  // a budget overrun aborts the query (rather than producing a
+  // bundle the caller still has to throw away). The tracker's
+  // consume() throws if the cumulative ε would exceed cap.
+  if (args.epsilonBudget) {
+    args.epsilonBudget.consume({
+      queryDescription: args.queryDescription ?? `homomorphic-sum on ${args.cohortIri}`,
+      epsilon: args.epsilon,
+    });
+  }
 
   const trueSum = args.contributions.reduce((acc, c) => acc + c.value, 0n);
   const trueBlinding = args.contributions.reduce((acc, c) => acc + c.blinding, 0n);
@@ -629,4 +650,112 @@ export function verifyAttestedHomomorphicSum(r: AttestedHomomorphicSumResult): {
   if (!(r.epsilon > 0)) return { valid: false, reason: 'epsilon must be > 0' };
   if (!(r.sensitivity > 0)) return { valid: false, reason: 'sensitivity must be > 0' };
   return { valid: true };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  v3.2 — Cumulative ε-budget tracking
+// ─────────────────────────────────────────────────────────────────────
+//
+// Differential-privacy budgets compose: under sequential composition,
+// running k queries with budgets ε1, ε2, …, εk on the same dataset
+// yields a combined ε equal to Σ εi. Without a tracker, a caller can
+// run aggregate_decisions_query 1000 times at ε=0.01 each and
+// effectively get ε=10 of accumulated leakage — the per-query
+// privacy claim is sound, the cumulative claim is gone.
+//
+// EpsilonBudget tracks consumption per cohort. The caller declares a
+// max budget; each query consumes its ε; the tracker throws (or
+// returns a warning) when a query would exceed the remaining budget.
+// Bookkeeping only — the substrate itself doesn't enforce; the
+// caller is responsible for plumbing the tracker into their
+// aggregate calls. The discipline is "honest accounting" not
+// "tamper-evident":
+//   - Auditors can replay the log of consume() calls to verify the
+//     remaining budget claim.
+//   - A malicious caller that bypasses the tracker still leaks DP
+//     information, but the audit log will show the gap.
+//
+// Future v3.3: a signed audit-log descriptor on the institution's
+// pod so the consumption log is itself a verifiable artifact. For
+// now the tracker is in-memory; serialize via `toJSON` / `fromJSON`
+// for persistence.
+
+export interface EpsilonConsumption {
+  readonly queryDescription: string;
+  readonly epsilon: number;
+  readonly consumedAt: string;
+}
+
+export class EpsilonBudget {
+  readonly cohortIri: IRI;
+  readonly maxEpsilon: number;
+  private _spent: number;
+  private _log: EpsilonConsumption[];
+
+  constructor(args: { cohortIri: IRI; maxEpsilon: number; initial?: { spent?: number; log?: readonly EpsilonConsumption[] } }) {
+    if (!(args.maxEpsilon > 0)) throw new Error('EpsilonBudget: maxEpsilon must be > 0');
+    this.cohortIri = args.cohortIri;
+    this.maxEpsilon = args.maxEpsilon;
+    this._spent = args.initial?.spent ?? 0;
+    this._log = args.initial?.log ? [...args.initial.log] : [];
+    if (this._spent < 0) throw new Error('EpsilonBudget: initial spent cannot be negative');
+    if (this._spent > this.maxEpsilon) throw new Error('EpsilonBudget: initial spent exceeds maxEpsilon');
+  }
+
+  /** Current cumulative ε spent. */
+  get spent(): number { return this._spent; }
+
+  /** Remaining ε. Negative is impossible (consume throws first). */
+  get remaining(): number { return this.maxEpsilon - this._spent; }
+
+  /** Consumption log, oldest first. Useful for the audit-log descriptor. */
+  get log(): readonly EpsilonConsumption[] { return this._log; }
+
+  /**
+   * Reserve ε for a query. Throws if the consumption would exceed
+   * the declared maxEpsilon — the caller's contract is to call this
+   * BEFORE the query and only run the query if it returns. The
+   * log entry records the description + ε + a timestamp so an
+   * auditor can replay the budget.
+   */
+  consume(args: { queryDescription: string; epsilon: number }): void {
+    if (!(args.epsilon > 0)) throw new Error('EpsilonBudget.consume: epsilon must be > 0');
+    if (this._spent + args.epsilon > this.maxEpsilon) {
+      const wouldBe = this._spent + args.epsilon;
+      throw new Error(`EpsilonBudget: query "${args.queryDescription}" with ε=${args.epsilon} would push cumulative ε to ${wouldBe} (cap ${this.maxEpsilon}; remaining ${this.remaining}). Aborting.`);
+    }
+    this._spent += args.epsilon;
+    this._log.push({
+      queryDescription: args.queryDescription,
+      epsilon: args.epsilon,
+      consumedAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Check whether a hypothetical query would fit without consuming.
+   * Useful for pre-flight validation in UIs.
+   */
+  canAfford(epsilon: number): boolean {
+    return epsilon > 0 && this._spent + epsilon <= this.maxEpsilon;
+  }
+
+  /** Serialize to a plain object for persistence (e.g., publishing as a pod descriptor). */
+  toJSON(): { cohortIri: IRI; maxEpsilon: number; spent: number; log: readonly EpsilonConsumption[] } {
+    return {
+      cohortIri: this.cohortIri,
+      maxEpsilon: this.maxEpsilon,
+      spent: this._spent,
+      log: this._log,
+    };
+  }
+
+  /** Rehydrate from a serialized snapshot. */
+  static fromJSON(snap: { cohortIri: IRI; maxEpsilon: number; spent: number; log: readonly EpsilonConsumption[] }): EpsilonBudget {
+    return new EpsilonBudget({
+      cohortIri: snap.cohortIri,
+      maxEpsilon: snap.maxEpsilon,
+      initial: { spent: snap.spent, log: snap.log },
+    });
+  }
 }

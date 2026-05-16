@@ -32,6 +32,7 @@ import {
   buildAttestedHomomorphicSum,
   verifyAttestedHomomorphicSum,
   signedBoundsMessage, verifySignedBounds,
+  EpsilonBudget,
   type ParticipationHit,
   type CommittedContribution,
 } from '../aggregate-privacy/index.js';
@@ -475,5 +476,104 @@ describe('aggregate-privacy v3.1: signed-bounds attestations', () => {
       requireSignedBounds: true,
     });
     expect(bundle.contributorCount).toBe(1);
+  });
+});
+
+describe('aggregate-privacy v3.2: cumulative ε-budget tracking', () => {
+  it('rejects construction with non-positive maxEpsilon', () => {
+    expect(() => new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 0 })).toThrow(/maxEpsilon/);
+    expect(() => new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: -1 })).toThrow(/maxEpsilon/);
+  });
+
+  it('rejects construction with initial.spent > maxEpsilon', () => {
+    expect(() => new EpsilonBudget({
+      cohortIri: COHORT, maxEpsilon: 1.0,
+      initial: { spent: 2.0 },
+    })).toThrow(/exceeds maxEpsilon/);
+  });
+
+  it('consumes ε across queries; remaining decrements', () => {
+    const b = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    expect(b.remaining).toBe(1.0);
+    b.consume({ queryDescription: 'q1', epsilon: 0.3 });
+    expect(b.spent).toBeCloseTo(0.3, 9);
+    expect(b.remaining).toBeCloseTo(0.7, 9);
+    b.consume({ queryDescription: 'q2', epsilon: 0.4 });
+    expect(b.spent).toBeCloseTo(0.7, 9);
+    expect(b.remaining).toBeCloseTo(0.3, 9);
+  });
+
+  it('throws when a consume would exceed the cap', () => {
+    const b = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    b.consume({ queryDescription: 'q1', epsilon: 0.8 });
+    expect(() => b.consume({ queryDescription: 'q2', epsilon: 0.3 }))
+      .toThrow(/would push cumulative/);
+    // Spent did NOT advance on the failed consume.
+    expect(b.spent).toBeCloseTo(0.8, 9);
+  });
+
+  it('records a log entry per successful consume', () => {
+    const b = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 2.0 });
+    b.consume({ queryDescription: 'q1', epsilon: 0.5 });
+    b.consume({ queryDescription: 'q2', epsilon: 0.5 });
+    expect(b.log.length).toBe(2);
+    expect(b.log[0]!.queryDescription).toBe('q1');
+    expect(b.log[1]!.queryDescription).toBe('q2');
+    expect(b.log[0]!.epsilon).toBe(0.5);
+  });
+
+  it('canAfford preflight does not consume', () => {
+    const b = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    b.consume({ queryDescription: 'q1', epsilon: 0.5 });
+    expect(b.canAfford(0.4)).toBe(true);
+    expect(b.canAfford(0.6)).toBe(false);
+    expect(b.spent).toBeCloseTo(0.5, 9); // unchanged by canAfford
+  });
+
+  it('serializes + rehydrates losslessly', () => {
+    const b = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    b.consume({ queryDescription: 'persisted', epsilon: 0.25 });
+    const snap = b.toJSON();
+    const b2 = EpsilonBudget.fromJSON(snap);
+    expect(b2.spent).toBeCloseTo(0.25, 9);
+    expect(b2.remaining).toBeCloseTo(0.75, 9);
+    expect(b2.log.length).toBe(1);
+    expect(b2.log[0]!.queryDescription).toBe('persisted');
+  });
+
+  it('buildAttestedHomomorphicSum consumes ε from a supplied budget', () => {
+    const budget = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://p1/', value: 5n, bounds: { min: 0n, max: 10n }, blindingSeed: 'p1', blindingLabel: 'l' }),
+      buildCommittedContribution({ contributorPodUrl: 'https://p2/', value: 5n, bounds: { min: 0n, max: 10n }, blindingSeed: 'p2', blindingLabel: 'l' }),
+    ];
+    buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 0.5,
+      epsilonBudget: budget,
+      queryDescription: 'first-aggregate',
+    });
+    expect(budget.spent).toBeCloseTo(0.5, 9);
+    expect(budget.log[0]!.queryDescription).toBe('first-aggregate');
+  });
+
+  it('buildAttestedHomomorphicSum REFUSES to run if the budget would be exhausted', () => {
+    const budget = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 0.5 });
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://p1/', value: 5n, bounds: { min: 0n, max: 10n }, blindingSeed: 'p1', blindingLabel: 'l' }),
+    ];
+    // First query at 0.4 fits; second at 0.2 would exceed cap.
+    buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 0.4, epsilonBudget: budget,
+    });
+    expect(() => buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 0.2, epsilonBudget: budget,
+    })).toThrow(/would push cumulative/);
+    // The budget recorded the failed attempt's check but not the
+    // spend (consume throws before incrementing).
+    expect(budget.spent).toBeCloseTo(0.4, 9);
+    expect(budget.log.length).toBe(1);
   });
 });
