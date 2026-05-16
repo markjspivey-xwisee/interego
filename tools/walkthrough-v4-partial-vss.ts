@@ -49,6 +49,9 @@ import {
   reconstructThresholdRevealAndVerify,
   signCommitteeReconstruction,
   verifyCommitteeReconstruction,
+  signCommitteeAuthorization,
+  verifyCommitteeAuthorization,
+  verifyCommitteeMatchesAuthorization,
   encryptSharesForCommittee,
   decryptShareForRecipient,
   type CommitteeReconstructionAttestation,
@@ -139,7 +142,22 @@ async function main(): Promise<void> {
     ok(`Member ${i}: ${dids[i]!.slice(0, 32)}… (X25519 pub ${encKeyPairs[i]!.publicKey.slice(0, 16)}…)`);
   }
 
-  step(1, 'Operator encrypts each share for its recipient via X25519/nacl envelopes');
+  step(1, 'Operator signs CommitteeAuthorization BEFORE distributing shares (pre-reveal binding)');
+  const operatorWallet = await createWallet('agent', 'walkthrough-operator');
+  const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
+  const authorization = await signCommitteeAuthorization({
+    bundleSumCommitment: bundle.sumCommitment.bytes,
+    authorizedDids: dids,
+    threshold: { n: 5, t: 3 },
+    operatorDid,
+    operatorWallet: operatorWallet as unknown as Wallet,
+  });
+  const authCheck = verifyCommitteeAuthorization({ authorization });
+  ok(`Operator ${operatorDid.slice(0, 32)}… signed authorization (verifies: ${authCheck.valid})`);
+  ok(`Authorized committee: 5 DIDs, threshold (n=5, t=3)`);
+  ok(`The regulator will cross-check the actual reveal committee against this authorization.`);
+
+  step(2, 'Operator encrypts each share for its recipient via X25519/nacl envelopes');
   const senderKeyPair = generateKeyPair();
   const distributions = encryptSharesForCommittee({
     shares: bundle.thresholdShares!,
@@ -148,7 +166,7 @@ async function main(): Promise<void> {
   });
   ok(`${distributions.length} encrypted share envelopes produced (one per recipient)`);
 
-  step(2, 'Each pseudo-aggregator decrypts their own share (and ONLY their own)');
+  step(3, 'Each pseudo-aggregator decrypts their own share (and ONLY their own)');
   const decryptedShares = distributions.map((dist, i) => {
     const share = decryptShareForRecipient({ distribution: dist, recipientKeyPair: encKeyPairs[i]! });
     if (share === null) throw new Error(`Member ${i} failed to decrypt their share`);
@@ -158,7 +176,7 @@ async function main(): Promise<void> {
     ok(`Member ${i} decrypted share x=${decryptedShares[i]!.x} (y bigint preserved)`);
   }
 
-  step(3, 'Cross-decrypt attempt: member 0 tries to read member 1\'s envelope');
+  step(4, 'Cross-decrypt attempt: member 0 tries to read member 1\'s envelope');
   const crossAttempt = decryptShareForRecipient({ distribution: distributions[1]!, recipientKeyPair: encKeyPairs[0]! });
   ok(`Cross-decrypt rejected: ${crossAttempt === null ? 'YES (no wrapped key for member 0)' : 'NO (BUG)'}`);
 
@@ -223,9 +241,15 @@ async function main(): Promise<void> {
   ok('Every signature recovers an address inside its claimed memberDid');
   ok(`Recovered addresses: ${auditResult.recoveredAddresses!.length}`);
   ok('No committee member silently dropped; no outsider signature');
+
+  step(1, 'Cross-check: actual reveal committee MATCHES the operator\'s earlier authorization');
+  const cross = verifyCommitteeMatchesAuthorization({ authorization, attestation });
+  ok(`Cross-check valid: ${cross.valid} (every reveal-committee member appears in the authorized list; bundleSumCommitment matches)`);
   info('In a real deployment, the operator would now call:');
-  info('  publishCommitteeReconstructionAttestation({ attestation, podUrl })');
-  info('and the auditor would fetch it back via:');
+  info('  publishCommitteeAuthorization({ authorization, podUrl })   // BEFORE distributing shares');
+  info('  publishCommitteeReconstructionAttestation({ attestation, podUrl })   // AFTER reveal');
+  info('and the auditor would fetch both back via:');
+  info('  fetchPublishedCommitteeAuthorization({ graphUrl })');
   info('  fetchPublishedCommitteeReconstructionAttestation({ graphUrl })');
 
   // ────────────────────────────────────────────────────────────────
@@ -253,9 +277,10 @@ async function main(): Promise<void> {
   header('Walkthrough complete');
   info('Every primitive composed cleanly:');
   info('  Pedersen commit → homomorphic sum → DP noise → Shamir split');
-  info('  → Feldman VSS commitments → X25519/nacl share encryption');
-  info('  → per-recipient decryption → committee reconstruction');
-  info('  → chain-of-custody attestation → auditor verification');
+  info('  → Feldman VSS commitments → operator-signed committee authorization');
+  info('  → X25519/nacl share encryption → per-recipient decryption');
+  info('  → committee reconstruction → chain-of-custody attestation');
+  info('  → cross-check vs authorization → auditor verification');
   info('No new ontology terms introduced; all building blocks pre-existed in src/crypto/.');
   console.log();
 }
