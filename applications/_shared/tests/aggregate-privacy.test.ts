@@ -28,6 +28,9 @@ import {
   participationGraphIri,
   buildAttestedAggregateResult,
   verifyAttestedAggregateResult,
+  buildCommittedContribution,
+  buildAttestedHomomorphicSum,
+  verifyAttestedHomomorphicSum,
   type ParticipationHit,
 } from '../aggregate-privacy/index.js';
 import type { IRI } from '../../../src/index.js';
@@ -184,5 +187,135 @@ describe('aggregate-privacy v2: verifyAttestedAggregateResult REJECTS cheats', (
     const r = verifyAttestedAggregateResult(cheating);
     expect(r.valid).toBe(false);
     expect(r.reason).toMatch(/different Merkle root|failed verification/);
+  });
+});
+
+describe('aggregate-privacy v3: homomorphic Pedersen sum + DP-Laplace noise', () => {
+  const bounds = { min: 0n, max: 100n };
+  const mkContrib = (slug: string, value: bigint) => buildCommittedContribution({
+    contributorPodUrl: `https://${slug}.example/pod/`,
+    value,
+    bounds,
+    blindingSeed: `seed-${slug}`,
+    blindingLabel: 'pedersen/contribution',
+  });
+
+  it('buildAttestedHomomorphicSum sums commitments without revealing individuals', () => {
+    const contribs = [mkContrib('alice', 70n), mkContrib('bob', 80n), mkContrib('carol', 95n)];
+    const bundle = buildAttestedHomomorphicSum({
+      cohortIri: COHORT,
+      aggregatorDid: AGGREGATOR,
+      contributions: contribs,
+      epsilon: 1.0,
+      includeAuditFields: true,
+    });
+    expect(bundle.privacyMode).toBe('zk-aggregate');
+    expect(bundle.contributorCount).toBe(3);
+    expect(bundle.trueSum).toBe(70n + 80n + 95n);
+    expect(bundle.noisySum).toBe(bundle.trueSum! + BigInt(bundle.noise));
+    expect(bundle.sensitivity).toBe(100); // bounds.max - bounds.min
+    expect(bundle.epsilon).toBe(1.0);
+  });
+
+  it('verifyAttestedHomomorphicSum accepts an honest bundle (audit fields)', () => {
+    const contribs = [mkContrib('p1', 10n), mkContrib('p2', 20n)];
+    const bundle = buildAttestedHomomorphicSum({
+      cohortIri: COHORT,
+      aggregatorDid: AGGREGATOR,
+      contributions: contribs,
+      epsilon: 0.5,
+      includeAuditFields: true,
+    });
+    const r = verifyAttestedHomomorphicSum(bundle);
+    expect(r.valid).toBe(true);
+  });
+
+  it('verifyAttestedHomomorphicSum accepts an honest bundle (no audit fields, structural-only)', () => {
+    const contribs = [mkContrib('p1', 10n), mkContrib('p2', 20n)];
+    const bundle = buildAttestedHomomorphicSum({
+      cohortIri: COHORT,
+      aggregatorDid: AGGREGATOR,
+      contributions: contribs,
+      epsilon: 0.5,
+      includeAuditFields: false,
+    });
+    const r = verifyAttestedHomomorphicSum(bundle);
+    expect(r.valid).toBe(true);
+  });
+
+  it('REJECTS aggregator substituting a different sumCommitment', () => {
+    const contribs = [mkContrib('p1', 10n), mkContrib('p2', 20n)];
+    const honest = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR, contributions: contribs, epsilon: 1.0,
+    });
+    // Swap in a sum-commitment from a different contributor set.
+    const decoy = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [mkContrib('x', 1n), mkContrib('y', 2n)],
+      epsilon: 1.0,
+    });
+    const cheating = { ...honest, sumCommitment: decoy.sumCommitment };
+    const r = verifyAttestedHomomorphicSum(cheating);
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/sumCommitment does not equal/);
+  });
+
+  it('REJECTS bundle whose trueSum does not open the sumCommitment', () => {
+    const contribs = [mkContrib('p1', 30n), mkContrib('p2', 40n)];
+    const honest = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR, contributions: contribs,
+      epsilon: 1.0, includeAuditFields: true,
+    });
+    const cheating = { ...honest, trueSum: 9999n }; // lie about reconstructed sum
+    const r = verifyAttestedHomomorphicSum(cheating);
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/does not open/);
+  });
+
+  it('REJECTS bundle whose noisySum is inconsistent with trueSum + noise', () => {
+    const contribs = [mkContrib('p1', 5n), mkContrib('p2', 5n)];
+    const honest = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR, contributions: contribs,
+      epsilon: 1.0, includeAuditFields: true,
+    });
+    const cheating = { ...honest, noisySum: honest.noisySum + 1000n };
+    const r = verifyAttestedHomomorphicSum(cheating);
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/noisySum/);
+  });
+
+  it('buildCommittedContribution REJECTS values outside declared bounds', () => {
+    expect(() => buildCommittedContribution({
+      contributorPodUrl: 'https://x.example/',
+      value: 200n,
+      bounds: { min: 0n, max: 100n },
+      blindingSeed: 's', blindingLabel: 'l',
+    })).toThrow(/outside declared bounds/);
+  });
+
+  it('REJECTS contributors with mismatched bounds (sensitivity invariant)', () => {
+    const a = buildCommittedContribution({
+      contributorPodUrl: 'https://a/', value: 5n,
+      bounds: { min: 0n, max: 100n }, blindingSeed: 'a', blindingLabel: 'l',
+    });
+    const b = buildCommittedContribution({
+      contributorPodUrl: 'https://b/', value: 5n,
+      bounds: { min: 0n, max: 200n }, blindingSeed: 'b', blindingLabel: 'l',
+    });
+    expect(() => buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [a, b], epsilon: 1.0,
+    })).toThrow(/disagree on bounds/);
+  });
+
+  it('REJECTS invalid epsilon / sensitivity at verify time', () => {
+    const contribs = [mkContrib('p1', 10n), mkContrib('p2', 20n)];
+    const bundle = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR, contributions: contribs, epsilon: 1.0,
+    });
+    const badE = { ...bundle, epsilon: 0 };
+    expect(verifyAttestedHomomorphicSum(badE).valid).toBe(false);
+    const badS = { ...bundle, sensitivity: -1 };
+    expect(verifyAttestedHomomorphicSum(badS).valid).toBe(false);
   });
 });

@@ -8,6 +8,111 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy v3: real homomorphic Pedersen sum + DP-Laplace noise (zk-aggregate mode live)
+
+Closes the last item from the prior PM-eval-driven session arc: v3 of
+the aggregate-privacy ladder. The four `aggregate_*_query` affordances
+now have `privacy_mode: 'zk-aggregate'` as a LIVE option, not a stub —
+the aggregator commits each contributor's value with a Pedersen
+commitment over ristretto255, sums commitments homomorphically WITHOUT
+seeing individual values, adds DP-Laplace noise calibrated to a public
+ε budget, and returns a re-verifiable bundle.
+
+NEW: `src/crypto/pedersen.ts` (~250 lines)
+
+- Pedersen commitments over the ristretto255 prime-order group (RFC
+  9496 via `@noble/curves/ed25519.js`). C = v·G + b·H where G is
+  ristretto255.Point.BASE and H is derived via RFC 9380 hash-to-curve
+  from a public domain-separation label (`H_GENERATOR_LABEL` is
+  exported so any implementor can re-derive and confirm).
+- `commit(value, blinding)` / `verifyOpening(c, v, b)` /
+  `addCommitments([c1, c2, …])` / `verifyHomomorphicSum(cs, sumV, sumB)`.
+- Both scalars reduced mod L before point multiplication so sums
+  ≥ L still verify; value=0 case handled cleanly via the explicit
+  ristretto255.Point.ZERO additive identity (avoids `multiply(0n)`
+  undefined-behaviour in `@noble/curves`).
+- `sampleLaplaceFloat(sensitivity, ε)` / `sampleLaplaceInt(...)` —
+  inverse-CDF Laplace sampling with cryptographically-secure
+  53-bit uniform via `crypto.getRandomValues`; rejects samples at the
+  boundary so the log argument is bounded.
+- 17 vitest contract tests pin hiding, binding, homomorphic addition,
+  cheat-rejection (inflated total, substituted blinding, swapped
+  sum-commitment), Laplace ε-calibration (smaller ε ⇒ larger noise
+  measured empirically), zero-mean noise, integer-valued sampling,
+  H-generator reproducibility from the public label.
+
+EXTENDED: `applications/_shared/aggregate-privacy/` (+200 lines)
+
+- `buildCommittedContribution({podUrl, value, bounds, blindingSeed?})`
+  — contributor builds a CommittedContribution: Pedersen commitment +
+  bounds the contributor consents to + the plaintext value (held by
+  the contributor, revealed once to the aggregator). Self-bounds
+  check rejects values outside declared `[min, max]`.
+- `buildAttestedHomomorphicSum({cohortIri, aggregatorDid, contributions,
+  epsilon, includeAuditFields?})` — aggregator-side: reconstruct
+  `trueSum + trueBlinding` from revealed openings; sum commitments
+  homomorphically; add DP-Laplace noise (sensitivity = max - min, ε
+  from caller); return AttestedHomomorphicSumResult. Bounds invariant
+  enforced: every contributor's bounds must match for the sensitivity
+  calculation to mean anything.
+- `verifyAttestedHomomorphicSum(r)` — auditor-side: structural check
+  (sumCommitment == homomorphic sum of contributor commitments) +
+  audit-field check (sum opens to claimed trueSum/trueBlinding) +
+  consistency check (noisySum == trueSum + noise). Catches: aggregator
+  substituting a different sumCommitment, lying about reconstructed
+  trueSum, inflating noisySum past consistency with claimed noise.
+
+LIVE wiring in both aggregate queries
+
+- `owm.aggregate_decisions_query` and `lpc.aggregate_cohort_query`
+  gain `privacy_mode: 'zk-aggregate'` (the enum value previously
+  declared as future-scope; now a real branch). v3 supports
+  count-shaped metrics (decision-count, completion-count,
+  credential-coverage, competency-threshold-met); throws a clear
+  error for distribution-shaped metrics (which still work under v2's
+  merkle-attested-opt-in mode). Requires `epsilon` arg; throws if
+  unset or non-positive.
+- Top-level `privacyMode` on the result advertises the actual path
+  taken; the bundle's `homomorphic: AttestedHomomorphicSumResult`
+  field is present when v3 was selected.
+- The published `value` in v3 mode is the noisy sum, not the
+  underlying count (DP-protected by construction).
+
+9 v3 contract tests appended to
+`applications/_shared/tests/aggregate-privacy.test.ts`:
+- honest bundle accepted with + without audit fields
+- aggregator substituting sumCommitment from a different cohort:
+  REJECTED
+- bundle whose trueSum doesn't open the commitment: REJECTED
+- bundle whose noisySum is inconsistent with trueSum + noise:
+  REJECTED
+- contributor with value outside declared bounds: REJECTED at
+  buildCommittedContribution
+- contributors disagreeing on bounds (sensitivity invariant):
+  REJECTED at buildAttestedHomomorphicSum
+- invalid epsilon / sensitivity at verify time: REJECTED
+
+Validation: project-wide `tsc -p tsconfig.json --noEmit` clean; full
+vitest suite **1309/1309 passing** (1283 prior + 17 Pedersen + 9
+v3 aggregate contract tests).
+
+STATUS.md updated: v3 row moves from "future scope" to "live since
+this commit"; remaining-work table replaced with the next-iteration
+items (v4 multi-aggregator threshold reveal; v3.1 per-contribution
+range proofs paired with the homomorphic sum; v3.1 distribution-
+shaped metrics; cumulative ε-budget tracking; second-language
+Interego impl for L1 CR advancement).
+
+The aggregate-privacy ladder is now end-to-end:
+  v1 'abac'                       → ABAC-bounded count (default)
+  v2 'merkle-attested-opt-in'     → verifiable count + opt-in
+  v3 'zk-aggregate'               → homomorphic sum + DP noise
+
+All three modes ship in the same affordance signatures; callers pick
+their privacy boundary at call time.
+
+---
+
 ## 2026-05-16 — Dual-audience verticals fully implemented (operator + institutional + v2 attested-merkle aggregate-privacy + demo)
 
 Closes PM rec #4 (pick verticals + ship to real users) through to

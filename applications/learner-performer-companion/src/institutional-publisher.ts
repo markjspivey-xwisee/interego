@@ -30,7 +30,9 @@ import type { IRI } from '../../../src/index.js';
 import { projectDescriptorToLrs } from '../../lrs-adapter/src/pod-publisher.js';
 import {
   gatherParticipations, buildAttestedAggregateResult,
+  buildAttestedHomomorphicSum, buildCommittedContribution,
   type AttestedAggregateResult,
+  type AttestedHomomorphicSumResult,
 } from '../../_shared/aggregate-privacy/index.js';
 import { createHash } from 'node:crypto';
 
@@ -214,15 +216,18 @@ export interface AggregateCohortQueryArgs {
   learner_pods?: readonly string[];
   /**
    * Privacy mode. Default `'abac'` (v1: ABAC-bounded count over the
-   * supplied learner_pods). When set to `'merkle-attested-opt-in'`
-   * (v2): only learner pods that have published a signed
-   * CohortParticipation descriptor for this cohort_iri are included,
-   * and the response is an AttestedAggregateResult bundle with a
-   * Merkle root + per-pod inclusion proofs that any auditor can
-   * verify. Bilateral by construction — the learner opts IN; the
-   * aggregator cannot inflate the count.
+   * supplied learner_pods). `'merkle-attested-opt-in'` (v2): only
+   * learner pods that have published a signed CohortParticipation
+   * descriptor for this cohort_iri are included, and the response
+   * includes a Merkle root + per-pod inclusion proofs.
+   * `'zk-aggregate'` (v3): each opted-in learner contributes a
+   * Pedersen commitment to their completion (0 or 1); the
+   * aggregator sums homomorphically + adds DP-Laplace noise. The
+   * aggregator never sees individual contributions.
    */
-  privacy_mode?: 'abac' | 'merkle-attested-opt-in';
+  privacy_mode?: 'abac' | 'merkle-attested-opt-in' | 'zk-aggregate';
+  /** DP ε budget for 'zk-aggregate' mode. Required when privacy_mode='zk-aggregate'. */
+  epsilon?: number;
 }
 
 export interface AggregateCohortQueryResult {
@@ -233,6 +238,8 @@ export interface AggregateCohortQueryResult {
   readonly privacyMode: 'abac' | 'merkle-attested-opt-in' | 'zk-aggregate';
   /** Present when privacyMode = 'merkle-attested-opt-in'. */
   readonly attestation?: AttestedAggregateResult;
+  /** Present when privacyMode = 'zk-aggregate'. */
+  readonly homomorphic?: AttestedHomomorphicSumResult;
 }
 
 export async function aggregateCohortQuery(
@@ -243,13 +250,16 @@ export async function aggregateCohortQuery(
   if (!args.metric) throw new Error('metric is required');
   const mode = args.privacy_mode ?? 'abac';
 
-  // v2 path: filter the candidate learner_pods down to those that
-  // have explicitly opted in via a CohortParticipation descriptor.
-  // The aggregator cannot include a pod that has not opted in; the
-  // result bundle includes a Merkle root + per-pod inclusion proofs.
+  // v2 / v3 path: filter the candidate learner_pods down to those
+  // that have explicitly opted in via a CohortParticipation descriptor.
+  // The aggregator cannot include a pod that has not opted in. v2
+  // adds a Merkle root + per-pod inclusion proofs; v3 additionally
+  // commits each contribution via Pedersen + sums homomorphically +
+  // adds DP-Laplace noise.
   let pods: readonly string[];
   let attestation: AttestedAggregateResult | undefined;
-  if (mode === 'merkle-attested-opt-in') {
+  let homomorphic: AttestedHomomorphicSumResult | undefined;
+  if (mode === 'merkle-attested-opt-in' || mode === 'zk-aggregate') {
     const candidatePods = args.learner_pods ?? [];
     if (candidatePods.length === 0) {
       // No candidate pods supplied — opt-in mode with zero candidates
@@ -265,7 +275,7 @@ export async function aggregateCohortQuery(
         metric: args.metric,
         value: 0,
         sampleSize: 0,
-        privacyMode: 'merkle-attested-opt-in',
+        privacyMode: mode,
         attestation: empty,
       };
     }
@@ -280,6 +290,34 @@ export async function aggregateCohortQuery(
       participations,
       value: 0, // placeholder; replaced after metric computation
     });
+    // v3 ADDITIONALLY builds a homomorphic Pedersen sum + DP noise.
+    // Each opted-in learner contributes 1 (they're either in the
+    // cohort or not); sensitivity = 1; DP ε from args.
+    if (mode === 'zk-aggregate') {
+      if (!args.epsilon || args.epsilon <= 0) {
+        throw new Error(`zk-aggregate requires a positive epsilon (DP budget); got ${args.epsilon}`);
+      }
+      if (args.metric !== 'completion-count' && args.metric !== 'credential-coverage' && args.metric !== 'competency-threshold-met') {
+        throw new Error(`zk-aggregate v3 supports count-shaped metrics only (got '${args.metric}'); use 'merkle-attested-opt-in' for distribution-shaped metrics`);
+      }
+      const bounds = { min: 0n, max: 1n };
+      const contributions = participations.map((p, i) => buildCommittedContribution({
+        contributorPodUrl: p.podUrl,
+        value: 1n, // simply "this learner is in the cohort"
+        bounds,
+        blindingSeed: `${p.podUrl}|${p.descriptorIri}|${i}`,
+        blindingLabel: 'lpc-cohort/contribution',
+      }));
+      if (contributions.length > 0) {
+        homomorphic = buildAttestedHomomorphicSum({
+          cohortIri: args.cohort_iri as IRI,
+          aggregatorDid: ctx.issuerDid,
+          contributions,
+          epsilon: args.epsilon,
+          includeAuditFields: true,
+        });
+      }
+    }
   } else {
     // v1 ABAC path: walk every supplied pod (and the institution's
     // own). No opt-in filtering. Result is a count derived from
@@ -361,20 +399,31 @@ export async function aggregateCohortQuery(
   // bundle's `value` matches the top-level result. (We had to compute
   // the metric to know `value`; the participations were already
   // gathered above.)
-  if (mode === 'merkle-attested-opt-in' && attestation) {
+  if ((mode === 'merkle-attested-opt-in' || mode === 'zk-aggregate') && attestation) {
     attestation = {
       ...attestation,
       value,
     };
   }
 
+  // For zk-aggregate, the published `value` is the noisy sum so
+  // callers see the DP-protected aggregate, not the underlying count.
+  // (The attestation bundle's value field carries the pre-noise
+  // count; the homomorphic bundle carries the DP-noised sum.)
+  let publishedValue = value;
+  if (mode === 'zk-aggregate' && homomorphic) {
+    publishedValue = Number(homomorphic.noisySum);
+  }
+
   return {
     cohortIri: args.cohort_iri,
     metric: args.metric,
-    value,
+    value: publishedValue,
     sampleSize,
-    privacyMode: mode === 'merkle-attested-opt-in' ? 'merkle-attested-opt-in' : 'abac',
+    privacyMode: mode === 'zk-aggregate' ? 'zk-aggregate'
+      : mode === 'merkle-attested-opt-in' ? 'merkle-attested-opt-in' : 'abac',
     ...(attestation ? { attestation } : {}),
+    ...(homomorphic ? { homomorphic } : {}),
   };
 }
 

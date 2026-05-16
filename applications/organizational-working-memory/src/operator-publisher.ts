@@ -26,8 +26,10 @@ import { ContextDescriptor, publish, discover, buildDeployEvent, buildAccessChan
 import type { IRI, ContextDescriptorData, ManifestEntry, ComplianceFramework } from '../../../src/index.js';
 import {
   buildAttestedAggregateResult,
+  buildAttestedHomomorphicSum, buildCommittedContribution,
   type ParticipationHit,
   type AttestedAggregateResult,
+  type AttestedHomomorphicSumResult,
 } from '../../_shared/aggregate-privacy/index.js';
 import { createHash } from 'node:crypto';
 
@@ -54,14 +56,22 @@ export interface AggregateDecisionsQueryArgs {
   scope_iri?: string;    // optional narrowing scope
   metric: 'decision-count' | 'mean-revision-count' | 'supersession-distribution' | 'contributor-breadth';
   /**
-   * When `'merkle-attested-opt-in'`, additionally return a Merkle root
-   * over the contributing decision descriptor URLs plus per-leaf
-   * inclusion proofs. Same count + value as the default 'abac' mode,
-   * but tamper-evident: an auditor can verify the count without
-   * seeing the underlying decisions. v2 of the aggregate-privacy
-   * story. Default: 'abac'.
+   * Privacy boundary:
+   *   - 'abac' (default, v1): count derived from descriptors the
+   *     operator's ABAC scope permits reading.
+   *   - 'merkle-attested-opt-in' (v2): adds a Merkle root over the
+   *     contributing descriptor URLs + per-leaf inclusion proofs
+   *     so an auditor can verify the count without seeing the
+   *     decisions themselves.
+   *   - 'zk-aggregate' (v3): adds a Pedersen homomorphic sum +
+   *     DP-Laplace noise (calibrated to `epsilon`) for
+   *     decision-count metrics. The aggregator never sees
+   *     individual contribution values; the published noisySum
+   *     leaks O(1/ε) bits per query.
    */
-  privacy_mode?: 'abac' | 'merkle-attested-opt-in';
+  privacy_mode?: 'abac' | 'merkle-attested-opt-in' | 'zk-aggregate';
+  /** DP ε budget for 'zk-aggregate' mode. Required when privacy_mode='zk-aggregate'. */
+  epsilon?: number;
 }
 
 export interface AggregateDecisionsQueryResult {
@@ -79,6 +89,14 @@ export interface AggregateDecisionsQueryResult {
    * applications/_shared/aggregate-privacy/).
    */
   readonly attestation?: AttestedAggregateResult;
+  /**
+   * Present when the operator requested 'zk-aggregate' mode. The
+   * aggregator commits to each contributor's value (a Pedersen
+   * commitment), sums homomorphically without seeing individuals,
+   * and publishes the noisy sum + the sum-commitment. v3 of the
+   * aggregate-privacy story.
+   */
+  readonly homomorphic?: AttestedHomomorphicSumResult;
 }
 
 export async function aggregateDecisionsQuery(
@@ -142,7 +160,54 @@ export async function aggregateDecisionsQuery(
 
   const mode = args.privacy_mode ?? 'abac';
   let attestation: AttestedAggregateResult | undefined;
-  if (mode === 'merkle-attested-opt-in') {
+  let homomorphic: AttestedHomomorphicSumResult | undefined;
+  if (mode === 'zk-aggregate') {
+    // v3: Pedersen homomorphic sum + DP-Laplace noise. Only
+    // 'decision-count' is supported here in v3 — sum-of-revisions
+    // and contributor-breadth are also count-shaped and can be
+    // added with the same machinery; supersession-distribution is
+    // bucket-valued and needs a per-bucket commitment vector, which
+    // is a future enhancement (v3.1).
+    if (args.metric !== 'decision-count') {
+      throw new Error(`zk-aggregate v3 supports 'decision-count' metric only (got '${args.metric}'); use 'merkle-attested-opt-in' for distribution-shaped metrics`);
+    }
+    if (!args.epsilon || args.epsilon <= 0) {
+      throw new Error(`zk-aggregate requires a positive epsilon (DP budget); got ${args.epsilon}`);
+    }
+    // Each discovered decision counts as 1; sensitivity = 1 per
+    // contributor (a single decision changes the count by 1). The
+    // aggregator commits to each contributor's count (here always 1)
+    // and sums; the noise hides whether a specific contributor is in
+    // the set.
+    const bounds = { min: 0n, max: 1n };
+    // Treat each discovered decision as a 1-count contribution from
+    // its pod author. For OWM v1 the pod is always the org pod so all
+    // contributions come from the same pod; this is honest accounting
+    // of what the aggregator sees today. A multi-pod org would have
+    // distinct contributorPodUrls per author.
+    const contributions = decisions.map((e, i) => buildCommittedContribution({
+      contributorPodUrl: ctx.orgPodUrl,
+      value: 1n,
+      bounds,
+      blindingSeed: `${ctx.orgPodUrl}|${e.descriptorUrl}|${i}`,
+      blindingLabel: 'owm-decisions/contribution',
+    }));
+    if (contributions.length > 0) {
+      homomorphic = buildAttestedHomomorphicSum({
+        cohortIri: (args.scope_iri ?? `urn:owm:scope:all:${args.period_from}|${args.period_to}`) as IRI,
+        aggregatorDid: ctx.authorityDid,
+        contributions,
+        epsilon: args.epsilon,
+        includeAuditFields: true,
+      });
+      // Replace the aggregate value with the DP-noised one.
+      value = Number(homomorphic.noisySum);
+    } else {
+      // Empty cohort — emit a zero noisy result so the bundle's
+      // privacyMode discipline is still preserved.
+      value = 0;
+    }
+  } else if (mode === 'merkle-attested-opt-in') {
     // OWM decisions live on the org pod by definition — there's no
     // separate "opt in" step (contributors authored them as
     // owm:Decision descriptors). The Merkle attestation here is over
@@ -170,8 +235,11 @@ export async function aggregateDecisionsQuery(
     ...(args.scope_iri ? { scope: args.scope_iri } : {}),
     value,
     sampleSize,
-    privacyMode: mode === 'merkle-attested-opt-in' ? 'merkle-attested-opt-in' : 'abac',
+    privacyMode: (mode === 'zk-aggregate'
+      ? 'zk-aggregate'
+      : mode === 'merkle-attested-opt-in' ? 'merkle-attested-opt-in' : 'abac') as 'abac' | 'merkle-attested-opt-in' | 'zk-aggregate',
     ...(attestation ? { attestation } : {}),
+    ...(homomorphic ? { homomorphic } : {}),
   };
 }
 

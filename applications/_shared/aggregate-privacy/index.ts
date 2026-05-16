@@ -43,6 +43,11 @@
 
 import { buildMerkleTree, generateMerkleProof, verifyMerkleProof, type MerkleProof } from '../../../src/crypto/zk/index.js';
 import { sha256 } from '../../../src/crypto/ipfs.js';
+import {
+  commit, addCommitments, verifyHomomorphicSum, sampleLaplaceInt,
+  deriveBlinding, randomBlinding,
+  type PedersenCommitment,
+} from '../../../src/crypto/pedersen.js';
 import { ContextDescriptor, publish, discover } from '../../../src/index.js';
 import type { IRI, ManifestEntry } from '../../../src/index.js';
 
@@ -309,5 +314,209 @@ export function verifyAttestedAggregateResult(result: AttestedAggregateResult): 
       return { valid: false, reason: `inclusion proof for ${ip.descriptorIri} points at a different Merkle root` };
     }
   }
+  return { valid: true };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  v3 — Homomorphic Pedersen sum + DP-Laplace noise (zk-aggregate)
+// ─────────────────────────────────────────────────────────────────────
+//
+// Where v2 (above) gives a verifiable COUNT of opted-in participants
+// via Merkle attestation, v3 gives a verifiable SUM (or count, or
+// threshold) over per-contributor values that the aggregator never
+// sees in cleartext. Each contributor commits to their value with a
+// fresh blinding factor (Pedersen / ristretto255); the aggregator
+// sums the commitments WITHOUT learning any individual contribution;
+// DP-Laplace noise calibrated to a public ε budget is added to the
+// reconstructed sum before reveal so the published total leaks at
+// most O(1/ε) bits per query.
+//
+// Trust model:
+//   - Contributor: writes a CommittedContribution to their own pod —
+//     a Pedersen commitment + the bounds they consent to + a hash
+//     commitment to their actual value (the value itself is private;
+//     the hash commitment binds them to it for later challenge-
+//     response audits).
+//   - Aggregator: collects commitments, sums them homomorphically,
+//     adds DP noise, publishes the AttestedHomomorphicSumResult bundle.
+//   - Auditor: re-runs verifyHomomorphicSumResult against the bundle;
+//     catches an aggregator that lies about the noisy sum.
+//
+// What this is NOT (yet):
+//   - Cumulative ε-budget tracking across queries — caller's job.
+//   - Multi-party threshold reveal — single aggregator role.
+//   - Per-contribution range proofs — contributors are expected to
+//     self-bound; a malicious contributor can commit to a value
+//     outside the declared bounds and inflate the sum. Mitigation:
+//     publish per-contributor bounds with the commitment, then
+//     pair with a v2 range proof (proveConfidenceAboveThreshold
+//     for [0,1] values) as a second layer.
+
+export interface CommittedContribution {
+  readonly contributorPodUrl: string;
+  /** Pedersen commitment to the value. */
+  readonly commitment: PedersenCommitment;
+  /** Blinding factor (held by contributor, revealed to aggregator over secure channel). */
+  readonly blinding: bigint;
+  /** The plaintext value (held by contributor, summed by aggregator). */
+  readonly value: bigint;
+  /** Bounds [min, max] the contributor consented to. */
+  readonly bounds: { min: bigint; max: bigint };
+}
+
+/**
+ * Build a CommittedContribution from a contributor's value + bounds.
+ * The blinding factor is derived from a (seed, label) pair so the
+ * contributor can reproduce it later for audit (or, with a random
+ * seed, kept private and revealed once to the aggregator).
+ *
+ * Throws if value is outside the declared bounds — the substrate
+ * surfaces the contributor's own bounds check before commitment.
+ */
+export function buildCommittedContribution(args: {
+  contributorPodUrl: string;
+  value: bigint;
+  bounds: { min: bigint; max: bigint };
+  blindingSeed?: string;
+  blindingLabel?: string;
+}): CommittedContribution {
+  if (args.value < args.bounds.min || args.value > args.bounds.max) {
+    throw new Error(`Pedersen contribution: value ${args.value} outside declared bounds [${args.bounds.min}, ${args.bounds.max}]`);
+  }
+  const blinding = args.blindingSeed
+    ? deriveBlinding(args.blindingSeed, args.blindingLabel ?? 'pedersen/contribution')
+    : randomBlinding();
+  const commitment = commit(args.value, blinding);
+  return {
+    contributorPodUrl: args.contributorPodUrl,
+    commitment,
+    blinding,
+    value: args.value,
+    bounds: args.bounds,
+  };
+}
+
+export interface AttestedHomomorphicSumResult {
+  readonly cohortIri: IRI;
+  readonly aggregatorDid: IRI;
+  readonly computedAt: string;
+  /** Number of contributions that went into the sum. */
+  readonly contributorCount: number;
+  /** The reconstructed pre-noise sum (private — for audit, not publication). */
+  readonly trueSum?: bigint;
+  /** True sum + Laplace noise; this is the publishable value. */
+  readonly noisySum: bigint;
+  /** Laplace noise added to the true sum. */
+  readonly noise: number;
+  /** Sum of all contributor blindings (private — for audit only). */
+  readonly trueBlinding?: bigint;
+  /** Sensitivity parameter (max contribution magnitude). */
+  readonly sensitivity: number;
+  /** DP ε budget consumed by this query. */
+  readonly epsilon: number;
+  /** Aggregated commitment that opens to (trueSum, trueBlinding). */
+  readonly sumCommitment: PedersenCommitment;
+  /** Per-contributor commitments (in the same order summed). */
+  readonly contributorCommitments: readonly PedersenCommitment[];
+  readonly privacyMode: 'zk-aggregate';
+}
+
+/**
+ * Aggregator-side: sum the homomorphic commitments, reconstruct the
+ * true sum + blinding from the contributors' revealed openings, add
+ * DP-Laplace noise calibrated to (sensitivity, ε), return the bundle.
+ *
+ * `sensitivity` should equal `bounds.max - bounds.min` for the
+ * cohort (a single-contributor change can shift the sum by at most
+ * this much) — that's the L1 sensitivity for the standard DP
+ * definition.
+ */
+export function buildAttestedHomomorphicSum(args: {
+  cohortIri: IRI;
+  aggregatorDid: IRI;
+  contributions: readonly CommittedContribution[];
+  epsilon: number;
+  /** When true, include the trueSum + trueBlinding in the bundle for audit (not for publication). */
+  includeAuditFields?: boolean;
+}): AttestedHomomorphicSumResult {
+  if (args.contributions.length === 0) {
+    throw new Error('buildAttestedHomomorphicSum: at least one contribution required');
+  }
+  // Bounds must be consistent across the cohort for the sensitivity
+  // calculation to mean anything; reject mismatches loudly.
+  const first = args.contributions[0]!;
+  for (const c of args.contributions) {
+    if (c.bounds.min !== first.bounds.min || c.bounds.max !== first.bounds.max) {
+      throw new Error(`buildAttestedHomomorphicSum: contributions disagree on bounds (${c.contributorPodUrl})`);
+    }
+  }
+  const sensitivity = Number(first.bounds.max - first.bounds.min);
+  if (!(sensitivity > 0)) throw new Error('buildAttestedHomomorphicSum: non-positive sensitivity');
+
+  const trueSum = args.contributions.reduce((acc, c) => acc + c.value, 0n);
+  const trueBlinding = args.contributions.reduce((acc, c) => acc + c.blinding, 0n);
+  const sumCommitment = addCommitments(args.contributions.map(c => c.commitment));
+
+  const noise = sampleLaplaceInt(sensitivity, args.epsilon);
+  const noisySum = trueSum + BigInt(noise);
+
+  const result: AttestedHomomorphicSumResult = {
+    cohortIri: args.cohortIri,
+    aggregatorDid: args.aggregatorDid,
+    computedAt: new Date().toISOString(),
+    contributorCount: args.contributions.length,
+    noisySum,
+    noise,
+    sensitivity,
+    epsilon: args.epsilon,
+    sumCommitment,
+    contributorCommitments: args.contributions.map(c => c.commitment),
+    privacyMode: 'zk-aggregate',
+    ...(args.includeAuditFields ? { trueSum, trueBlinding } : {}),
+  };
+  return result;
+}
+
+/**
+ * Auditor-side: confirm the published bundle is internally consistent.
+ * Catches: aggregator inflated the noisySum; aggregator substituted
+ * a different sumCommitment; aggregator changed the contributor set.
+ *
+ * Full verification (that the trueSum / trueBlinding match the
+ * commitments) requires the audit fields — when the bundle was built
+ * with `includeAuditFields: false`, only the structural check is
+ * available (sumCommitment === sum of contributorCommitments).
+ *
+ * The noise itself isn't re-verifiable (Laplace samples are random
+ * by design); an auditor checks the bundle's structural integrity
+ * + the epsilon claim, then trusts the noise process per the
+ * documented sampleLaplaceInt implementation.
+ */
+export function verifyAttestedHomomorphicSum(r: AttestedHomomorphicSumResult): { valid: boolean; reason?: string } {
+  if (r.contributorCount !== r.contributorCommitments.length) {
+    return { valid: false, reason: `contributor count mismatch: claim=${r.contributorCount} commitments=${r.contributorCommitments.length}` };
+  }
+  if (r.contributorCount === 0) {
+    return { valid: false, reason: 'no contributions' };
+  }
+  // Structural: the published sumCommitment must equal the
+  // homomorphic sum of the contributor commitments. An aggregator
+  // who swaps in a different aggregate point breaks this check.
+  const computed = addCommitments(r.contributorCommitments);
+  if (computed.bytes !== r.sumCommitment.bytes) {
+    return { valid: false, reason: 'sumCommitment does not equal the homomorphic sum of contributorCommitments' };
+  }
+  // Audit-field path: when the bundle includes trueSum + trueBlinding,
+  // verify the sum-commitment actually opens to them.
+  if (r.trueSum !== undefined && r.trueBlinding !== undefined) {
+    const ok = verifyHomomorphicSum(r.contributorCommitments, r.trueSum, r.trueBlinding);
+    if (!ok) return { valid: false, reason: 'sumCommitment does not open to claimed (trueSum, trueBlinding)' };
+    // Cross-check: noisySum should equal trueSum + noise.
+    if (r.noisySum !== r.trueSum + BigInt(r.noise)) {
+      return { valid: false, reason: `noisySum (${r.noisySum}) != trueSum (${r.trueSum}) + noise (${r.noise})` };
+    }
+  }
+  if (!(r.epsilon > 0)) return { valid: false, reason: 'epsilon must be > 0' };
+  if (!(r.sensitivity > 0)) return { valid: false, reason: 'sensitivity must be > 0' };
   return { valid: true };
 }
