@@ -875,3 +875,151 @@ export function verifyBudgetAuditLog(signed: SignedBudgetAuditLog): { valid: boo
   }
   return { valid: true, recoveredAddress: recovered };
 }
+
+// ─────────────────────────────────────────────────────────────────────
+//  Publishable bundles — write attestation artifacts to a pod
+// ─────────────────────────────────────────────────────────────────────
+//
+// v3.x results above are returned in-memory from the aggregate
+// query. For audit, the institution typically wants the bundle as a
+// persistent, fetchable artifact on the operator's pod so any
+// authorized auditor can read + re-verify WITHOUT trusting the
+// aggregator's word that the bundle exists at all. These helpers
+// publish each bundle type as a normal cg:ContextDescriptor (no new
+// ontology terms) with the bundle JSON embedded in the graph
+// content as a single `agg:bundleJson` literal — the verifier
+// pulls the graph, parses the JSON, and runs the existing
+// `verifyAttested*` function against it.
+
+const AGG_BUNDLE_GRAPH_PREFIX = 'urn:graph:cg:aggregate-bundle:';
+const AGG_BUNDLE_DESC_PREFIX = 'urn:cg:aggregate-bundle:';
+
+function bundleIris(seedHex: string): { iri: IRI; graphIri: IRI } {
+  return {
+    iri: `${AGG_BUNDLE_DESC_PREFIX}${seedHex}` as IRI,
+    graphIri: `${AGG_BUNDLE_GRAPH_PREFIX}${seedHex}` as IRI,
+  };
+}
+
+function escapeTtl(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+}
+
+export interface PublishedBundle {
+  readonly iri: IRI;
+  readonly descriptorUrl: string;
+  readonly graphUrl: string;
+}
+
+/**
+ * Publish an AttestedHomomorphicSumResult (v3 / v3.1 / v3.2 / v3.3) as a
+ * pod descriptor. The bundle JSON is embedded in the graph content
+ * so an auditor can fetch the graph + JSON.parse it + re-run
+ * `verifyAttestedHomomorphicSum` without trusting the aggregator's
+ * word that the bundle exists. Content-addressed on the
+ * sumCommitment so re-publishing the same bundle is idempotent.
+ *
+ * Big-number values (trueSum, trueBlinding, noisySum) serialize as
+ * decimal strings via a custom JSON replacer so they round-trip
+ * losslessly; the matching fetch helper uses a reviver to convert
+ * them back to bigint.
+ */
+export async function publishAttestedHomomorphicSum(args: {
+  bundle: AttestedHomomorphicSumResult;
+  podUrl: string;
+}): Promise<PublishedBundle> {
+  const seed = sha256(`zk-sum|${args.bundle.sumCommitment.bytes}|${args.bundle.cohortIri}`).slice(0, 16);
+  const { iri, graphIri } = bundleIris(seed);
+  const json = JSON.stringify(args.bundle, (_, v) =>
+    typeof v === 'bigint' ? { __bigint: v.toString() } : v,
+  );
+  const ttl = `@prefix agg: <${AGGREGATE_NS}> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<${graphIri}> a agg:AttestedHomomorphicSumBundle ;
+  agg:bundleJson """${escapeTtl(json)}""" ;
+  prov:wasAttributedTo <${args.bundle.aggregatorDid}> ;
+  dct:issued "${args.bundle.computedAt}" .`;
+  const built = ContextDescriptor.create(iri)
+    .describes(graphIri)
+    .agent(args.bundle.aggregatorDid)
+    .generatedBy(args.bundle.aggregatorDid, { onBehalfOf: args.bundle.aggregatorDid, endedAt: args.bundle.computedAt })
+    .temporal({ validFrom: args.bundle.computedAt })
+    .asserted(0.95)
+    .verified(args.bundle.aggregatorDid)
+    .build();
+  const r = await publish(built, ttl, args.podUrl);
+  return { iri, descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl };
+}
+
+/**
+ * Same shape for the v3.3 SignedBudgetAuditLog. The published
+ * descriptor is the audit trail an institution shows a regulator:
+ * "here are the queries we ran, here's the cumulative ε, here's
+ * the signed proof we didn't fabricate the log."
+ */
+export async function publishSignedBudgetAuditLog(args: {
+  signed: SignedBudgetAuditLog;
+  podUrl: string;
+}): Promise<PublishedBundle> {
+  const seed = sha256(`budget-audit|${args.signed.snapshot.cohortIri}|${args.signed.snapshot.spent}|${args.signed.signedAt}`).slice(0, 16);
+  const { iri, graphIri } = bundleIris(seed);
+  const json = JSON.stringify(args.signed);
+  const ttl = `@prefix agg: <${AGGREGATE_NS}> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<${graphIri}> a agg:SignedBudgetAuditLog ;
+  agg:bundleJson """${escapeTtl(json)}""" ;
+  prov:wasAttributedTo <${args.signed.signerDid}> ;
+  dct:issued "${args.signed.signedAt}" .`;
+  const built = ContextDescriptor.create(iri)
+    .describes(graphIri)
+    .agent(args.signed.signerDid)
+    .generatedBy(args.signed.signerDid, { onBehalfOf: args.signed.signerDid, endedAt: args.signed.signedAt })
+    .temporal({ validFrom: args.signed.signedAt })
+    .asserted(0.95)
+    .verified(args.signed.signerDid)
+    .build();
+  const r = await publish(built, ttl, args.podUrl);
+  return { iri, descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl };
+}
+
+/**
+ * Reviver for the bigint-encoded JSON. Use with JSON.parse(text, bigintReviver).
+ */
+export function bigintReviver(_key: string, value: unknown): unknown {
+  if (value !== null && typeof value === 'object' && '__bigint' in value && typeof (value as { __bigint: unknown }).__bigint === 'string') {
+    return BigInt((value as { __bigint: string }).__bigint);
+  }
+  return value;
+}
+
+/**
+ * Fetch a published AttestedHomomorphicSumBundle graph and JSON.parse
+ * it back with the bigint reviver, ready to feed into
+ * `verifyAttestedHomomorphicSum`. Used by auditors who want to
+ * re-verify a bundle the aggregator claims to have published.
+ */
+export async function fetchPublishedHomomorphicSum(args: {
+  graphUrl: string;
+}): Promise<AttestedHomomorphicSumResult | null> {
+  const fetchFn = globalThis.fetch as unknown as (url: string, init?: { headers?: Record<string, string> }) => Promise<{ ok: boolean; text(): Promise<string> }>;
+  try {
+    const r = await fetchFn(args.graphUrl, { headers: { Accept: 'text/turtle, application/trig' } });
+    if (!r.ok) return null;
+    const ttl = await r.text();
+    const m = ttl.match(/agg:bundleJson\s+"""([\s\S]*?)"""/);
+    if (!m || !m[1]) return null;
+    // Reverse the escape — Turtle has its own escaping; the JSON
+    // inside has its own. Unescape Turtle first, then JSON.parse.
+    const unescaped = m[1]
+      .replace(/\\t/g, '\t')
+      .replace(/\\r/g, '\r')
+      .replace(/\\n/g, '\n')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+    return JSON.parse(unescaped, bigintReviver) as AttestedHomomorphicSumResult;
+  } catch {
+    return null;
+  }
+}

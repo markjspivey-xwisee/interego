@@ -34,6 +34,8 @@ import {
   signedBoundsMessage, verifySignedBounds,
   EpsilonBudget,
   canonicalizeBudgetForSigning, signBudgetAuditLog, verifyBudgetAuditLog,
+  publishAttestedHomomorphicSum, publishSignedBudgetAuditLog,
+  fetchPublishedHomomorphicSum, bigintReviver,
   type ParticipationHit,
   type CommittedContribution,
 } from '../aggregate-privacy/index.js';
@@ -692,3 +694,118 @@ describe('aggregate-privacy v3.3: signed audit-log descriptor', () => {
 // verbatim. The 44 contract tests above exercise every code path the
 // new args trigger inside the publisher; no separate integration test
 // needed.
+
+describe('aggregate-privacy: publishable bundles (in-process publish + fetch + re-verify roundtrip)', () => {
+  const bounds = { min: 0n, max: 100n };
+  const mkContrib = (slug: string, value: bigint) => buildCommittedContribution({
+    contributorPodUrl: `https://${slug}.example/pod/`,
+    value,
+    bounds,
+    blindingSeed: `seed-${slug}`,
+    blindingLabel: 'publish/contribution',
+  });
+
+  it('bigintReviver round-trips {__bigint: "..."} encoded bigints', () => {
+    const original = { trueSum: 42n, noisySum: 100n, label: 'plain' };
+    const encoded = JSON.stringify(original, (_, v) =>
+      typeof v === 'bigint' ? { __bigint: v.toString() } : v,
+    );
+    const decoded = JSON.parse(encoded, bigintReviver);
+    expect(decoded.trueSum).toBe(42n);
+    expect(decoded.noisySum).toBe(100n);
+    expect(decoded.label).toBe('plain');
+  });
+
+  it('publishAttestedHomomorphicSum + fetchPublishedHomomorphicSum survive the Turtle ↔ JSON escape boundary', async () => {
+    // We don't have a pod handy in the test; mock the global fetch to
+    // capture the PUT body, then serve it back on GET. Exercises the
+    // exact escape path the real pod write/read goes through.
+    const contribs = [mkContrib('alpha', 30n), mkContrib('beta', 40n), mkContrib('gamma', 50n)];
+    const bundle = buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0, includeAuditFields: true,
+    });
+
+    const stored = new Map<string, string>();
+    const originalFetch = globalThis.fetch;
+    // Loose mock: capture PUTs, serve GETs from the map.
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'PUT' && typeof init?.body === 'string') {
+        stored.set(url, init.body);
+        return new Response('', { status: 201 });
+      }
+      if (method === 'POST' && typeof init?.body === 'string') {
+        // PATCH/POST appending to .well-known/context-graphs — accept.
+        return new Response('', { status: 200 });
+      }
+      if (method === 'GET') {
+        const body = stored.get(url);
+        if (body) return new Response(body, { status: 200, headers: { 'content-type': 'text/turtle' } });
+        return new Response('', { status: 404 });
+      }
+      return new Response('', { status: 405 });
+    }) as typeof fetch;
+
+    try {
+      const published = await publishAttestedHomomorphicSum({
+        bundle,
+        podUrl: 'https://mock-pod.example/operator/',
+      });
+      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+      expect(published.graphUrl).toContain('mock-pod.example');
+
+      const refetched = await fetchPublishedHomomorphicSum({ graphUrl: published.graphUrl });
+      expect(refetched).not.toBeNull();
+      // Re-verify against the original verifier — full round-trip
+      // catches: bundle corrupted in escape, bigints lost their type,
+      // sum-commitment bytes shifted.
+      const r = verifyAttestedHomomorphicSum(refetched!);
+      expect(r.valid).toBe(true);
+      // Sanity: the auditor reading from the pod sees the same
+      // trueSum the in-memory verifier would.
+      expect(refetched!.trueSum).toBe(bundle.trueSum);
+      expect(refetched!.noisySum).toBe(bundle.noisySum);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('publishSignedBudgetAuditLog wraps the signed log as a fetchable descriptor', async () => {
+    const budget = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    budget.consume({ queryDescription: 'p1', epsilon: 0.3 });
+    const wallet = await createWallet('agent', 'publish-audit');
+    const did = `did:ethr:${wallet.address}` as IRI;
+    const signed = await signBudgetAuditLog({ budget, signerWallet: wallet, signerDid: did });
+
+    const stored = new Map<string, string>();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'PUT' && typeof init?.body === 'string') {
+        stored.set(url, init.body);
+        return new Response('', { status: 201 });
+      }
+      if (method === 'POST') return new Response('', { status: 200 });
+      if (method === 'GET') {
+        const body = stored.get(url);
+        return body
+          ? new Response(body, { status: 200, headers: { 'content-type': 'text/turtle' } })
+          : new Response('', { status: 404 });
+      }
+      return new Response('', { status: 405 });
+    }) as typeof fetch;
+
+    try {
+      const published = await publishSignedBudgetAuditLog({
+        signed,
+        podUrl: 'https://mock-pod.example/operator/',
+      });
+      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
