@@ -37,6 +37,12 @@ import {
   buildAttestedHomomorphicSumV5,
   reconstructAndVerifyV5,
   type DistributedContribution,
+  buildDistributedContributionV6,
+  aggregatePseudoAggregatorSharesV6,
+  revealTrueSumFromCommittee,
+  buildAttestedHomomorphicSumV6,
+  verifyAttestedHomomorphicSumV6,
+  type DistributedContributionV6,
   bucketIndex,
   bucketCount,
   buildBucketedContribution,
@@ -2526,5 +2532,200 @@ describe('aggregate-privacy v5: contributor-distributed blinding sharing (no tru
     }
     const first = reconstructions[0]!;
     for (const r of reconstructions) expect(r).toBe(first);
+  });
+});
+
+describe('aggregate-privacy v6: operator never sees individual values OR blindings', () => {
+  const bounds = { min: 0n, max: 100n };
+
+  async function mkCommittee(n: number) {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    return Array.from({ length: n }, (_, k) => ({
+      index: k + 1,
+      recipientDid: `did:test:v6-${k + 1}` as IRI,
+      keyPair: generateKeyPair(),
+    }));
+  }
+
+  async function mkCohortV6(values: bigint[], committee: Awaited<ReturnType<typeof mkCommittee>>, t: number) {
+    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    return values.map((v, i) => buildDistributedContributionV6({
+      contributorPodUrl: `https://v6-contrib-${i}/`,
+      value: v, bounds,
+      committee: committee.map(m => ({ recipientDid: m.recipientDid, recipientPublicKey: m.keyPair.publicKey })),
+      threshold: t,
+      contributorSenderKeyPair: generateKeyPair(),
+      blindingSeed: `v6-b-${i}`, valueSeed: `v6-v-${i}`,
+    }));
+  }
+
+  it('buildDistributedContributionV6 emits value + blinding VSS commitments + paired encrypted shares', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohortV6([42n], committee, 3);
+    const c = cohort[0]!;
+    expect(c.valueCommitments.points.length).toBe(3);
+    expect(c.blindingCommitments.points.length).toBe(3);
+    expect(c.encryptedValueShares.length).toBe(5);
+    expect(c.encryptedBlindingShares.length).toBe(5);
+    expect(c.commitment).toBeDefined();
+    // Note: contribution does NOT carry the cleartext value — operator never sees it.
+    expect((c as unknown as Record<string, unknown>).value).toBeUndefined();
+  });
+
+  it('full v6 flow: operator reveals trueSum via committee, never sees individual values', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohortV6([10n, 20n, 30n, 40n, 50n], committee, 3);
+    const allShares = committee.map(m => aggregatePseudoAggregatorSharesV6({
+      contributions: cohort, pseudoAggregatorIndex: m.index, ownKeyPair: m.keyPair,
+    }));
+    const committeeValueShares = [allShares[0]!, allShares[2]!, allShares[4]!].map(s => s.combinedValueShare);
+    const reveal = revealTrueSumFromCommittee({
+      contributions: cohort, committeeValueShares, threshold: 3,
+    });
+    expect(reveal.valid).toBe(true);
+    expect(reveal.trueSum).toBe(150n);
+    expect(reveal.verifiedShareCount).toBe(3);
+    expect(reveal.rejectedShareCount).toBe(0);
+
+    const bundle = buildAttestedHomomorphicSumV6({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: cohort, revealedTrueSum: reveal.trueSum!,
+      epsilon: 1.0, includeAuditFields: true, threshold: { n: 5, t: 3 },
+    });
+    expect(bundle.trueSum).toBe(150n);
+    expect(bundle.privacyMode).toBe('zk-aggregate-v6-no-value-disclosure');
+
+    const committeeBlindingShares = [allShares[0]!, allShares[2]!, allShares[4]!].map(s => s.combinedBlindingShare);
+    const audit = verifyAttestedHomomorphicSumV6({
+      bundle, committeeBlindingShares, claimedTrueSum: reveal.trueSum!,
+    });
+    expect(audit.valid).toBe(true);
+    expect(audit.reconstructedTrueBlinding).toBeDefined();
+  });
+
+  it('REJECTS reveal with insufficient value shares (threshold enforced)', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohortV6([10n, 20n], committee, 3);
+    const allShares = committee.map(m => aggregatePseudoAggregatorSharesV6({
+      contributions: cohort, pseudoAggregatorIndex: m.index, ownKeyPair: m.keyPair,
+    }));
+    const reveal = revealTrueSumFromCommittee({
+      contributions: cohort,
+      committeeValueShares: [allShares[0]!.combinedValueShare, allShares[1]!.combinedValueShare],
+      threshold: 3,
+    });
+    expect(reveal.valid).toBe(false);
+    expect(reveal.reason).toMatch(/insufficient value shares/);
+  });
+
+  it('REJECTS reveal with tampered combined value share (caught via combined-VSS)', async () => {
+    const L = 7237005577332262213973186563042994240857116359379907606001950938285454250989n;
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohortV6([10n, 20n, 30n], committee, 3);
+    const allShares = committee.map(m => aggregatePseudoAggregatorSharesV6({
+      contributions: cohort, pseudoAggregatorIndex: m.index, ownKeyPair: m.keyPair,
+    }));
+    const tampered = { ...allShares[1]!.combinedValueShare, y: (allShares[1]!.combinedValueShare.y + 1n) % L };
+    const reveal = revealTrueSumFromCommittee({
+      contributions: cohort,
+      committeeValueShares: [allShares[0]!.combinedValueShare, tampered, allShares[2]!.combinedValueShare, allShares[3]!.combinedValueShare],
+      threshold: 3,
+    });
+    expect(reveal.valid).toBe(true);
+    expect(reveal.verifiedShareCount).toBe(3);
+    expect(reveal.rejectedShareCount).toBe(1);
+  });
+
+  it('aggregatePseudoAggregatorSharesV6 throws on a tampered per-contribution value share', async () => {
+    const committee = await mkCommittee(3);
+    const cohort = await mkCohortV6([10n, 20n], committee, 2);
+    const forgedCohort: DistributedContributionV6[] = [
+      { ...cohort[0]!, encryptedValueShares: cohort[1]!.encryptedValueShares },
+      cohort[1]!,
+    ];
+    expect(() => aggregatePseudoAggregatorSharesV6({
+      contributions: forgedCohort, pseudoAggregatorIndex: 1, ownKeyPair: committee[0]!.keyPair,
+    })).toThrow(/value share .* failed VSS verification/);
+  });
+
+  it('audit verifier REJECTS bundle with insufficient blinding shares', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohortV6([10n, 20n, 30n], committee, 3);
+    const allShares = committee.map(m => aggregatePseudoAggregatorSharesV6({
+      contributions: cohort, pseudoAggregatorIndex: m.index, ownKeyPair: m.keyPair,
+    }));
+    const reveal = revealTrueSumFromCommittee({
+      contributions: cohort,
+      committeeValueShares: allShares.slice(0, 3).map(s => s.combinedValueShare),
+      threshold: 3,
+    });
+    const bundle = buildAttestedHomomorphicSumV6({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: cohort, revealedTrueSum: reveal.trueSum!,
+      epsilon: 1.0, includeAuditFields: true, threshold: { n: 5, t: 3 },
+    });
+    const audit = verifyAttestedHomomorphicSumV6({
+      bundle,
+      committeeBlindingShares: [allShares[0]!.combinedBlindingShare],
+      claimedTrueSum: reveal.trueSum!,
+    });
+    expect(audit.valid).toBe(false);
+    expect(audit.reason).toMatch(/insufficient blinding shares/);
+  });
+
+  it('audit verifier REJECTS bundle when claimedTrueSum is wrong (sumCommitment open fails)', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohortV6([10n, 20n, 30n], committee, 3);
+    const allShares = committee.map(m => aggregatePseudoAggregatorSharesV6({
+      contributions: cohort, pseudoAggregatorIndex: m.index, ownKeyPair: m.keyPair,
+    }));
+    const reveal = revealTrueSumFromCommittee({
+      contributions: cohort,
+      committeeValueShares: allShares.slice(0, 3).map(s => s.combinedValueShare),
+      threshold: 3,
+    });
+    const bundle = buildAttestedHomomorphicSumV6({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: cohort, revealedTrueSum: reveal.trueSum!,
+      epsilon: 1.0, includeAuditFields: true, threshold: { n: 5, t: 3 },
+    });
+    const audit = verifyAttestedHomomorphicSumV6({
+      bundle,
+      committeeBlindingShares: allShares.slice(0, 3).map(s => s.combinedBlindingShare),
+      claimedTrueSum: reveal.trueSum! + 1n,
+    });
+    expect(audit.valid).toBe(false);
+    expect(audit.reason).toMatch(/does not open/);
+  });
+
+  it('every t-subset of n committee shares yields the same trueSum AND trueBlinding', async () => {
+    const committee = await mkCommittee(5);
+    const cohort = await mkCohortV6([7n, 14n, 21n, 28n], committee, 3);
+    const allShares = committee.map(m => aggregatePseudoAggregatorSharesV6({
+      contributions: cohort, pseudoAggregatorIndex: m.index, ownKeyPair: m.keyPair,
+    }));
+    const sums: bigint[] = [];
+    const blindings: bigint[] = [];
+    for (let i = 0; i < 5; i++) {
+      for (let j = i + 1; j < 5; j++) {
+        for (let k = j + 1; k < 5; k++) {
+          const valueShares = [allShares[i]!.combinedValueShare, allShares[j]!.combinedValueShare, allShares[k]!.combinedValueShare];
+          const blindingShares = [allShares[i]!.combinedBlindingShare, allShares[j]!.combinedBlindingShare, allShares[k]!.combinedBlindingShare];
+          const reveal = revealTrueSumFromCommittee({ contributions: cohort, committeeValueShares: valueShares, threshold: 3 });
+          expect(reveal.valid).toBe(true);
+          sums.push(reveal.trueSum!);
+          const bundle = buildAttestedHomomorphicSumV6({
+            cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+            contributions: cohort, revealedTrueSum: reveal.trueSum!,
+            epsilon: 1.0, includeAuditFields: true, threshold: { n: 5, t: 3 },
+          });
+          const audit = verifyAttestedHomomorphicSumV6({ bundle, committeeBlindingShares: blindingShares, claimedTrueSum: reveal.trueSum! });
+          expect(audit.valid).toBe(true);
+          blindings.push(audit.reconstructedTrueBlinding!);
+        }
+      }
+    }
+    expect(new Set(sums.map(s => s.toString())).size).toBe(1);
+    expect(new Set(blindings.map(b => b.toString())).size).toBe(1);
   });
 });

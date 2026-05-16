@@ -2725,3 +2725,400 @@ export function reconstructAndVerifyV5(args: {
     rejectedShareCount: rejected,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────
+//  v6 — Operator never sees individual values OR individual blindings
+//  (Shamir-on-values + Shamir-on-blindings, both distributed)
+// ─────────────────────────────────────────────────────────────────────
+//
+// v5 closed the blinding-side trust gap: the operator never knew
+// individual blindings or trueBlinding. But the operator still saw
+// cleartext values to compute trueSum + add DP noise. v6 closes the
+// values gap too: contributors now Shamir-share their VALUES as well
+// as their blindings, both to the same pseudo-aggregator committee.
+//
+// The same composition extends: Shamir is additively homomorphic, so
+// pseudo-aggregator j's combined VALUE share s_v_j = Σ_i v_i^{(j)}
+// is a Shamir share of trueSum = Σ_i v_i under the COMBINED value
+// polynomial V(x) = Σ_i g_i(x) (where g_i is contributor i's value
+// polynomial with g_i(0) = v_i).
+//
+// Flow:
+//   Contributor i:
+//     - Pedersen commitment c_i = v_i·G + b_i·H
+//     - Feldman-VSS-split v_i to committee → value shares + value
+//       polynomial commitments G_i^{(k)}
+//     - Feldman-VSS-split b_i to committee → blinding shares + blinding
+//       polynomial commitments C_i^{(k)} (same as v5)
+//     - Encrypt each (value share, blinding share) pair for its
+//       recipient pseudo-aggregator
+//   Pseudo-aggregator j:
+//     - Decrypts received shares; verifies via VSS
+//     - Computes combined value share s_v_j = Σ_i v_i^{(j)} and
+//       combined blinding share s_b_j = Σ_i b_i^{(j)}
+//   Operator at reveal time:
+//     - Collects t pseudo-aggregator combined VALUE shares
+//     - Lagrange-interpolates trueSum (operator NEVER sees individual
+//       values)
+//     - Adds DP-Laplace noise; publishes noisySum + bundle
+//   Auditor at audit time:
+//     - Collects t pseudo-aggregator combined BLINDING shares (or
+//       reuses already-revealed value shares + acquires blinding
+//       shares too)
+//     - Lagrange-interpolates trueBlinding; confirms sumCommitment
+//       opens to (trueSum, trueBlinding)
+//
+// The operator's trust assumption is now reduced to honest-but-curious
+// about TRUESUM ONLY (the aggregate). Individual values are hidden
+// even from the operator. This is the closest the v3-family substrate
+// can get to a true zero-trust aggregator without distributed noise
+// generation.
+
+export interface DistributedContributionV6 {
+  readonly contributorPodUrl: string;
+  /** Pedersen commitment c_i = v_i·G + b_i·H. PUBLIC. */
+  readonly commitment: PedersenCommitment;
+  /** Bounds [min, max] the contributor consented to. */
+  readonly bounds: { min: bigint; max: bigint };
+  /** Feldman VSS commitments to the VALUE polynomial g_i with g_i(0) = v_i. PUBLIC. */
+  readonly valueCommitments: FeldmanCommitments;
+  /** Feldman VSS commitments to the BLINDING polynomial f_i with f_i(0) = b_i. PUBLIC. */
+  readonly blindingCommitments: FeldmanCommitments;
+  /** Encrypted value shares — one per pseudo-aggregator. */
+  readonly encryptedValueShares: readonly EncryptedShareDistribution[];
+  /** Encrypted blinding shares — one per pseudo-aggregator. */
+  readonly encryptedBlindingShares: readonly EncryptedShareDistribution[];
+  /** Optional ZK range proof on the value. v3.4 composition. */
+  readonly rangeProof?: RangeProof;
+}
+
+/**
+ * Contributor-side v6: builds a DistributedContributionV6.
+ * Splits BOTH value AND blinding via Feldman VSS, encrypts both
+ * sets of shares for the committee.
+ */
+export function buildDistributedContributionV6(args: {
+  contributorPodUrl: string;
+  value: bigint;
+  bounds: { min: bigint; max: bigint };
+  committee: readonly { recipientDid: IRI; recipientPublicKey: string }[];
+  threshold: number;
+  contributorSenderKeyPair: EncryptionKeyPair;
+  blindingSeed?: string;
+  blindingLabel?: string;
+  valueSeed?: string;
+  valueLabel?: string;
+  withRangeProof?: boolean;
+}): DistributedContributionV6 {
+  if (args.value < args.bounds.min || args.value > args.bounds.max) {
+    throw new Error(`buildDistributedContributionV6: value ${args.value} outside declared bounds [${args.bounds.min}, ${args.bounds.max}]`);
+  }
+  if (args.threshold < 1 || args.threshold > args.committee.length) {
+    throw new Error(`buildDistributedContributionV6: threshold ${args.threshold} must be in [1, committee.length=${args.committee.length}]`);
+  }
+  const blinding = args.blindingSeed
+    ? deriveBlinding(args.blindingSeed, args.blindingLabel ?? 'pedersen/distributed-contribution-v6/blinding')
+    : randomBlinding();
+  const commitment = commit(args.value, blinding);
+
+  // VSS-split the blinding (same as v5).
+  const blindingSplit = splitSecretWithCommitments({
+    secret: blinding,
+    totalShares: args.committee.length,
+    threshold: args.threshold,
+  });
+
+  // VSS-split the value (new for v6). The "secret" is the value itself.
+  const valueSplit = splitSecretWithCommitments({
+    secret: args.value,
+    totalShares: args.committee.length,
+    threshold: args.threshold,
+  });
+
+  // Encrypt both sets of shares to the committee.
+  const encryptedBlindingShares = encryptSharesForCommittee({
+    shares: blindingSplit.shares,
+    recipients: args.committee.map(c => ({ recipientDid: c.recipientDid, recipientPublicKey: c.recipientPublicKey })),
+    senderKeyPair: args.contributorSenderKeyPair,
+  });
+  const encryptedValueShares = encryptSharesForCommittee({
+    shares: valueSplit.shares,
+    recipients: args.committee.map(c => ({ recipientDid: c.recipientDid, recipientPublicKey: c.recipientPublicKey })),
+    senderKeyPair: args.contributorSenderKeyPair,
+  });
+
+  const rangeProof = args.withRangeProof
+    ? proveRange({ commitment, value: args.value, blinding, min: args.bounds.min, max: args.bounds.max })
+    : undefined;
+
+  return {
+    contributorPodUrl: args.contributorPodUrl,
+    commitment,
+    bounds: args.bounds,
+    valueCommitments: valueSplit.commitments,
+    blindingCommitments: blindingSplit.commitments,
+    encryptedValueShares,
+    encryptedBlindingShares,
+    ...(rangeProof ? { rangeProof } : {}),
+  };
+}
+
+/**
+ * Pseudo-aggregator-side v6: decrypts + verifies BOTH value-shares
+ * AND blinding-shares for this pseudo-aggregator, sums each into
+ * combined shares.
+ *
+ * Returns { combinedValueShare, combinedBlindingShare } — both
+ * VerifiableShamirShare under their respective combined polynomials.
+ * The combined value share verifies against the bundle's
+ * combinedValueCommitments; the combined blinding share verifies
+ * against combinedBlindingCommitments.
+ */
+export function aggregatePseudoAggregatorSharesV6(args: {
+  contributions: readonly DistributedContributionV6[];
+  pseudoAggregatorIndex: number;
+  ownKeyPair: EncryptionKeyPair;
+}): { combinedValueShare: VerifiableShamirShare; combinedBlindingShare: VerifiableShamirShare } {
+  if (args.contributions.length === 0) {
+    throw new Error('aggregatePseudoAggregatorSharesV6: no contributions');
+  }
+  if (args.pseudoAggregatorIndex < 1) {
+    throw new Error(`aggregatePseudoAggregatorSharesV6: pseudoAggregatorIndex ${args.pseudoAggregatorIndex} must be >= 1`);
+  }
+  const firstThreshold = args.contributions[0]!.blindingCommitments.threshold;
+  let combinedValueY = 0n;
+  let combinedBlindingY = 0n;
+  for (const contrib of args.contributions) {
+    if (contrib.valueCommitments.threshold !== firstThreshold || contrib.blindingCommitments.threshold !== firstThreshold) {
+      throw new Error(`aggregatePseudoAggregatorSharesV6: contribution from ${contrib.contributorPodUrl} threshold mismatch`);
+    }
+    // Decrypt + verify value share.
+    const valDist = contrib.encryptedValueShares[args.pseudoAggregatorIndex - 1];
+    if (!valDist) {
+      throw new Error(`aggregatePseudoAggregatorSharesV6: contribution from ${contrib.contributorPodUrl} has no value share for pseudo-aggregator ${args.pseudoAggregatorIndex}`);
+    }
+    const valShare = decryptShareForRecipient({ distribution: valDist, recipientKeyPair: args.ownKeyPair });
+    if (!valShare) throw new Error(`aggregatePseudoAggregatorSharesV6: value share decryption failed for ${contrib.contributorPodUrl}`);
+    if (valShare.x !== args.pseudoAggregatorIndex) throw new Error(`aggregatePseudoAggregatorSharesV6: value share x mismatch (${valShare.x} vs ${args.pseudoAggregatorIndex})`);
+    if (!filterVerifiedShares({ shares: [valShare], commitments: contrib.valueCommitments }).length) {
+      throw new Error(`aggregatePseudoAggregatorSharesV6: value share for ${contrib.contributorPodUrl} failed VSS verification`);
+    }
+    combinedValueY = (combinedValueY + valShare.y) % L_AGG;
+
+    // Decrypt + verify blinding share.
+    const blDist = contrib.encryptedBlindingShares[args.pseudoAggregatorIndex - 1];
+    if (!blDist) throw new Error(`aggregatePseudoAggregatorSharesV6: contribution from ${contrib.contributorPodUrl} has no blinding share for pseudo-aggregator ${args.pseudoAggregatorIndex}`);
+    const blShare = decryptShareForRecipient({ distribution: blDist, recipientKeyPair: args.ownKeyPair });
+    if (!blShare) throw new Error(`aggregatePseudoAggregatorSharesV6: blinding share decryption failed for ${contrib.contributorPodUrl}`);
+    if (blShare.x !== args.pseudoAggregatorIndex) throw new Error(`aggregatePseudoAggregatorSharesV6: blinding share x mismatch`);
+    if (!filterVerifiedShares({ shares: [blShare], commitments: contrib.blindingCommitments }).length) {
+      throw new Error(`aggregatePseudoAggregatorSharesV6: blinding share for ${contrib.contributorPodUrl} failed VSS verification`);
+    }
+    combinedBlindingY = (combinedBlindingY + blShare.y) % L_AGG;
+  }
+  return {
+    combinedValueShare: {
+      x: args.pseudoAggregatorIndex,
+      y: combinedValueY < 0n ? combinedValueY + L_AGG : combinedValueY,
+      threshold: firstThreshold,
+      totalShares: args.contributions[0]!.encryptedValueShares.length,
+    },
+    combinedBlindingShare: {
+      x: args.pseudoAggregatorIndex,
+      y: combinedBlindingY < 0n ? combinedBlindingY + L_AGG : combinedBlindingY,
+      threshold: firstThreshold,
+      totalShares: args.contributions[0]!.encryptedBlindingShares.length,
+    },
+  };
+}
+
+/**
+ * Operator-side v6 reveal: the operator collects t pseudo-aggregator
+ * combined VALUE shares, VSS-verifies them against the COMBINED value
+ * commitments, and Lagrange-interpolates trueSum. The operator NEVER
+ * sees any individual value.
+ *
+ * Returns { trueSum, verifiedShareCount, rejectedShareCount } or a
+ * reason on failure.
+ */
+export function revealTrueSumFromCommittee(args: {
+  contributions: readonly DistributedContributionV6[];
+  committeeValueShares: readonly VerifiableShamirShare[];
+  threshold: number;
+}): { valid: boolean; reason?: string; trueSum?: bigint; verifiedShareCount?: number; rejectedShareCount?: number } {
+  if (args.committeeValueShares.length < args.threshold) {
+    return { valid: false, reason: `insufficient value shares: need ${args.threshold}, got ${args.committeeValueShares.length}` };
+  }
+  // Compute combined VALUE commitments.
+  const combinedValueCommitments = combineFeldmanCommitments(
+    args.contributions.map(c => c.valueCommitments),
+    args.threshold,
+  );
+  const verified = filterVerifiedShares({
+    shares: args.committeeValueShares,
+    commitments: combinedValueCommitments,
+  });
+  const rejected = args.committeeValueShares.length - verified.length;
+  if (verified.length < args.threshold) {
+    return {
+      valid: false,
+      reason: `after combined-VSS verification, only ${verified.length} value share(s) remain (need ${args.threshold}); ${rejected} rejected`,
+      verifiedShareCount: verified.length,
+      rejectedShareCount: rejected,
+    };
+  }
+  const trueSum = reconstructSecret(verified as readonly ShamirShare[]);
+  if (trueSum === null) {
+    return { valid: false, reason: 'Lagrange reconstruction failed', verifiedShareCount: verified.length, rejectedShareCount: rejected };
+  }
+  return { valid: true, trueSum, verifiedShareCount: verified.length, rejectedShareCount: rejected };
+}
+
+export interface AttestedHomomorphicSumV6Result {
+  readonly cohortIri: IRI;
+  readonly aggregatorDid: IRI;
+  readonly computedAt: string;
+  readonly contributorCount: number;
+  readonly trueSum?: bigint; // present when includeAuditFields=true
+  readonly noisySum: bigint;
+  readonly noise: number;
+  readonly sensitivity: number;
+  readonly epsilon: number;
+  readonly sumCommitment: PedersenCommitment;
+  readonly contributorCommitments: readonly PedersenCommitment[];
+  /** Combined VSS commitments for the VALUE polynomial. */
+  readonly combinedValueCommitments: FeldmanCommitments;
+  /** Combined VSS commitments for the BLINDING polynomial. */
+  readonly combinedBlindingCommitments: FeldmanCommitments;
+  readonly threshold: { n: number; t: number };
+  readonly privacyMode: 'zk-aggregate-v6-no-value-disclosure';
+  readonly contributorRangeProofs?: readonly RangeProof[];
+}
+
+/**
+ * Operator-side v6: build the bundle given a trueSum that was just
+ * revealed by the committee (via revealTrueSumFromCommittee). The
+ * operator adds DP noise to trueSum + publishes the bundle. The
+ * operator NEVER saw any individual value or blinding.
+ */
+export function buildAttestedHomomorphicSumV6(args: {
+  cohortIri: IRI;
+  aggregatorDid: IRI;
+  contributions: readonly DistributedContributionV6[];
+  /** TrueSum just revealed by the committee via revealTrueSumFromCommittee. */
+  revealedTrueSum: bigint;
+  epsilon: number;
+  includeAuditFields?: boolean;
+  epsilonBudget?: EpsilonBudget;
+  queryDescription?: string;
+  threshold: { n: number; t: number };
+}): AttestedHomomorphicSumV6Result {
+  if (args.contributions.length === 0) {
+    throw new Error('buildAttestedHomomorphicSumV6: at least one contribution required');
+  }
+  const first = args.contributions[0]!;
+  for (const c of args.contributions) {
+    if (c.bounds.min !== first.bounds.min || c.bounds.max !== first.bounds.max) {
+      throw new Error(`buildAttestedHomomorphicSumV6: contributions disagree on bounds (${c.contributorPodUrl})`);
+    }
+    if (c.valueCommitments.threshold !== args.threshold.t || c.blindingCommitments.threshold !== args.threshold.t) {
+      throw new Error(`buildAttestedHomomorphicSumV6: contribution from ${c.contributorPodUrl} threshold mismatch`);
+    }
+    if (c.encryptedValueShares.length !== args.threshold.n || c.encryptedBlindingShares.length !== args.threshold.n) {
+      throw new Error(`buildAttestedHomomorphicSumV6: contribution from ${c.contributorPodUrl} share-count mismatch (n=${args.threshold.n})`);
+    }
+  }
+  const sensitivity = Number(first.bounds.max - first.bounds.min);
+  if (!(sensitivity > 0)) throw new Error('buildAttestedHomomorphicSumV6: non-positive sensitivity');
+
+  if (args.epsilonBudget) {
+    args.epsilonBudget.consume({
+      queryDescription: args.queryDescription ?? `homomorphic-sum-v6 on ${args.cohortIri}`,
+      epsilon: args.epsilon,
+    });
+  }
+
+  const sumCommitment = addCommitments(args.contributions.map(c => c.commitment));
+  const noise = sampleLaplaceInt(sensitivity, args.epsilon);
+  const noisySum = args.revealedTrueSum + BigInt(noise);
+
+  const combinedValueCommitments = combineFeldmanCommitments(
+    args.contributions.map(c => c.valueCommitments),
+    args.threshold.t,
+  );
+  const combinedBlindingCommitments = combineFeldmanCommitments(
+    args.contributions.map(c => c.blindingCommitments),
+    args.threshold.t,
+  );
+
+  return {
+    cohortIri: args.cohortIri,
+    aggregatorDid: args.aggregatorDid,
+    computedAt: new Date().toISOString(),
+    contributorCount: args.contributions.length,
+    noisySum,
+    noise,
+    sensitivity,
+    epsilon: args.epsilon,
+    sumCommitment,
+    contributorCommitments: args.contributions.map(c => c.commitment),
+    combinedValueCommitments,
+    combinedBlindingCommitments,
+    threshold: args.threshold,
+    privacyMode: 'zk-aggregate-v6-no-value-disclosure',
+    ...(args.includeAuditFields ? { trueSum: args.revealedTrueSum } : {}),
+    ...(args.contributions.every(c => c.rangeProof)
+      ? { contributorRangeProofs: args.contributions.map(c => c.rangeProof!) }
+      : {}),
+  };
+}
+
+/**
+ * v6 audit-time verifier. Takes the published bundle + t-of-n combined
+ * BLINDING shares (the value shares were already used at reveal time;
+ * audit verifies the blinding side). Filters via combined-VSS,
+ * Lagrange-interpolates trueBlinding, confirms sumCommitment opens to
+ * (trueSum, reconstructedTrueBlinding) — where trueSum is the bundle's
+ * published `trueSum` (audit-field) or supplied externally.
+ */
+export function verifyAttestedHomomorphicSumV6(args: {
+  bundle: AttestedHomomorphicSumV6Result;
+  committeeBlindingShares: readonly VerifiableShamirShare[];
+  claimedTrueSum: bigint;
+}): { valid: boolean; reason?: string; reconstructedTrueBlinding?: bigint; verifiedShareCount?: number; rejectedShareCount?: number } {
+  if (args.committeeBlindingShares.length < args.bundle.threshold.t) {
+    return { valid: false, reason: `insufficient blinding shares: need ${args.bundle.threshold.t}, got ${args.committeeBlindingShares.length}` };
+  }
+  const verified = filterVerifiedShares({
+    shares: args.committeeBlindingShares,
+    commitments: args.bundle.combinedBlindingCommitments,
+  });
+  const rejected = args.committeeBlindingShares.length - verified.length;
+  if (verified.length < args.bundle.threshold.t) {
+    return {
+      valid: false,
+      reason: `after combined-VSS verification, only ${verified.length} blinding share(s) remain (need ${args.bundle.threshold.t}); ${rejected} rejected`,
+      verifiedShareCount: verified.length,
+      rejectedShareCount: rejected,
+    };
+  }
+  const reconstructed = reconstructSecret(verified as readonly ShamirShare[]);
+  if (reconstructed === null) {
+    return { valid: false, reason: 'Lagrange reconstruction failed', verifiedShareCount: verified.length, rejectedShareCount: rejected };
+  }
+  const ok = verifyHomomorphicSum(args.bundle.contributorCommitments, args.claimedTrueSum, reconstructed);
+  if (!ok) {
+    return {
+      valid: false,
+      reason: 'sumCommitment does not open to (claimedTrueSum, reconstructedTrueBlinding)',
+      verifiedShareCount: verified.length,
+      rejectedShareCount: rejected,
+    };
+  }
+  return {
+    valid: true,
+    reconstructedTrueBlinding: reconstructed,
+    verifiedShareCount: verified.length,
+    rejectedShareCount: rejected,
+  };
+}
