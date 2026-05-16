@@ -19,6 +19,8 @@ The first tool call walks you through a passkey or wallet enrollment in the brow
 
 > **Status: reference implementation.** Hosted on the maintainer's free Azure instance for evaluation. Self-host (`examples/personal-bridge/`) before you depend on it. The compliance + audit-trail work in this repo is *infrastructure for* SOC 2 / EU AI Act / NIST RMF evidence — it is not an attested control environment by itself.
 
+> **L1 protocol: Last Call Working Draft (2026-05-16).** Wire format and core vocabulary (`cg:` / `cgh:` / `pgsl:` / `ie:` / `align:`) are frozen for v1.0 pending Candidate Recommendation. Editors commit no breaking changes through 2027-05-16 without a deprecation cycle. See [`spec/STABILITY.md`](spec/STABILITY.md) for the practical adopter-facing commitment, and [`spec/architecture.md`](spec/architecture.md) for the normative spec. Second implementations (any language) are warmly welcomed — open an issue and we will work with you.
+
 **Author:** Mark Spivey
 **License:** MIT
 

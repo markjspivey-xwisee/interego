@@ -10,7 +10,13 @@
 
 **Abstract:** This document is the normative specification of the Interego 1.0 protocol — a compositional framework for typed graph contexts over RDF 1.2 Named Graphs. It defines the descriptor model, facet vocabulary, composition operators, serialization, and federation behavior that every conforming implementation must satisfy. Examples and architectural patterns are illustrative; the reference TypeScript implementation `@interego/core` is one such implementation and is not itself normative.
 
-**Status:** Working Draft (2026-04-26). Core sections (§1–§5: descriptor model, facets, composition, serialization, federation) are stable for v1.0 — implementations conforming to L1 of [`CONFORMANCE.md`](CONFORMANCE.md) MUST satisfy the normative MUST/SHOULD claims in those sections. Sections explicitly marked "informative" or "extension" are non-normative and may evolve in v1.1. Promotion to W3C-style "Candidate Recommendation" requires (a) two independent interoperable implementations passing the L1 conformance fixtures and (b) a 30-day review window with no substantive change requests; neither has occurred yet.
+**Status:** **Last Call Working Draft (2026-05-16).** Core sections (§1–§5: descriptor model, facets, composition, serialization, federation) are frozen for v1.0 pending Candidate Recommendation. Until 2027-05-16 the editors commit that:
+
+- No change to the L1 wire format (Turtle / TriG / JSON-LD serializations of the seven facets, the composition operators, modal status, `cg:supersedes` chains) without a deprecation cycle of at least one minor version.
+- No removal or rename of any term in the `cg:`, `cgh:`, `pgsl:`, `ie:`, or `align:` namespaces. Additive changes (new optional terms, new optional facets) are permitted within v1.x.
+- Sections explicitly marked "informative" or "extension" remain non-normative and may evolve in v1.x without affecting conformance claims.
+
+Promotion to W3C-style **Candidate Recommendation** requires (a) two independent interoperable implementations passing the L1 conformance fixtures and (b) a 30-day review window with no substantive change requests; neither has occurred yet. See [`STABILITY.md`](STABILITY.md) for the practical adopter-facing summary of what this means.
 
 **Normative language:** The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT, RECOMMENDED, MAY, and OPTIONAL in this document are to be interpreted as described in [RFC 2119] and [RFC 8174] when, and only when, they appear in all capitals.
 

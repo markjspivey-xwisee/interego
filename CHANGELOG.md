@@ -8,6 +8,57 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — L1 protocol → Last Call Working Draft; backcompat committed through 2027-05-16
+
+Promoted the L1 protocol status in [`spec/architecture.md`](spec/architecture.md)
+from *Working Draft* to **Last Call Working Draft**, and added
+[`spec/STABILITY.md`](spec/STABILITY.md) as the adopter-facing summary
+of what's now committed vs. what stays open.
+
+Why now — the audit cadence of the past several weeks is the natural
+maturity signal. Recent work has been correctness fixes layered on
+existing primitives (the project-wide audit, escape consolidation,
+intersection-meet correction, stateless tokens, the `/try`
+provisioning endpoint), not new ontology terms or new protocol
+capabilities. Layer 1 has reached coherence; the editors are now
+hardening, not extending.
+
+What's committed for the 12 months ending 2027-05-16:
+
+- **Wire format frozen.** Turtle / TriG / JSON-LD serializations of
+  any conforming descriptor written today will parse identically by
+  any v1.x implementation.
+- **Vocabulary frozen in `cg:` / `cgh:` / `pgsl:` / `ie:` /
+  `align:`.** No removals, renames, or semantic narrowing.
+  Additive changes (new optional terms, new optional facets) are
+  permitted within v1.x.
+- **Composition operator laws frozen.** `union` / `intersection` /
+  `restriction` / `override` (and the lattice properties they
+  satisfy) are normative.
+- **Modal-truth invariants frozen.** The
+  Asserted/Quoted/Hypothetical/Counterfactual/Retracted correspondence
+  to `cg:groundTruth` is the L1 contract.
+- **Conformance-level partition frozen.** L1 / L2 / L3 / L4 categories
+  are fixed; tests may be added within a level.
+
+Explicitly NOT in the L1 commitment (separate cadences, documented in
+`STABILITY.md`): reference-implementation npm versions, L2 patterns
+(`abac:` / `registry:` / `passport:` / `hyprcat:` / `hypragent:`), L3
+ontologies (`hela:` / `sat:` / `cts:` / `olke:` / `amta:` / `code:` /
+`eu-ai-act:` / `nist-rmf:` / `soc2:`), verticals, deployment topology,
+and the regulator-owned control sets the compliance mappings track.
+
+Forward path to **Candidate Recommendation** is documented and
+gated: (a) two independent interoperable implementations passing the
+L1 conformance fixtures, (b) a 30-day review window. Neither has
+occurred yet; second implementations in any language are warmly
+welcomed via the issue tracker. The conformance runner at
+[`spec/conformance/runner.mjs`](spec/conformance/runner.mjs) is
+intentionally dependency-free so any second implementation can validate
+without a SHACL engine.
+
+---
+
 ## 2026-05-14 — Production hardening, Hermes integration, HATEOAS surface, hosted onboarding, name service
 
 A multi-part pass: harden the substrate, land the Hermes Agent
