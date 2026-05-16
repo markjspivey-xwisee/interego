@@ -1,6 +1,6 @@
 # Choosing an aggregate-privacy mode
 
-The Interego aggregate-privacy ladder ships thirteen layered modes. Each
+The Interego aggregate-privacy ladder ships fourteen layered modes. Each
 composes the previous; none replaces it. This page is the adopter's
 field guide — which mode to pick for which threat model, and how to
 upgrade in place when the threat model shifts.
@@ -12,7 +12,7 @@ The implementations all live in
 [`src/crypto/feldman-vss.ts`](../src/crypto/feldman-vss.ts); contract
 tests pin every cheat path in
 [`applications/_shared/tests/aggregate-privacy.test.ts`](../applications/_shared/tests/aggregate-privacy.test.ts)
-(124 tests, all green).
+(132 tests, all green).
 
 Want to see the full v4-partial flow without standing up a pod?
 Run `npx tsx tools/walkthrough-v4-partial-vss.ts` — an 8-phase
@@ -39,6 +39,7 @@ simulation. Regression-protected via
 | Plus: distribute encrypted shares to pseudo-aggregators via standard pod-discovery flows (not out-of-band) | **`encryptSharesForCommittee` + `publishEncryptedShareDistribution`** (in-process API) |
 | Plus: operator signs a pre-reveal commitment to the authorized committee, regulator cross-checks at audit time (catches sock-puppet committees) | **`signCommitteeAuthorization` + `publishCommitteeAuthorization` + `verifyCommitteeMatchesAuthorization`** (in-process API) |
 | Operator must NOT know trueBlinding at all (contributors distribute their own blindings to a committee; operator is honest-but-curious about cleartext values only) | **v5 contributor-distributed blinding sharing** (`buildDistributedContribution` + `aggregatePseudoAggregatorShares` + `buildAttestedHomomorphicSumV5` + `reconstructAndVerifyV5`) |
+| Operator must NOT know individual values OR blindings (operator only learns trueSum via t-of-n committee reveal; honest-but-curious about TRUESUM only) | **v6 distributed values + distributed blindings** (`buildDistributedContributionV6` + `aggregatePseudoAggregatorSharesV6` + `revealTrueSumFromCommittee` + `buildAttestedHomomorphicSumV6` + `verifyAttestedHomomorphicSumV6`) |
 
 ## The ladder
 
@@ -57,7 +58,8 @@ simulation. Regression-protected via
 | **Encrypted share distribution** (`encryptSharesForCommittee` + `publishEncryptedShareDistribution`) | Each VerifiableShamirShare is wrapped in an X25519/nacl envelope keyed to its intended pseudo-aggregator recipient. The operator publishes each envelope as a normal `cg:ContextDescriptor`; the recipient discovers it via standard pod-discovery flows and decrypts with their own X25519 keypair. | Catches: share leaking to the wrong recipient; share substitution in transit; replay across recipients. Composes the substrate's existing X25519 / nacl envelope machinery — no new ontology terms. Bigint y survives the JSON-in-envelope round-trip via the same `__bigint` wrapper used by the publishable bundle JSON encoder. | Doesn't prevent the operator from publishing the SAME share to multiple recipients (which would defeat threshold privacy) — that's a per-share auditing problem the recipient discovers when they see another envelope at the same content-addressed slot. |
 | **Operator-signed committee authorization** (`signCommitteeAuthorization` + `publishCommitteeAuthorization` + `verifyCommitteeMatchesAuthorization`) | The operator signs a `CommitteeAuthorization` BEFORE distributing shares, naming the n authorized DIDs + the (n, t) threshold. The authorization is published as a pod descriptor; at audit time the regulator cross-checks the actual reveal committee (from the chain-of-custody attestation) against this earlier authorization via `verifyCommitteeMatchesAuthorization`. | Catches: operator forms a sock-puppet committee at reveal time; operator silently changes the threshold; reveal-time committee membership doesn't match the operator's prior commitment; bundleSumCommitment swapped between authorization and reveal. Closes the "operator improvises a committee" cheat that the reveal-side chain-of-custody attestation alone could not catch. | Doesn't prevent the operator from never publishing an authorization at all — that's the same institutional-policy enforcement story as v3.3 (institution publishes a policy saying "all threshold reveals MUST be preceded by a published authorization" + binds operators via `passport:`). |
 | **Distribution-vs-authorization cross-check** (`verifyShareDistributionsMatchAuthorization`) | Confirms the actual share distributions match the authorization at the SHARE-SHIPPING phase, not just the reveal phase. Catches: operator authorizes 5 DIDs but ships shares to 3 sock-puppets; operator ships more/fewer shares than authorized; duplicate distribution to the same recipient; authorized DID with no matching distribution. | Composes the existing `CommitteeAuthorization` + `EncryptedShareDistribution` machinery — no new primitives required. The regulator now has full audit coverage across the entire reveal lifecycle: pre-reveal authorization → distribution → reveal → cross-check. | Doesn't address the scenario where the operator never publishes the distributions at all — same institutional-policy enforcement story as the other "publish or be flagged" controls. |
-| **v5 contributor-distributed blinding sharing — no trusted dealer** (`buildDistributedContribution` / `aggregatePseudoAggregatorShares` / `buildAttestedHomomorphicSumV5` / `reconstructAndVerifyV5`) | Each contributor i splits their OWN blinding b_i via Feldman VSS to the pseudo-aggregator committee + encrypts each share for its recipient. Pseudo-aggregator j decrypts + verifies received shares + sums them — the combined sum s_j is a Shamir share of trueBlinding under the COMBINED polynomial F(x) = Σ_i f_i(x). Operator never sees any blinding; only sees cleartext values (for trueSum + DP noise) + commitments + COMBINED VSS commitments (per-coefficient point-sum). At reveal, t-of-n committee submits combined shares; verifier filters via combined-VSS (catches tampered shares before Lagrange), Lagrange-interpolates trueBlinding, confirms sumCommitment opens. | Removes the trusted-aggregator caveat that v3 / v4-partial / v4-partial+VSS all carry: the operator NEVER knows trueBlinding, even momentarily. Catches: tampered combined shares via combined-VSS; tampered per-contributor shares via per-contributor VSS at aggregation time; wrong claimedTrueSum via sumCommitment opening check. **Substrate-pure emergent composition** — Shamir's additive homomorphism + Feldman VSS's point-sum commitment combining + the existing X25519 envelope machinery + the existing Lagrange reconstruction give the protocol without any new crypto primitive. | v5 does NOT yet hide individual cleartext values from the operator. The operator still computes trueSum from cleartext v_i (needed for DP noise). Hiding v_i too is a v6 layer that needs additive secret-sharing of values across the committee; the substrate primitives for that already exist (the same Shamir + reconstruction path) — it's a composition exercise, not new crypto. |
+| **v5 contributor-distributed blinding sharing — no trusted dealer** (`buildDistributedContribution` / `aggregatePseudoAggregatorShares` / `buildAttestedHomomorphicSumV5` / `reconstructAndVerifyV5`) | Each contributor i splits their OWN blinding b_i via Feldman VSS to the pseudo-aggregator committee + encrypts each share for its recipient. Pseudo-aggregator j decrypts + verifies received shares + sums them — the combined sum s_j is a Shamir share of trueBlinding under the COMBINED polynomial F(x) = Σ_i f_i(x). Operator never sees any blinding; only sees cleartext values (for trueSum + DP noise) + commitments + COMBINED VSS commitments (per-coefficient point-sum). At reveal, t-of-n committee submits combined shares; verifier filters via combined-VSS (catches tampered shares before Lagrange), Lagrange-interpolates trueBlinding, confirms sumCommitment opens. | Removes the trusted-aggregator caveat that v3 / v4-partial / v4-partial+VSS all carry: the operator NEVER knows trueBlinding, even momentarily. Catches: tampered combined shares via combined-VSS; tampered per-contributor shares via per-contributor VSS at aggregation time; wrong claimedTrueSum via sumCommitment opening check. **Substrate-pure emergent composition** — Shamir's additive homomorphism + Feldman VSS's point-sum commitment combining + the existing X25519 envelope machinery + the existing Lagrange reconstruction give the protocol without any new crypto primitive. | v5 does NOT yet hide individual cleartext values from the operator (covered by v6). |
+| **v6 distributed values + distributed blindings — operator sees neither** (`buildDistributedContributionV6` / `aggregatePseudoAggregatorSharesV6` / `revealTrueSumFromCommittee` / `buildAttestedHomomorphicSumV6` / `verifyAttestedHomomorphicSumV6`) | Doubles the v5 composition: contributors VSS-split both VALUES and BLINDINGS to the committee. Operator learns trueSum only via a t-of-n committee Lagrange reveal (calls `revealTrueSumFromCommittee` before noisy publication). Audit reveals trueBlinding identically via the blinding side. | Removes the cleartext-value disclosure to the operator that all earlier modes carried. **Emergent property:** the operator's trust assumption is now honest-but-curious about TRUESUM ONLY (the aggregate). No party (operator, single pseudo-aggregator, auditor) sees any individual value or blinding without t-of-n cooperation. Composition is the same as v5 applied twice; substrate-pure with no new crypto. | The operator still computes DP noise centrally (adds Laplace noise to trueSum). For distributed noise generation — where the noise itself is also split across the committee so the operator never sees the un-noised trueSum — the substrate primitives need an additive-Laplace-sharing layer (e.g., each pseudo-aggregator contributes Laplace(ε/t) noise to their share before reveal). That's the natural v7 layer. |
 
 ## Upgrading in place
 
@@ -228,12 +230,16 @@ const cross = verifyCommitteeMatchesAuthorization({
   primitive at `src/crypto/dkg.ts` is still standalone-ready for
   protocols that need a no-trusted-dealer COLLECTIVE secret (rather
   than the additively-combined secret v5 uses).
-- **Hiding cleartext values from the operator**. v5 has the operator
-  see cleartext v_i (needed for trueSum + DP noise). A v6 layer would
-  additively-secret-share v_i across the committee too, so the
-  operator sees neither values nor blindings — only commitments. The
-  substrate primitives (Shamir + reconstruction) already exist; v6
-  is a composition exercise.
+- **Distributed noise generation (v7).** v6 has the operator add DP-
+  Laplace noise centrally after learning trueSum via the committee.
+  A v7 layer would distribute the noise too: each pseudo-aggregator
+  contributes Laplace(ε/t) noise to their value-share before reveal,
+  so the operator sees only (trueSum + Σ noise contributions). The
+  combined noise approximates Laplace(ε) under tight composition
+  bounds (this is the "secure aggregation" / distributed-DP
+  literature). The substrate primitives needed already exist
+  (Shamir + reconstruction); v7 is a composition exercise on top
+  of v6.
 - **Non-interactive ZK range proofs on each contribution** (Bulletproofs
   / similar). v3.1 closes the bounds-lying threat via aggregator-side
   re-check + signed-bounds attestations; a future v3.4 could swap in

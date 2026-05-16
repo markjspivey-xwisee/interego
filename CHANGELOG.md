@@ -8,6 +8,69 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — v6 distributed values + distributed blindings (operator sees neither)
+
+Doubles the v5 composition: contributors VSS-split BOTH values AND
+blindings to the same pseudo-aggregator committee. The operator
+learns trueSum only via a t-of-n committee Lagrange reveal — never
+sees any individual value. The audit-time blinding reveal works
+identically.
+
+**Emergent property:** the operator's trust assumption is now
+honest-but-curious about TRUESUM ONLY (the aggregate). No party
+(operator, any single pseudo-aggregator, the auditor) sees any
+individual value or blinding without t-of-n cooperation. Closest
+the substrate can get to a true zero-trust aggregator without
+distributed noise generation (which is the natural v7 layer).
+
+NEW exports in `applications/_shared/aggregate-privacy/index.ts`:
+- `buildDistributedContributionV6({contributorPodUrl, value, bounds,
+  committee, threshold, contributorSenderKeyPair, blindingSeed?,
+  valueSeed?, withRangeProof?})` — contributor side. Pedersen-commits
+  + VSS-splits BOTH value AND blinding + encrypts paired share sets
+  for the committee. Note: returns no `value` field — operator never
+  sees cleartext.
+- `aggregatePseudoAggregatorSharesV6({contributions,
+  pseudoAggregatorIndex, ownKeyPair})` — pseudo-aggregator j
+  decrypts received value-shares + blinding-shares, verifies each
+  via VSS, sums each into combined shares. Returns
+  `{ combinedValueShare, combinedBlindingShare }`.
+- `revealTrueSumFromCommittee({contributions, committeeValueShares,
+  threshold})` — operator-side reveal. VSS-filters combined value
+  shares against the combined value commitments, Lagrange-
+  interpolates trueSum. The operator never sees individual values.
+- `buildAttestedHomomorphicSumV6({cohortIri, aggregatorDid,
+  contributions, revealedTrueSum, epsilon, threshold,
+  includeAuditFields?, epsilonBudget?, queryDescription?})` —
+  operator builds bundle from committee-revealed trueSum. Bundle's
+  `privacyMode` is `'zk-aggregate-v6-no-value-disclosure'`.
+- `verifyAttestedHomomorphicSumV6({bundle, committeeBlindingShares,
+  claimedTrueSum})` — audit-time reveal. VSS-filters combined
+  blinding shares, Lagrange-interpolates trueBlinding, confirms
+  sumCommitment opens to (claimedTrueSum, reconstructedTrueBlinding).
+- `DistributedContributionV6` + `AttestedHomomorphicSumV6Result`
+  types.
+
+8 new contract tests (132 total in aggregate-privacy.test.ts):
+- contribution emission shape (no cleartext value)
+- full v6 honest flow with operator-never-sees-values assertion
+- insufficient value shares rejected
+- tampered combined value share rejected via combined-VSS
+- per-contribution value-share tamper throws at aggregation
+- audit insufficient blinding shares rejected
+- audit wrong claimedTrueSum rejected via sumCommitment open
+- every-t-subset consistency for BOTH trueSum AND trueBlinding
+
+Live walkthrough at
+[`tools/walkthrough-v6-distributed-values.ts`](tools/walkthrough-v6-distributed-values.ts)
+demonstrates 9 phases including both tampering simulations + full
+trust analysis. Regression-protected via
+[`tests/walkthrough-v6-distributed-values.test.ts`](tests/walkthrough-v6-distributed-values.test.ts).
+
+Tests: 1506/1506 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — v5 contributor-distributed blinding sharing (no trusted dealer)
 
 Solves the trusted-aggregator problem at the protocol layer. Where v3
