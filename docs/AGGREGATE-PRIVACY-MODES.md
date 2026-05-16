@@ -82,6 +82,16 @@ await aggregateCohortQuery({
   learner_pods: [/* candidate set */],
 }, ctx);
 
+// v3 distribution (homomorphic histogram + DP noise)
+await aggregateCohortQuery({
+  cohort_iri, metric: 'score-distribution',
+  privacy_mode: 'zk-distribution',
+  epsilon: 1.0,                    // per-bucket ε; histogram-level ε = k * epsilon
+  distribution_edges: ['0', '25', '50', '75'],  // bigints as decimal strings
+  distribution_max_value: '100',
+  learner_pods: [/* candidate set */],
+}, ctx);
+
 // v3.1 + v3.2 (regulator-grade attribution + ε-budget)
 await aggregateCohortQuery({
   cohort_iri, metric: 'completion-count',
