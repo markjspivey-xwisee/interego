@@ -189,3 +189,97 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
 ];
 
 export const owmAffordances = OWM_AFFORDANCES;
+
+// ─────────────────────────────────────────────────────────────────────
+//  Org-level operator — declared affordance surface
+// ─────────────────────────────────────────────────────────────────────
+//
+// The dual-audience design discipline (docs/DUAL-AUDIENCE.md) names two
+// first-class audiences for the OWM vertical: the knowledge worker /
+// individual contributor (entity + navigation affordances above) AND
+// the org-level operator (PM lead, ops, exec, board-facing compliance
+// manager).
+//
+// The affordances below describe the operator side of the surface in
+// design. They are DECLARED but NOT YET wired into the bridge —
+// `owmAffordances` (above) is the auto-registered set; this constant is
+// the next-implementer hand-off. When an operator bridge ships, these
+// IRIs and input schemas are the contract.
+//
+// All four respect the substrate's bilateral primitives:
+//   - Aggregate queries return counts / proofs / thresholds via the
+//     spec/AGGREGATE-PRIVACY.md mechanism + src/crypto/ ZK primitives;
+//     refuse to expose individual descriptors under ABAC restriction.
+//   - Org-policy descriptors are signed by an org-authority key and
+//     published to the org pod; contributors discover via federated
+//     read on their own ABAC scope.
+//   - Compliance evidence wraps the existing src/ops/ operational
+//     event builders + integrations/compliance-overlay/ so the same
+//     code path that records a DeployEvent records a board-facing
+//     summary descriptor.
+const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
+  {
+    action: 'urn:cg:action:owm:aggregate-decisions-query' as IRI,
+    toolName: 'owm.aggregate_decisions_query',
+    title: '[operator] Aggregate-privacy query over decision lineage',
+    description: 'Org-operator-side: return counts / thresholds / lineage summaries over owm:Decision descriptors without exposing individual decision text where ABAC restricts. Returns "47 decisions in Q2; mean revision count 1.3; 8 decisions superseded ≥3 times" — not the decisions themselves. Refuses any query that would reveal an individual contributor\'s descriptor under their ABAC scope. Uses src/crypto/ ZK primitives + spec/AGGREGATE-PRIVACY.md.',
+    method: 'POST',
+    targetTemplate: '{base}/owm/aggregate_decisions_query',
+    inputs: [
+      { name: 'period_from', type: 'string', required: true, description: 'ISO 8601 lower bound on cg:TemporalFacet.validFrom.' },
+      { name: 'period_to', type: 'string', required: true, description: 'ISO 8601 upper bound.' },
+      { name: 'scope_iri', type: 'string', required: false, description: 'Optional scope (project, team, decision class) to narrow the aggregate.' },
+      { name: 'metric', type: 'string', required: true, description: 'One of: decision-count | mean-revision-count | supersession-distribution | contributor-breadth.' },
+    ],
+  },
+  {
+    action: 'urn:cg:action:owm:project-health-summary' as IRI,
+    toolName: 'owm.project_health_summary',
+    title: '[operator] Per-project rollup of follow-up flow + decision recency',
+    description: 'Org-operator-side: aggregate-shaped rollup over a project — follow-up open/closed counts, decision recency, contributor breadth, supersession churn. Individual descriptors only surface where the contributor has explicitly issued share_with on them. Composes the existing owm:Project + owm:Decision + owm:FollowUp shapes.',
+    method: 'POST',
+    targetTemplate: '{base}/owm/project_health_summary',
+    inputs: [
+      { name: 'project_iri', type: 'string', required: true, description: 'IRI of the owm:Project being summarized.' },
+      { name: 'window_days', type: 'number', required: false, description: 'Recency window in days for "stale" thresholds. Default 30.' },
+    ],
+  },
+  {
+    action: 'urn:cg:action:owm:publish-org-policy' as IRI,
+    toolName: 'owm.publish_org_policy',
+    title: '[operator] Sign and publish an org-level policy descriptor',
+    description: 'Org-operator-side: publish a SIGNED org-policy descriptor to the org pod — retention windows, decision-promotion thresholds, framework-compliance attestations, source-adapter governance rules. Authored by an org-authority signing key (NOT a contributor key). Contributors discover via federated read; per-graph share_with is the boundary that determines who sees what.',
+    method: 'POST',
+    targetTemplate: '{base}/owm/publish_org_policy',
+    inputs: [
+      { name: 'policy_type', type: 'string', required: true, description: 'One of: retention | decision-promotion | compliance-attestation | source-governance.' },
+      { name: 'policy_body', type: 'object', required: true, description: 'Policy content as typed descriptor data (shape depends on policy_type).' },
+      { name: 'authority_did', type: 'string', required: true, description: 'DID of the org-authority signing key.' },
+      { name: 'org_pod_url', type: 'string', required: true, description: 'Pod URL of the publishing org.' },
+    ],
+  },
+  {
+    action: 'urn:cg:action:owm:publish-compliance-evidence' as IRI,
+    toolName: 'owm.publish_compliance_evidence',
+    title: '[operator] Wrap an operational event as compliance-grade evidence',
+    description: 'Org-operator-side: wrap an org-level operational event (deploy, access change, key rotation, incident, quarterly review) as a compliance: true descriptor citing the relevant control IRIs (soc2:CC6.1, eu-ai-act:Article15, nist-rmf:MG-1.1, etc.). Composes src/ops/ for the event shape and integrations/compliance-overlay/ for the framework citation. The same code path that records the ops event becomes board-facing audit evidence; no parallel pipeline.',
+    method: 'POST',
+    targetTemplate: '{base}/owm/publish_compliance_evidence',
+    inputs: [
+      { name: 'event_kind', type: 'string', required: true, description: 'One of: deploy | access-change | key-rotation | incident | quarterly-review.' },
+      { name: 'event_payload', type: 'object', required: true, description: 'Payload matching the src/ops/ buildXEvent signature for the chosen kind.' },
+      { name: 'framework', type: 'string', required: true, description: 'One of: soc2 | eu-ai-act | nist-rmf.' },
+      { name: 'cited_controls', type: 'array', required: true, description: 'Array of control IRIs being evidenced (e.g., ["soc2:CC6.1"]).' },
+      { name: 'org_pod_url', type: 'string', required: true, description: 'Pod URL of the publishing org.' },
+    ],
+  },
+];
+
+/**
+ * Declared (not yet implemented) affordance surface for the org-level
+ * operator audience. The bridge does NOT auto-register these — adding
+ * them to `owmAffordances` (above) would create tools that 404. Until
+ * an operator bridge ships, these IRIs and input schemas are the
+ * design contract for the next implementer.
+ */
+export const owmOperatorAffordances = OWM_OPERATOR_AFFORDANCES;

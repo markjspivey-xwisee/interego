@@ -1898,7 +1898,7 @@ app.post('/try', tryProvisionLimiter, async (_req, res) => {
   res.json({
     ...tokenResponse,
     ephemeral: true,
-    ttlNote: `Anonymous evaluation identity. Reaped by the janitor after ~${TRY_USER_TTL_MS / 86400000}d. To keep it, enroll a passkey or wallet at /connect using this bearer token as addDeviceToken.`,
+    ttlNote: `Anonymous evaluation identity. The janitor reaps the user + pod ~${TRY_USER_TTL_MS / 86400000}d after creation UNLESS you claim it by enrolling a credential. To claim: go to /connect, expand "Advanced options", paste this bearer token into "addDeviceToken", and enroll a passkey or wallet. The same pod (and its descriptors) becomes permanently yours; the janitor leaves credentialed u-try-* users alone.`,
     mcpConfigSnippet,
   });
 });
@@ -3072,6 +3072,28 @@ app.get('/dashboard', (_req, res) => {
     }
     document.getElementById('greeting').textContent = 'Hi ' + (meData.displayName || meData.userId);
 
+    // Ephemeral evaluation identity (u-try-*) — surface the
+    // claim-it-or-lose-it path before the user invests in this pod.
+    // The /try response promises the upgrade flow; this is the UI hook.
+    if (typeof meData.userId === 'string' && meData.userId.indexOf('u-try-') === 0) {
+      const banner = document.createElement('div');
+      banner.style.cssText = 'background:#1a1a2e;border:1px solid #6366f1;border-radius:9px;padding:14px 16px;margin-bottom:14px;color:#e0e0e8;font-size:0.92rem;line-height:1.5';
+      banner.innerHTML =
+        '<strong style="color:#a78bfa">Anonymous evaluation identity.</strong> ' +
+        'The janitor reaps this pod ~7 days after creation unless you claim it. Enroll a passkey or wallet to keep the same pod (and everything in it) permanently.' +
+        '<br><br>' +
+        '<a id="claimBtn" href="/connect" style="display:inline-block;background:#6366f1;color:white;text-decoration:none;padding:9px 16px;border-radius:7px;font-weight:600;font-size:0.92rem">Claim this identity →</a>';
+      idCard.appendChild(banner);
+      // Pre-fill the addDeviceToken on /connect by passing it in the URL.
+      // getToken() returns the current bearer; /connect reads ?claim=...
+      // and slots it into the advanced "addDeviceToken" field on load.
+      var claimAnchor = document.getElementById('claimBtn');
+      var currentToken = getToken();
+      if (claimAnchor && currentToken) {
+        claimAnchor.setAttribute('href', '/connect?claim=' + encodeURIComponent(currentToken));
+      }
+    }
+
     // Populate identity card
     idCard.appendChild(field('Display name', meData.displayName));
     idCard.appendChild(field('Your DID (share with a friend so they can send you context)', meData.did));
@@ -3262,6 +3284,30 @@ function setStatus(msg, type) {
   el.className = 'status ' + type;
 }
 
+// Pre-fill the addDeviceToken field when the user arrived here from
+// the dashboard's "Claim this identity" button on a u-try-* identity
+// (?claim=<bearer>). Auto-expand the Advanced section so the field
+// is visible, and prepend a soft status so the user knows the
+// passkey they're about to enroll will bind to the SAME pod they
+// were just using (no new identity will be minted).
+(function prefillClaim() {
+  try {
+    var params = new URL(window.location.href).searchParams;
+    var claim = params.get('claim');
+    if (!claim) return;
+    var field = document.getElementById('addDeviceToken');
+    if (field) field.value = claim;
+    var details = document.querySelector('details.step');
+    if (details) details.open = true;
+    setStatus('Claiming an evaluation identity — the passkey or wallet you enroll next will bind to your existing u-try-* pod (no new identity is minted).', 'info');
+    // Strip the bearer from the URL so it isn't logged in shared
+    // bookmarks; preserve any other params.
+    params.delete('claim');
+    var clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+    window.history.replaceState({}, '', clean);
+  } catch { /* best-effort UX, never throw */ }
+})();
+
 function onEnrolled(result) {
   const el = document.getElementById('status');
   el.className = 'status success';
@@ -3440,7 +3486,7 @@ app.listen(PORT, () => {
   const JANITOR_INTERVAL_MS = parseInt(process.env['JANITOR_INTERVAL_MS'] ?? '300000');     // 5 min
   const TEST_USER_GRACE_MS = parseInt(process.env['TEST_USER_GRACE_MS'] ?? '900000');       // 15 min
   if (JANITOR_INTERVAL_MS > 0) {
-    setInterval(() => {
+    setInterval(async () => {
       const now = Date.now();
       const testCutoff = now - TEST_USER_GRACE_MS;
       const tryCutoff = now - TRY_USER_TTL_MS;
@@ -3456,11 +3502,27 @@ app.listen(PORT, () => {
         }
       }
       // TTL sweep for anonymous `u-try-*` evaluation users. The /try
-      // endpoint promises this in its response; janitor enforces it.
+      // endpoint promises eligibility for reaping in its response; this
+      // is the enforcer. CRITICAL EXEMPTION: a u-try-* user who has
+      // ALSO enrolled any credential (passkey, wallet, or did:key) has
+      // explicitly chosen to claim the identity. The /try response
+      // promises that path keeps the pod. Skip them; otherwise we'd
+      // delete a user's pod right after they enrolled a passkey to
+      // save it — the exact opposite of what the promise says.
       for (const u of identities.values()) {
-        if (u.type === 'user' && u.id.startsWith('u-try-')) {
-          if (new Date(u.createdAt).getTime() < tryCutoff) toPurge.add(u.id);
+        if (u.type !== 'user' || !u.id.startsWith('u-try-')) continue;
+        if (new Date(u.createdAt).getTime() >= tryCutoff) continue;
+        try {
+          const methods = await readAuthMethods(u.id, /* allowStale */ true);
+          if (hasAnyCredential(methods)) {
+            // Claimed. Don't reap — the user has chosen to keep this.
+            continue;
+          }
+        } catch {
+          // If we can't even read auth-methods, the pod may already be
+          // gone (rebuilt from a partial scan); fall through to reap.
         }
+        toPurge.add(u.id);
       }
       if (toPurge.size === 0) return;
       log(`Janitor: purging ${toPurge.size} stale user(s) (test + try-it)`);
