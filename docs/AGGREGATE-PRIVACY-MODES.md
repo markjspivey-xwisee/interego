@@ -1,6 +1,6 @@
 # Choosing an aggregate-privacy mode
 
-The Interego aggregate-privacy ladder ships eight layered modes. Each
+The Interego aggregate-privacy ladder ships nine layered modes. Each
 composes the previous; none replaces it. This page is the adopter's
 field guide — which mode to pick for which threat model, and how to
 upgrade in place when the threat model shifts.
@@ -12,7 +12,13 @@ The implementations all live in
 [`src/crypto/feldman-vss.ts`](../src/crypto/feldman-vss.ts); contract
 tests pin every cheat path in
 [`applications/_shared/tests/aggregate-privacy.test.ts`](../applications/_shared/tests/aggregate-privacy.test.ts)
-(72 tests, all green).
+(78 tests, all green).
+
+Want to see the full v4-partial flow without standing up a pod?
+Run `npx tsx tools/walkthrough-v4-partial-vss.ts` — a 7-phase
+narrative from contributor commit → threshold split → encrypted
+distribution → committee reconstruction → chain-of-custody →
+tampering simulation.
 
 ## Which mode to pick
 
@@ -27,6 +33,7 @@ tests pin every cheat path in
 | Operator wants no single party (including the auditor) to hold the trueBlinding — distribute across a k-of-n committee | **v4-partial `thresholdReveal: {n, t}`** (trusted-dealer; DKG still future) |
 | Plus: detect tampered shares BEFORE Lagrange reconstruction silently poisons the result | **v4-partial+VSS** (automatic when thresholdReveal is requested — bundle ships coefficientCommitments) |
 | Plus: tamper-evident chain-of-custody record of WHO actually reconstructed the blinding (regulator wants to see the committee) | **`signCommitteeReconstruction` + `publishCommitteeReconstructionAttestation`** (in-process API) |
+| Plus: distribute encrypted shares to pseudo-aggregators via standard pod-discovery flows (not out-of-band) | **`encryptSharesForCommittee` + `publishEncryptedShareDistribution`** (in-process API) |
 | Full multi-aggregator threshold reveal with no trusted dealer (k-of-n DKG) | **v4 — not yet shipped, multi-week distributed-crypto work** |
 
 ## The ladder
@@ -42,6 +49,7 @@ tests pin every cheat path in
 | **v4-partial `thresholdReveal: {n, t}`** | Splits the trueBlinding into n Shamir shares (over the ristretto255 scalar field L) requiring any t to reconstruct. The bundle's `trueBlinding` audit field is OMITTED — no single party including the auditor knows it. `reconstructThresholdRevealAndVerify` takes any t shares + the claimed trueSum and verifies via Pedersen. | Distributes trust over a k-of-n committee: no single committee member can recover trueBlinding alone. Catches: insufficient shares; wrong claimedTrueSum; non-threshold-mode bundle. | Trusted-dealer caveat: the operator running `buildAttestedHomomorphicSum` still knows the polynomial coefficients during the split. Full multi-aggregator DKG (the remaining v4 piece) needs a multi-round protocol that no single party can short-circuit — not yet shipped. |
 | **v4-partial+VSS** (automatic) | Same as v4-partial but `buildAttestedHomomorphicSum`'s thresholdReveal path now uses Feldman Verifiable Secret Sharing under the hood. The bundle emits `coefficientCommitments: FeldmanCommitments` (one EC-point per polynomial coefficient). `reconstructThresholdRevealAndVerify` filters shares via `filterVerifiedShares` BEFORE Lagrange. | Catches: a single tampered share BEFORE it silently poisons the Lagrange interpolation. Returns `verifiedShareCount` + `rejectedShareCount` so the caller sees exactly what was rejected. Composition is automatic — opting into thresholdReveal automatically enables VSS. | Doesn't itself remove the trusted-dealer caveat; just makes the share-distribution phase cheat-resistant. Backward-compatible: bundles without `coefficientCommitments` (legacy / stripped) fall through to the unguarded path. |
 | **Committee reconstruction attestation** (`signCommitteeReconstruction` + `verifyCommitteeReconstruction`) | When a t-of-n committee successfully reconstructs trueBlinding, each member signs the canonical `committeeReconstructionMessage(bundleSumCommitment, claimedTrueSum, committeeDids, reconstructedAt)`. The coordinator bundles signatures into a `CommitteeReconstructionAttestation`; `publishCommitteeReconstructionAttestation` writes it as a pod descriptor. | Catches: forged committee membership; substituted bundle; tampered claimedTrueSum; impersonated member; silently-dropped member. Regulator can fetch the attestation from the pod and see exactly who participated, when, and on which bundle. | A malicious operator that NEVER signs the committee attestation isn't caught by the verifier — same enforcement story as v3.3 (institutional policy + `passport:` machinery). |
+| **Encrypted share distribution** (`encryptSharesForCommittee` + `publishEncryptedShareDistribution`) | Each VerifiableShamirShare is wrapped in an X25519/nacl envelope keyed to its intended pseudo-aggregator recipient. The operator publishes each envelope as a normal `cg:ContextDescriptor`; the recipient discovers it via standard pod-discovery flows and decrypts with their own X25519 keypair. | Catches: share leaking to the wrong recipient; share substitution in transit; replay across recipients. Composes the substrate's existing X25519 / nacl envelope machinery — no new ontology terms. Bigint y survives the JSON-in-envelope round-trip via the same `__bigint` wrapper used by the publishable bundle JSON encoder. | Doesn't prevent the operator from publishing the SAME share to multiple recipients (which would defeat threshold privacy) — that's a per-share auditing problem the recipient discovers when they see another envelope at the same content-addressed slot. |
 
 ## Upgrading in place
 
@@ -118,6 +126,40 @@ const sig = await signCommitteeReconstruction({
 await publishCommitteeReconstructionAttestation({
   attestation: { ..., signatures: [/* t signatures */] },
   podUrl: 'https://operator.example/pod/',
+});
+
+// Encrypted share distribution (pod-discovery flow)
+// In-process API (composes X25519/nacl envelope primitives).
+import {
+  encryptSharesForCommittee,
+  publishEncryptedShareDistribution,
+  fetchPublishedEncryptedShareDistribution,
+  decryptShareForRecipient,
+} from '@interego/core/applications/_shared/aggregate-privacy';
+
+// Operator side:
+const distributions = encryptSharesForCommittee({
+  shares: bundle.thresholdShares,
+  recipients: pseudoAggregatorDids.map((did, i) => ({
+    recipientDid: did,
+    recipientPublicKey: pseudoAggregatorX25519PublicKeys[i],
+  })),
+  senderKeyPair: operatorX25519KeyPair,
+});
+for (const dist of distributions) {
+  await publishEncryptedShareDistribution({
+    distribution: dist,
+    bundleSumCommitment: bundle.sumCommitment.bytes,
+    operatorDid: operatorDid,
+    podUrl: 'https://operator.example/pod/',
+  });
+}
+
+// Recipient side (each pseudo-aggregator):
+const fetched = await fetchPublishedEncryptedShareDistribution({ graphUrl });
+const myShare = decryptShareForRecipient({
+  distribution: fetched!,
+  recipientKeyPair: myOwnX25519KeyPair,
 });
 ```
 
