@@ -162,12 +162,23 @@ const handlers = {
     projectToLrs(args as unknown as ProjectToLrsArgs, institutionCtx(args)),
 };
 
-const allAffordances = [...lpcAffordances, ...lpcEnterpriseAffordances];
+// Deployment-split configuration: a single deployment of this bridge
+// can expose either audience independently by setting LPC_AUDIENCE.
+//   - LPC_AUDIENCE=learner          → expose lpcAffordances only
+//   - LPC_AUDIENCE=institutional    → expose lpcEnterpriseAffordances only
+//   - LPC_AUDIENCE=both (default)   → expose both (current behaviour)
+// See docs/DEPLOYMENT-SPLIT.md for the institutional-only deployment
+// pattern (separate network policy, restricted pod scope, etc.).
+const audience = (process.env.LPC_AUDIENCE ?? 'both').toLowerCase();
+let activeAffordances: typeof lpcAffordances;
+if (audience === 'learner') activeAffordances = lpcAffordances;
+else if (audience === 'institutional') activeAffordances = lpcEnterpriseAffordances;
+else activeAffordances = [...lpcAffordances, ...lpcEnterpriseAffordances];
 
 const PORT = parseInt(process.env.PORT ?? '6010', 10);
 const app = createVerticalBridge({
   verticalName: 'learner-performer-companion',
-  affordances: allAffordances,
+  affordances: activeAffordances,
   handlers,
   defaultPodUrl: process.env.LPC_DEFAULT_POD_URL,
 });
@@ -176,5 +187,5 @@ app.listen(PORT, () => {
   console.log(`learner-performer-companion bridge on http://localhost:${PORT}`);
   console.log(`  MCP endpoint:        http://localhost:${PORT}/mcp`);
   console.log(`  Affordance manifest: http://localhost:${PORT}/affordances`);
-  console.log(`  ${allAffordances.length} affordances available (${lpcAffordances.length} learner + ${lpcEnterpriseAffordances.length} institutional); tools/list mirrors them`);
+  console.log(`  Audience: ${audience} (${activeAffordances.length} affordances active; LPC_AUDIENCE=learner|institutional|both)`);
 });

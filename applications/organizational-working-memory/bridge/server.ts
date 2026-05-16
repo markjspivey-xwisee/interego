@@ -134,12 +134,23 @@ const handlers = {
     publishComplianceEvidence(args as unknown as PublishComplianceEvidenceArgs, operatorCtx(args)),
 };
 
-const allAffordances = [...owmAffordances, ...owmOperatorAffordances];
+// Deployment-split configuration: a single deployment of this bridge
+// can expose either audience independently by setting OWM_AUDIENCE.
+//   - OWM_AUDIENCE=contributor    → expose owmAffordances only
+//   - OWM_AUDIENCE=operator       → expose owmOperatorAffordances only
+//   - OWM_AUDIENCE=both (default) → expose both (current behaviour)
+// See docs/DEPLOYMENT-SPLIT.md for the operator-only deployment
+// pattern (separate network policy, restricted pod scope, etc.).
+const audience = (process.env['OWM_AUDIENCE'] ?? 'both').toLowerCase();
+let activeAffordances: typeof owmAffordances;
+if (audience === 'contributor') activeAffordances = owmAffordances;
+else if (audience === 'operator') activeAffordances = owmOperatorAffordances;
+else activeAffordances = [...owmAffordances, ...owmOperatorAffordances];
 
 const PORT = parseInt(process.env['PORT'] ?? '6060', 10);
 const app = createVerticalBridge({
   verticalName: 'organizational-working-memory',
-  affordances: allAffordances,
+  affordances: activeAffordances,
   handlers,
   defaultPodUrl: process.env['OWM_DEFAULT_POD_URL'],
 });
@@ -149,5 +160,5 @@ app.listen(PORT, () => {
   console.log(`  MCP endpoint:        http://localhost:${PORT}/mcp`);
   console.log(`  Affordance manifest: http://localhost:${PORT}/affordances`);
   console.log(`  Source adapters:     ${sourceRegistry.list().map(s => s.key).join(', ')}`);
-  console.log(`  ${allAffordances.length} affordances available (${owmAffordances.length} contributor + ${owmOperatorAffordances.length} operator)`);
+  console.log(`  Audience: ${audience} (${activeAffordances.length} affordances active; OWM_AUDIENCE=contributor|operator|both)`);
 });

@@ -8,6 +8,32 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Per-vertical bridge audience split (operator-only deployments)
+
+Closes the "per-vertical operator-side bridges as standalone
+deployments" item. Both LPC + OWM bridges now switch their exposed
+affordance set based on a single env var, letting operators run an
+operator-only deployment behind stricter network policy without
+forking code.
+
+CHANGED in `applications/learner-performer-companion/bridge/server.ts`:
+- New `LPC_AUDIENCE` env var: `learner` | `institutional` | `both`
+  (default `both`). Selects which subset of declared affordances the
+  runtime exposes.
+
+CHANGED in `applications/organizational-working-memory/bridge/server.ts`:
+- New `OWM_AUDIENCE` env var: `contributor` | `operator` | `both`
+  (default `both`). Same shape.
+
+GET `/affordances` and MCP `tools/list` automatically reflect the
+active subset — no client-side change required.
+
+NEW in `docs/DEPLOYMENT-SPLIT.md`: the deployment-split pattern. Why
+this is a configuration change rather than a code change, when to
+split, pod-scope hygiene notes, and the recipe for new verticals.
+
+---
+
 ## 2026-05-16 — Python verifier: first slice of the second-language story
 
 Ships [`integrations/python-verifier/`](integrations/python-verifier/) —
