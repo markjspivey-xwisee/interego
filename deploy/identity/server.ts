@@ -986,15 +986,61 @@ const LANDING_HTML = `<!doctype html>
 <p class="muted" style="margin-top:-0.8em;margin-bottom:1.6em;font-size:0.88rem">Reference implementation, hosted on the maintainer's free Azure instance. Fine for evaluation; self-host before you depend on it.</p>
 
 <h2 style="margin-top:1.2em">60-second setup</h2>
-<p>Add this to your MCP client config — <code>~/.claude.json</code>, <code>.cursor/mcp.json</code>, the Codex equivalent, anything that speaks MCP:</p>
+<p>Click the button to mint an anonymous, ephemeral pod + bearer token (no signup, reaped after 7 days). Paste the personalized config into your MCP client and the agent has working pod-rooted memory immediately. Want to keep it? Enroll a passkey or wallet at <code>/connect</code> using the same token as <code>addDeviceToken</code> and the pod becomes permanently yours.</p>
+<button id="tryBtn" class="btn" type="button" style="margin:0.4em 0 0.8em">Try it now — no signup &rarr;</button>
+<span id="tryStatus" class="muted" style="margin-left:0.6em;font-size:0.88rem"></span>
+<div id="trySnippetWrap" style="display:none;margin-top:0.6em">
+  <p style="margin-bottom:0.3em" class="muted">Paste into <code>~/.claude.json</code>, <code>.cursor/mcp.json</code>, or the Codex equivalent:</p>
+  <pre id="trySnippet" style="position:relative"></pre>
+  <button id="tryCopyBtn" class="btn ghost" type="button" style="margin-top:0.4em">Copy</button>
+  <p id="tryTtl" class="muted" style="margin-top:0.4em;font-size:0.86rem"></p>
+</div>
+<details style="margin:0.6em 0 1em">
+  <summary class="muted" style="cursor:pointer">Or do it manually (enroll first, paste your own token)</summary>
+  <p style="margin-top:0.6em">Enroll at <a href="/connect">/connect</a> with a passkey or wallet, then add this to your MCP client config and substitute your bearer token:</p>
 <pre>{
   "mcpServers": {
     "interego": {
-      "url": "${RELAY_URL}/sse"
+      "url": "${RELAY_URL}/sse",
+      "headers": { "Authorization": "Bearer YOUR_TOKEN_HERE" }
     }
   }
 }</pre>
-<p>First tool call opens a browser tab for passkey / wallet enrollment (~30 seconds, no email, no password — your key never leaves the device). Your DID and pod are minted from the credential. After that, the agent stores and recalls context across sessions, devices, and runtimes.</p>
+</details>
+<script>
+(function(){
+  var btn = document.getElementById('tryBtn');
+  var status = document.getElementById('tryStatus');
+  var wrap = document.getElementById('trySnippetWrap');
+  var pre = document.getElementById('trySnippet');
+  var ttl = document.getElementById('tryTtl');
+  var copy = document.getElementById('tryCopyBtn');
+  if (!btn) return;
+  btn.addEventListener('click', function(){
+    btn.disabled = true;
+    status.textContent = 'Provisioning…';
+    fetch('/try', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(j){
+        pre.textContent = j.mcpConfigSnippet;
+        wrap.style.display = 'block';
+        ttl.textContent = j.ttlNote || '';
+        status.textContent = 'Ready — userId ' + j.userId;
+        btn.textContent = 'Generate another →';
+        btn.disabled = false;
+      })
+      .catch(function(e){
+        status.textContent = 'Failed: ' + e.message;
+        btn.disabled = false;
+      });
+  });
+  copy.addEventListener('click', function(){
+    navigator.clipboard.writeText(pre.textContent || '').then(function(){
+      copy.textContent = 'Copied'; setTimeout(function(){ copy.textContent = 'Copy'; }, 1500);
+    });
+  });
+})();
+</script>
 
 <h2>What this unlocks (one concrete shape)</h2>
 <p>An agent debugs an issue and stores the findings on your pod. Tomorrow — different session, different machine, possibly a different agent — the next call discovers the same findings and avoids redoing the work. Hand the link to a teammate's agent and theirs can verify the trail back to the signer.</p>
@@ -1796,6 +1842,72 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
 
   res.json(await issueTokenResponse(user, surfaceAgent));
 });
+
+// ── Try-it provisioning (no signup, ephemeral identity) ─────
+//
+// POST /try mints a fresh anonymous user + pod + token so a stranger
+// can evaluate Interego from any MCP client in literally 60 seconds.
+// No credential is required — the trade is that the identity is
+// ephemeral: the janitor reaps `u-try-*` users after TRY_USER_TTL_MS
+// (default 7 days). Users who like what they see follow the normal
+// `/connect` flow to enroll a passkey / wallet against the SAME pod
+// (the bearer token returned here can be used as `addDeviceToken` on
+// the WebAuthn registration flow).
+//
+// Rate-limited per IP. The token is signed by the same HMAC key as
+// every other token, so it survives deploys (until the janitor reaps
+// the underlying user).
+const tryProvisionLimiter = rateLimit('try-provision', { windowMs: 60 * 60 * 1000, max: 5 });
+
+app.post('/try', tryProvisionLimiter, async (_req, res) => {
+  // userId derivation is global per the CLAUDE.md invariant — for `/try`
+  // there's no credential to derive from, so we use a fresh random suffix
+  // and prefix `u-try-` so the janitor knows to reap it. Same shape as
+  // the seeded-userId pattern (`u-pend-<rand>`) used during in-flight
+  // WebAuthn ceremonies.
+  const userId = `u-try-${crypto.randomBytes(8).toString('hex').slice(0, 12)}`;
+  const name = 'Try Interego (anonymous)';
+  // Seed the user + a default mcp-client agent. issueToken needs the
+  // agent to exist so the per-surface agent resolution doesn't throw.
+  seedIdentity(userId, 'user', name);
+  const agentId = `mcp-client-${userId}`;
+  seedIdentity(agentId, 'agent', `MCP client (${name})`, userId, 'ReadWrite');
+  // Write the empty auth-methods.jsonld so the pod has a canonical
+  // anchor and a future credential can be appended via /auth/webauthn
+  // (with this token as `addDeviceToken`) to claim the pod permanently.
+  try {
+    await putPodAuthMethods(userId, emptyAuthMethods(userId, name, agentId));
+  } catch (err) {
+    // If the pod write fails, roll back the in-memory seeds so we don't
+    // leave dangling identities that can't actually be used.
+    identities.delete(agentId);
+    identities.delete(userId);
+    res.status(503).json({ error: `Could not provision pod: ${(err as Error).message}` });
+    return;
+  }
+  const tokenResponse = await issueTokenResponse(identities.get(userId)!);
+  const mcpConfigSnippet = JSON.stringify({
+    mcpServers: {
+      interego: {
+        url: `${RELAY_URL}/sse`,
+        headers: { Authorization: `Bearer ${(tokenResponse as { token: string }).token}` },
+      },
+    },
+  }, null, 2);
+  log(`Provisioned try-it identity: ${userId} (TTL via janitor)`);
+  res.json({
+    ...tokenResponse,
+    ephemeral: true,
+    ttlNote: `Anonymous evaluation identity. Reaped by the janitor after ~${TRY_USER_TTL_MS / 86400000}d. To keep it, enroll a passkey or wallet at /connect using this bearer token as addDeviceToken.`,
+    mcpConfigSnippet,
+  });
+});
+
+// Janitor TTL for `u-try-*` users. Configurable; default 7 days. The
+// constant is defined here (and read by the janitor block below) so the
+// /try endpoint can include the TTL in its response without duplicating
+// the env-var read.
+const TRY_USER_TTL_MS = parseInt(process.env['TRY_USER_TTL_MS'] ?? String(7 * 24 * 60 * 60 * 1000));
 
 // ── Token response helper (shared across auth methods) ──────
 /**
@@ -3329,23 +3441,33 @@ app.listen(PORT, () => {
   const TEST_USER_GRACE_MS = parseInt(process.env['TEST_USER_GRACE_MS'] ?? '900000');       // 15 min
   if (JANITOR_INTERVAL_MS > 0) {
     setInterval(() => {
-      const cutoff = Date.now() - TEST_USER_GRACE_MS;
+      const now = Date.now();
+      const testCutoff = now - TEST_USER_GRACE_MS;
+      const tryCutoff = now - TRY_USER_TTL_MS;
       const allAgents = [...identities.values()].filter(i => i.type === 'agent');
-      const testUserIds = new Set<string>();
+      const toPurge = new Set<string>();
+      // Crash-recovery sweep for E2E test users (existing behaviour).
       for (const a of allAgents) {
         if (TEST_AGENT_PATTERN.test(a.id) && a.owner) {
           const owner = identities.get(a.owner);
-          if (owner && new Date(owner.createdAt).getTime() < cutoff) {
-            testUserIds.add(a.owner);
+          if (owner && new Date(owner.createdAt).getTime() < testCutoff) {
+            toPurge.add(a.owner);
           }
         }
       }
-      if (testUserIds.size === 0) return;
-      log(`Janitor: purging ${testUserIds.size} stale test user(s)`);
-      for (const uid of testUserIds) {
+      // TTL sweep for anonymous `u-try-*` evaluation users. The /try
+      // endpoint promises this in its response; janitor enforces it.
+      for (const u of identities.values()) {
+        if (u.type === 'user' && u.id.startsWith('u-try-')) {
+          if (new Date(u.createdAt).getTime() < tryCutoff) toPurge.add(u.id);
+        }
+      }
+      if (toPurge.size === 0) return;
+      log(`Janitor: purging ${toPurge.size} stale user(s) (test + try-it)`);
+      for (const uid of toPurge) {
         deleteUserCompletely(uid).catch(err => log(`Janitor: failed to delete ${uid}: ${(err as Error).message}`));
       }
     }, JANITOR_INTERVAL_MS).unref();
-    log(`Janitor: scanning every ${JANITOR_INTERVAL_MS}ms; grace ${TEST_USER_GRACE_MS}ms; pattern ${TEST_AGENT_PATTERN}`);
+    log(`Janitor: scanning every ${JANITOR_INTERVAL_MS}ms; test grace ${TEST_USER_GRACE_MS}ms (pattern ${TEST_AGENT_PATTERN}); try-it TTL ${TRY_USER_TTL_MS}ms`);
   }
 });
