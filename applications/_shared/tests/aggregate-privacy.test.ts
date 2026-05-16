@@ -36,6 +36,8 @@ import {
   buildBucketedContribution,
   buildAttestedHomomorphicDistribution,
   verifyAttestedHomomorphicDistribution,
+  publishAttestedHomomorphicDistribution,
+  fetchPublishedHomomorphicDistribution,
   type NumericBucketingScheme,
   signedBoundsMessage, verifySignedBounds,
   EpsilonBudget,
@@ -2132,5 +2134,51 @@ describe('aggregate-privacy v3 distribution: buildAttestedHomomorphicDistributio
       includeAuditFields: true,
     });
     expect(result.trueBucketCounts).toEqual([1n, 1n, 3n]);
+  });
+
+  it('publish + fetch + verify: distribution bundle survives the Turtle ↔ JSON escape boundary', async () => {
+    const result = buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: mkCohort([10n, 30n, 60n, 70n]),
+      epsilon: 1.0,
+      includeAuditFields: true,
+    });
+
+    const stored = new Map<string, string>();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'PUT' && typeof init?.body === 'string') {
+        stored.set(url, init.body);
+        return new Response('', { status: 201 });
+      }
+      if (method === 'POST' && typeof init?.body === 'string') return new Response('', { status: 200 });
+      if (method === 'GET') {
+        const body = stored.get(url);
+        if (body) return new Response(body, { status: 200, headers: { 'content-type': 'text/turtle' } });
+        return new Response('', { status: 404 });
+      }
+      return new Response('', { status: 405 });
+    }) as typeof fetch;
+
+    try {
+      const published = await publishAttestedHomomorphicDistribution({
+        bundle: result,
+        podUrl: 'https://mock-pod.example/operator/',
+      });
+      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+
+      const refetched = await fetchPublishedHomomorphicDistribution({ graphUrl: published.graphUrl });
+      expect(refetched).not.toBeNull();
+      expect(refetched!.scheme.maxValue).toBe(result.scheme.maxValue);
+      expect(refetched!.scheme.edges.length).toBe(result.scheme.edges.length);
+      expect(refetched!.trueBucketCounts).toEqual(result.trueBucketCounts);
+      // Re-verify against the original verifier.
+      const v = verifyAttestedHomomorphicDistribution(refetched!);
+      expect(v.valid).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

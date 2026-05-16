@@ -41,4 +41,5 @@ export {
   buildBudgetAuditComplianceDescriptor,
   buildCommitteeReconstructionComplianceDescriptor,
   buildCommitteeAuthorizationComplianceDescriptor,
+  buildDistributionQueryComplianceDescriptor,
 } from './aggregate-bridge.js';

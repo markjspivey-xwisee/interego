@@ -28,10 +28,13 @@ import {
   buildBudgetAuditComplianceDescriptor,
   buildCommitteeReconstructionComplianceDescriptor,
   buildCommitteeAuthorizationComplianceDescriptor,
+  buildDistributionQueryComplianceDescriptor,
 } from '../src/index.js';
 import {
   buildCommittedContribution,
   buildAttestedHomomorphicSum,
+  buildBucketedContribution,
+  buildAttestedHomomorphicDistribution,
   buildAttestedAggregateResult,
   signBudgetAuditLog,
   signCommitteeReconstruction,
@@ -41,6 +44,7 @@ import {
   participationGraphIri,
   type ParticipationHit,
   type CommitteeReconstructionAttestation,
+  type NumericBucketingScheme,
 } from '../../../applications/_shared/aggregate-privacy/index.js';
 import { createWallet } from '../../../src/index.js';
 import type { IRI } from '../../../src/index.js';
@@ -334,5 +338,74 @@ describe('compliance-aggregate bridge: v4-partial committee authorization → co
       citation: { framework: 'nist-rmf' },
     });
     expect(r.graphContent).toContain('aggregate-privacy.committee-authorization');
+  });
+});
+
+describe('compliance-aggregate bridge: v3 zk-distribution → compliance descriptor', () => {
+  const scheme: NumericBucketingScheme = {
+    type: 'numeric',
+    edges: [0n, 25n, 50n, 75n],
+    maxValue: 100n,
+  };
+
+  const mkBundle = () => {
+    const contribs = [10n, 30n, 60n, 70n, 80n].map((v, i) =>
+      buildBucketedContribution({ contributorPodUrl: `https://l-${i}/`, value: v, scheme, blindingSeed: `s-${i}` }),
+    );
+    return buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0, includeAuditFields: true,
+    });
+  };
+
+  it('embeds per-bucket noisy counts + scheme + bucketSumCommitment bytes for auditor re-verification', () => {
+    const bundle = mkBundle();
+    const r = buildDistributionQueryComplianceDescriptor({
+      bundle,
+      queryArgs: { cohort_iri: COHORT, metric: 'score-distribution', privacy_mode: 'zk-distribution' },
+      toolName: 'lpc.aggregate_cohort_query',
+      citation: { framework: 'soc2' },
+    });
+    expect(r.cited).toContain('soc2:CC6.1');
+    // Per-bucket noisy counts appear as JSON-escaped decimal strings in Turtle.
+    for (const n of bundle.noisyBucketCounts) {
+      expect(r.graphContent).toContain(n.toString());
+    }
+    // Scheme edges appear too.
+    for (const e of bundle.scheme.edges) {
+      expect(r.graphContent).toContain(e.toString());
+    }
+    // Bucket sum-commitment bytes — what the auditor needs for re-verification.
+    for (const c of bundle.bucketSumCommitments) {
+      expect(r.graphContent).toContain(c.bytes);
+    }
+    expect(r.graphContent).toContain('zk-distribution');
+  });
+
+  it('does NOT leak per-bucket trueBucketCounts / trueBucketBlindings (privacy boundary)', () => {
+    const bundle = mkBundle();
+    expect(bundle.trueBucketCounts).toBeDefined();
+    const r = buildDistributionQueryComplianceDescriptor({
+      bundle,
+      queryArgs: { cohort_iri: COHORT, metric: 'score-distribution', privacy_mode: 'zk-distribution' },
+      toolName: 'lpc.aggregate_cohort_query',
+      citation: { framework: 'eu-ai-act' },
+    });
+    // Inside Turtle, JSON keys are backslash-escaped.
+    expect(r.graphContent).not.toContain('\\"trueBucketCounts\\"');
+    expect(r.graphContent).not.toContain('\\"trueBucketBlindings\\"');
+  });
+
+  it('all three frameworks have default control mappings for the distribution bridge', () => {
+    const bundle = mkBundle();
+    for (const framework of ['soc2', 'eu-ai-act', 'nist-rmf'] as const) {
+      const r = buildDistributionQueryComplianceDescriptor({
+        bundle,
+        queryArgs: { cohort_iri: COHORT, metric: 'score-distribution' },
+        toolName: 'lpc.aggregate_cohort_query',
+        citation: { framework },
+      });
+      expect(r.cited.length).toBeGreaterThan(0);
+    }
   });
 });

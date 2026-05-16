@@ -2010,6 +2010,68 @@ export async function publishEncryptedShareDistribution(args: {
 }
 
 /**
+ * Publish an AttestedHomomorphicDistributionResult bundle as a pod
+ * descriptor. Same pattern as publishAttestedHomomorphicSum;
+ * content-addressed on (bundleSumCommitmentBytes-of-bucket-0, cohortIri)
+ * so re-publish is idempotent.
+ */
+export async function publishAttestedHomomorphicDistribution(args: {
+  bundle: AttestedHomomorphicDistributionResult;
+  podUrl: string;
+}): Promise<PublishedBundle> {
+  const firstBucketBytes = args.bundle.bucketSumCommitments[0]!.bytes;
+  const seed = sha256(`zk-distribution|${firstBucketBytes}|${args.bundle.cohortIri}`).slice(0, 16);
+  const { iri, graphIri } = bundleIris(seed);
+  const json = JSON.stringify(args.bundle, (_, v) =>
+    typeof v === 'bigint' ? { __bigint: v.toString() } : v,
+  );
+  const ttl = `@prefix agg: <${AGGREGATE_NS}> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<${graphIri}> a agg:AttestedHomomorphicDistributionBundle ;
+  agg:bundleJson """${escapeTtl(json)}""" ;
+  prov:wasAttributedTo <${args.bundle.aggregatorDid}> ;
+  dct:issued "${args.bundle.computedAt}" .`;
+  const built = ContextDescriptor.create(iri)
+    .describes(graphIri)
+    .agent(args.bundle.aggregatorDid)
+    .generatedBy(args.bundle.aggregatorDid, { onBehalfOf: args.bundle.aggregatorDid, endedAt: args.bundle.computedAt })
+    .temporal({ validFrom: args.bundle.computedAt })
+    .asserted(0.95)
+    .verified(args.bundle.aggregatorDid)
+    .build();
+  const r = await publish(built, ttl, args.podUrl);
+  return { iri, descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl };
+}
+
+/**
+ * Fetch a published AttestedHomomorphicDistributionBundle graph and
+ * JSON.parse it back with the bigint reviver, ready for
+ * `verifyAttestedHomomorphicDistribution`.
+ */
+export async function fetchPublishedHomomorphicDistribution(args: {
+  graphUrl: string;
+}): Promise<AttestedHomomorphicDistributionResult | null> {
+  const fetchFn = globalThis.fetch as unknown as (url: string, init?: { headers?: Record<string, string> }) => Promise<{ ok: boolean; text(): Promise<string> }>;
+  try {
+    const r = await fetchFn(args.graphUrl, { headers: { Accept: 'text/turtle, application/trig' } });
+    if (!r.ok) return null;
+    const ttl = await r.text();
+    const m = ttl.match(/agg:bundleJson\s+"""([\s\S]*?)"""/);
+    if (!m || !m[1]) return null;
+    const unescaped = m[1]
+      .replace(/\\t/g, '\t')
+      .replace(/\\r/g, '\r')
+      .replace(/\\n/g, '\n')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+    return JSON.parse(unescaped, bigintReviver) as AttestedHomomorphicDistributionResult;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Publish a CommitteeAuthorization as a pod descriptor. The
  * operator writes this BEFORE distributing shares so the auditor
  * can compare the actual reveal committee against it. Content-

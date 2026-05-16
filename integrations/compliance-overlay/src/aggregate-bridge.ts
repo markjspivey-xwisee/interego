@@ -31,6 +31,7 @@ import {
 } from './overlay.js';
 import type {
   AttestedHomomorphicSumResult,
+  AttestedHomomorphicDistributionResult,
   AttestedAggregateResult,
   SignedBudgetAuditLog,
   CommitteeReconstructionAttestation,
@@ -294,5 +295,54 @@ export function buildCommitteeAuthorizationComplianceDescriptor(args: {
     outcome: 'success',
     startedAt: args.authorization.issuedAt,
     endedAt: args.authorization.issuedAt,
+  }, cited);
+}
+
+/**
+ * Wrap a v3 zk-distribution AttestedHomomorphicDistributionResult as
+ * a compliance-grade descriptor. Same shape as the sum-bundle wrapper:
+ * cites the framework's relevant controls, embeds the publishable
+ * fields (per-bucket noisy counts + per-bucket sum-commitments +
+ * scheme + epsilon + cohort + contributor count), explicitly OMITS
+ * the trueBucketCounts / trueBucketBlindings audit fields from the
+ * descriptor body (they're private — published only when the
+ * operator's full bundle JSON is opened by an authorized auditor).
+ *
+ * Default toolName: `aggregate-privacy.distribution-query`.
+ */
+export function buildDistributionQueryComplianceDescriptor(args: {
+  bundle: AttestedHomomorphicDistributionResult;
+  queryArgs: Record<string, unknown>;
+  toolName: string;
+  citation: ComplianceCitation;
+  startedAt?: string;
+}): BuildEventResult {
+  const cited: ComplianceCitation = {
+    framework: args.citation.framework,
+    controls: (args.citation.controls && args.citation.controls.length > 0
+      ? args.citation.controls
+      : defaultAggregateControls(args.citation.framework)) as ComplianceCitation['controls'],
+  };
+
+  const resultSummary = JSON.stringify({
+    privacyMode: args.bundle.privacyMode,
+    contributorCount: args.bundle.contributorCount,
+    bucketCount: args.bundle.bucketSumCommitments.length,
+    noisyBucketCounts: args.bundle.noisyBucketCounts.map(n => n.toString()),
+    schemeEdges: args.bundle.scheme.edges.map(e => e.toString()),
+    schemeMaxValue: args.bundle.scheme.maxValue.toString(),
+    bucketSumCommitmentBytes: args.bundle.bucketSumCommitments.map(c => c.bytes),
+    epsilon: args.bundle.epsilon,
+    cohortIri: args.bundle.cohortIri,
+    computedAt: args.bundle.computedAt,
+  });
+
+  return buildAgentActionDescriptor({
+    toolName: args.toolName,
+    args: args.queryArgs,
+    resultSummary,
+    outcome: 'success',
+    startedAt: args.startedAt ?? args.bundle.computedAt,
+    endedAt: args.bundle.computedAt,
   }, cited);
 }

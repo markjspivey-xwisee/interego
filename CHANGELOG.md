@@ -8,6 +8,37 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy v3 distribution: publishable + compliance bridge
+
+Completes the zk-distribution layer parity with v3 zk-aggregate.
+The distribution bundle is now a fetchable pod artifact AND a
+compliance-grade descriptor, so non-TS clients + regulators have the
+same audit surface they get for single-sum aggregates.
+
+NEW in `applications/_shared/aggregate-privacy/index.ts`:
+- `publishAttestedHomomorphicDistribution({bundle, podUrl})` —
+  content-addressed on (firstBucketCommitmentBytes, cohortIri).
+- `fetchPublishedHomomorphicDistribution({graphUrl})` — auditor side.
+
+NEW in `integrations/compliance-overlay/src/aggregate-bridge.ts`:
+- `buildDistributionQueryComplianceDescriptor({bundle, queryArgs,
+  toolName, citation, startedAt?})` — embeds per-bucket noisy counts
+  + scheme + bucketSumCommitment bytes + epsilon + cohort. Intentionally
+  OMITS trueBucketCounts / trueBucketBlindings — those are the private
+  aggregator-side values the privacy boundary explicitly hides.
+- Re-exported from `integrations/compliance-overlay/src/index.ts`.
+
+4 new contract tests:
+- 1 in aggregate-privacy.test.ts (107 total): publish + fetch +
+  re-verify round-trip via mock fetch.
+- 3 in compliance-overlay aggregate-bridge.test.ts (17 total): per-
+  bucket embedding shape, privacy-boundary non-leakage, default
+  control mappings.
+
+Tests: 1446/1446 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy v3 distribution: per-bucket homomorphic sums + DP noise
 
 Closes the "verticals throw if metric isn't count-shaped" gap from the
