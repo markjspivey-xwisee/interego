@@ -40,6 +40,8 @@ import {
   committeeReconstructionMessage,
   signCommitteeReconstruction,
   verifyCommitteeReconstruction,
+  publishCommitteeReconstructionAttestation,
+  fetchPublishedCommitteeReconstructionAttestation,
   type CommitteeReconstructionAttestation,
   type CommitteeMemberSignature,
   type ParticipationHit,
@@ -1314,5 +1316,67 @@ describe('aggregate-privacy v4-partial: committee-reconstruction attestation (ch
     const r = verifyCommitteeReconstruction({ attestation: swapped });
     expect(r.valid).toBe(false);
     expect(r.reason).toMatch(/not present in memberDid/);
+  });
+
+  it('publish + fetch + re-verify: committee attestation survives the Turtle ↔ JSON escape boundary', async () => {
+    const bundle = mkBundle();
+    const { wallets, dids } = await mkCommittee(2);
+    const reconstructedAt = new Date().toISOString();
+    const signatures = await Promise.all(dids.map((did, i) =>
+      signCommitteeReconstruction({
+        bundleSumCommitment: bundle.sumCommitment.bytes,
+        claimedTrueSum: bundle.trueSum!,
+        committeeDids: dids,
+        reconstructedAt,
+        signerWallet: wallets[i]!,
+        signerDid: did,
+      }),
+    ));
+    const attestation: CommitteeReconstructionAttestation = {
+      bundleSumCommitment: bundle.sumCommitment.bytes,
+      claimedTrueSum: bundle.trueSum!,
+      committeeDids: dids,
+      reconstructedAt,
+      signatures,
+    };
+
+    const stored = new Map<string, string>();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'PUT' && typeof init?.body === 'string') {
+        stored.set(url, init.body);
+        return new Response('', { status: 201 });
+      }
+      if (method === 'POST' && typeof init?.body === 'string') return new Response('', { status: 200 });
+      if (method === 'GET') {
+        const body = stored.get(url);
+        if (body) return new Response(body, { status: 200, headers: { 'content-type': 'text/turtle' } });
+        return new Response('', { status: 404 });
+      }
+      return new Response('', { status: 405 });
+    }) as typeof fetch;
+
+    try {
+      const published = await publishCommitteeReconstructionAttestation({
+        attestation,
+        podUrl: 'https://mock-pod.example/operator/',
+      });
+      expect(published.iri).toMatch(/^urn:cg:aggregate-bundle:/);
+
+      const refetched = await fetchPublishedCommitteeReconstructionAttestation({ graphUrl: published.graphUrl });
+      expect(refetched).not.toBeNull();
+      expect(refetched!.claimedTrueSum).toBe(attestation.claimedTrueSum);
+      expect(refetched!.committeeDids.length).toBe(2);
+      expect(refetched!.signatures.length).toBe(2);
+
+      // Full round-trip verification: the auditor reading from the
+      // pod can re-verify just as the in-memory verifier would.
+      const r = verifyCommitteeReconstruction({ attestation: refetched! });
+      expect(r.valid).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

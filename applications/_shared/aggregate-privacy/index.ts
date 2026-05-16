@@ -1327,3 +1327,82 @@ export async function fetchPublishedHomomorphicSum(args: {
     return null;
   }
 }
+
+/**
+ * Publish a CommitteeReconstructionAttestation as a pod descriptor —
+ * the chain-of-custody artifact the operator (or the coordinator)
+ * writes after a t-of-n committee successfully reconstructs
+ * trueBlinding. An auditor can fetch it back via
+ * `fetchPublishedCommitteeReconstructionAttestation` and re-run
+ * `verifyCommitteeReconstruction` without trusting that the
+ * attestation actually exists.
+ *
+ * The attestation's bigint `claimedTrueSum` round-trips via the same
+ * encoder publishAttestedHomomorphicSum uses (bigint reviver on read).
+ * Content-addressed on (bundleSumCommitment, reconstructedAt) so
+ * republishing the same attestation is idempotent. The first
+ * committee member's DID is recorded as the descriptor's provenance
+ * agent — committee membership is in the attestation body, but at
+ * least one signer is named at the descriptor level so the pod's
+ * standard provenance + ABAC primitives apply uniformly.
+ */
+export async function publishCommitteeReconstructionAttestation(args: {
+  attestation: CommitteeReconstructionAttestation;
+  podUrl: string;
+}): Promise<PublishedBundle> {
+  const seed = sha256(`committee-reconstruction|${args.attestation.bundleSumCommitment}|${args.attestation.reconstructedAt}`).slice(0, 16);
+  const { iri, graphIri } = bundleIris(seed);
+  const json = JSON.stringify(args.attestation, (_, v) =>
+    typeof v === 'bigint' ? { __bigint: v.toString() } : v,
+  );
+  // Use the first committee DID (canonical-sorted) as the descriptor's
+  // provenance agent — keeps the provenance facet single-valued while
+  // the actual committee membership is recoverable from the JSON body.
+  const sortedDids = [...args.attestation.committeeDids].sort();
+  const provenanceDid = sortedDids[0]!;
+  const ttl = `@prefix agg: <${AGGREGATE_NS}> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<${graphIri}> a agg:CommitteeReconstructionAttestation ;
+  agg:bundleJson """${escapeTtl(json)}""" ;
+  prov:wasAttributedTo <${provenanceDid}> ;
+  dct:issued "${args.attestation.reconstructedAt}" .`;
+  const built = ContextDescriptor.create(iri)
+    .describes(graphIri)
+    .agent(provenanceDid)
+    .generatedBy(provenanceDid, { onBehalfOf: provenanceDid, endedAt: args.attestation.reconstructedAt })
+    .temporal({ validFrom: args.attestation.reconstructedAt })
+    .asserted(0.95)
+    .verified(provenanceDid)
+    .build();
+  const r = await publish(built, ttl, args.podUrl);
+  return { iri, descriptorUrl: r.descriptorUrl, graphUrl: r.graphUrl };
+}
+
+/**
+ * Fetch a published CommitteeReconstructionAttestation graph and
+ * JSON.parse it with the bigint reviver, ready for
+ * `verifyCommitteeReconstruction`. Returns null on fetch error or
+ * if the graph doesn't carry an attestation body.
+ */
+export async function fetchPublishedCommitteeReconstructionAttestation(args: {
+  graphUrl: string;
+}): Promise<CommitteeReconstructionAttestation | null> {
+  const fetchFn = globalThis.fetch as unknown as (url: string, init?: { headers?: Record<string, string> }) => Promise<{ ok: boolean; text(): Promise<string> }>;
+  try {
+    const r = await fetchFn(args.graphUrl, { headers: { Accept: 'text/turtle, application/trig' } });
+    if (!r.ok) return null;
+    const ttl = await r.text();
+    const m = ttl.match(/agg:bundleJson\s+"""([\s\S]*?)"""/);
+    if (!m || !m[1]) return null;
+    const unescaped = m[1]
+      .replace(/\\t/g, '\t')
+      .replace(/\\r/g, '\r')
+      .replace(/\\n/g, '\n')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+    return JSON.parse(unescaped, bigintReviver) as CommitteeReconstructionAttestation;
+  } catch {
+    return null;
+  }
+}

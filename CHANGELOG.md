@@ -8,6 +8,32 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy: publishable committee-reconstruction attestation
+
+The CommitteeReconstructionAttestation is now publishable as a normal
+`cg:ContextDescriptor` on the operator's pod. Parallels the existing
+publishAttestedHomomorphicSum / publishSignedBudgetAuditLog pattern:
+JSON body (with bigint-string round-trip) inside `agg:bundleJson`;
+content-addressed on (bundleSumCommitment, reconstructedAt) so
+republishing is idempotent.
+
+NEW in `applications/_shared/aggregate-privacy/index.ts`:
+- `publishCommitteeReconstructionAttestation({attestation, podUrl})` —
+  writes the attestation as a pod descriptor. The first canonical-
+  sorted committee DID becomes the descriptor's provenance agent;
+  full committee membership remains in the JSON body.
+- `fetchPublishedCommitteeReconstructionAttestation({graphUrl})` —
+  retrieves + JSON.parses with the bigint reviver. Returns null on
+  fetch error or missing body.
+
+1 new contract test (72 total in aggregate-privacy.test.ts): publish →
+fetch → re-verify round-trip via the same mock-fetch pattern used by
+the existing publishAttestedHomomorphicSum + publishSignedBudgetAuditLog
+tests. Catches: Turtle ↔ JSON escape regressions, bigint loss,
+signature-array shape changes through serialization.
+
+---
+
 ## 2026-05-16 — Aggregate-privacy v4-partial committee-reconstruction attestation (chain-of-custody)
 
 Closes the "who actually revealed the blinding" gap from the
