@@ -36,6 +36,7 @@ import {
   canonicalizeBudgetForSigning, signBudgetAuditLog, verifyBudgetAuditLog,
   publishAttestedHomomorphicSum, publishSignedBudgetAuditLog,
   fetchPublishedHomomorphicSum, bigintReviver,
+  reconstructThresholdRevealAndVerify,
   type ParticipationHit,
   type CommittedContribution,
 } from '../aggregate-privacy/index.js';
@@ -807,5 +808,111 @@ describe('aggregate-privacy: publishable bundles (in-process publish + fetch + r
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe('aggregate-privacy v4-partial: Shamir threshold reveal', () => {
+  const bounds = { min: 0n, max: 100n };
+  const mkBundle = (thresholdReveal?: { n: number; t: number }) => {
+    const contribs = [
+      buildCommittedContribution({ contributorPodUrl: 'https://t1/', value: 30n, bounds, blindingSeed: 't1', blindingLabel: 'l' }),
+      buildCommittedContribution({ contributorPodUrl: 'https://t2/', value: 40n, bounds, blindingSeed: 't2', blindingLabel: 'l' }),
+      buildCommittedContribution({ contributorPodUrl: 'https://t3/', value: 20n, bounds, blindingSeed: 't3', blindingLabel: 'l' }),
+    ];
+    return buildAttestedHomomorphicSum({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: contribs, epsilon: 1.0,
+      includeAuditFields: true,
+      ...(thresholdReveal ? { thresholdReveal } : {}),
+    });
+  };
+
+  it('emits thresholdShares when thresholdReveal is requested', () => {
+    const bundle = mkBundle({ n: 5, t: 3 });
+    expect(bundle.thresholdShares).toBeDefined();
+    expect(bundle.thresholdShares!.length).toBe(5);
+    expect(bundle.threshold).toEqual({ n: 5, t: 3 });
+  });
+
+  it('OMITS trueBlinding from audit fields when threshold reveal is in use (no single party knows it)', () => {
+    const bundle = mkBundle({ n: 5, t: 3 });
+    expect(bundle.trueBlinding).toBeUndefined();
+    // trueSum stays available — the noisySum already pins it modulo noise.
+    expect(bundle.trueSum).toBeDefined();
+  });
+
+  it('INCLUDES trueBlinding when no threshold reveal (single-aggregator mode unchanged)', () => {
+    const bundle = mkBundle();
+    expect(bundle.trueBlinding).toBeDefined();
+    expect(bundle.thresholdShares).toBeUndefined();
+  });
+
+  it('threshold reveal: any t-of-n committee reconstructs trueBlinding and verifies the sum', () => {
+    const bundle = mkBundle({ n: 5, t: 3 });
+    // Pick any 3 of the 5 shares — the protocol layer would gather
+    // these from t pseudo-aggregators.
+    const committee = [bundle.thresholdShares![0]!, bundle.thresholdShares![2]!, bundle.thresholdShares![4]!];
+    const r = reconstructThresholdRevealAndVerify({
+      bundle,
+      shares: committee,
+      claimedTrueSum: bundle.trueSum!,
+    });
+    expect(r.valid).toBe(true);
+    expect(r.reconstructedTrueBlinding).toBeDefined();
+  });
+
+  it('REJECTS reconstruction with fewer than t shares', () => {
+    const bundle = mkBundle({ n: 5, t: 3 });
+    const r = reconstructThresholdRevealAndVerify({
+      bundle,
+      shares: [bundle.thresholdShares![0]!, bundle.thresholdShares![1]!], // only 2
+      claimedTrueSum: bundle.trueSum!,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/insufficient shares/);
+  });
+
+  it('REJECTS reconstruction with a wrong claimedTrueSum', () => {
+    const bundle = mkBundle({ n: 5, t: 3 });
+    const r = reconstructThresholdRevealAndVerify({
+      bundle,
+      shares: bundle.thresholdShares!.slice(0, 3),
+      claimedTrueSum: bundle.trueSum! + 1n, // off-by-one
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/does not open/);
+  });
+
+  it('REJECTS reconstruction on a bundle that is NOT in threshold-reveal mode', () => {
+    const single = mkBundle(); // no thresholdReveal
+    const r = reconstructThresholdRevealAndVerify({
+      bundle: single,
+      shares: [], // would-be shares
+      claimedTrueSum: single.trueSum!,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/not in threshold-reveal mode/);
+  });
+
+  it('every t-subset of n shares yields the same reconstructed blinding', () => {
+    const bundle = mkBundle({ n: 5, t: 3 });
+    const shares = bundle.thresholdShares!;
+    const reconstructions: bigint[] = [];
+    for (let i = 0; i < shares.length; i++) {
+      for (let j = i + 1; j < shares.length; j++) {
+        for (let k = j + 1; k < shares.length; k++) {
+          const r = reconstructThresholdRevealAndVerify({
+            bundle,
+            shares: [shares[i]!, shares[j]!, shares[k]!],
+            claimedTrueSum: bundle.trueSum!,
+          });
+          expect(r.valid).toBe(true);
+          reconstructions.push(r.reconstructedTrueBlinding!);
+        }
+      }
+    }
+    // All reconstructions converge on the same trueBlinding.
+    const first = reconstructions[0]!;
+    for (const r of reconstructions) expect(r).toBe(first);
   });
 });

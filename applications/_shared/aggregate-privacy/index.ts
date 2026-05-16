@@ -48,6 +48,10 @@ import {
   deriveBlinding, randomBlinding,
   type PedersenCommitment,
 } from '../../../src/crypto/pedersen.js';
+import {
+  splitSecret, reconstructSecret,
+  type ShamirShare,
+} from '../../../src/crypto/shamir.js';
 import { ContextDescriptor, publish, discover } from '../../../src/index.js';
 import type { IRI, ManifestEntry } from '../../../src/index.js';
 import { verifyMessage } from 'ethers';
@@ -495,6 +499,19 @@ export interface AttestedHomomorphicSumResult {
   /** Per-contributor commitments (in the same order summed). */
   readonly contributorCommitments: readonly PedersenCommitment[];
   readonly privacyMode: 'zk-aggregate';
+  /**
+   * v4-partial: Shamir shares of the trueBlinding. Present iff the
+   * caller supplied `thresholdReveal: {n, t}`. The operator
+   * distributes these to k pseudo-aggregators; any t-of-n committee
+   * reconstructs trueBlinding via `reconstructThresholdRevealAndVerify`
+   * and confirms the sum-commitment opens to (claimedTrueSum,
+   * reconstructedTrueBlinding). The trueBlinding is OMITTED from
+   * the audit fields when threshold reveal is in use — that's the
+   * point: no single party (including the auditor) knows it.
+   */
+  readonly thresholdShares?: readonly ShamirShare[];
+  /** Present alongside thresholdShares. */
+  readonly threshold?: { n: number; t: number };
 }
 
 /**
@@ -532,6 +549,22 @@ export function buildAttestedHomomorphicSum(args: {
   epsilonBudget?: EpsilonBudget;
   /** Optional description recorded in the EpsilonBudget log entry. */
   queryDescription?: string;
+  /**
+   * v4-partial: threshold reveal. When supplied, the trueBlinding is
+   * split into `n` Shamir shares with threshold `t` (the secret is
+   * the bigint blinding, the shares live in the ristretto255 scalar
+   * field). The bundle's `thresholdShares` field is populated so the
+   * operator can distribute the shares to k pseudo-aggregators; any
+   * t-of-n committee can later call `reconstructThresholdRevealAndVerify`
+   * to recover the trueBlinding and confirm the sum-commitment opens
+   * to (claimedTrueSum, reconstructedTrueBlinding).
+   *
+   * STILL TRUSTED-DEALER: the operator running buildAttestedHomomorphicSum
+   * knows the polynomial coefficients. Full multi-aggregator setup
+   * needs Distributed Key Generation to remove this — out of scope
+   * for this iteration; tracked in STATUS.md as the next v4 piece.
+   */
+  thresholdReveal?: { n: number; t: number };
 }): AttestedHomomorphicSumResult {
   if (args.contributions.length === 0) {
     throw new Error('buildAttestedHomomorphicSum: at least one contribution required');
@@ -591,6 +624,25 @@ export function buildAttestedHomomorphicSum(args: {
   const noise = sampleLaplaceInt(sensitivity, args.epsilon);
   const noisySum = trueSum + BigInt(noise);
 
+  // v4-partial: split trueBlinding via Shamir when threshold reveal
+  // is requested. The shares ARE the bundle's blinding material in
+  // this mode; the single-aggregator trueBlinding audit field is
+  // omitted (no single party including the auditor should know it).
+  let thresholdShares: readonly ShamirShare[] | undefined;
+  if (args.thresholdReveal) {
+    const { n, t } = args.thresholdReveal;
+    thresholdShares = splitSecret({ secret: trueBlinding, totalShares: n, threshold: t });
+  }
+
+  // Compose audit fields: when threshold reveal is in use, trueBlinding
+  // is NEVER published; the verifier reconstructs it from shares.
+  // trueSum stays available (the noisySum already pins it modulo noise).
+  const auditFields: Partial<Pick<AttestedHomomorphicSumResult, 'trueSum' | 'trueBlinding'>> = {};
+  if (args.includeAuditFields) {
+    auditFields.trueSum = trueSum;
+    if (!thresholdShares) auditFields.trueBlinding = trueBlinding;
+  }
+
   const result: AttestedHomomorphicSumResult = {
     cohortIri: args.cohortIri,
     aggregatorDid: args.aggregatorDid,
@@ -603,7 +655,8 @@ export function buildAttestedHomomorphicSum(args: {
     sumCommitment,
     contributorCommitments: args.contributions.map(c => c.commitment),
     privacyMode: 'zk-aggregate',
-    ...(args.includeAuditFields ? { trueSum, trueBlinding } : {}),
+    ...auditFields,
+    ...(thresholdShares ? { thresholdShares, threshold: args.thresholdReveal! } : {}),
   };
   return result;
 }
@@ -650,6 +703,45 @@ export function verifyAttestedHomomorphicSum(r: AttestedHomomorphicSumResult): {
   if (!(r.epsilon > 0)) return { valid: false, reason: 'epsilon must be > 0' };
   if (!(r.sensitivity > 0)) return { valid: false, reason: 'sensitivity must be > 0' };
   return { valid: true };
+}
+
+/**
+ * v4-partial: auditor-side threshold reveal verifier. Takes a bundle
+ * (built with `thresholdReveal: {n, t}` so it includes thresholdShares),
+ * a t-subset of shares (typically collected from t pseudo-aggregators
+ * via the protocol layer the substrate doesn't ship yet), and the
+ * claimed trueSum (separately disclosed by one of the parties, or
+ * derivable from the noisySum + noise when the noise is published).
+ *
+ * Returns valid + reconstructedTrueBlinding on success; descriptive
+ * reason on failure. Catches: insufficient shares; the
+ * reconstructed-trueBlinding doesn't open the sumCommitment to the
+ * claimed trueSum; the bundle isn't in threshold-reveal mode.
+ */
+export function reconstructThresholdRevealAndVerify(args: {
+  bundle: AttestedHomomorphicSumResult;
+  shares: readonly ShamirShare[];
+  claimedTrueSum: bigint;
+}): { valid: boolean; reason?: string; reconstructedTrueBlinding?: bigint } {
+  if (!args.bundle.thresholdShares || !args.bundle.threshold) {
+    return { valid: false, reason: 'bundle is not in threshold-reveal mode (no thresholdShares)' };
+  }
+  if (args.shares.length < args.bundle.threshold.t) {
+    return { valid: false, reason: `insufficient shares: need ${args.bundle.threshold.t}, got ${args.shares.length}` };
+  }
+  const reconstructed = reconstructSecret(args.shares);
+  if (reconstructed === null) {
+    return { valid: false, reason: 'Lagrange reconstruction failed (invalid share set)' };
+  }
+  // Confirm the sum-commitment opens to (claimedTrueSum, reconstructed)
+  // via Pedersen. This is the structural verification the substrate's
+  // homomorphic primitives already give us; threshold-reveal just
+  // distributed who knows the blinding.
+  const ok = verifyHomomorphicSum(args.bundle.contributorCommitments, args.claimedTrueSum, reconstructed);
+  if (!ok) {
+    return { valid: false, reason: 'sumCommitment does not open to (claimedTrueSum, reconstructedTrueBlinding) — either the claimed sum is wrong or the share set was tampered' };
+  }
+  return { valid: true, reconstructedTrueBlinding: reconstructed };
 }
 
 // ─────────────────────────────────────────────────────────────────────
