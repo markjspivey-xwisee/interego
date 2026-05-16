@@ -8,6 +8,103 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Dual-audience verticals fully implemented (operator + institutional + v2 attested-merkle aggregate-privacy + demo)
+
+Closes PM rec #4 (pick verticals + ship to real users) through to
+runnable code. The dual-audience design discipline shipped earlier
+(`8216374`) named two pilot verticals (learning + OWM) and DECLARED 8
+institutional/operator affordances as next-implementer hand-offs.
+This pass implements all 8 + ships a v2 upgrade for the aggregate
+queries + adds a runnable demo + codifies the v2 contract in vitest.
+
+Implementations (commit `69959f7`):
+
+- `applications/organizational-working-memory/src/operator-publisher.ts` (NEW,
+  ~370 lines) — `aggregate_decisions_query`, `project_health_summary`,
+  `publish_org_policy`, `publish_compliance_evidence`. Composes
+  `discover()` + `publish()` + `src/ops/buildXEvent` + `src/compliance/`;
+  no new ontology terms.
+- `applications/learner-performer-companion/src/institutional-publisher.ts`
+  (NEW, ~420 lines) — `publish_authoritative_content`,
+  `issue_cohort_credential_template`, `aggregate_cohort_query`,
+  `project_to_lrs`. Composes `publish()` + `discover()` +
+  `lrs-adapter/projectDescriptorToLrs`. Honors consent at the LRS
+  projection boundary (refuses unless a consent descriptor exists on
+  the learner's pod).
+- Both bridges' `server.ts` concatenate `<vertical>Affordances` +
+  `<vertical>{Operator,Enterprise}Affordances` into one auto-
+  registered set + dispatch the new handlers. Tools/list mirrors them.
+
+v2 aggregate-privacy upgrade (this commit):
+
+- New shared module `applications/_shared/aggregate-privacy/` —
+  ~250 lines composing existing `src/crypto/zk/` Merkle primitives.
+  Exports: `publishCohortParticipation` (learner opts-in by signing
+  a CohortParticipation descriptor on their own pod);
+  `gatherParticipations` (operator discovers opted-in participants);
+  `buildAttestedAggregateResult` + `verifyAttestedAggregateResult`
+  (operator returns a tamper-evident Merkle root + per-leaf
+  inclusion proofs; auditor re-verifies in O(log n) per leaf).
+- Aggregate IRIs are content-addressed on (cohort_iri,
+  participant_did) so the operator can derive the expected IRI
+  per (cohort, participant) without scanning every descriptor.
+- Both `aggregate_*_query` affordances gain a `privacy_mode`
+  argument; default `'abac'` (v1 behavior); when set to
+  `'merkle-attested-opt-in'` the response includes an
+  AttestedAggregateResult bundle. The privacyMode enum on the
+  result advertises the v1 → v2 → v3 ladder; v3 (DP-noised
+  homomorphic aggregates per `spec/AGGREGATE-PRIVACY.md`) is the
+  remaining future scope.
+- LPC gains a new learner-side affordance `lpc.opt_into_cohort` —
+  the missing bilateral primitive. The institution cannot include a
+  learner in a merkle-attested aggregate unless the learner has
+  explicitly opted in via this affordance. Revocation = re-publish
+  the same descriptor as Counterfactual (auto-supersedes the prior
+  Asserted one); `gatherParticipations` filters out non-Asserted.
+
+Test + demo + verification:
+
+- `applications/_shared/tests/aggregate-privacy.test.ts` (NEW, 12
+  tests) — pins the v2 contract: content-addressed IRIs are
+  deterministic; Merkle root is sort-stable; verifier accepts honest
+  bundles and REJECTS each cheat path (count inflation, count
+  deflation, inclusion-proof root substitution, leaf tampering).
+  12/12 passing.
+- `demos/scenarios/24-dual-audience-owm.ts` (NEW, ~240 lines) — runs
+  a Contributor agent + an Operator agent against ONE OWM bridge
+  against ONE pod. Contributor authors a project, 3 decisions (one
+  superseded by a 4th), a follow-up, and 2 notes. Operator runs the
+  v2 attested aggregate, project_health_summary, publish_org_policy
+  (retention), and publish_compliance_evidence (soc2:CC8.1-cited
+  deploy). In-process auditor then verifies the attestation bundle
+  AND confirms the cheat-protection works by mutating the count and
+  re-verifying. End-to-end proof that the dual-audience surface,
+  the v2 attested-merkle path, and the v1 institutional affordances
+  all compose against real Claude Code agents.
+- `demos/agent-lib.ts` `BridgeSpawnOptions` gains an optional `env`
+  field so callers can wire operator-authority DIDs (and other
+  conventional env vars) that the per-vertical defaults don't cover.
+
+Validation: project-wide `tsc -p tsconfig.json --noEmit` clean; full
+vitest suite 1283/1283 passing (1271 prior + 12 new aggregate-
+privacy contract tests).
+
+Where the PM-eval recommendations stand after this pass:
+
+| # | Rec | Status |
+|---|---|---|
+| 1 | Front-door: one user, one wedge | live (`2b3a857`) |
+| 2 | Zero-config `/try` | live + smoke-tested (`bbe960d` / `d123ee6` / `6e6be2c`) |
+| 3 | L1 Last Call Working Draft + 12-mo backcompat | shipped (`0fe8ec7`) |
+| 4 | Dual-audience verticals + 8 operator affordances + v2 attested-merkle + opt-in primitive + runnable demo | this commit |
+
+The remaining honest future scope: v3 DP-noised homomorphic aggregates
+(real crypto work, separate scope) + second-language Interego
+implementation to advance L1 from Last Call → Candidate Recommendation
+(multi-month, community ask).
+
+---
+
 ## 2026-05-16 — L1 protocol → Last Call Working Draft; backcompat committed through 2027-05-16
 
 Promoted the L1 protocol status in [`spec/architecture.md`](spec/architecture.md)

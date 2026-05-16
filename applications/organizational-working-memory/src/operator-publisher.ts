@@ -24,6 +24,11 @@
 
 import { ContextDescriptor, publish, discover, buildDeployEvent, buildAccessChangeEvent, buildWalletRotationEvent, buildIncidentEvent, buildQuarterlyReviewEvent } from '../../../src/index.js';
 import type { IRI, ContextDescriptorData, ManifestEntry, ComplianceFramework } from '../../../src/index.js';
+import {
+  buildAttestedAggregateResult,
+  type ParticipationHit,
+  type AttestedAggregateResult,
+} from '../../_shared/aggregate-privacy/index.js';
 import { createHash } from 'node:crypto';
 
 const OWM_NS = 'https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#';
@@ -48,6 +53,15 @@ export interface AggregateDecisionsQueryArgs {
   period_to: string;     // ISO 8601
   scope_iri?: string;    // optional narrowing scope
   metric: 'decision-count' | 'mean-revision-count' | 'supersession-distribution' | 'contributor-breadth';
+  /**
+   * When `'merkle-attested-opt-in'`, additionally return a Merkle root
+   * over the contributing decision descriptor URLs plus per-leaf
+   * inclusion proofs. Same count + value as the default 'abac' mode,
+   * but tamper-evident: an auditor can verify the count without
+   * seeing the underlying decisions. v2 of the aggregate-privacy
+   * story. Default: 'abac'.
+   */
+  privacy_mode?: 'abac' | 'merkle-attested-opt-in';
 }
 
 export interface AggregateDecisionsQueryResult {
@@ -56,7 +70,15 @@ export interface AggregateDecisionsQueryResult {
   readonly scope?: string;
   readonly value: number | Record<string, number>;
   readonly sampleSize: number;
-  readonly privacyMode: 'abac' | 'zk-aggregate';
+  readonly privacyMode: 'abac' | 'merkle-attested-opt-in' | 'zk-aggregate';
+  /**
+   * Present when the operator requested a Merkle-attested result. Each
+   * contributing descriptor URL is a Merkle leaf; the root + per-leaf
+   * inclusion proofs let any auditor verify the count without seeing
+   * which decisions are in it. v2 of the aggregate-privacy story (see
+   * applications/_shared/aggregate-privacy/).
+   */
+  readonly attestation?: AttestedAggregateResult;
 }
 
 export async function aggregateDecisionsQuery(
@@ -118,13 +140,38 @@ export async function aggregateDecisionsQuery(
     }
   }
 
+  const mode = args.privacy_mode ?? 'abac';
+  let attestation: AttestedAggregateResult | undefined;
+  if (mode === 'merkle-attested-opt-in') {
+    // OWM decisions live on the org pod by definition — there's no
+    // separate "opt in" step (contributors authored them as
+    // owm:Decision descriptors). The Merkle attestation here is over
+    // the contributing descriptor URLs themselves: an auditor can
+    // verify the count + an inclusion proof for any specific
+    // decision without the aggregator being able to inflate.
+    const participations: ParticipationHit[] = decisions.map(e => ({
+      podUrl: ctx.orgPodUrl,
+      descriptorIri: e.descriptorUrl as IRI,
+      descriptorUrl: e.descriptorUrl,
+      graphIri: (e.describes.find(d => d.startsWith('urn:owm:decision:')) ?? e.descriptorUrl) as IRI,
+      modalStatus: (e.modalStatus ?? 'Asserted') as 'Asserted' | 'Hypothetical' | 'Counterfactual',
+    }));
+    attestation = buildAttestedAggregateResult({
+      cohortIri: (args.scope_iri ?? `urn:owm:scope:all:${args.period_from}|${args.period_to}`) as IRI,
+      aggregatorDid: ctx.authorityDid,
+      participations,
+      value,
+    });
+  }
+
   return {
     metric: args.metric,
     period: { from: args.period_from, to: args.period_to },
     ...(args.scope_iri ? { scope: args.scope_iri } : {}),
     value,
     sampleSize,
-    privacyMode: 'abac',
+    privacyMode: mode === 'merkle-attested-opt-in' ? 'merkle-attested-opt-in' : 'abac',
+    ...(attestation ? { attestation } : {}),
   };
 }
 

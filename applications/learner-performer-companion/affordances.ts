@@ -111,6 +111,21 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
   },
+
+  {
+    action: 'urn:cg:action:lpc:opt-into-cohort' as IRI,
+    toolName: 'lpc.opt_into_cohort',
+    title: 'Opt the learner into an institutional cohort aggregate',
+    description: 'Learner-side: publish a SIGNED agg:CohortParticipation descriptor on the learner\'s pod, declaring willingness to be counted in an institutional aggregate-cohort-query for the named cohort_iri. The institution\'s lpc.aggregate_cohort_query with privacy_mode = merkle-attested-opt-in will include this learner\'s pod in the count and emit a Merkle inclusion proof. Revoke by re-publishing the same descriptor with modal status Counterfactual (auto-supersedes the prior Asserted one). The substrate\'s consent boundary — the institution cannot include a learner who has not opted in.',
+    method: 'POST',
+    targetTemplate: '{base}/lpc/opt_into_cohort',
+    inputs: [
+      { name: 'cohort_iri', type: 'string', required: true, description: 'IRI of the institutional cohort the learner is opting into.' },
+      { name: 'policy_iri', type: 'string', required: false, description: 'IRI of the cohort-aggregation policy descriptor (on the institution\'s pod) the learner is consenting to.' },
+      { name: 'pod_url', type: 'string', required: false, description: 'Learner pod URL.' },
+      { name: 'user_did', type: 'string', required: false, description: 'Learner DID.' },
+    ],
+  },
 ];
 
 export const lpcAffordances = LPC_AFFORDANCES;

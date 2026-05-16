@@ -61,6 +61,13 @@ const VERTICAL_PORTS: Record<VerticalName, number> = {
 export interface BridgeSpawnOptions {
   readonly podUrl: string;
   readonly didPrefix: string;  // becomes did:web:${didPrefix}.example
+  /**
+   * Optional extra env-vars to pass to the bridge process. Useful
+   * for the operator-side affordances (e.g., OWM_DEFAULT_AUTHORITY_DID,
+   * LPC_INSTITUTION_POD_URL, LPC_INSTITUTION_ISSUER_DID) that the
+   * vertical-specific conventional env vars below don't cover.
+   */
+  readonly env?: Record<string, string>;
 }
 
 /**
@@ -104,6 +111,13 @@ export async function spawnBridge(
       env.OWM_DEFAULT_POD_URL = options.podUrl;
       env.OWM_DEFAULT_ORG_DID = did;
       break;
+  }
+
+  // Per-call env overrides (e.g., operator-authority DIDs that aren't
+  // covered by the conventional defaults above). Applied AFTER the
+  // per-vertical defaults so callers can override.
+  if (options.env) {
+    for (const [k, v] of Object.entries(options.env)) env[k] = v;
   }
 
   const cwd = join(REPO_ROOT, 'applications', name, 'bridge');

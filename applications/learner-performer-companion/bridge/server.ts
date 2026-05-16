@@ -34,6 +34,7 @@ import {
   type PublishAuthoritativeContentArgs, type IssueCohortCredentialTemplateArgs,
   type AggregateCohortQueryArgs, type ProjectToLrsArgs,
 } from '../src/institutional-publisher.js';
+import { publishCohortParticipation } from '../../_shared/aggregate-privacy/index.js';
 import type { IRI } from '../../../src/index.js';
 
 interface PodCtx { podUrl: string; userDid: IRI }
@@ -130,6 +131,18 @@ const handlers = {
       performanceRecords: wallet.performanceRecords.map(r => ({ iri: r.iri, attributedTo: r.attributedTo, recordedAt: r.recordedAt })),
       learningExperiences: wallet.learningExperiences.map(le => ({ iri: le.iri, forContent: le.forContent, earnedCredential: le.earnedCredential, completedAt: le.completedAt })),
     };
+  },
+
+  'lpc.opt_into_cohort': async (args: Record<string, unknown>) => {
+    const { podUrl, userDid } = ctx(args);
+    const cohortIri = args['cohort_iri'] as string | undefined;
+    if (!cohortIri) throw new Error('cohort_iri is required');
+    return publishCohortParticipation({
+      cohortIri: cohortIri as IRI,
+      participantDid: userDid,
+      podUrl,
+      ...(args['policy_iri'] ? { policyIri: args['policy_iri'] as IRI } : {}),
+    });
   },
 
   // ── Institutional-side affordances (dual-audience: enterprise edtech professional) ──

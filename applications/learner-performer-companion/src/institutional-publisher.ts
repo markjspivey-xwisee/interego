@@ -28,6 +28,10 @@ import {
 } from '../../../src/index.js';
 import type { IRI } from '../../../src/index.js';
 import { projectDescriptorToLrs } from '../../lrs-adapter/src/pod-publisher.js';
+import {
+  gatherParticipations, buildAttestedAggregateResult,
+  type AttestedAggregateResult,
+} from '../../_shared/aggregate-privacy/index.js';
 import { createHash } from 'node:crypto';
 
 const LPC_NS = 'https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#';
@@ -206,8 +210,19 @@ export interface AggregateCohortQueryArgs {
   cohort_iri: string;
   metric: 'completion-count' | 'score-distribution' | 'competency-threshold-met' | 'credential-coverage';
   predicate?: Record<string, unknown>;
-  /** Pods to walk; v1 expects the institution to know which learner pods are participating. */
+  /** Pods to walk; the institution names the candidate set, but v2 filters down to those that have published a CohortParticipation descriptor. */
   learner_pods?: readonly string[];
+  /**
+   * Privacy mode. Default `'abac'` (v1: ABAC-bounded count over the
+   * supplied learner_pods). When set to `'merkle-attested-opt-in'`
+   * (v2): only learner pods that have published a signed
+   * CohortParticipation descriptor for this cohort_iri are included,
+   * and the response is an AttestedAggregateResult bundle with a
+   * Merkle root + per-pod inclusion proofs that any auditor can
+   * verify. Bilateral by construction — the learner opts IN; the
+   * aggregator cannot inflate the count.
+   */
+  privacy_mode?: 'abac' | 'merkle-attested-opt-in';
 }
 
 export interface AggregateCohortQueryResult {
@@ -215,7 +230,9 @@ export interface AggregateCohortQueryResult {
   readonly metric: AggregateCohortQueryArgs['metric'];
   readonly value: number | Record<string, number>;
   readonly sampleSize: number;
-  readonly privacyMode: 'abac' | 'zk-aggregate';
+  readonly privacyMode: 'abac' | 'merkle-attested-opt-in' | 'zk-aggregate';
+  /** Present when privacyMode = 'merkle-attested-opt-in'. */
+  readonly attestation?: AttestedAggregateResult;
 }
 
 export async function aggregateCohortQuery(
@@ -224,13 +241,51 @@ export async function aggregateCohortQuery(
 ): Promise<AggregateCohortQueryResult> {
   if (!args.cohort_iri) throw new Error('cohort_iri is required');
   if (!args.metric) throw new Error('metric is required');
+  const mode = args.privacy_mode ?? 'abac';
 
-  // v1: walk the institution's own pod + any learner pods explicitly
-  // provided (the cohort-aggregation policy descriptor on each learner
-  // pod is what authorizes inclusion; in v1 we trust the caller to
-  // have resolved the list). v2 should derive the participating set
-  // from spec/AGGREGATE-PRIVACY.md cohort-policy descriptors directly.
-  const pods = [ctx.institutionPodUrl, ...(args.learner_pods ?? [])];
+  // v2 path: filter the candidate learner_pods down to those that
+  // have explicitly opted in via a CohortParticipation descriptor.
+  // The aggregator cannot include a pod that has not opted in; the
+  // result bundle includes a Merkle root + per-pod inclusion proofs.
+  let pods: readonly string[];
+  let attestation: AttestedAggregateResult | undefined;
+  if (mode === 'merkle-attested-opt-in') {
+    const candidatePods = args.learner_pods ?? [];
+    if (candidatePods.length === 0) {
+      // No candidate pods supplied — opt-in mode with zero candidates
+      // produces a zero-count Merkle attestation honestly.
+      const empty = buildAttestedAggregateResult({
+        cohortIri: args.cohort_iri as IRI,
+        aggregatorDid: ctx.issuerDid,
+        participations: [],
+        value: 0,
+      });
+      return {
+        cohortIri: args.cohort_iri,
+        metric: args.metric,
+        value: 0,
+        sampleSize: 0,
+        privacyMode: 'merkle-attested-opt-in',
+        attestation: empty,
+      };
+    }
+    const participations = await gatherParticipations(args.cohort_iri as IRI, candidatePods);
+    pods = participations.map(p => p.podUrl);
+    // We'll fill in `attestation` after computing the metric value
+    // below so it carries the same `value` field as the top-level
+    // result.
+    attestation = buildAttestedAggregateResult({
+      cohortIri: args.cohort_iri as IRI,
+      aggregatorDid: ctx.issuerDid,
+      participations,
+      value: 0, // placeholder; replaced after metric computation
+    });
+  } else {
+    // v1 ABAC path: walk every supplied pod (and the institution's
+    // own). No opt-in filtering. Result is a count derived from
+    // whatever descriptors the operator's ABAC scope permits reading.
+    pods = [ctx.institutionPodUrl, ...(args.learner_pods ?? [])];
+  }
   const all: Array<{ podUrl: string; entry: Awaited<ReturnType<typeof discover>>[number] }> = [];
   for (const podUrl of pods) {
     try {
@@ -302,12 +357,24 @@ export async function aggregateCohortQuery(
     }
   }
 
+  // Rebuild the attestation with the actual computed value so the
+  // bundle's `value` matches the top-level result. (We had to compute
+  // the metric to know `value`; the participations were already
+  // gathered above.)
+  if (mode === 'merkle-attested-opt-in' && attestation) {
+    attestation = {
+      ...attestation,
+      value,
+    };
+  }
+
   return {
     cohortIri: args.cohort_iri,
     metric: args.metric,
     value,
     sampleSize,
-    privacyMode: 'abac',
+    privacyMode: mode === 'merkle-attested-opt-in' ? 'merkle-attested-opt-in' : 'abac',
+    ...(attestation ? { attestation } : {}),
   };
 }
 
