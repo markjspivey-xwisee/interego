@@ -8,6 +8,59 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-05-16 — Aggregate-privacy v3 distribution: per-bucket homomorphic sums + DP noise
+
+Closes the "verticals throw if metric isn't count-shaped" gap from the
+"Honest remaining work" list. Operators can now compute histograms over
+private contributor values (decision-distribution by quarter, learner
+score-distribution, etc.) with the same homomorphic+DP guarantees v3
+gives single sums.
+
+NEW in `applications/_shared/aggregate-privacy/index.ts`:
+- `NumericBucketingScheme` — typed bucket boundaries (edges + maxValue).
+  Right-open buckets except the last one (right-closed at maxValue).
+- `bucketIndex(scheme, value)` — classify a value; throws on out-of-range.
+- `bucketCount(scheme)` — number of buckets in the scheme.
+- `BucketedCommittedContribution` — one-hot encoded contribution:
+  the bucket the value falls into gets commit(1, blinding_i), every
+  other bucket gets commit(0, blinding_i).
+- `buildBucketedContribution({contributorPodUrl, value, scheme,
+  blindingSeed?, blindingLabel?})` — produces the contribution
+  vector. Deterministic when a seed is supplied.
+- `buildAttestedHomomorphicDistribution({cohortIri, aggregatorDid,
+  contributions, epsilon, includeAuditFields?, epsilonBudget?,
+  queryDescription?})` — per-bucket homomorphic sum + per-bucket
+  DP-Laplace noise. Per-bucket sensitivity = 1 (one-hot encoding
+  bounds shift per bucket to ≤1). Composes the existing `EpsilonBudget`
+  tracker.
+- `verifyAttestedHomomorphicDistribution(result)` — auditor-side.
+  Per-bucket structural check (sum equals homomorphic sum of
+  contributor commitments) + per-bucket opening check (with audit
+  fields). Catches: aggregator substituting per-bucket commitments,
+  lying about per-bucket counts, scheme tampering.
+- `AttestedHomomorphicDistributionResult` interface with
+  `privacyMode: 'zk-distribution'`.
+
+Sensitivity note: per-bucket ε is the standard DP guarantee; the
+cumulative histogram ε under sequential composition is `k * ε` where
+k = number of buckets. Callers wanting histogram-level ε divide
+their budget by k before calling.
+
+16 new contract tests (106 total in aggregate-privacy.test.ts):
+- bucketing helpers: bucketCount, classification across all buckets,
+  below-min throw, above-max throw, edges-too-few throw
+- buildBucketedContribution: one-hot encoding correctness +
+  distinguishable per-bucket commitments, seeded reproducibility
+- buildAttestedHomomorphicDistribution + verify: noisy-count shape,
+  true-count distribution correctness, honest verify, tampered
+  bucketSumCommitments rejection, tampered trueBucketCounts
+  rejection, scheme-mismatch throw, empty-contributions throw,
+  ε-budget integration, boundary-value classification across all edges
+
+Tests: 1442/1442 passing (tsc clean).
+
+---
+
 ## 2026-05-16 — Aggregate-privacy: distribution-vs-authorization cross-check
 
 Closes the "operator authorizes 5 DIDs but ships shares to 3 sock-

@@ -31,6 +31,12 @@ import {
   buildCommittedContribution,
   buildAttestedHomomorphicSum,
   verifyAttestedHomomorphicSum,
+  bucketIndex,
+  bucketCount,
+  buildBucketedContribution,
+  buildAttestedHomomorphicDistribution,
+  verifyAttestedHomomorphicDistribution,
+  type NumericBucketingScheme,
   signedBoundsMessage, verifySignedBounds,
   EpsilonBudget,
   canonicalizeBudgetForSigning, signBudgetAuditLog, verifyBudgetAuditLog,
@@ -1936,5 +1942,195 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe('aggregate-privacy v3 distribution: bucketing helpers', () => {
+  const scheme: NumericBucketingScheme = {
+    type: 'numeric',
+    edges: [0n, 25n, 50n, 75n],
+    maxValue: 100n,
+  };
+
+  it('bucketCount returns edges.length - 1', () => {
+    expect(bucketCount(scheme)).toBe(3); // [0,25), [25,50), [50,100]
+  });
+
+  it('bucketIndex classifies values correctly across all buckets', () => {
+    expect(bucketIndex(scheme, 0n)).toBe(0);
+    expect(bucketIndex(scheme, 24n)).toBe(0);
+    expect(bucketIndex(scheme, 25n)).toBe(1);
+    expect(bucketIndex(scheme, 49n)).toBe(1);
+    expect(bucketIndex(scheme, 50n)).toBe(2);
+    expect(bucketIndex(scheme, 100n)).toBe(2); // last bucket is right-closed at maxValue
+  });
+
+  it('bucketIndex throws when value is below the scheme minimum', () => {
+    expect(() => bucketIndex(scheme, -1n)).toThrow(/below scheme minimum/);
+  });
+
+  it('bucketIndex throws when value is above maxValue', () => {
+    expect(() => bucketIndex(scheme, 101n)).toThrow(/above scheme maxValue/);
+  });
+
+  it('bucketIndex throws when scheme has fewer than 2 edges', () => {
+    expect(() => bucketIndex({ type: 'numeric', edges: [0n], maxValue: 100n }, 50n)).toThrow(/at least 2 edges/);
+  });
+});
+
+describe('aggregate-privacy v3 distribution: buildBucketedContribution', () => {
+  const scheme: NumericBucketingScheme = {
+    type: 'numeric',
+    edges: [0n, 25n, 50n, 75n],
+    maxValue: 100n,
+  };
+
+  it('one-hot encoding: bucket gets commit(1), every other bucket commit(0)', () => {
+    const c = buildBucketedContribution({
+      contributorPodUrl: 'https://test/',
+      value: 60n,
+      scheme,
+      blindingSeed: 'bucket-1',
+    });
+    expect(c.bucket).toBe(2); // 60 falls in [50, 100]
+    expect(c.perBucketCommitments.length).toBe(3);
+    expect(c.perBucketBlindings.length).toBe(3);
+    const bytes = c.perBucketCommitments.map(p => p.bytes);
+    expect(new Set(bytes).size).toBe(3);
+  });
+
+  it('reproducible with the same seed', () => {
+    const c1 = buildBucketedContribution({
+      contributorPodUrl: 'https://x/', value: 33n, scheme, blindingSeed: 'reproduce',
+    });
+    const c2 = buildBucketedContribution({
+      contributorPodUrl: 'https://x/', value: 33n, scheme, blindingSeed: 'reproduce',
+    });
+    expect(c1.bucket).toBe(c2.bucket);
+    for (let i = 0; i < c1.perBucketCommitments.length; i++) {
+      expect(c1.perBucketCommitments[i]!.bytes).toBe(c2.perBucketCommitments[i]!.bytes);
+      expect(c1.perBucketBlindings[i]).toBe(c2.perBucketBlindings[i]);
+    }
+  });
+});
+
+describe('aggregate-privacy v3 distribution: buildAttestedHomomorphicDistribution + verify', () => {
+  const scheme: NumericBucketingScheme = {
+    type: 'numeric',
+    edges: [0n, 25n, 50n, 75n],
+    maxValue: 100n,
+  };
+
+  function mkCohort(values: bigint[]) {
+    return values.map((v, i) => buildBucketedContribution({
+      contributorPodUrl: `https://learner-${i}/`,
+      value: v, scheme, blindingSeed: `seed-${i}`,
+    }));
+  }
+
+  it('emits a noisy-count vector with the correct length', () => {
+    const result = buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: mkCohort([10n, 30n, 60n, 70n, 80n]),
+      epsilon: 1.0,
+      includeAuditFields: true,
+    });
+    expect(result.noisyBucketCounts.length).toBe(3);
+    expect(result.bucketSumCommitments.length).toBe(3);
+    expect(result.scheme).toEqual(scheme);
+    expect(result.privacyMode).toBe('zk-distribution');
+  });
+
+  it('true bucket counts match the contributor distribution (when audit fields are included)', () => {
+    const result = buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: mkCohort([10n, 20n, 30n, 60n, 70n, 80n, 90n]),
+      epsilon: 1.0,
+      includeAuditFields: true,
+    });
+    expect(result.trueBucketCounts).toEqual([2n, 1n, 4n]);
+    const total = result.trueBucketCounts!.reduce((a, b) => a + b, 0n);
+    expect(total).toBe(BigInt(result.contributorCount));
+  });
+
+  it('honest bundle verifies — every bucket sum opens to the true count', () => {
+    const result = buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: mkCohort([10n, 30n, 60n]),
+      epsilon: 1.0,
+      includeAuditFields: true,
+    });
+    const v = verifyAttestedHomomorphicDistribution(result);
+    expect(v.valid).toBe(true);
+  });
+
+  it('REJECTS a bundle whose bucketSumCommitments do not equal the homomorphic sum of contributor commitments', () => {
+    const result = buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: mkCohort([10n, 30n, 60n]),
+      epsilon: 1.0,
+      includeAuditFields: true,
+    });
+    const tampered = {
+      ...result,
+      bucketSumCommitments: [result.bucketSumCommitments[1]!, result.bucketSumCommitments[1]!, result.bucketSumCommitments[2]!],
+    };
+    const v = verifyAttestedHomomorphicDistribution(tampered);
+    expect(v.valid).toBe(false);
+    expect(v.reason).toMatch(/sumCommitment does not equal/);
+  });
+
+  it('REJECTS a bundle whose trueBucketCounts have been tampered with', () => {
+    const result = buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: mkCohort([10n, 30n, 60n]),
+      epsilon: 1.0,
+      includeAuditFields: true,
+    });
+    const tampered = {
+      ...result,
+      trueBucketCounts: [10n, 10n, 10n],
+    };
+    const v = verifyAttestedHomomorphicDistribution(tampered);
+    expect(v.valid).toBe(false);
+    expect(v.reason).toMatch(/does not open to claimed/);
+  });
+
+  it('REJECTS contributions with mismatched schemes', () => {
+    const altScheme: NumericBucketingScheme = { type: 'numeric', edges: [0n, 50n], maxValue: 100n };
+    const c1 = buildBucketedContribution({ contributorPodUrl: 'https://a/', value: 10n, scheme, blindingSeed: 'a' });
+    const c2 = buildBucketedContribution({ contributorPodUrl: 'https://b/', value: 30n, scheme: altScheme, blindingSeed: 'b' });
+    expect(() => buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [c1, c2], epsilon: 1.0,
+    })).toThrow(/scheme mismatch/);
+  });
+
+  it('throws on empty contributions', () => {
+    expect(() => buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: [], epsilon: 1.0,
+    })).toThrow(/at least one contribution/);
+  });
+
+  it('cumulative ε-budget integration: refuses to run when budget would overflow', () => {
+    const budget = new EpsilonBudget({ cohortIri: COHORT, maxEpsilon: 1.0 });
+    budget.consume({ queryDescription: 'prior', epsilon: 0.7 });
+    expect(() => buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: mkCohort([10n, 30n, 60n]),
+      epsilon: 0.5,
+      epsilonBudget: budget,
+    })).toThrow(/would push cumulative/);
+  });
+
+  it('boundary classification: values at edges land in the right bucket', () => {
+    const result = buildAttestedHomomorphicDistribution({
+      cohortIri: COHORT, aggregatorDid: AGGREGATOR,
+      contributions: mkCohort([0n, 25n, 50n, 75n, 100n]),
+      epsilon: 1.0,
+      includeAuditFields: true,
+    });
+    expect(result.trueBucketCounts).toEqual([1n, 1n, 3n]);
   });
 });

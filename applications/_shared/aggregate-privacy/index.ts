@@ -480,6 +480,281 @@ export function buildCommittedContribution(args: {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────
+//  v3 — Distribution-shaped metrics (per-bucket homomorphic sums)
+// ─────────────────────────────────────────────────────────────────────
+//
+// Where buildAttestedHomomorphicSum gives a single noisy sum, many
+// real metrics are distributions: "how many learners scored 0-25 vs
+// 25-50 vs 50-75 vs 75-100", "what's the histogram of decisions per
+// quarter", etc. The naive sum primitive can't express this — at
+// most it gives the total count or a single statistic.
+//
+// Composition: each contributor is committed to a vector of per-bucket
+// Pedersen commitments via one-hot encoding — the bucket their value
+// falls into gets a commit(1, blinding_i); every other bucket gets a
+// commit(0, blinding_i). The aggregator homomorphically sums each
+// bucket's commitments independently, producing a per-bucket sum
+// commitment that opens to (count_in_bucket, Σ blindings_for_bucket).
+// DP-Laplace noise is added per bucket independently; the sensitivity
+// is 1 (one-hot encoding bounds each contributor's per-bucket
+// contribution to {0, 1}, so a single-contributor change shifts any
+// one bucket count by at most 1).
+//
+// All primitives compose existing pieces: Pedersen commit + DP-Laplace
+// noise + addCommitments. No new ontology terms.
+
+export interface NumericBucketingScheme {
+  readonly type: 'numeric';
+  /**
+   * Bucket edges in ascending order. A value v falls into bucket i iff
+   * `edges[i] <= v < edges[i+1]` (right-open). The last bucket is
+   * right-CLOSED to include the maximum: `edges[n-1] <= v <= maxValue`.
+   * For an edges array of length `b + 1`, there are `b` buckets.
+   */
+  readonly edges: readonly bigint[];
+  /** Maximum permitted value; values > maxValue throw at contribution time. */
+  readonly maxValue: bigint;
+}
+
+export type BucketingScheme = NumericBucketingScheme;
+
+/**
+ * Determine which bucket a value falls into. Returns the index in
+ * `[0, edges.length - 1)`. Throws if the value is outside the
+ * [edges[0], maxValue] range.
+ */
+export function bucketIndex(scheme: BucketingScheme, value: bigint): number {
+  if (scheme.edges.length < 2) {
+    throw new Error('bucketIndex: scheme must have at least 2 edges (1 bucket)');
+  }
+  if (value < scheme.edges[0]!) {
+    throw new Error(`bucketIndex: value ${value} below scheme minimum ${scheme.edges[0]}`);
+  }
+  if (value > scheme.maxValue) {
+    throw new Error(`bucketIndex: value ${value} above scheme maxValue ${scheme.maxValue}`);
+  }
+  for (let i = scheme.edges.length - 2; i >= 0; i--) {
+    if (value >= scheme.edges[i]!) return i;
+  }
+  throw new Error(`bucketIndex: unreachable — value ${value} not classified`);
+}
+
+/**
+ * Number of buckets in the scheme.
+ */
+export function bucketCount(scheme: BucketingScheme): number {
+  return scheme.edges.length - 1;
+}
+
+export interface BucketedCommittedContribution {
+  readonly contributorPodUrl: string;
+  /** Bucket index this contributor's value falls into (one-hot indicator). */
+  readonly bucket: number;
+  /** Per-bucket Pedersen commitments. Length == bucketCount(scheme). */
+  readonly perBucketCommitments: readonly PedersenCommitment[];
+  /** Per-bucket blindings (kept by contributor; revealed to aggregator). */
+  readonly perBucketBlindings: readonly bigint[];
+  /** The scheme this contribution was bucketed against. */
+  readonly scheme: BucketingScheme;
+}
+
+/**
+ * Build a one-hot-encoded bucketed contribution. The bucket that
+ * `value` falls into gets a commit(1, blinding_i); every other bucket
+ * gets a commit(0, blinding_i). The blinding vector is derived per-
+ * bucket from a (seed, label) pair so the contributor can reproduce
+ * them later for audit, or kept private if the seed is random.
+ *
+ * @throws on bucket-out-of-range (handled by bucketIndex).
+ */
+export function buildBucketedContribution(args: {
+  contributorPodUrl: string;
+  value: bigint;
+  scheme: BucketingScheme;
+  blindingSeed?: string;
+  blindingLabel?: string;
+}): BucketedCommittedContribution {
+  const bucket = bucketIndex(args.scheme, args.value);
+  const k = bucketCount(args.scheme);
+  const blindings: bigint[] = [];
+  const commitments: PedersenCommitment[] = [];
+  const labelBase = args.blindingLabel ?? 'pedersen/bucketed-contribution';
+  for (let i = 0; i < k; i++) {
+    const b = args.blindingSeed
+      ? deriveBlinding(args.blindingSeed, `${labelBase}/bucket-${i}`)
+      : randomBlinding();
+    const v = i === bucket ? 1n : 0n;
+    blindings.push(b);
+    commitments.push(commit(v, b));
+  }
+  return {
+    contributorPodUrl: args.contributorPodUrl,
+    bucket,
+    perBucketCommitments: commitments,
+    perBucketBlindings: blindings,
+    scheme: args.scheme,
+  };
+}
+
+export interface AttestedHomomorphicDistributionResult {
+  readonly cohortIri: IRI;
+  readonly aggregatorDid: IRI;
+  readonly computedAt: string;
+  /** Number of contributions that went into the distribution. */
+  readonly contributorCount: number;
+  /** The bucketing scheme used. */
+  readonly scheme: BucketingScheme;
+  /** Per-bucket noisy counts (publishable). */
+  readonly noisyBucketCounts: readonly bigint[];
+  /** Per-bucket DP-Laplace noise added (for audit). */
+  readonly noisePerBucket: readonly number[];
+  /** Per-bucket aggregated commitments (opens to (true count, Σ blindings)). */
+  readonly bucketSumCommitments: readonly PedersenCommitment[];
+  /** Per-bucket per-contributor commitments preserved for structural verification. */
+  readonly perContributorCommitments: readonly (readonly PedersenCommitment[])[];
+  /** Per-bucket true counts (private — for audit when includeAuditFields=true). */
+  readonly trueBucketCounts?: readonly bigint[];
+  /** Per-bucket sum of blindings (private — for audit when includeAuditFields=true). */
+  readonly trueBucketBlindings?: readonly bigint[];
+  /** DP ε budget consumed by this query (per-bucket sensitivity = 1). */
+  readonly epsilon: number;
+  readonly privacyMode: 'zk-distribution';
+}
+
+/**
+ * Aggregator-side: per-bucket homomorphic sums + per-bucket DP-Laplace
+ * noise. Each bucket's sensitivity is 1 (one-hot encoding: a single-
+ * contributor change shifts any one bucket count by exactly 1), so
+ * `sampleLaplaceInt(1, epsilon)` per bucket gives ε-DP per bucket
+ * with the standard noise calibration.
+ *
+ * Sensitivity NOTE: this is per-bucket ε; the cumulative privacy
+ * across the whole histogram under sequential composition is
+ * `k * ε` where k = number of buckets. Callers who want histogram-
+ * level ε should divide their ε budget by k before calling.
+ */
+export function buildAttestedHomomorphicDistribution(args: {
+  cohortIri: IRI;
+  aggregatorDid: IRI;
+  contributions: readonly BucketedCommittedContribution[];
+  epsilon: number;
+  includeAuditFields?: boolean;
+  epsilonBudget?: EpsilonBudget;
+  queryDescription?: string;
+}): AttestedHomomorphicDistributionResult {
+  if (args.contributions.length === 0) {
+    throw new Error('buildAttestedHomomorphicDistribution: at least one contribution required');
+  }
+  const first = args.contributions[0]!;
+  const k = bucketCount(first.scheme);
+  // All contributors MUST share the same scheme (same edges + maxValue).
+  for (const c of args.contributions) {
+    if (c.scheme.edges.length !== first.scheme.edges.length || c.scheme.maxValue !== first.scheme.maxValue) {
+      throw new Error(`buildAttestedHomomorphicDistribution: scheme mismatch in contribution from ${c.contributorPodUrl}`);
+    }
+    for (let i = 0; i < c.scheme.edges.length; i++) {
+      if (c.scheme.edges[i] !== first.scheme.edges[i]) {
+        throw new Error(`buildAttestedHomomorphicDistribution: edge mismatch at ${i} in contribution from ${c.contributorPodUrl}`);
+      }
+    }
+    if (c.perBucketCommitments.length !== k) {
+      throw new Error(`buildAttestedHomomorphicDistribution: contribution from ${c.contributorPodUrl} has ${c.perBucketCommitments.length} commitments, expected ${k}`);
+    }
+  }
+
+  if (args.epsilonBudget) {
+    args.epsilonBudget.consume({
+      queryDescription: args.queryDescription ?? `homomorphic-distribution on ${args.cohortIri}`,
+      epsilon: args.epsilon,
+    });
+  }
+
+  // Per-bucket: homomorphic sum + DP-Laplace noise.
+  const bucketSumCommitments: PedersenCommitment[] = [];
+  const noisyBucketCounts: bigint[] = [];
+  const noisePerBucket: number[] = [];
+  const trueBucketCounts: bigint[] = [];
+  const trueBucketBlindings: bigint[] = [];
+  for (let i = 0; i < k; i++) {
+    const bucketCommits = args.contributions.map(c => c.perBucketCommitments[i]!);
+    const bucketSum = addCommitments(bucketCommits);
+    bucketSumCommitments.push(bucketSum);
+    const trueCount = args.contributions.reduce((acc, c) => acc + (c.bucket === i ? 1n : 0n), 0n);
+    const trueBlinding = args.contributions.reduce((acc, c) => acc + c.perBucketBlindings[i]!, 0n);
+    trueBucketCounts.push(trueCount);
+    trueBucketBlindings.push(trueBlinding);
+    // Per-bucket sensitivity = 1 (one-hot encoding).
+    const noise = sampleLaplaceInt(1, args.epsilon);
+    noisePerBucket.push(noise);
+    noisyBucketCounts.push(trueCount + BigInt(noise));
+  }
+
+  const result: AttestedHomomorphicDistributionResult = {
+    cohortIri: args.cohortIri,
+    aggregatorDid: args.aggregatorDid,
+    computedAt: new Date().toISOString(),
+    contributorCount: args.contributions.length,
+    scheme: first.scheme,
+    noisyBucketCounts,
+    noisePerBucket,
+    bucketSumCommitments,
+    perContributorCommitments: args.contributions.map(c => c.perBucketCommitments),
+    epsilon: args.epsilon,
+    privacyMode: 'zk-distribution',
+    ...(args.includeAuditFields ? { trueBucketCounts, trueBucketBlindings } : {}),
+  };
+  return result;
+}
+
+/**
+ * Auditor-side: confirm the published distribution bundle is
+ * internally consistent. Catches: aggregator substituting per-bucket
+ * sum commitments; aggregator lying about per-bucket counts;
+ * aggregator changing the contributor set; scheme tampering.
+ */
+export function verifyAttestedHomomorphicDistribution(r: AttestedHomomorphicDistributionResult): { valid: boolean; reason?: string } {
+  const k = bucketCount(r.scheme);
+  if (r.bucketSumCommitments.length !== k) {
+    return { valid: false, reason: `bucketSumCommitments length ${r.bucketSumCommitments.length} != bucketCount ${k}` };
+  }
+  if (r.noisyBucketCounts.length !== k) {
+    return { valid: false, reason: `noisyBucketCounts length ${r.noisyBucketCounts.length} != bucketCount ${k}` };
+  }
+  if (r.noisePerBucket.length !== k) {
+    return { valid: false, reason: `noisePerBucket length ${r.noisePerBucket.length} != bucketCount ${k}` };
+  }
+  if (r.contributorCount !== r.perContributorCommitments.length) {
+    return { valid: false, reason: `contributorCount ${r.contributorCount} != perContributorCommitments.length ${r.perContributorCommitments.length}` };
+  }
+  // Per-bucket structural: each bucketSumCommitment must equal the
+  // homomorphic sum of that bucket's per-contributor commitments.
+  for (let i = 0; i < k; i++) {
+    const bucketCommits = r.perContributorCommitments.map(c => c[i]!);
+    const computed = addCommitments(bucketCommits);
+    if (computed.bytes !== r.bucketSumCommitments[i]!.bytes) {
+      return { valid: false, reason: `bucket ${i} sumCommitment does not equal the homomorphic sum of contributor commitments` };
+    }
+  }
+  // Audit-field path: when the bundle includes per-bucket trueCounts +
+  // trueBlindings, verify each bucket opens correctly.
+  if (r.trueBucketCounts !== undefined && r.trueBucketBlindings !== undefined) {
+    if (r.trueBucketCounts.length !== k || r.trueBucketBlindings.length !== k) {
+      return { valid: false, reason: 'true-bucket audit arrays have wrong length' };
+    }
+    for (let i = 0; i < k; i++) {
+      const bucketCommits = r.perContributorCommitments.map(c => c[i]!);
+      const ok = verifyHomomorphicSum(bucketCommits, r.trueBucketCounts[i]!, r.trueBucketBlindings[i]!);
+      if (!ok) return { valid: false, reason: `bucket ${i} sumCommitment does not open to claimed (trueCount, trueBlinding)` };
+      if (r.noisyBucketCounts[i] !== r.trueBucketCounts[i]! + BigInt(r.noisePerBucket[i]!)) {
+        return { valid: false, reason: `bucket ${i} noisyCount (${r.noisyBucketCounts[i]}) != trueCount + noise (${r.trueBucketCounts[i]! + BigInt(r.noisePerBucket[i]!)})` };
+      }
+    }
+  }
+  if (!(r.epsilon > 0)) return { valid: false, reason: 'epsilon must be > 0' };
+  return { valid: true };
+}
+
 export interface AttestedHomomorphicSumResult {
   readonly cohortIri: IRI;
   readonly aggregatorDid: IRI;
