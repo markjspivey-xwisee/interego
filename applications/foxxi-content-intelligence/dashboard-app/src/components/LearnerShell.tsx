@@ -59,11 +59,12 @@ export function LearnerShell({ session }: { session: FoxxiSession }) {
         {enrollments && enrollments.enrollments.length > 0 && (
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 10 }}>
-              Substrate matched {enrollments.enrollments.length} policy assignment{enrollments.enrollments.length === 1 ? '' : 's'} for your audience tags.
+              Substrate matched {enrollments.enrollments.length} policy assignment{enrollments.enrollments.length === 1 ? '' : 's'} for your audience tags
+              {' '}across {new Set(enrollments.enrollments.map(e => e.courseId)).size} course{new Set(enrollments.enrollments.map(e => e.courseId)).size === 1 ? '' : 's'}.
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {enrollments.enrollments.map(e => (
-                <EnrollmentRow key={e.policyId} enrollment={e} canOpen={!!getCourseContent(e.courseId)} onOpen={() => setOpenCourseId(e.courseId)} session={session} />
+              {groupByCourse(enrollments.enrollments).map(group => (
+                <CourseRow key={group.courseId} group={group} canOpen={!!getCourseContent(group.courseId)} onOpen={() => setOpenCourseId(group.courseId)} session={session} />
               ))}
             </div>
           </div>
@@ -158,38 +159,93 @@ function buildPlayerUrl(courseId: string, session: { webId: string; name: string
   return u.toString();
 }
 
-function EnrollmentRow({ enrollment, canOpen, onOpen, session }: { enrollment: EnrolledCourse; canOpen: boolean; onOpen: () => void; session?: FoxxiSession }) {
-  const tone = enrollment.status === 'completed' ? 'good'
-    : enrollment.status === 'overdue' ? 'bad' : 'warn';
-  const playable = enrollment.courseId === 'golf-explained';
+interface CourseGroup {
+  courseId: string;
+  courseTitle: string;
+  category: string;
+  policies: EnrolledCourse[];
+  /** Strongest requirement across all matching policies — drives headline status. */
+  headlineRequirement: 'required' | 'recommended' | 'optional';
+  /** Worst lifecycle state across all matching policies (overdue > pending > completed). */
+  headlineStatus: 'overdue' | 'pending' | 'completed';
+}
+
+function groupByCourse(enrollments: readonly EnrolledCourse[]): CourseGroup[] {
+  const byId = new Map<string, EnrolledCourse[]>();
+  for (const e of enrollments) {
+    const list = byId.get(e.courseId) ?? [];
+    list.push(e);
+    byId.set(e.courseId, list);
+  }
+  const requirementRank: Record<string, number> = { required: 3, recommended: 2, optional: 1 };
+  const statusRank: Record<string, number> = { overdue: 3, pending: 2, completed: 1 };
+  return [...byId.entries()].map(([courseId, policies]) => {
+    const first = policies[0]!;
+    const headlineRequirement = policies
+      .map(p => p.requirementType)
+      .sort((a, b) => (requirementRank[b] ?? 0) - (requirementRank[a] ?? 0))[0] as CourseGroup['headlineRequirement'];
+    const headlineStatus = policies
+      .map(p => p.status)
+      .sort((a, b) => (statusRank[b] ?? 0) - (statusRank[a] ?? 0))[0] as CourseGroup['headlineStatus'];
+    return { courseId, courseTitle: first.courseTitle, category: first.category, policies, headlineRequirement, headlineStatus };
+  });
+}
+
+function CourseRow({ group, canOpen, onOpen, session }: { group: CourseGroup; canOpen: boolean; onOpen: () => void; session?: FoxxiSession }) {
+  const playable = group.courseId === 'golf-explained';
+  const headlineTone = group.headlineStatus === 'completed' ? 'good'
+    : group.headlineStatus === 'overdue' ? 'bad'
+    : group.headlineRequirement === 'required' ? 'bad' : 'neutral';
+  const headlineLabel = group.headlineRequirement === 'required' ? 'Required' : group.headlineRequirement === 'recommended' ? 'Recommended' : 'Optional';
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 12,
       padding: 12, background: 'var(--panel-2)',
       borderRadius: 6, border: '1px solid var(--border)',
     }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 500 }}>{enrollment.courseTitle}</div>
-        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>
-          {enrollment.category} · assigned {enrollment.assignedAt} · due {enrollment.dueAt || '—'}
+      {/* Headline */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 500 }}>{group.courseTitle}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>{group.category}</div>
         </div>
-      </div>
-      <Pill tone={enrollment.requirementType === 'required' ? 'bad' : 'neutral'}>
-        {enrollment.requirementType}
-      </Pill>
-      <Pill tone={tone}>{enrollment.status}{enrollment.completedAt ? ` · ${enrollment.completedAt}` : ''}</Pill>
-      {playable && session && (
-        <Button
-          primary
-          onClick={() => window.open(buildPlayerUrl(enrollment.courseId, session), '_blank', 'noopener')}
-          title="Open the SCORM course in a new tab. The player emits live xAPI statements to Foxxi-as-LRS."
-        >
-          ▶ Launch
+        <Pill tone={headlineTone}>{headlineLabel}{group.policies.length > 1 ? ` + ${group.policies.length - 1}` : ''}</Pill>
+        {playable && session && (
+          <Button
+            primary
+            onClick={() => window.open(buildPlayerUrl(group.courseId, session), '_blank', 'noopener')}
+            title="Open the course in a new tab. The player emits live xAPI 2.0 statements to Foxxi-as-LRS."
+          >
+            ▶ Launch
+          </Button>
+        )}
+        <Button onClick={onOpen} disabled={!canOpen} primary={!playable && canOpen}>
+          {canOpen ? 'Open & ask' : 'Open'}
         </Button>
-      )}
-      <Button onClick={onOpen} disabled={!canOpen} primary={!playable && canOpen}>
-        {canOpen ? 'Open & ask' : 'Open'}
-      </Button>
+      </div>
+      {/* Per-policy detail — each line is one matching assignment */}
+      <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {group.policies.map(p => <PolicyLine key={p.policyId} p={p} />)}
+      </div>
+    </div>
+  );
+}
+
+function PolicyLine({ p }: { p: EnrolledCourse }) {
+  const isOverdue = p.status === 'overdue';
+  const isCompleted = p.status === 'completed';
+  const reqColor = p.requirementType === 'required' ? 'var(--bad)'
+    : p.requirementType === 'recommended' ? 'var(--warn)' : 'var(--text-dim)';
+  const statusColor = isCompleted ? 'var(--good)'
+    : isOverdue ? 'var(--bad)' : 'var(--text-dim)';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>
+      <span style={{ color: reqColor, fontWeight: 600, minWidth: 100 }}>{p.requirementType}</span>
+      <span style={{ color: 'var(--text-dim)', flex: 1 }}>
+        assigned {p.assignedAt}{p.dueAt ? ' · due ' + p.dueAt : ''}
+      </span>
+      <span style={{ color: statusColor, fontWeight: 500 }}>
+        {p.status}{p.completedAt ? ' ' + p.completedAt : ''}
+      </span>
     </div>
   );
 }
