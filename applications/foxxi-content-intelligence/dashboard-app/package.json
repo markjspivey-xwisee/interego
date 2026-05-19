@@ -13,7 +13,8 @@
     "d3-force": "^3.0.0",
     "ethers": "^6.16.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.15.1"
   },
   "devDependencies": {
     "@types/d3-force": "^3.0.10",

@@ -120,17 +120,40 @@ export function Header({ session, onLogout, transport }: { session: { role: stri
         fontFamily: "'EB Garamond', serif", fontStyle: 'italic',
         color: 'var(--panel)', fontSize: 18,
       }}>Interego-grounded L&amp;D</div>
-      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
         <TransportPill transport={transport} />
-        <span style={{
-          fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5,
-          letterSpacing: '0.06em', textTransform: 'uppercase',
-          color: 'var(--accent)',
-        }}>{session.role}</span>
-        <span style={{ fontFamily: "'EB Garamond', serif", fontStyle: 'italic', fontSize: 16 }}>
-          {session.name}
-        </span>
-        <Button onClick={onLogout} small>Sign out</Button>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '4px 12px', borderRadius: 18,
+          background: 'rgba(245, 239, 226, 0.08)',
+          border: '1px solid rgba(193, 80, 28, 0.4)',
+        }}>
+          <span style={{
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5,
+            letterSpacing: '0.06em', textTransform: 'uppercase',
+            color: 'var(--accent)', fontWeight: 600,
+          }}>{session.role}</span>
+          <span style={{
+            fontFamily: "'EB Garamond', serif", fontStyle: 'italic',
+            fontSize: 15, color: 'var(--panel)',
+          }}>{session.name}</span>
+        </div>
+        <button
+          onClick={onLogout}
+          aria-label="Sign out"
+          title={`Sign out ${session.name}`}
+          style={{
+            font: 'inherit', fontSize: 13, fontWeight: 600,
+            padding: '7px 16px', borderRadius: 4,
+            border: '1px solid var(--accent)',
+            background: 'var(--accent)', color: 'white',
+            cursor: 'pointer',
+            fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Sign out ↗
+        </button>
       </div>
     </header>
   );

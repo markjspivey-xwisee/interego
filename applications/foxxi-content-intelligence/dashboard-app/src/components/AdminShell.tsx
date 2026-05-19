@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Card, Pill, Button, Modal, Row } from './common.js';
 import { coverageQuery, type CoverageQueryResult } from '../interego/client.js';
 import { SAMPLE_ADMIN_PAYLOAD } from '../sample/data.js';
@@ -7,10 +8,19 @@ import type { FoxxiSession } from '../auth/session.js';
 import type { CatalogEntry, AdminConnection } from '../types.js';
 
 type Tab = 'catalog' | 'policies' | 'coverage' | 'access' | 'integrations' | 'audit' | 'lrs';
+const TAB_VALUES = new Set<Tab>(['catalog', 'policies', 'coverage', 'access', 'integrations', 'audit', 'lrs']);
 
 export function AdminShell({ session }: { session: FoxxiSession }) {
-  const [tab, setTab] = useState<Tab>('catalog');
+  const params = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
   const a = SAMPLE_ADMIN_PAYLOAD;
+
+  // Tab is driven by the URL path — /admin/<tab> or /admin/lrs/<sub>
+  const isLrsPath = location.pathname.startsWith('/admin/lrs');
+  const urlTab = isLrsPath ? 'lrs' : (params.tab as string | undefined);
+  const tab: Tab = (urlTab && TAB_VALUES.has(urlTab as Tab)) ? (urlTab as Tab) : 'catalog';
+  const setTab = (v: Tab) => navigate(v === 'lrs' ? '/admin/lrs/statements' : `/admin/${v}`);
 
   return (
     <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}>

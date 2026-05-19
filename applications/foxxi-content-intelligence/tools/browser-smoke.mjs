@@ -106,6 +106,31 @@ console.log(`  ${anonPosts.length} POSTs to /xapi/statements (expected 0 — mus
 const okAnon = anonPosts.length === 0;
 await browser2.close();
 
+// ── Case 4 — deep-link routes resolve correctly (SPA fallback) ──
+console.log('\n=== Case 4: deep-link routes (SPA fallback via nginx) ===');
+const browser4 = await chromium.launch({ headless: true });
+const ctx4 = await browser4.newContext();
+const DASHBOARD_BASE = 'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const deepLinks = [
+  '/login',
+  '/learner',
+  '/admin/catalog',
+  '/admin/policies',
+  '/admin/lrs/statements',
+  '/admin/lrs/aggregates',
+];
+let deepLinkPass = 0;
+for (const path of deepLinks) {
+  const p = await ctx4.newPage();
+  const resp = await p.goto(DASHBOARD_BASE + path, { waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => null);
+  const status = resp?.status() ?? 0;
+  const ok = status >= 200 && status < 400;
+  if (ok) deepLinkPass++;
+  console.log(`  ${ok ? '✓' : '✗'} ${path.padEnd(30)} HTTP ${status}`);
+  await p.close();
+}
+await browser4.close();
+
 // ── Case 3 — dashboard → ▶ Launch end-to-end ──
 // Open dashboard, clear stale localStorage, sign in as Joshua, click
 // Launch, intercept the new tab, verify its URL has a bearer + the
@@ -174,6 +199,9 @@ console.log(`  dashboard console errors: ${dashConsoleErr.length}`);
 for (const e of dashConsoleErr.slice(0, 5)) console.log(`    · ${e}`);
 await browser3.close();
 
-const ok = okAuthed && okAnon;
+const okDeepLinks = deepLinkPass === deepLinks.length;
+console.log(`\n=== deep-link routes: ${okDeepLinks ? 'PASS' : 'FAIL'} — ${deepLinkPass}/${deepLinks.length} served ===`);
+
+const ok = okAuthed && okAnon && okDeepLinks;
 console.log(`\n=== overall: ${ok ? 'PASS' : 'FAIL'} ===`);
 process.exit(ok ? 0 : 1);

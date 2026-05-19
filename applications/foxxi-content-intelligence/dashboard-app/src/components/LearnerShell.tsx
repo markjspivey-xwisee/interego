@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Card, Pill, Button, Stat } from './common.js';
 import { ChatPanel } from './ChatPanel.js';
 import { SlideNavigator } from './SlideNavigator.js';
@@ -9,9 +10,12 @@ import type { CourseContent, EnrolledCourse } from '../types.js';
 import type { FoxxiSession } from '../auth/session.js';
 
 export function LearnerShell({ session }: { session: FoxxiSession }) {
+  const params = useParams();
+  const navigate = useNavigate();
+  const openCourseId = (params.courseId as string | undefined) ?? null;
+  const setOpenCourseId = (id: string | null) => navigate(id ? `/learner/courses/${id}` : '/learner');
   const [enrollments, setEnrollments] = useState<DiscoverAssignedCoursesResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openCourseId, setOpenCourseId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;

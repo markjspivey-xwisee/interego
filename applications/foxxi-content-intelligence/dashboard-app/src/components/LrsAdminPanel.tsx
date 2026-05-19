@@ -12,6 +12,7 @@
  */
 
 import React, { useEffect, useState, useMemo } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Card, Pill, Button } from './common.js';
 
 const BRIDGE = (import.meta.env.VITE_FOXXI_BRIDGE_URL as string | undefined) ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
@@ -40,8 +41,15 @@ async function api<T>(bearer: string, path: string): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+type LrsTab = 'statements' | 'aggregates' | 'conformance' | 'config';
+const LRS_TAB_VALUES = new Set<LrsTab>(['statements', 'aggregates', 'conformance', 'config']);
+
 export function LrsAdminPanel({ bearer }: { bearer: string }) {
-  const [tab, setTab] = useState<'statements' | 'aggregates' | 'conformance' | 'config'>('statements');
+  const params = useParams();
+  const navigate = useNavigate();
+  const urlTab = params.lrsTab as string | undefined;
+  const tab: LrsTab = (urlTab && LRS_TAB_VALUES.has(urlTab as LrsTab)) ? (urlTab as LrsTab) : 'statements';
+  const setTab = (v: LrsTab) => navigate(`/admin/lrs/${v}`);
   return (
     <Card title="xAPI / LRS administration"
       right={<Pill tone="accent">Foxxi-as-LRS</Pill>}>
