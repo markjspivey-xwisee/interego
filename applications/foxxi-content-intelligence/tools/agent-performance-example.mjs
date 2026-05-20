@@ -144,11 +144,13 @@ console.log(`  rung 3 (counterfactual): ${cr.rung3.reading}`);
 console.log(`  recommendation:          ${cr.recommendation.toUpperCase()} — ${cr.recommendationRationale}`);
 console.log(`  caveat:                  ${cr.caveat}`);
 
+// Note: the bridge's probe store is in-memory and accumulates a probe
+// portfolio across runs — so we check that THIS run's probe added a
+// causal read, not that the team started probe-free.
 const ok = d0.cynefin.domain.length > 0
   && d0.dispositions.length >= 1
-  && before.probeCount === 0
   && probe.recorded === true
-  && after.causalReads.length >= 1
+  && after.causalReads.length > before.causalReads.length
   && ['amplify', 'dampen', 'let-run'].includes(cr.recommendation)
   && typeof cr.rung2.shift === 'string';
 console.log(`\n=== ${ok ? 'PASS' : 'FAIL'} — disposition read (no gap/ideal-state), do(x) probe run, ` +
