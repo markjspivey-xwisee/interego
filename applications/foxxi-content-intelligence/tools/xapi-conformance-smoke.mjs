@@ -53,7 +53,7 @@ console.log(`\n=== xAPI 2.0 Conformance Smoke against ${BRIDGE} ===\n`);
   check('GET /xapi/about returns 200 with auth', r.status === 200, '§7.7');
   const body = await r.json();
   check('/about reports 2.0.0 in version array', Array.isArray(body.version) && body.version.includes('2.0.0'), '§7.7');
-  check('/about reports backend description extension', !!body.extensions?.['https://markjspivey-xwisee.github.io/interego/ns/foxxi#lrsBackend'], 'foxxi ext');
+  check('/about reports backend description extension', !!body.extensions?.['https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#lrsBackend'], 'foxxi ext');
 }
 
 // ── /xapi/profile ──

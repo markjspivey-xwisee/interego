@@ -157,30 +157,48 @@ async function handleAggregates(_req: Request, res: Response): Promise<void> {
   });
 }
 
+/** xAPI 2.0 / cmi5 core verbs — external, dereference to adlnet.gov. */
+const ADL_CORE_VERBS = [
+  'launched', 'initialized', 'experienced', 'completed', 'passed', 'failed',
+  'satisfied', 'terminated', 'abandoned', 'waived', 'voided',
+].map(v => `http://adlnet.gov/expapi/verbs/${v}`);
+
+/**
+ * The Foxxi verb set, obtained by ACTUALLY DEREFERENCING the vocabulary
+ * — a runtime GET of `<bridge>/ns/foxxi`, not a hardcoded list. This is
+ * the production code path that proves the namespace is live linked
+ * data: every Conformance read re-grounds itself against the served
+ * vocabulary. Cached briefly so the tab is not a fetch storm.
+ */
+let _foxxiVerbCache: { verbs: string[]; at: number } | null = null;
+const FOXXI_VERB_TTL_MS = 5 * 60_000;
+
+async function dereferenceFoxxiVerbs(vocabUrl: string): Promise<{ verbs: string[]; dereferenced: boolean }> {
+  if (_foxxiVerbCache && Date.now() - _foxxiVerbCache.at < FOXXI_VERB_TTL_MS) {
+    return { verbs: _foxxiVerbCache.verbs, dereferenced: true };
+  }
+  try {
+    const r = await fetch(vocabUrl, { headers: { Accept: 'application/ld+json' } });
+    if (!r.ok) throw new Error(`vocab HTTP ${r.status}`);
+    const doc = await r.json() as { terms?: Array<{ '@id'?: string; '@type'?: string }> };
+    const verbs = (doc.terms ?? [])
+      .filter(t => typeof t['@type'] === 'string' && t['@type']!.endsWith('Verb') && typeof t['@id'] === 'string')
+      .map(t => t['@id'] as string);
+    _foxxiVerbCache = { verbs, at: Date.now() };
+    return { verbs, dereferenced: true };
+  } catch {
+    // The vocabulary did not dereference — report that honestly rather
+    // than silently substituting a guess. A 0% in-profile rate with
+    // vocabularyDereferenced=false is a true signal something is wrong.
+    return { verbs: [], dereferenced: false };
+  }
+}
+
 async function handleConformance(_req: Request, res: Response, config: AdminConfig): Promise<void> {
   const all = await listStoredStatements();
-  const knownVerbs = new Set([
-    'http://adlnet.gov/expapi/verbs/launched',
-    'http://adlnet.gov/expapi/verbs/initialized',
-    'http://adlnet.gov/expapi/verbs/experienced',
-    'http://adlnet.gov/expapi/verbs/completed',
-    'http://adlnet.gov/expapi/verbs/passed',
-    'http://adlnet.gov/expapi/verbs/failed',
-    'http://adlnet.gov/expapi/verbs/satisfied',
-    'http://adlnet.gov/expapi/verbs/terminated',
-    'http://adlnet.gov/expapi/verbs/abandoned',
-    'http://adlnet.gov/expapi/verbs/waived',
-    'http://adlnet.gov/expapi/verbs/voided',
-    'https://markjspivey-xwisee.github.io/interego/ns/foxxi#verbs/scene-completed',
-    'https://markjspivey-xwisee.github.io/interego/ns/foxxi#verbs/asked',
-    'https://markjspivey-xwisee.github.io/interego/ns/foxxi#verbs/retrieved',
-    'https://markjspivey-xwisee.github.io/interego/ns/foxxi#verbs/enrolled',
-    'https://markjspivey-xwisee.github.io/interego/ns/foxxi#verbs/credentialed',
-    'https://markjspivey-xwisee.github.io/interego/ns/foxxi#verbs/wallet-exported',
-    'https://markjspivey-xwisee.github.io/interego/ns/foxxi#verbs/framework-aligned',
-    'https://markjspivey-xwisee.github.io/interego/ns/foxxi#verbs/policy-decided',
-    'https://markjspivey-xwisee.github.io/interego/ns/foxxi#verbs/affordance-invoked',
-  ]);
+  const vocabularyUrl = `${config.selfBaseUrl}/ns/foxxi`;
+  const { verbs: foxxiVerbs, dereferenced } = await dereferenceFoxxiVerbs(vocabularyUrl);
+  const knownVerbs = new Set([...ADL_CORE_VERBS, ...foxxiVerbs]);
   let inProfile = 0;
   let outOfProfile = 0;
   const outOfProfileSet = new Set<string>();
@@ -193,6 +211,10 @@ async function handleConformance(_req: Request, res: Response, config: AdminConf
   res.json({
     profileId: FOXXI_PROFILE_ID,
     profileUrl: `${config.selfBaseUrl}/xapi/profile`,
+    // The conformance check dereferenced the live vocabulary to obtain
+    // the foxxi verb set — it is not assumed.
+    vocabularyUrl,
+    vocabularyDereferenced: dereferenced,
     totalStatements: all.length,
     inProfile,
     outOfProfile,

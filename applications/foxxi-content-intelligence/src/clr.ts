@@ -34,7 +34,7 @@ const CLR_CONTEXT = [
   'https://purl.imsglobal.org/spec/clr/v2p0/context-2.0.1.json',
 ] as const;
 
-const WALLET_TYPE = 'https://vocab.foxximediums.com/wallet#WalletEnvelope';
+const WALLET_TYPE = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#WalletEnvelope';
 
 export interface ClrEntry {
   credential: VerifiableCredentialJson;
@@ -78,9 +78,12 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
     config.fetch ? { fetch: config.fetch as never } : undefined,
   );
 
+  // Match credential descriptors by local name — resilient to a foxxi
+  // namespace migration (pod credentials published under a legacy base
+  // stay discoverable).
+  const credLocalNames = new Set(['CourseCompletionCredential', 'CompetencyAssertion']);
   const credentialEntries = entries.filter(e =>
-    (e.conformsTo ?? []).includes(CREDENTIAL_TYPES.CourseCompletionCredential)
-    || (e.conformsTo ?? []).includes(CREDENTIAL_TYPES.CompetencyAssertion),
+    (e.conformsTo ?? []).some(c => credLocalNames.has(c.split(/[#/]/).pop() ?? '')),
   );
 
   const composedEntries: ClrEntry[] = [];
@@ -169,7 +172,10 @@ function extractDistributionTarget(descTurtle: string): string | null {
 }
 
 function extractCredentialJson(trig: string): VerifiableCredentialJson {
-  const m = trig.match(/<https:\/\/vocab\.foxximediums\.com\/scorm#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
+  // Match the bundleJson literal by its local name only, so the
+  // credential graph parses regardless of which foxxi namespace base it
+  // was published under (current bridge-served base + any legacy base).
+  const m = trig.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
   if (!m) {
     throw new Error('graph has no fxs:bundleJson literal');
   }

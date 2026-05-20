@@ -210,7 +210,7 @@ export interface SequencingRule {
  */
 export function sequencingRulesToTurtle(packageSubject: string, rules: readonly SequencingRule[]): string {
   if (rules.length === 0) return '';
-  const FXS = 'https://vocab.foxximediums.com/scorm#';
+  const FXS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
   const lines: string[] = [];
   for (const r of rules) {
     const ruleIri = `${packageSubject.replace(/^</, '').replace(/>$/, '')}#sequencing-${r.id}`;

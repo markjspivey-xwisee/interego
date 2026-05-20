@@ -44,7 +44,7 @@ const ELR_CONTEXT = [
 ] as const;
 
 const ADL = 'http://adlnet.gov/expapi/verbs/';
-const FOXXI_VOCAB = 'https://vocab.foxximediums.com/activity#';
+const FOXXI_VOCAB = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 /** Verbs that imply the subject demonstrated something (→ inferred competency). */
 const MASTERY_VERBS = new Set([`${ADL}passed`, `${ADL}completed`, `${ADL}mastered`]);
 /** The verb a `performed` production-work statement carries. */

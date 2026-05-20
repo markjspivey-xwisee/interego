@@ -33,7 +33,7 @@
 (function installRte() {
   const ADL = 'http://adlnet.gov/expapi';
   const CMI5_CAT = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
-  const FOXXI_NS = 'https://markjspivey-xwisee.github.io/interego/ns/foxxi#';
+  const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 
   // ── CMI 2004 store ──
   const cmi2004 = {

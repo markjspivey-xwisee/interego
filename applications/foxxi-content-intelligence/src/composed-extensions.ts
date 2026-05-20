@@ -70,7 +70,7 @@ export async function bootstrapTenant(
   const desc: ContextDescriptorData = {
     id: `${tenantGraphIri}#descriptor` as IRI,
     describes: [tenantGraphIri],
-    conformsTo: ['https://vocab.foxximediums.com/scorm#TenantMetadata' as IRI],
+    conformsTo: ['https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#TenantMetadata' as IRI],
     facets: [
       { type: 'Temporal', validFrom: new Date().toISOString() },
       { type: 'Provenance', wasAttributedTo: args.tenantDid as IRI },
@@ -78,9 +78,9 @@ export async function bootstrapTenant(
     ],
   };
   const b64 = Buffer.from(JSON.stringify(tenantMetadata), 'utf8').toString('base64');
-  const graph = `<${tenantGraphIri}> a <https://vocab.foxximediums.com/scorm#TenantMetadata> ;
+  const graph = `<${tenantGraphIri}> a <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#TenantMetadata> ;
     <http://www.w3.org/ns/prov#wasAttributedTo> <${args.tenantDid}> ;
-    <https://vocab.foxximediums.com/scorm#bundleJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
+    <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#bundleJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
   const result = await publish(desc, graph, args.podUrl, {
     fetch: fetchFn,
@@ -112,7 +112,7 @@ export async function bootstrapTenant(
 
 export interface AdaptiveSequencingPolicy {
   policyId: string;
-  conformsTo: 'https://vocab.foxximediums.com/scorm#AdaptiveSequencingPolicy';
+  conformsTo: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#AdaptiveSequencingPolicy';
   derivedFrom: 'fxa:CohortConceptIntelligence';
   cohortSize: number;
   reinforcementGates: Array<{
@@ -137,7 +137,7 @@ export function deriveAdaptivePolicy(
 ): AdaptiveSequencingPolicy {
   return {
     policyId: `urn:foxxi:adaptive-policy:${Date.now()}`,
-    conformsTo: 'https://vocab.foxximediums.com/scorm#AdaptiveSequencingPolicy',
+    conformsTo: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#AdaptiveSequencingPolicy',
     derivedFrom: 'fxa:CohortConceptIntelligence',
     cohortSize: intel.cohortSize,
     reinforcementGates: intel.reinforcementCandidates
@@ -548,7 +548,7 @@ export async function uploadScormPackage(args: {
   const descriptor: ContextDescriptorData = {
     id: `${graphIri}#descriptor` as IRI,
     describes: [graphIri],
-    conformsTo: ['https://vocab.foxximediums.com/scorm#PackageUpload' as IRI],
+    conformsTo: ['https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#PackageUpload' as IRI],
     facets: [
       { type: 'Temporal', validFrom: new Date().toISOString() },
       { type: 'Provenance', wasAttributedTo: args.uploaderDid as IRI },
@@ -564,9 +564,9 @@ export async function uploadScormPackage(args: {
     status: 'queued',
   };
   const b64 = Buffer.from(JSON.stringify(meta), 'utf8').toString('base64');
-  const graph = `<${graphIri}> a <https://vocab.foxximediums.com/scorm#PackageUpload> ;
+  const graph = `<${graphIri}> a <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#PackageUpload> ;
     <http://www.w3.org/ns/prov#wasAttributedTo> <${args.uploaderDid}> ;
-    <https://vocab.foxximediums.com/scorm#bundleJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
+    <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#bundleJson> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
   const result = await publish(descriptor, graph, args.tenantPodUrl, {
     fetch: args.fetch,

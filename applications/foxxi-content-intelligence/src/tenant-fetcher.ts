@@ -102,7 +102,12 @@ async function findEntry(
   typeIri: IRI,
 ): Promise<ManifestEntry | null> {
   const entries = await discover(config.podUrl, undefined, config.fetch ? { fetch: config.fetch as never } : undefined);
-  const matching = entries.filter(e => (e.conformsTo ?? []).includes(typeIri));
+  // Match by the type's LOCAL NAME (the `#…` suffix), not the full IRI,
+  // so the tenant directory still resolves after a namespace migration —
+  // pod data published under a legacy foxxi namespace stays readable.
+  const localName = typeIri.split(/[#/]/).pop() ?? typeIri;
+  const matching = entries.filter(e =>
+    (e.conformsTo ?? []).some(c => c === typeIri || c.split(/[#/]/).pop() === localName));
   if (matching.length === 0) return null;
   // Pick the most recent by validFrom; if absent, fall back to first
   // entry order in the manifest.
@@ -263,7 +268,8 @@ export async function fetchCoursePackage(
   // graph IRI follows the slug convention `course:<courseId>`.
   const entries = await discover(config.podUrl, undefined, config.fetch ? { fetch: config.fetch as never } : undefined);
   const matching = entries.filter(e =>
-    (e.conformsTo ?? []).includes(TENANT_TYPES.CoursePackageBundle)
+    // Local-name match — resilient to a namespace migration (see findEntry).
+    (e.conformsTo ?? []).some(c => c.split(/[#/]/).pop() === 'CoursePackageBundle')
     && e.describes.some(g => g.endsWith(`:course:${courseId}`)),
   );
   if (matching.length === 0) {

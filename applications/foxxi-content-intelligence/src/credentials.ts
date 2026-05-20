@@ -45,8 +45,8 @@ import type {
 import type { FetchFn, PublishResult } from '../../../src/solid/types.js';
 import { createHash } from 'node:crypto';
 
-const FXA = 'https://vocab.foxximediums.com/activity#';
-const FXS = 'https://vocab.foxximediums.com/scorm#';
+const FXA = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FXS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 
 export const CREDENTIAL_TYPES = {
   CourseCompletionCredential: `${FXA}CourseCompletionCredential` as IRI,

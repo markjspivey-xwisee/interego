@@ -79,7 +79,7 @@ const SLIDES = [
 
 // ── xAPI emission ──────────────────────────────────────────────────
 
-const FOXXI_NS = 'https://markjspivey-xwisee.github.io/interego/ns/foxxi#';
+const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 const ADL = 'http://adlnet.gov/expapi/';
 const CMI5_CAT = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
 // COURSE_IRI is declared at the top of the file (line 35) — reused here

@@ -37,6 +37,14 @@ interface AggregateRow {
 type LrsTab = 'statements' | 'aggregates' | 'conformance' | 'config';
 const LRS_TAB_VALUES = new Set<LrsTab>(['statements', 'aggregates', 'conformance', 'config']);
 
+/** Dereferenceable URL for a verb IRI. A foxxi verb resolves to its own
+ *  term resource (`/ns/foxxi/term/<name>`); any other verb resolves to
+ *  its own IRI. Every verb in the statement browser is a live link. */
+function verbHref(verbId: string): string {
+  const m = verbId.match(/^(.*\/ns\/foxxi)#(.+)$/);
+  return m ? `${m[1]}/term/${m[2]}` : verbId;
+}
+
 export function LrsAdminPanel({ bearer }: { bearer: string }) {
   const params = useParams();
   const navigate = useNavigate();
@@ -150,7 +158,13 @@ function StatementsView({ bearer }: { bearer: string }) {
                   background: selected?.id === r.id ? 'var(--panel-2)' : 'transparent',
                 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <strong style={{ color: 'var(--accent)' }}>{r.verb.display?.en ?? r.verb.id.split('/').pop()}</strong>
+                  <a
+                    href={verbHref(r.verb.id)}
+                    target="_blank" rel="noreferrer"
+                    onClick={e => e.stopPropagation()}
+                    title={`Dereference this verb — ${r.verb.id}`}
+                    style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none' }}
+                  >{r.verb.display?.en ?? r.verb.id.split(/[#/]/).pop()}</a>
                   <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>{r.stored.slice(11, 19)}</span>
                 </div>
                 <div style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 2 }}>
@@ -271,6 +285,8 @@ function ConformanceView({ bearer }: { bearer: string }) {
   const [data, setData] = useState<null | {
     profileId: string;
     profileUrl: string;
+    vocabularyUrl?: string;
+    vocabularyDereferenced?: boolean;
     totalStatements: number;
     inProfile: number;
     outOfProfile: number;
@@ -301,6 +317,19 @@ function ConformanceView({ bearer }: { bearer: string }) {
         <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>
           {data.declaredVerbs} verbs declared · <a href={data.profileUrl} target="_blank" rel="noreferrer">view JSON-LD profile →</a>
         </div>
+        {data.vocabularyUrl && (
+          <div style={{ fontSize: 11, marginTop: 6 }}>
+            <span style={{
+              display: 'inline-block', padding: '1px 6px', borderRadius: 3, marginRight: 6,
+              background: data.vocabularyDereferenced ? 'rgba(47,106,58,0.16)' : 'rgba(168,51,31,0.16)',
+              color: data.vocabularyDereferenced ? 'var(--good)' : 'var(--bad)',
+            }}>
+              {data.vocabularyDereferenced ? '✓ vocabulary dereferenced' : '✗ vocabulary did not dereference'}
+            </span>
+            this conformance check performed a live GET of the foxxi vocabulary — not a hardcoded list ·{' '}
+            <a href={data.vocabularyUrl} target="_blank" rel="noreferrer">{data.vocabularyUrl} →</a>
+          </div>
+        )}
       </div>
       {data.outOfProfileVerbs.length > 0 && (
         <div>

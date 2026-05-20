@@ -30,8 +30,8 @@ import { createHash } from 'node:crypto';
 
 // ── Foxxi namespace IRIs (declared in ns/foxxi-content-graph-v0.2.ttl) ──
 
-const FXS = 'https://vocab.foxximediums.com/scorm#';
-const FXA = 'https://vocab.foxximediums.com/activity#';
+const FXS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+const FXA = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 
 export const TENANT_TYPES = {
   CourseCatalog: `${FXS}CourseCatalog` as IRI,

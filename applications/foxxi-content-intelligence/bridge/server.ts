@@ -151,6 +151,7 @@ import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal } fro
 import { attachLti13Routes } from '../src/lti13.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
+import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
 import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
 import { attachOauthTokenRoute } from '../src/xapi-oauth.js';
@@ -635,7 +636,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         id: taskId,
         definition: {
           name: { en: taskName },
-          type: 'https://vocab.foxximediums.com/activity#ProductionTask',
+          type: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#ProductionTask',
         },
       },
       result: {
@@ -1589,6 +1590,29 @@ const app = createVerticalBridge({
     // (bizdev / partner-eng teams who want a typed SDK). Served at
     // /openapi.json + Swagger UI at /docs.
     attachOpenApiRoutes(a, { selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080', affordances: activeAffordances });
+
+    // ── Foxxi vocabulary — dereferenceable RESTful linked data ───────
+    // Every foxxi term IRI (`<bridge>/ns/foxxi#<name>`) resolves here.
+    // A hash IRI dereferences to the whole document; each term is also
+    // its own resource at /ns/foxxi/term/<name> with HATEOAS _links.
+    // Content-negotiated: JSON-LD by default, Turtle on Accept.
+    a.get('/ns/foxxi', (req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      if ((req.headers.accept ?? '').includes('text/turtle')) {
+        res.type('text/turtle').send(renderVocabTurtle());
+      } else {
+        res.type('application/ld+json').send(JSON.stringify(renderVocabJsonLd(), null, 2));
+      }
+    });
+    // Term names carry at most one `/` (e.g. `verbs/affordance-invoked`),
+    // so two plain routes cover every term — no wildcard, no optional
+    // param (path-to-regexp version-portable).
+    const sendTerm = (name: string, res: import('express').Response): void => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.type('application/ld+json').send(JSON.stringify(renderTermJsonLd(name), null, 2));
+    };
+    a.get('/ns/foxxi/term/:a/:b', (req, res) => sendTerm(`${req.params.a}/${req.params.b}`, res));
+    a.get('/ns/foxxi/term/:a', (req, res) => sendTerm(req.params.a, res));
 
     // LRS-admin dashboard endpoints — gated by admin or learning-engineer
     // role. The dashboard's new "xAPI / LRS" tab calls these to render

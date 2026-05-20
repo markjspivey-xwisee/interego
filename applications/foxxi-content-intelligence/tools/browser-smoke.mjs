@@ -433,6 +433,7 @@ console.log(`=== performance record → performance-verified competency: ${okPer
 // causal read renders.
 console.log('\n=== Case 7: Agent Performance Consultant (APT) ===');
 let okAgentPerf = false;
+let vocabDereferencedInProd = false;
 const apToken = await mintSessionToken({ userId: USER_ID, webId: WEB_ID, ttlMs: 30 * 60 * 1000 });
 const AP_TEAM = ['did:key:z6MkFoxxiResearchAgent', 'did:key:z6MkFoxxiRetrievalAgent', 'did:key:z6MkFoxxiSynthesisAgent'];
 async function bridgeTool(name, args) {
@@ -493,12 +494,54 @@ if (await jordan7.count() > 0) {
   console.log(`  run_performance_probe invoked: ${apProbeCalled} · causal read (rung 2/3) shown: ${causalShown && rungShown}`);
   okAgentPerf = panelPresent && aptBadge && apAssessCalled && cynefinShown && noScore
     && apProbeCalled && causalShown && rungShown;
+
+  // While signed in as the admin, open the LRS Conformance tab — its
+  // check ACTUALLY dereferences the foxxi vocabulary (a live GET), and
+  // the tab surfaces whether that dereference succeeded.
+  await page7.goto(`${DASHBOARD}/statements/conformance`, { waitUntil: 'networkidle', timeout: 20_000 }).catch(() => null);
+  await page7.waitForSelector('text=/vocabulary dereferenced/i', { timeout: 15_000 }).catch(() => null);
+  await page7.waitForTimeout(1500);
+  vocabDereferencedInProd = await page7.locator('text=/✓ vocabulary dereferenced/i').count() > 0;
+  console.log(`  conformance tab confirms the vocab was dereferenced in production: ${vocabDereferencedInProd}`);
 } else {
   console.log('  ✗ Jordan sign-in button not found');
 }
 await browser7.close();
 console.log(`\n=== Agent Performance Consultant (APT): ${okAgentPerf ? 'PASS' : 'FAIL'} ===`);
 
-const ok = okAuthed && okAnon && okDeepLinks && okTabs && okNoMcp && okOob && okElr && okSelectiveDisclosure && okPerformance && okAgentPerf;
+// ── Case 8 — Foxxi vocabulary is dereferenceable linked data ──
+// Not just an RDF namespace: the bridge SERVES it, every term IRI
+// resolves, and a production path (the conformance check) actually
+// dereferences it.
+console.log('\n=== Case 8: Foxxi vocabulary — dereferenceable RESTful linked data ===');
+let okVocab = false;
+try {
+  const ep = await (await fetch(`${BRIDGE}/api/foxxi/v1`, { headers: { Accept: 'application/json' } })).json();
+  const vocabLink = ep._links?.['foxxi-vocabulary']?.href;
+  const vocabRes = await fetch(`${BRIDGE}/ns/foxxi`, { headers: { Accept: 'application/ld+json' } });
+  const vocab = await vocabRes.json();
+  const terms = Array.isArray(vocab.terms) ? vocab.terms : [];
+  const hasAffordanceInvoked = terms.some(t => String(t['@id']).endsWith('#verbs/affordance-invoked'));
+  // Dereference a single verb as its own RESTful resource.
+  const termRes = await fetch(`${BRIDGE}/ns/foxxi/term/verbs/affordance-invoked`, { headers: { Accept: 'application/ld+json' } });
+  const term = await termRes.json();
+  const termOk = termRes.status === 200 && typeof term.comment === 'string' && !!term._links?.vocabulary;
+  // Turtle content negotiation.
+  const ttlRes = await fetch(`${BRIDGE}/ns/foxxi`, { headers: { Accept: 'text/turtle' } });
+  const ttl = await ttlRes.text();
+  const ttlOk = ttlRes.status === 200 && ttl.includes('foxxi:') && ttl.includes('rdfs:comment');
+  console.log(`  entry-point advertises foxxi-vocabulary link: ${!!vocabLink}`);
+  console.log(`  GET /ns/foxxi → HTTP ${vocabRes.status}, ${terms.length} terms, affordance-invoked present: ${hasAffordanceInvoked}`);
+  console.log(`  single verb dereferences as a RESTful resource: ${termOk}`);
+  console.log(`  Turtle content negotiation works: ${ttlOk}`);
+  console.log(`  conformance check actually dereferenced the vocab in production: ${vocabDereferencedInProd} (Case 7, admin session)`);
+  okVocab = !!vocabLink && vocabRes.status === 200 && terms.length > 10 && hasAffordanceInvoked
+    && termOk && ttlOk && vocabDereferencedInProd;
+} catch (err) {
+  console.log(`  ✗ ${err.message}`);
+}
+console.log(`\n=== Foxxi vocabulary dereferenceable: ${okVocab ? 'PASS' : 'FAIL'} ===`);
+
+const ok = okAuthed && okAnon && okDeepLinks && okTabs && okNoMcp && okOob && okElr && okSelectiveDisclosure && okPerformance && okAgentPerf && okVocab;
 console.log(`\n=== overall: ${ok ? 'PASS' : 'FAIL'} ===`);
 process.exit(ok ? 0 : 1);

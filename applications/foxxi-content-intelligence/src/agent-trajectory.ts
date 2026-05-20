@@ -39,7 +39,7 @@
 import { union, type ContextDescriptorData, type IRI } from '../../../src/index.js';
 import { PERFORMED_VERB, PERF_EXT } from './learner-record.js';
 
-const FOXXI_VOCAB = 'https://vocab.foxximediums.com/activity#';
+const FOXXI_VOCAB = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 
 /** The poly-granular zoom axis (the PGSL principle). */
 export type TrajectoryGranularity = 'task' | 'subtask' | 'tool-call';

@@ -40,7 +40,7 @@ export interface FrameworkAlignment {
   declaredAt?: string;
 }
 
-export const ALIGNMENT_TYPE_IRI = 'https://vocab.foxximediums.com/activity#CASEAlignment' as IRI;
+export const ALIGNMENT_TYPE_IRI = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#CASEAlignment' as IRI;
 
 export interface SerializedAlignment {
   '@type': 'CFAssociation';

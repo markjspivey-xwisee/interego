@@ -50,7 +50,7 @@ export interface FoxxiConfig {
   readonly authoritativeSource: IRI;
 }
 
-const FOXXI_NS = 'https://vocab.foxximediums.com/';
+const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 
 function sha256Hex(s: string): string {
   return createHash('sha256').update(s, 'utf8').digest('hex');

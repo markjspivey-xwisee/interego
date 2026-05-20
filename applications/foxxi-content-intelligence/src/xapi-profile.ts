@@ -32,7 +32,7 @@
  */
 
 export const FOXXI_PROFILE_ID = 'https://markjspivey-xwisee.github.io/interego/applications/foxxi-content-intelligence/xapi/profile/v1';
-export const FOXXI_NS = 'https://markjspivey-xwisee.github.io/interego/ns/foxxi#';
+export const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 
 const ADL = 'http://adlnet.gov/expapi';
 const CMI5 = 'https://w3id.org/xapi/cmi5';

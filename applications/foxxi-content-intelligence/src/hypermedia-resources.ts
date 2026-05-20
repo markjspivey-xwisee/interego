@@ -286,7 +286,7 @@ function collectionEnvelope(args: {
   return {
     '@context': {
       hydra: 'http://www.w3.org/ns/hydra/core#',
-      foxxi: 'https://markjspivey-xwisee.github.io/interego/ns/foxxi#',
+      foxxi: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#',
     },
     '@type': 'hydra:Collection',
     '@id': args.selfUrl,
@@ -319,7 +319,7 @@ function itemEnvelope(args: {
   return {
     '@context': {
       hydra: 'http://www.w3.org/ns/hydra/core#',
-      foxxi: 'https://markjspivey-xwisee.github.io/interego/ns/foxxi#',
+      foxxi: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#',
     },
     '@id': args.selfUrl,
     ...resourceRest,
@@ -372,6 +372,7 @@ export function attachHypermediaRoutes(app: Express, config: HypermediaConfig): 
         'launch-codes': { href: `${base}/launch-codes`, title: 'Mint a one-time out-of-band launch code (POST, bearer-authenticated)' },
         affordances: { href: `${config.selfBaseUrl}/affordances` },
         openapi: { href: `${config.selfBaseUrl}/openapi.json` },
+        'foxxi-vocabulary': { href: `${config.selfBaseUrl}/ns/foxxi`, title: 'The Foxxi vocabulary — every foxxi term IRI dereferences here (JSON-LD / Turtle)' },
       },
       _affordances: config.affordances.map(a => bridgeAffordanceToLink(a, config.selfBaseUrl)),
     });
