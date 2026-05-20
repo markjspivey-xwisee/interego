@@ -59,6 +59,16 @@ import { exportClr } from '../src/clr.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, PERF_EXT } from '../src/learner-record.js';
 import { proveCompetency } from '../src/competency-proof.js';
+import {
+  buildTrajectory, trajectoryShape, projectTrajectoryToXapi,
+  type AgentTrajectory, type TrajectoryStepInput,
+} from '../src/agent-trajectory.js';
+
+/** Agentic-native trajectory store — the source of truth (modal +
+ *  poly-granular), keyed by agent DID. xAPI statements are projected
+ *  off it into the LRS; the native form here keeps what xAPI drops. */
+const agentTrajectories = new Map<string, AgentTrajectory>();
+const AGENT_TRAJECTORY_MAX = 5_000;
 import { frameworkToCase, type FoxxiSkillFramework } from '../src/case-exporter.js';
 import { buildPassedSessionTrace } from '../src/cmi5.js';
 import { pushFrameworkToCass } from '../src/cass-connector.js';
@@ -644,6 +654,96 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       taskName,
       actorKind,
       success: args.success as boolean,
+    };
+  },
+
+  'foxxi.record_agent_trajectory': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return { error: resolved.error };
+    const { ctx } = resolved;
+    const agentDid = args.agent_did as string;
+    if (!agentDid) return { error: 'agent_did is required' };
+    const rawSteps = args.steps as Array<Record<string, unknown>> | undefined;
+    if (!Array.isArray(rawSteps) || rawSteps.length === 0) {
+      return { error: 'steps (non-empty array) is required' };
+    }
+    // Map the caller's snake_case step inputs to the native shape.
+    const stepInputs: TrajectoryStepInput[] = rawSteps.map(s => ({
+      id: s.id as string | undefined,
+      modalStatus: (s.modal_status as TrajectoryStepInput['modalStatus']) ?? 'Asserted',
+      granularity: (s.granularity as TrajectoryStepInput['granularity']) ?? 'tool-call',
+      verb: (s.verb as string) ?? 'acted',
+      objectId: (s.object_id as string) ?? `urn:foxxi:trajectory-object:${Date.now()}`,
+      objectName: (s.object_name as string) ?? 'step',
+      parentId: s.parent_id as string | undefined,
+      supersedesId: s.supersedes_id as string | undefined,
+      wasDerivedFrom: s.was_derived_from as string[] | undefined,
+      result: s.result as TrajectoryStepInput['result'],
+    }));
+    const trajectory = buildTrajectory(agentDid, args.agent_name as string | undefined, stepInputs);
+
+    // The native trajectory is the source of truth.
+    if (agentTrajectories.size >= AGENT_TRAJECTORY_MAX && !agentTrajectories.has(agentDid)) {
+      const oldest = agentTrajectories.keys().next().value;
+      if (oldest) agentTrajectories.delete(oldest);
+    }
+    agentTrajectories.set(agentDid, trajectory);
+
+    // Project the Asserted tool-call steps down to xAPI `performed`
+    // statements — the deliberately lossy interop view.
+    const projection = projectTrajectoryToXapi(trajectory, { authoritativeSource });
+    for (const stmt of projection.statements) {
+      storeStatementInternal({ id: randomUUID(), ...stmt });
+    }
+    const shape = trajectoryShape(trajectory);
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.record_agent_trajectory', decision: 'allow', appliedPolicies: ['agent-trajectory-public'] });
+    return {
+      recorded: true,
+      agentDid,
+      stepCount: trajectory.steps.length,
+      byModalStatus: shape.byModalStatus,
+      byGranularity: shape.byGranularity,
+      projectedToXapi: projection.statements.length,
+      retainedNativeOnly: projection.retainedNativeOnly,
+      note: 'Native trajectory stored as source of truth; only Asserted tool-call steps projected to xAPI. Intentions, counterfactuals + task hierarchy are retained natively only.',
+      accessDecision: trace,
+    };
+  },
+
+  'foxxi.get_agent_trajectory': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return { error: resolved.error };
+    const { ctx } = resolved;
+    const agentDid = args.agent_did as string;
+    if (!agentDid) return { error: 'agent_did is required' };
+    const trajectory = agentTrajectories.get(agentDid);
+    if (!trajectory) return { error: `no trajectory recorded for ${agentDid}` };
+    const projection = projectTrajectoryToXapi(trajectory, { authoritativeSource });
+    const shape = trajectoryShape(trajectory);
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.get_agent_trajectory', decision: 'allow', appliedPolicies: ['agent-trajectory-public'] });
+    return {
+      agentDid: trajectory.agentDid,
+      agentName: trajectory.agentName,
+      createdAt: trajectory.createdAt,
+      stepCount: trajectory.steps.length,
+      byModalStatus: shape.byModalStatus,
+      byGranularity: shape.byGranularity,
+      steps: trajectory.steps.map(s => ({
+        id: s.id,
+        modalStatus: s.modalStatus,
+        granularity: s.granularity,
+        verb: s.verb,
+        object: { id: s.objectId, name: s.objectName },
+        parentId: s.parentId,
+        supersedesId: s.supersedesId,
+        result: s.result,
+        recordedAt: s.recordedAt,
+      })),
+      xapiProjection: {
+        statementsProjected: projection.statements.length,
+        retainedNativeOnly: projection.retainedNativeOnly,
+      },
+      accessDecision: trace,
     };
   },
 

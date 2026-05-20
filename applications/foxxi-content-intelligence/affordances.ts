@@ -316,6 +316,34 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
   },
 
   {
+    action: 'urn:cg:action:foxxi:record-agent-trajectory' as IRI,
+    toolName: 'foxxi.record_agent_trajectory',
+    title: 'Record an agentic-native trajectory (modal · poly-granular · composable)',
+    description: 'Record an agent run in the AGENTIC-NATIVE form — not as flat xAPI statements but as a trajectory of Context Descriptors emergent from Interego L1: each step is MODAL (Hypothetical = an intention/plan, Asserted = executed, Counterfactual = a rejected branch — with cg:supersedes chains), POLY-GRANULAR (task ▸ subtask ▸ tool-call, the PGSL principle), and COMPOSABLE (trajectories merge via the L1 union/restriction algebra). The native trajectory is the source of truth; the bridge projects only the Asserted tool-call steps down to xAPI `performed` statements (which the IEEE P2997 ELR then reads). Intentions, counterfactuals, and the task hierarchy are retained ONLY in the native trajectory — xAPI structurally cannot hold them, and the projection reports exactly what it dropped.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/record_agent_trajectory',
+    inputs: [
+      { name: 'agent_did', type: 'string', required: true, description: 'The agent whose run this trajectory records.' },
+      { name: 'agent_name', type: 'string', required: false, description: 'Optional agent display name.' },
+      { name: 'steps', type: 'array', itemType: 'object', required: true, description: 'Ordered trajectory steps. Each: { modal_status (Hypothetical|Asserted|Counterfactual), granularity (task|subtask|tool-call), verb, object_id, object_name, id?, parent_id?, supersedes_id?, was_derived_from?[], result?{success,quality,note} }.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+  },
+
+  {
+    action: 'urn:cg:action:foxxi:get-agent-trajectory' as IRI,
+    toolName: 'foxxi.get_agent_trajectory',
+    title: 'Get an agent\'s native trajectory (what the xAPI projection drops)',
+    description: 'Return an agent\'s full agentic-native trajectory — every step at every modal status (including the Hypothetical intentions + Counterfactual branches xAPI cannot represent) and every granularity. Includes a projection summary: how many steps reach xAPI vs. how many are retained only in the native form. Agent trajectories are discoverable, like the agent capability registry.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/get_agent_trajectory',
+    inputs: [
+      { name: 'agent_did', type: 'string', required: true, description: 'The agent whose trajectory to retrieve.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+  },
+
+  {
     action: 'urn:cg:action:foxxi:export-case-framework' as IRI,
     toolName: 'foxxi.export_case_framework',
     title: '[admin] Export the tenant\'s competency framework as 1EdTech CASE 1.0 JSON-LD',
