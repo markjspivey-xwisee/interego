@@ -57,6 +57,9 @@ interface PublishedCourse {
   tenant: TenantId;
   cmi5Xml: string;
   scormZip: Buffer;
+  /** The source emergent Course — retained so the Context Companion can
+   *  ground answers in its fragments with full provenance. */
+  course: Course;
   /** Runnable AUs, in course order. */
   aus: Array<{ index: number; lessonId: string; title: string; competency: string; html: string; blocks: Array<{ label: string; text: string }> }>;
 }
@@ -132,7 +135,7 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       html: generateAuHtml(course.title, auLessonView(fl)),
       blocks: fl.fragments.map(f => ({ label: f.modality, text: f.body })),
     }));
-    published.set(publishId, { publishId, courseId: course.id, title: course.title, tenant, cmi5Xml, scormZip, aus });
+    published.set(publishId, { publishId, courseId: course.id, title: course.title, tenant, cmi5Xml, scormZip, course, aus });
 
     res.json({
       published: true,
@@ -307,4 +310,6 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
 
 /** Test/inspection helper — the live published-course registry. */
 export function _publishedCourses(): Map<string, PublishedCourse> { return published; }
+/** Test/inspection helper — the live published job-aid registry. */
+export function _publishedJobAids(): Map<string, PublishedJobAid> { return jobAids; }
 void DEFAULT_TENANT;

@@ -169,6 +169,7 @@ import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { attachScormSequencingRoutes } from '../src/scorm-sequencing.js';
 import { attachPerformanceRoutes } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
+import { attachContextChatRoutes, type ContextEnrollment } from '../src/context-chat.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
@@ -1873,6 +1874,33 @@ const app = createVerticalBridge({
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       authoritativeSource,
       emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
+    });
+
+    // Context Companion — the one conversational front door over a user's
+    // networked context. POST /content/ask takes a natural-language
+    // question from any human or agent user, classifies its intent, and
+    // answers from the substrate's own surfaces: assignments, the
+    // published content (sourced, verbatim-cited), the job aids, and the
+    // live LRS. Policy-driven assignments are resolved from the tenant
+    // directory when the pod is seeded; otherwise engagement-derived.
+    attachContextChatRoutes(a, {
+      selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
+      authoritativeSource,
+      emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
+      resolveAssignments: async (learner): Promise<ContextEnrollment[] | undefined> => {
+        const admin = await autoFetchAdmin({});
+        if (!admin) return undefined;
+        const resolved = discoverAssignedCourses({ admin, learnerWebId: learner });
+        if (resolved.enrollments.length === 0) return undefined;
+        return resolved.enrollments.map(e => ({
+          courseId: e.courseId,
+          courseTitle: e.courseTitle,
+          status: e.status,
+          requirementType: e.requirementType,
+          ...(e.dueAt ? { dueAt: e.dueAt } : {}),
+          source: 'policy' as const,
+        }));
+      },
     });
 
     // OpenAPI 3.1 — machine-readable contract for non-MCP integrators
