@@ -55,25 +55,36 @@ authenticates to the LRS with the issued token.
 | SCORM 1.2 + 2004 Run-Time Environment (the JS API, full CMI data model, error codes, suspend_data limits) | **Conformant (RTE)** | `deploy/foxxi-scorm-player/site/scorm-rte.js` |
 | SCORM → cmi5 auto-translation (RTE emits cmi5 statements on Commit/Terminate) | **Implemented** | `scorm-rte.js` |
 | Package parsing (SCORM 1.2 / 2004 / cmi5 detection) | **Implemented** | `applications/_shared/scorm/` |
-| Sequencing & Navigation enforcement, attempt management | **Roadmap** | rules parsed, not yet runtime-enforced |
+| LOM metadata + sequencing-rule extraction (audit trail) | **Implemented** | `src/lom-sequencing.ts` |
+| **SCORM 2004 Sequencing & Navigation — runtime enforcement**: activity tree, control modes (choice/choiceExit/flow/forwardOnly), the Flow + Choice subprocesses, pre/post-condition rules, limit conditions (attemptLimit), the Rollup process (measure / objective-satisfied incl. satisfiedByMeasure / completion; default + custom rules), objective maps | **Implemented** | `src/scorm-sequencing.ts`; `POST /scorm/sequencing/session` · `.../navigate` · `.../commit` · `GET .../:id`; verified by `tools/lms-conformance-smoke.ts` |
+
+Foxxi now genuinely **enforces** SCORM 2004 sequencing — `lom-sequencing.ts`
+makes the rules auditable, `scorm-sequencing.ts` is the runtime that
+evaluates them. Honestly out of scope (documented, not silently
+dropped): time-limit conditions, attempt-absolute-duration limits, and
+selection/randomization controls.
 
 ## 4. LTI 1.3 Advantage
 
 | Capability | Status | Evidence |
 |---|---|---|
-| Tool: JWKS, OIDC login, launch verification, AGS score post-back, multi-platform registration | **Implemented** | `src/lti13.ts` |
-| Deep Linking, NRPS roster, AGS line-item management | **Partial** | endpoints present, stubbed |
+| Tool: JWKS, OIDC login, launch verification (incl. `application/x-www-form-urlencoded` OIDC/launch bodies), AGS score post-back, multi-platform registration | **Implemented** | `src/lti13.ts` |
+| Deep Linking 2.0 — content-item selection round trip: a content picker UI + a signed `LtiDeepLinkingResponse` JWT auto-posted to the platform's return URL | **Implemented** | `GET` + `POST /lti/deeplink` |
+| NRPS 2.0 — Names & Roles: Foxxi as a roster *provider* (tenant directory + imported OneRoster overlay → membership container) and as a *consumer* (`?members_url=` proxies a platform with a Tool-signed JWT) | **Implemented** | `GET /lti/nrps/members` |
+| AGS 2.0 — line-item management: per-tenant create / read / update / delete, optional mirror onto a platform's line-item container | **Implemented** | `GET/POST /lti/ags/lineitems`, `GET/PUT/DELETE /lti/ags/lineitems/:id` |
 | LTI Platform role (Foxxi launching external tools) | **Roadmap** | Foxxi is a Tool, not a Platform |
 
 An external LMS (Canvas, Moodle, Blackboard, Open edX) can launch Foxxi
-as a Tool today.
+as a Tool today — resource-link launch, deep-link content selection,
+roster sync, and grade passback all close end-to-end. All three LTI
+Advantage services are verified by `tools/lms-conformance-smoke.ts`.
 
 ## 5. OneRoster 1.2
 
 | Capability | Status | Evidence |
 |---|---|---|
-| Producer: users, orgs, classes, enrollments, pagination | **Implemented** | `src/oneroster.ts` |
-| Consumer: CSV bundle ingest (parse) | **Partial** | parses; apply-to-roster is roadmap |
+| Producer: users, orgs, **courses**, classes, enrollments, pagination | **Implemented** | `src/oneroster.ts` — `GET /ims/oneroster/v1p2/{users,orgs,courses,classes,enrollments}` |
+| Consumer: OneRoster CSV bundle ingest — parsed **and applied** into the tenant's imported roster overlay; every producer GET then reflects it (imported records win on `sourcedId` collision) | **Implemented** | `POST /ims/oneroster/v1p2/import`; `applyCsvBundle` in `src/oneroster.ts`; verified by `tools/lms-conformance-smoke.ts` |
 
 ## 6. Multi-tenancy — enterprise isolation
 
@@ -110,14 +121,22 @@ An incumbent xAPI LRS becomes a *data source under the substrate* — see
 
 - **Foxxi-as-LRS**: production-conformant xAPI 2.0 (1435/1435), multi-tenant,
   interoperable with any external LRS.
-- **Foxxi-as-LMS**: the full cmi5 launch-and-track loop now closes inside
+- **Foxxi-as-LMS**: the full cmi5 launch-and-track loop closes inside
   Foxxi — register a cmi5.xml course structure, launch an AU (sequential
   gating derived from the structure), the AU runs and reports, moveOn
   auto-evaluates, `satisfied` is emitted, and satisfaction rolls up
-  blocks → course. It also runs SCORM 1.2/2004 content via a conformant
-  RTE, is an LTI 1.3 Tool, and exposes a OneRoster roster.
-- **The honest gaps**, prioritised, are listed above as Roadmap/Partial —
-  chiefly SCORM 2004 sequencing-rule enforcement, the LTI Advantage
-  stubs (NRPS / Deep Linking / line-item management), and the OneRoster
-  consumer apply-step. None blocks the core LMS loop; each is a bounded,
-  separately-shippable unit.
+  blocks → course. It runs SCORM 1.2/2004 content via a conformant RTE
+  **and enforces SCORM 2004 Sequencing & Navigation at runtime**. It is
+  a full LTI 1.3 Advantage Tool — resource-link launch, Deep Linking 2.0
+  content selection, NRPS roster, and AGS line-item management + score
+  passback. It is a OneRoster 1.2 producer (incl. courses) and an
+  applying CSV consumer.
+- **The remaining Roadmap items** are genuinely lower-priority and
+  honestly scoped: the LTI *Platform* role (Foxxi launching external
+  tools — Foxxi is a Tool today), and the SN edge cases noted in §3
+  (time limits, attempt-absolute-duration limits, randomization). None
+  blocks any core LMS loop.
+- **Verification**: `tools/lms-conformance-smoke.ts` is a self-contained
+  regression test (run `npx tsx tools/lms-conformance-smoke.ts`) that
+  exercises the SCORM 2004 sequencing engine, the three LTI Advantage
+  services, and the OneRoster CSV apply-step end-to-end.

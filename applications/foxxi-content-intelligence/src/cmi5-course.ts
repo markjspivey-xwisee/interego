@@ -50,7 +50,8 @@ export interface Cmi5Course {
 
 // ── A minimal, dependency-free XML reader ────────────────────────────
 
-interface XmlNode { tag: string; attrs: Record<string, string>; children: XmlNode[]; text: string; }
+/** A parsed XML element — tag/attribute names are local (prefix stripped). */
+export interface XmlNode { tag: string; attrs: Record<string, string>; children: XmlNode[]; text: string; }
 
 function localName(tag: string): string {
   const c = tag.indexOf(':');
@@ -71,8 +72,13 @@ function parseAttrs(raw: string): Record<string, string> {
   return out;
 }
 
-/** Parse an XML document into a node tree. Returns the root, or null. */
-function parseXml(src: string): XmlNode | null {
+/**
+ * Parse an XML document into a node tree. Returns the root, or null.
+ * Tag + attribute names are reduced to their local name (namespace
+ * prefix stripped) so callers need not track prefixes. Exported for
+ * reuse by other dependency-free readers (e.g. SCORM `imsmanifest.xml`).
+ */
+export function parseXml(src: string): XmlNode | null {
   const s = src
     .replace(/<\?[\s\S]*?\?>/g, '')
     .replace(/<!--[\s\S]*?-->/g, '')

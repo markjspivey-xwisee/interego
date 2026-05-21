@@ -170,6 +170,12 @@ export function getCmi5Course(tenant: TenantId, courseId: string): Cmi5Course | 
   return courseRegistry.for(tenant).get(courseId);
 }
 
+/** Every cmi5 course structure registered in a tenant — drives content
+ *  pickers (LTI Deep Linking) and catalog listings. */
+export function listCmi5Courses(tenant: TenantId): Cmi5Course[] {
+  return [...courseRegistry.for(tenant).values()];
+}
+
 /** Find a registered course (in a tenant) that contains the given AU. */
 function courseContainingAu(tenant: TenantId, auId: string): Cmi5Course | undefined {
   for (const course of courseRegistry.for(tenant).values()) {

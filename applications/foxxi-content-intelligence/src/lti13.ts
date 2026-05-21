@@ -10,11 +10,14 @@
  *
  *   GET  /lti/.well-known/jwks.json    Tool's public JWK set (RFC 7517)
  *   POST /lti/login                    OIDC 3rd-party-initiated login (LTI 1.3 §5.1)
- *   POST /lti/launch                   Resource-link launch with id_token (LTI 1.3 §5.1.2)
- *   POST /lti/deeplink                 Deep Linking 2.0 response handler
- *   GET  /lti/ags/lineitems            Assignment & Grade Service — line-item list
+ *   POST /lti/launch                   Resource-link / deep-linking launch (LTI 1.3 §5.1.2)
+ *   GET  /lti/deeplink                 Deep Linking 2.0 content picker (UI)
+ *   POST /lti/deeplink                 Deep Linking 2.0 — signed content-item response
+ *   GET  /lti/ags/lineitems            AGS — list line items (+ ?platformLineItemsUrl proxy)
+ *   POST /lti/ags/lineitems            AGS — create a line item (+ optional platform mirror)
+ *   GET/PUT/DELETE /lti/ags/lineitems/:id   AGS — line-item read / update / delete
  *   POST /lti/ags/scores               AGS — submit a Score back to the platform
- *   GET  /lti/nrps/members             Names & Roles Provisioning Service
+ *   GET  /lti/nrps/members             NRPS — tenant roster, or ?members_url proxy
  *
  * Platforms are registered per-tenant via the
  * `foxxi.register_lti_platform` affordance (issuer, client_id,
@@ -36,8 +39,11 @@
  * (RFC 7515/7517/7518/7519).
  */
 
-import type { Express, Request, Response } from 'express';
+import express, { type Express, type Request, type Response } from 'express';
 import { createHash, createHmac, randomUUID, createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, verify as cryptoVerify } from 'node:crypto';
+import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
+import { tenantOrUsers, type OrUser } from './oneroster.js';
+import { listCmi5Courses } from './cmi5-lms.js';
 
 // ── Config ──────────────────────────────────────────────────────────
 
@@ -269,13 +275,144 @@ const LTI_CLAIMS = {
   ags: 'https://purl.imsglobal.org/spec/lti-ags/claim/endpoint',
   nrps: 'https://purl.imsglobal.org/spec/lti-nrps/claim/namesroleservice',
   deepLinkingSettings: 'https://purl.imsglobal.org/spec/lti-dl/claim/deep_linking_settings',
+  dlContentItems: 'https://purl.imsglobal.org/spec/lti-dl/claim/content_items',
+  dlData: 'https://purl.imsglobal.org/spec/lti-dl/claim/data',
 } as const;
+
+// ── AGS / NRPS scopes + LIS role IRIs ───────────────────────────────
+
+const AGS_SCOPE = {
+  lineItem: 'https://purl.imsglobal.org/spec/lti-ags/scope/lineitem',
+  score: 'https://purl.imsglobal.org/spec/lti-ags/scope/score',
+  result: 'https://purl.imsglobal.org/spec/lti-ags/scope/result.readonly',
+} as const;
+const NRPS_SCOPE = 'https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly';
+const NRPS_ROLE = {
+  learner: 'http://purl.imsglobal.org/vocab/lis/v2/membership#Learner',
+  instructor: 'http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor',
+  administrator: 'http://purl.imsglobal.org/vocab/lis/v2/membership#Administrator',
+} as const;
+
+// ── AGS line-item store (the Tool's per-tenant line-item registry) ──
+
+interface AgsLineItem {
+  id: string;
+  label: string;
+  scoreMaximum: number;
+  resourceId?: string;
+  resourceLinkId?: string;
+  tag?: string;
+  startDateTime?: string;
+  endDateTime?: string;
+  /** Platform-side line-item URL, set when the item was mirrored to a platform. */
+  platformLineItemUrl?: string;
+}
+const lineItemStore = new Map<TenantId, Map<string, AgsLineItem>>();
+function lineItemsFor(t: TenantId): Map<string, AgsLineItem> {
+  let m = lineItemStore.get(t);
+  if (!m) { m = new Map(); lineItemStore.set(t, m); }
+  return m;
+}
+/** A line item as exposed on the wire — `id` is the full resource URL. */
+function publicLineItem(li: AgsLineItem, selfBaseUrl: string): Record<string, unknown> {
+  return {
+    id: `${selfBaseUrl.replace(/\/+$/, '')}/lti/ags/lineitems/${li.id}`,
+    label: li.label,
+    scoreMaximum: li.scoreMaximum,
+    ...(li.resourceId ? { resourceId: li.resourceId } : {}),
+    ...(li.resourceLinkId ? { resourceLinkId: li.resourceLinkId } : {}),
+    ...(li.tag ? { tag: li.tag } : {}),
+    ...(li.startDateTime ? { startDateTime: li.startDateTime } : {}),
+    ...(li.endDateTime ? { endDateTime: li.endDateTime } : {}),
+  };
+}
+
+/** Map a OneRoster user to an NRPS 2.0 membership member object. */
+function orUserToNrpsMember(u: OrUser): Record<string, unknown> {
+  const role = u.role === 'administrator' ? NRPS_ROLE.administrator
+    : u.role === 'teacher' ? NRPS_ROLE.instructor
+    : NRPS_ROLE.learner;
+  const name = `${u.givenName} ${u.familyName}`.trim();
+  return {
+    status: u.status === 'active' ? 'Active' : 'Inactive',
+    ...(name ? { name } : {}),
+    given_name: u.givenName,
+    family_name: u.familyName,
+    ...(u.email ? { email: u.email } : {}),
+    user_id: u.sourcedId,
+    lis_person_sourcedid: u.identifier || u.sourcedId,
+    roles: [role],
+  };
+}
+
+function htmlEscape(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * Obtain a platform access token via the OAuth 2.0 client-credentials
+ * grant with a Tool-signed JWT bearer assertion (LTI Security Framework
+ * §4 / RFC 7523). Used for outbound AGS + NRPS service calls.
+ */
+async function platformToken(
+  platform: PlatformRegistration, scope: string, keys: Es256Keys,
+): Promise<{ ok: true; token: string } | { ok: false; status: number; error: string }> {
+  const now = Math.floor(Date.now() / 1000);
+  const assertion = jwsSignEs256({}, {
+    iss: platform.client_id,
+    sub: platform.client_id,
+    aud: platform.auth_token_url,
+    iat: now,
+    exp: now + 300,
+    jti: randomUUID(),
+  }, keys);
+  let resp: Awaited<ReturnType<typeof fetch>>;
+  try {
+    resp = await fetch(platform.auth_token_url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: assertion,
+        scope,
+      }).toString(),
+    });
+  } catch (err) { return { ok: false, status: 502, error: `platform token endpoint unreachable: ${(err as Error).message}` }; }
+  if (!resp.ok) return { ok: false, status: 502, error: `platform token endpoint ${resp.status}` };
+  const j = await resp.json().catch(() => ({})) as { access_token?: string };
+  if (!j.access_token) return { ok: false, status: 502, error: 'platform token response missing access_token' };
+  return { ok: true, token: j.access_token };
+}
 
 // ── Route attachment ────────────────────────────────────────────────
 
 export function attachLti13Routes(app: Express, config: Lti13Config): void {
   const platforms = parsePlatforms(config.platformsConfig);
   const keys = deriveKeys(config.keySeed);
+  // The global JSON parser does not cover `application/x-www-form-urlencoded`
+  // bodies — and an OIDC/LTI form-post arrives exactly that way. Apply a
+  // route-scoped urlencoded parser to every form-post endpoint.
+  const formBody = express.urlencoded({ extended: true, limit: '1mb' });
+
+  // Short-lived HMAC-signed tickets (launch hand-off + deep-linking
+  // hand-off). base64url(JSON.stringify({ ...payload, sig })) where sig
+  // is HMAC-SHA256(keySeed, JSON.stringify(payload)).
+  const signTicket = (payload: Record<string, unknown>): string => {
+    const sig = createHmac('sha256', config.keySeed).update(JSON.stringify(payload)).digest('base64url');
+    return base64url(JSON.stringify({ ...payload, sig }));
+  };
+  const verifyTicket = (raw: string): Record<string, unknown> | null => {
+    try {
+      const obj = JSON.parse(base64urlDecode(raw).toString('utf8')) as Record<string, unknown>;
+      const { sig, ...rest } = obj;
+      const expect = createHmac('sha256', config.keySeed).update(JSON.stringify(rest)).digest('base64url');
+      if (typeof sig !== 'string' || sig !== expect) return null;
+      if (typeof rest.exp === 'number' && rest.exp * 1000 < Date.now()) return null;
+      return rest;
+    } catch { return null; }
+  };
 
   // (1) JWKS — Tool's public keys, fetched by Platform for signing operations
   // Foxxi makes outbound (AGS, NRPS service-call authentication).
@@ -323,12 +460,12 @@ export function attachLti13Routes(app: Express, config: Lti13Config): void {
     res.redirect(302, u.toString());
   };
   app.get('/lti/login', loginHandler);
-  app.post('/lti/login', loginHandler);
+  app.post('/lti/login', formBody, loginHandler);
 
   // (3) Launch — Platform POSTs id_token + state to us. We verify the
   // JWS against the platform's JWKS, validate LTI claims, and produce a
   // Foxxi session redirect to the dashboard.
-  app.post('/lti/launch', (req, res) => { void (async () => {
+  app.post('/lti/launch', formBody, (req, res) => { void (async () => {
     const id_token = (req.body?.id_token ?? '') as string;
     const state = (req.body?.state ?? '') as string;
     if (!id_token || !state) {
@@ -352,45 +489,260 @@ export function attachLti13Routes(app: Express, config: Lti13Config): void {
     if (!Number.isFinite(expClaim) || expClaim * 1000 < Date.now()) { res.status(401).json({ error: 'expired' }); return; }
     if (p[LTI_CLAIMS.deploymentId] !== platform.deployment_id) { res.status(401).json({ error: 'deployment_id mismatch' }); return; }
     if (p[LTI_CLAIMS.version] !== '1.3.0') { res.status(401).json({ error: `unsupported LTI version ${p[LTI_CLAIMS.version] as string}` }); return; }
-    if (p[LTI_CLAIMS.messageType] !== 'LtiResourceLinkRequest' && p[LTI_CLAIMS.messageType] !== 'LtiDeepLinkingRequest') {
-      res.status(400).json({ error: `unsupported message_type ${p[LTI_CLAIMS.messageType] as string}` }); return;
+    const messageType = p[LTI_CLAIMS.messageType];
+    if (messageType !== 'LtiResourceLinkRequest' && messageType !== 'LtiDeepLinkingRequest') {
+      res.status(400).json({ error: `unsupported message_type ${messageType as string}` }); return;
+    }
+    const iat = Math.floor(Date.now() / 1000);
+
+    // Deep Linking 2.0 (IMS-LTI-DL-2) — the platform is asking the Tool
+    // to return content items. Hand off to the Foxxi content picker:
+    // sign a short-lived deep-linking ticket carrying the return URL +
+    // opaque `data` (which MUST be echoed back), and redirect there.
+    if (messageType === 'LtiDeepLinkingRequest') {
+      const dls = (p[LTI_CLAIMS.deepLinkingSettings] ?? {}) as Record<string, unknown>;
+      const returnUrl = typeof dls.deep_link_return_url === 'string' ? dls.deep_link_return_url : '';
+      if (!returnUrl) { res.status(400).json({ error: 'deep_linking_settings.deep_link_return_url missing — not a valid deep-linking request' }); return; }
+      const dlTicket = signTicket({
+        kind: 'deeplink',
+        iss: platform.issuer,
+        clientId: platform.client_id,
+        deploymentId: platform.deployment_id,
+        returnUrl,
+        ...(dls.data !== undefined ? { data: String(dls.data) } : {}),
+        acceptMultiple: dls.accept_multiple === true || dls.accept_multiple === 'true',
+        iat,
+        exp: iat + 900, // 15min to make a selection
+      });
+      const picker = new URL(`${config.selfBaseUrl.replace(/\/+$/, '')}/lti/deeplink`);
+      picker.searchParams.set('dl', dlTicket);
+      res.redirect(302, picker.toString());
+      return;
     }
 
-    // At this point the launch is authentic. Build a launch context the
-    // dashboard can read on next page load. We sign a short-lived launch
-    // ticket (JWS HS256 with the bridge's session secret) and pass it on
-    // the redirect URL; the dashboard exchanges it for a session.
-    const launchTicket = {
+    // LtiResourceLinkRequest — an authentic content launch. Build a
+    // launch context the dashboard reads on next page load, signed as a
+    // short-lived ticket passed on the redirect URL; the dashboard
+    // exchanges it for a session.
+    const ticketJson = signTicket({
       iss: platform.issuer,
       sub: p.sub,
       roles: (p[LTI_CLAIMS.roles] ?? []) as string[],
       context: p[LTI_CLAIMS.context],
       resourceLink: p[LTI_CLAIMS.resourceLink],
       platform: p[LTI_CLAIMS.toolPlatform],
+      custom: p[LTI_CLAIMS.custom],
       ags: p[LTI_CLAIMS.ags],
       nrps: p[LTI_CLAIMS.nrps],
       deploymentId: platform.deployment_id,
       clientId: platform.client_id,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 300, // 5min ticket
-    };
-    const ticketHmac = createHmac('sha256', config.keySeed).update(JSON.stringify(launchTicket)).digest('base64url');
-    const ticketJson = base64url(JSON.stringify({ ...launchTicket, sig: ticketHmac }));
+      iat,
+      exp: iat + 300, // 5min ticket
+    });
     const redirect = new URL(config.dashboardUrl);
     redirect.searchParams.set('lti_ticket', ticketJson);
     res.redirect(302, redirect.toString());
   })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
 
-  // (4) Deep Linking response (kept minimal — returns a stub success).
-  app.post('/lti/deeplink', (_req, res) => {
-    res.json({ ok: true, note: 'deep-linking response endpoint stub — content-item selection round-trip is the future iteration' });
+  // (4) Deep Linking 2.0 — content-item selection round-trip.
+  //
+  // GET /lti/deeplink?dl=<ticket> renders the Foxxi content picker
+  // (registered cmi5 courses + the generic dashboard link). POST submits
+  // the selection: the Tool signs an LtiDeepLinkingResponse JWT and
+  // auto-posts it to the platform's deep_link_return_url. The platform
+  // verifies the JWT against the Tool's JWKS and persists the items.
+  app.get('/lti/deeplink', (req, res) => {
+    const ticket = verifyTicket(String(req.query.dl ?? ''));
+    if (!ticket || ticket.kind !== 'deeplink') {
+      res.status(400).type('html').send('<p>Invalid or expired deep-linking ticket. Re-launch from your LMS.</p>');
+      return;
+    }
+    const courses = listCmi5Courses(DEFAULT_TENANT);
+    const dl = htmlEscape(String(req.query.dl ?? ''));
+    const courseItems = courses.map(c => `
+      <label class="item"><input type="checkbox" name="course" value="${htmlEscape(c.id)}">
+        <span><b>${htmlEscape(c.title)}</b>${c.description ? `<br><small>${htmlEscape(c.description)}</small>` : ''}</span>
+      </label>`).join('');
+    res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Add Foxxi content</title><style>
+body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:640px;margin:2rem auto;padding:0 1rem;color:#1a1a2e}
+h1{font-size:1.25rem}.item{display:flex;gap:.6rem;align-items:flex-start;border:1px solid #dde;border-radius:8px;padding:.7rem .9rem;margin:.5rem 0;cursor:pointer}
+.item:hover{border-color:#1a73e8}small{color:#667}
+button{background:#1a73e8;color:#fff;border:0;border-radius:6px;padding:.65rem 1.3rem;font-size:1rem;cursor:pointer;margin-top:1rem}
+</style></head><body>
+<h1>Add Foxxi content to your course</h1>
+<p>Select the content items to embed. Your LMS will create a resource link for each.</p>
+<form method="POST" action="${config.selfBaseUrl.replace(/\/+$/, '')}/lti/deeplink">
+<input type="hidden" name="dl" value="${dl}">
+${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi link is offered below.</em></p>'}
+<label class="item"><input type="checkbox" name="generic" value="dashboard">
+  <span><b>Foxxi Learning Dashboard</b><br><small>The learner's full Foxxi experience surface</small></span></label>
+<button type="submit">Add selected content</button>
+</form></body></html>`);
   });
 
-  // (5) AGS lineitems list — placeholder until tenant-side line-item
-  // store is wired. Real implementation POSTs to platform_endpoints.lineitems
-  // with a Tool-signed JWT.
-  app.get('/lti/ags/lineitems', (_req, res) => {
-    res.json([]);
+  app.post('/lti/deeplink', formBody, (req, res) => { void (async () => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const ticket = verifyTicket(String(body.dl ?? ''));
+    if (!ticket || ticket.kind !== 'deeplink') {
+      res.status(400).type('html').send('<p>Invalid or expired deep-linking ticket.</p>');
+      return;
+    }
+    const platform = platforms.find(pl => pl.issuer === ticket.iss && pl.client_id === ticket.clientId);
+    if (!platform) { res.status(401).type('html').send('<p>Platform deregistered since launch.</p>'); return; }
+
+    const courseSel = Array.isArray(body.course) ? body.course.map(String)
+      : body.course ? [String(body.course)] : [];
+    const courses = listCmi5Courses(DEFAULT_TENANT);
+    const launchUrl = `${config.selfBaseUrl.replace(/\/+$/, '')}/lti/launch`;
+    let contentItems: Array<Record<string, unknown>> = [];
+    for (const cid of courseSel) {
+      const c = courses.find(x => x.id === cid);
+      if (!c) continue;
+      contentItems.push({
+        type: 'ltiResourceLink',
+        title: c.title,
+        ...(c.description ? { text: c.description } : {}),
+        url: launchUrl,
+        custom: { foxxi_course_id: c.id },
+      });
+    }
+    if (body.generic) {
+      contentItems.push({
+        type: 'ltiResourceLink',
+        title: 'Foxxi Learning Dashboard',
+        url: launchUrl,
+        custom: { foxxi_view: 'dashboard' },
+      });
+    }
+    // Respect accept_multiple — return at most one item when the platform
+    // asked for a single selection.
+    if (ticket.acceptMultiple !== true && contentItems.length > 1) {
+      contentItems = contentItems.slice(0, 1);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const responseJwt = jwsSignEs256({}, {
+      iss: platform.client_id,
+      aud: platform.issuer,
+      iat: now,
+      exp: now + 600,
+      nonce: randomUUID(),
+      [LTI_CLAIMS.messageType]: 'LtiDeepLinkingResponse',
+      [LTI_CLAIMS.version]: '1.3.0',
+      [LTI_CLAIMS.deploymentId]: ticket.deploymentId,
+      [LTI_CLAIMS.dlContentItems]: contentItems,
+      ...(typeof ticket.data === 'string' ? { [LTI_CLAIMS.dlData]: ticket.data } : {}),
+    }, keys);
+
+    // Auto-post the signed response JWT back to the platform (IMS-LTI-DL-2 §3).
+    const returnUrl = htmlEscape(String(ticket.returnUrl));
+    res.type('html').send(`<!doctype html><html><body onload="document.forms[0].submit()">
+<p>Returning ${contentItems.length} item(s) to your LMS…</p>
+<form method="POST" action="${returnUrl}">
+<input type="hidden" name="JWT" value="${htmlEscape(responseJwt)}">
+<noscript><button type="submit">Return to your LMS</button></noscript>
+</form></body></html>`);
+  })().catch(err => { res.status(500).type('html').send(htmlEscape((err as Error).message)); }); });
+
+  // (5) AGS line-item management (IMS-LTI-AGS-2). The Tool keeps a
+  // per-tenant line-item registry; create/read/update/delete operate on
+  // it. `?platformLineItemsUrl=` proxies a read against a platform's
+  // line-item container, and `platformLineItemsUrl` in a create body
+  // mirrors the new line item onto the platform with a Tool-signed JWT.
+  app.get('/lti/ags/lineitems', (req, res) => { void (async () => {
+    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const platformUrl = req.query.platformLineItemsUrl as string | undefined;
+    if (platformUrl) {
+      const platform = platforms[0];
+      if (!platform) { res.status(400).json({ error: 'no LTI platforms registered' }); return; }
+      const tok = await platformToken(platform, AGS_SCOPE.lineItem, keys);
+      if (!tok.ok) { res.status(tok.status).json({ error: tok.error }); return; }
+      const r = await fetch(platformUrl, {
+        headers: { Accept: 'application/vnd.ims.lis.v2.lineitemcontainer+json', Authorization: `Bearer ${tok.token}` },
+      });
+      const text = await r.text();
+      res.status(r.status).type('application/vnd.ims.lis.v2.lineitemcontainer+json').send(text);
+      return;
+    }
+    res.type('application/vnd.ims.lis.v2.lineitemcontainer+json')
+      .send(JSON.stringify([...lineItemsFor(tenant).values()].map(li => publicLineItem(li, config.selfBaseUrl))));
+  })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
+
+  app.post('/lti/ags/lineitems', (req, res) => { void (async () => {
+    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const label = typeof b.label === 'string' ? b.label : '';
+    const scoreMaximum = Number(b.scoreMaximum);
+    if (!label || !Number.isFinite(scoreMaximum) || scoreMaximum <= 0) {
+      res.status(400).json({ error: 'label (non-empty string) and scoreMaximum (positive number) are required' });
+      return;
+    }
+    const li: AgsLineItem = {
+      id: randomUUID(),
+      label,
+      scoreMaximum,
+      ...(typeof b.resourceId === 'string' ? { resourceId: b.resourceId } : {}),
+      ...(typeof b.resourceLinkId === 'string' ? { resourceLinkId: b.resourceLinkId } : {}),
+      ...(typeof b.tag === 'string' ? { tag: b.tag } : {}),
+      ...(typeof b.startDateTime === 'string' ? { startDateTime: b.startDateTime } : {}),
+      ...(typeof b.endDateTime === 'string' ? { endDateTime: b.endDateTime } : {}),
+    };
+    let platformSync: Record<string, unknown> | undefined;
+    const platformUrl = typeof b.platformLineItemsUrl === 'string' ? b.platformLineItemsUrl : undefined;
+    if (platformUrl) {
+      const platform = platforms[0];
+      if (!platform) {
+        platformSync = { ok: false, error: 'no LTI platforms registered' };
+      } else {
+        const tok = await platformToken(platform, AGS_SCOPE.lineItem, keys);
+        if (!tok.ok) {
+          platformSync = { ok: false, status: tok.status, error: tok.error };
+        } else {
+          const r = await fetch(platformUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/vnd.ims.lis.v2.lineitem+json', Authorization: `Bearer ${tok.token}` },
+            body: JSON.stringify(publicLineItem(li, config.selfBaseUrl)),
+          });
+          const created = await r.json().catch(() => ({})) as { id?: string };
+          if (r.ok && typeof created.id === 'string') li.platformLineItemUrl = created.id;
+          platformSync = { ok: r.ok, status: r.status, ...(li.platformLineItemUrl ? { platformLineItemUrl: li.platformLineItemUrl } : {}) };
+        }
+      }
+    }
+    lineItemsFor(tenant).set(li.id, li);
+    res.status(201).type('application/vnd.ims.lis.v2.lineitem+json')
+      .send(JSON.stringify({ ...publicLineItem(li, config.selfBaseUrl), ...(platformSync ? { platformSync } : {}) }));
+  })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
+
+  app.get('/lti/ags/lineitems/:id', (req, res) => {
+    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const li = lineItemsFor(tenant).get(String(req.params.id ?? ''));
+    if (!li) { res.status(404).json({ error: 'line item not found' }); return; }
+    res.type('application/vnd.ims.lis.v2.lineitem+json').send(JSON.stringify(publicLineItem(li, config.selfBaseUrl)));
+  });
+
+  app.put('/lti/ags/lineitems/:id', (req, res) => {
+    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const li = lineItemsFor(tenant).get(String(req.params.id ?? ''));
+    if (!li) { res.status(404).json({ error: 'line item not found' }); return; }
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof b.label === 'string' && b.label) li.label = b.label;
+    if (Number.isFinite(Number(b.scoreMaximum)) && Number(b.scoreMaximum) > 0) li.scoreMaximum = Number(b.scoreMaximum);
+    if (typeof b.tag === 'string') li.tag = b.tag;
+    if (typeof b.resourceId === 'string') li.resourceId = b.resourceId;
+    if (typeof b.resourceLinkId === 'string') li.resourceLinkId = b.resourceLinkId;
+    if (typeof b.startDateTime === 'string') li.startDateTime = b.startDateTime;
+    if (typeof b.endDateTime === 'string') li.endDateTime = b.endDateTime;
+    res.type('application/vnd.ims.lis.v2.lineitem+json').send(JSON.stringify(publicLineItem(li, config.selfBaseUrl)));
+  });
+
+  app.delete('/lti/ags/lineitems/:id', (req, res) => {
+    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const existed = lineItemsFor(tenant).delete(String(req.params.id ?? ''));
+    if (!existed) { res.status(404).json({ error: 'line item not found' }); return; }
+    res.status(204).end();
   });
 
   // (6) AGS score submission — accepts a Score object and forwards it
@@ -401,41 +753,49 @@ export function attachLti13Routes(app: Express, config: Lti13Config): void {
     if (!lineItemUrl || !score) { res.status(400).json({ error: 'lineItemUrl + score required' }); return; }
     const platform = platforms[0];
     if (!platform) { res.status(400).json({ error: 'no LTI platforms registered' }); return; }
-    // Mint a client-credentials JWT to obtain an access token
-    const assertion = jwsSignEs256({}, {
-      iss: platform.client_id,
-      sub: platform.client_id,
-      aud: platform.auth_token_url,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 300,
-      jti: randomUUID(),
-    }, keys);
-    const tokenResp = await fetch(platform.auth_token_url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-        client_assertion: assertion,
-        scope: 'https://purl.imsglobal.org/spec/lti-ags/scope/score',
-      }).toString(),
-    });
-    if (!tokenResp.ok) { res.status(502).json({ error: `platform token endpoint ${tokenResp.status}` }); return; }
-    const { access_token } = await tokenResp.json() as { access_token: string };
+    const tok = await platformToken(platform, AGS_SCOPE.score, keys);
+    if (!tok.ok) { res.status(tok.status).json({ error: tok.error }); return; }
     const scoreUrl = `${lineItemUrl.replace(/\/$/, '')}/scores`;
     const scorePost = await fetch(scoreUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/vnd.ims.lis.v1.score+json',
-        'Authorization': `Bearer ${access_token}`,
+        'Authorization': `Bearer ${tok.token}`,
       },
       body: JSON.stringify(score),
     });
     res.status(scorePost.status).json({ ok: scorePost.ok, status: scorePost.status });
   })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
 
-  // (7) NRPS members — same client_credentials pattern; placeholder.
-  app.get('/lti/nrps/members', (_req, res) => {
-    res.json({ id: `${config.selfBaseUrl}/lti/nrps/members`, context: { id: 'foxxi-context' }, members: [] });
-  });
+  // (7) NRPS — Names and Role Provisioning Service 2.0 (IMS-LTI-NRPS-2).
+  //
+  // Two modes, both conformant:
+  //  · `?members_url=` — Foxxi acts as an NRPS *consumer*: it calls the
+  //    platform's context-membership endpoint with a Tool-signed JWT and
+  //    returns the platform's membership container (the true Tool role).
+  //  · default — Foxxi acts as an NRPS *provider*: it returns its own
+  //    tenant roster (Foxxi directory + any imported OneRoster overlay)
+  //    as a conformant NRPS MembershipContainer.
+  app.get('/lti/nrps/members', (req, res) => { void (async () => {
+    const membersUrl = req.query.members_url as string | undefined;
+    if (membersUrl) {
+      const platform = platforms[0];
+      if (!platform) { res.status(400).json({ error: 'no LTI platforms registered' }); return; }
+      const tok = await platformToken(platform, NRPS_SCOPE, keys);
+      if (!tok.ok) { res.status(tok.status).json({ error: tok.error }); return; }
+      const r = await fetch(membersUrl, {
+        headers: { Accept: 'application/vnd.ims.lti-nrps.v2.membershipcontainer+json', Authorization: `Bearer ${tok.token}` },
+      });
+      const text = await r.text();
+      res.status(r.status).type('application/vnd.ims.lti-nrps.v2.membershipcontainer+json').send(text);
+      return;
+    }
+    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const members = tenantOrUsers(tenant).map(orUserToNrpsMember);
+    res.type('application/vnd.ims.lti-nrps.v2.membershipcontainer+json').send(JSON.stringify({
+      id: `${config.selfBaseUrl.replace(/\/+$/, '')}/lti/nrps/members`,
+      context: { id: 'foxxi-tenant', label: 'foxxi', title: 'Foxxi tenant roster' },
+      members,
+    }));
+  })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
 }

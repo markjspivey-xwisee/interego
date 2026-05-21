@@ -166,6 +166,7 @@ import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getS
 import { attachCmi5LmsRoutes, cmi5BearerTenant, observeCmi5Statement } from '../src/cmi5-lms.js';
 import { attachLti13Routes } from '../src/lti13.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
+import { attachScormSequencingRoutes } from '../src/scorm-sequencing.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
@@ -1840,8 +1841,16 @@ const app = createVerticalBridge({
 
     // OneRoster 1.2 — SIS / HR roster sync. Both a producer (Foxxi
     // exposes its roster) and a consumer (`POST /oneroster/v1p2/import`
-    // for CSV bundle ingest).
+    // applies a CSV bundle into the tenant's imported roster overlay).
     attachOneRosterRoutes(a, { tenantDid: authoritativeSource });
+
+    // SCORM 2004 4th Ed. Sequencing & Navigation runtime — Foxxi-as-LMS
+    // can ENFORCE sequencing (control modes, sequencing rules, limit
+    // conditions, rollup) rather than merely transcribe it. Routes:
+    // POST /scorm/sequencing/session, .../navigate, .../commit; GET .../:id.
+    attachScormSequencingRoutes(a, {
+      selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
+    });
 
     // OpenAPI 3.1 — machine-readable contract for non-MCP integrators
     // (bizdev / partner-eng teams who want a typed SDK). Served at
