@@ -70,23 +70,29 @@ import {
 import { ingestExternalRun, type ExternalRunInput, type ToolCallInput, type HarnessMeta } from '../src/agent-run-ingest.js';
 import { EvaluationRegistry, type CandidateRun } from '../src/agent-evaluation.js';
 import { comparePortfolio, type CandidateEvidence } from '../src/agent-portfolio.js';
+import { TenantPartition, tenantIdOf, type TenantId } from '../src/tenant-context.js';
 
-/** Agentic-native trajectory store — the source of truth (modal +
- *  poly-granular), keyed by agent DID. xAPI statements are projected
- *  off it into the LRS; the native form here keeps what xAPI drops. */
-const agentTrajectories = new Map<string, AgentTrajectory>();
+// ── Tenant-partitioned bridge stores ────────────────────────────────
+// One Foxxi bridge can serve many tenants. Every in-memory store is
+// partitioned by tenant (the tenant pod URL), so tenant A can never see
+// tenant B's trajectories, probes, or evaluations.
+
+/** Agentic-native trajectory store — keyed by agent DID, per tenant. */
+const agentTrajectoriesByTenant = new TenantPartition<Map<string, AgentTrajectory>>(() => new Map());
 const AGENT_TRAJECTORY_MAX = 5_000;
 
-/** Performance-probe store — safe-to-fail do(x) interventions, keyed by
- *  team key (sorted agent DIDs). A team accumulates a probe portfolio. */
-const performanceProbes = new Map<string, PerformanceProbe[]>();
+/** Performance-probe store — keyed by team key (sorted agent DIDs), per tenant. */
+const performanceProbesByTenant = new TenantPartition<Map<string, PerformanceProbe[]>>(() => new Map());
 const teamKey = (dids: readonly string[]): string => [...dids].sort().join('|');
 
-/** Agent-evaluation cohort registry — competing agents/harnesses brought
- *  together for a head-to-head portfolio read. Cross-pod: a candidate's
- *  DID may live on another team's pod. In-memory (demo-sized); the runs'
- *  xAPI evidence persists durably in Foxxi-as-LRS regardless. */
-const evaluationRegistry = new EvaluationRegistry();
+/** Agent-evaluation cohort registry — one per tenant. */
+const evaluationRegistryByTenant = new TenantPartition<EvaluationRegistry>(() => new EvaluationRegistry());
+
+/** Resolve the tenant of an affordance call from its `tenant_pod_url`
+ *  argument (falling back to the bridge's configured default tenant). */
+function callTenant(args: Record<string, unknown>): TenantId {
+  return tenantIdOf((args.tenant_pod_url as string) || tenantPodUrl);
+}
 import { frameworkToCase, type FoxxiSkillFramework } from '../src/case-exporter.js';
 import { buildPassedSessionTrace } from '../src/cmi5.js';
 import { pushFrameworkToCass } from '../src/cass-connector.js';
@@ -664,7 +670,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       },
       timestamp: new Date().toISOString(),
     };
-    const statementId = storeStatementInternal(statement);
+    const statementId = storeStatementInternal(statement, callTenant(args));
     return {
       recorded: true,
       statementId,
@@ -681,6 +687,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
     const agentDid = args.agent_did as string;
     if (!agentDid) return { error: 'agent_did is required' };
     const rawSteps = args.steps as Array<Record<string, unknown>> | undefined;
@@ -713,7 +720,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // statements — the deliberately lossy interop view.
     const projection = projectTrajectoryToXapi(trajectory, { authoritativeSource });
     for (const stmt of projection.statements) {
-      storeStatementInternal({ id: randomUUID(), ...stmt });
+      storeStatementInternal({ id: randomUUID(), ...stmt }, callTenant(args));
     }
     const shape = trajectoryShape(trajectory);
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.record_agent_trajectory', decision: 'allow', appliedPolicies: ['agent-trajectory-public'] });
@@ -734,6 +741,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
     const agentDid = args.agent_did as string;
     if (!agentDid) return { error: 'agent_did is required' };
     const trajectory = agentTrajectories.get(agentDid);
@@ -771,6 +779,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
+    const performanceProbes = performanceProbesByTenant.for(callTenant(args));
     const agentDids = args.agent_dids as string[] | undefined;
     if (!Array.isArray(agentDids) || agentDids.length === 0) {
       return { error: 'agent_dids (non-empty array) is required' };
@@ -799,6 +809,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
+    const performanceProbes = performanceProbesByTenant.for(callTenant(args));
     const agentDids = args.agent_dids as string[] | undefined;
     if (!Array.isArray(agentDids) || agentDids.length === 0) {
       return { error: 'agent_dids (non-empty array) is required' };
@@ -847,6 +859,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    const tenant = callTenant(args);
+    const agentTrajectories = agentTrajectoriesByTenant.for(tenant);
+    const evaluationRegistry = evaluationRegistryByTenant.for(tenant);
     const agentDid = args.agent_did as string;
     if (!agentDid) return { error: 'agent_did is required' };
     const taskName = args.task_name as string;
@@ -901,7 +916,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       }));
     }
     const ingested = ingestExternalRun(runInput);
-    for (const stmt of ingested.statements) storeStatementInternal({ id: randomUUID(), ...stmt });
+    for (const stmt of ingested.statements) storeStatementInternal({ id: randomUUID(), ...stmt }, tenant);
     if (agentTrajectories.size >= AGENT_TRAJECTORY_MAX && !agentTrajectories.has(agentDid)) {
       const oldest = agentTrajectories.keys().next().value;
       if (oldest) agentTrajectories.delete(oldest);
@@ -942,6 +957,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const name = args.name as string;
     const decisionQuestion = args.decision_question as string;
     if (!name || !name.trim()) return { error: 'name is required' };
@@ -961,6 +977,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
     const agentDid = args.agent_did as string;
     const team = args.team as string;
@@ -986,6 +1003,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
     const candidateId = args.candidate_id as string;
     const decision = args.decision as string;
@@ -1007,6 +1025,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
     if (!evaluationId) return { error: 'evaluation_id is required' };
     const state = evaluationRegistry.get(evaluationId);
@@ -1026,6 +1045,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return { error: resolved.error };
     const { ctx } = resolved;
+    const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
     if (!evaluationId) return { error: 'evaluation_id is required' };
     const state = evaluationRegistry.get(evaluationId);

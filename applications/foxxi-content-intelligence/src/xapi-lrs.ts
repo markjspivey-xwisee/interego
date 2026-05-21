@@ -52,12 +52,19 @@ import { randomUUID, createHash } from 'node:crypto';
 import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adapter/src/pod-publisher.js';
 import { createStatementStore, ConflictError, matchesFilter, type StatementStore, type StoredStatement } from './statement-store.js';
 import { validateStatement, validateAgentObject } from './xapi-validate.js';
+import { TenantPartition, DEFAULT_TENANT, parseTenantCredentials, type TenantId } from './tenant-context.js';
 import type { IRI } from '../../../src/index.js';
 
 void _unusedTypeAnchor;
 
-// ── Pluggable backend ───────────────────────────────────────────────
-const store: StatementStore = createStatementStore(process.env.FOXXI_LRS_BACKEND);
+// ── Pluggable, tenant-partitioned backend ───────────────────────────
+// One Foxxi bridge can serve many tenants. Every store below is
+// partitioned by tenant through TenantPartition; a single-tenant
+// deployment resolves every request to DEFAULT_TENANT and behaves
+// byte-identically to a single-tenant build.
+const statementStores = new TenantPartition<StatementStore>(
+  () => createStatementStore(process.env.FOXXI_LRS_BACKEND),
+);
 
 // ── Config ──────────────────────────────────────────────────────────
 
@@ -73,33 +80,39 @@ export interface XapiLrsConfig {
 
 export type XapiStatementRecord = StoredStatement;
 
-export function storeStatementInternal(stmt: Record<string, unknown>): string {
+export function storeStatementInternal(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT): string {
   const id = (typeof stmt.id === 'string' && isUuid(stmt.id)) ? stmt.id : randomUUID();
   const stored = new Date().toISOString();
   const rec: StoredStatement = { id, statement: { ...stmt, id, stored }, stored, voided: false };
-  void store.put(rec).catch(err => {
+  void statementStores.for(tenant).put(rec).catch(err => {
     // eslint-disable-next-line no-console
     console.warn('[storeStatementInternal]', (err as Error).message);
   });
   return id;
 }
 
-export async function listStoredStatements(): Promise<StoredStatement[]> { return store.listAll(); }
-export async function clearStatementStore(): Promise<void> { return store.clear(); }
-export function getStatementStore(): StatementStore { return store; }
+export async function listStoredStatements(tenant: TenantId = DEFAULT_TENANT): Promise<StoredStatement[]> {
+  return statementStores.for(tenant).listAll();
+}
+export async function clearStatementStore(tenant: TenantId = DEFAULT_TENANT): Promise<void> {
+  return statementStores.for(tenant).clear();
+}
+export function getStatementStore(tenant: TenantId = DEFAULT_TENANT): StatementStore {
+  return statementStores.for(tenant);
+}
+/** Every tenant that currently holds statements — for cross-tenant ops. */
+export function statementStoreTenants(): TenantId[] { return statementStores.tenants(); }
 
-// ── In-memory document stores (state + profile) ─────────────────────
+// ── In-memory document stores (state + profile), tenant-partitioned ──
 
 interface StoredDoc { content: unknown; etag: string; updated: string; contentType: string; }
-const activityStateStore = new Map<string, StoredDoc>();
-const activityProfileStore = new Map<string, StoredDoc>();
-const agentProfileStore = new Map<string, StoredDoc>();
+const stateStores = new TenantPartition<Map<string, StoredDoc>>(() => new Map());
+const activityProfileStores = new TenantPartition<Map<string, StoredDoc>>(() => new Map());
+const agentProfileStores = new TenantPartition<Map<string, StoredDoc>>(() => new Map());
 
-// Raw attachment bytes, keyed by their SHA-2 hash, captured from
-// multipart/mixed Statement requests. Used to satisfy `?attachments=true`
-// GET requests, which return the original attachment data alongside the
-// Statements in a multipart response.
-const attachmentDataStore = new Map<string, { data: Buffer; contentType: string }>();
+// Raw attachment bytes, keyed by SHA-2 hash, captured from
+// multipart/mixed Statement requests — tenant-partitioned.
+const attachmentStores = new TenantPartition<Map<string, { data: Buffer; contentType: string }>>(() => new Map());
 
 // ── Constants ───────────────────────────────────────────────────────
 
@@ -133,17 +146,23 @@ function negotiateVersion(req: Request): string {
   return typeof v === 'string' && v ? v : '2.0.0';
 }
 
-function basicAuthOk(header: string | undefined, pairs: string): boolean {
-  if (!pairs.trim()) return false;
-  if (!header || !/^Basic\s+/i.exec(header)) return false;
+/** Resolve a Basic-auth header to its tenant, or null if no pair matches. */
+function basicAuthTenant(header: string | undefined, credTenants: Map<string, TenantId>): TenantId | null {
+  if (credTenants.size === 0) return null;
+  if (!header || !/^Basic\s+/i.exec(header)) return null;
   const decoded = Buffer.from(header.replace(/^Basic\s+/i, ''), 'base64').toString('utf8');
-  return pairs.split(',').map(s => s.trim()).filter(Boolean).includes(decoded);
+  return credTenants.get(decoded) ?? null;
 }
 
 function bearerToken(header: string | undefined): string | undefined {
   if (!header) return undefined;
   const m = /^Bearer\s+(.+)$/i.exec(header);
   return m ? m[1]!.trim() : undefined;
+}
+
+/** The tenant a gated request resolved to (set by the auth gate). */
+function tenantOf(req: Request): TenantId {
+  return (req as Request & { xapiTenant?: TenantId }).xapiTenant ?? DEFAULT_TENANT;
 }
 
 /**
@@ -154,6 +173,10 @@ function bearerToken(header: string | undefined): string | undefined {
  *   2. Authentication (Basic key OR Foxxi Bearer token) — otherwise 401.
  */
 function makeAuthGate(config: XapiLrsConfig) {
+  // Each Basic-auth credential carries its tenant (`user:pass` → default,
+  // `user:pass:tenantId` → a named tenant) — the standard multi-tenant
+  // LRS pattern: one credential per upstream LMS/LRS integration.
+  const credTenants = parseTenantCredentials(config.basicAuthPairs);
   return (req: Request, res: Response, next: NextFunction): void => {
     const rawVersion = req.headers['x-experience-api-version'];
     const version = typeof rawVersion === 'string' ? rawVersion : '';
@@ -170,13 +193,17 @@ function makeAuthGate(config: XapiLrsConfig) {
     setXapiHeaders(res, version.startsWith('2.') ? version : version);
 
     const authHeader = (req.headers['authorization'] ?? req.headers['Authorization']) as string | undefined;
-    if (basicAuthOk(authHeader, config.basicAuthPairs)) {
-      (req as Request & { xapiAuth: { kind: 'basic'; principal: string } }).xapiAuth = { kind: 'basic', principal: 'lrs-key' };
+    const r = req as Request & { xapiAuth?: unknown; xapiTenant?: TenantId };
+    const basicTenant = basicAuthTenant(authHeader, credTenants);
+    if (basicTenant !== null) {
+      r.xapiAuth = { kind: 'basic', principal: 'lrs-key' };
+      r.xapiTenant = basicTenant;
       return next();
     }
     const bearer = bearerToken(authHeader);
     if (bearer) {
-      (req as Request & { xapiAuth: { kind: 'bearer'; token: string } }).xapiAuth = { kind: 'bearer', token: bearer };
+      r.xapiAuth = { kind: 'bearer', token: bearer };
+      r.xapiTenant = DEFAULT_TENANT;
       return next();
     }
     res.status(401).setHeader('WWW-Authenticate', 'Basic realm="foxxi-lrs", Bearer realm="foxxi-lrs"').json({
@@ -438,12 +465,14 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
     }
   }
 
+  const store = statementStores.for(tenantOf(req));
+  const attachStore = attachmentStores.for(tenantOf(req));
   const ids: string[] = [];
   const authority = { homePage: config.selfBaseUrl, name: 'foxxi-lrs' };
   for (const stmt of batch) {
     const enriched = ensureStatementFields(stmt, authority);
     const id = enriched.id as string;
-    await applyVoiding(enriched, id);
+    await applyVoiding(enriched, id, store);
     try {
       await store.put({ id, statement: enriched, stored: enriched.stored as string, voided: false });
     } catch (err) {
@@ -451,7 +480,7 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
       throw err;
     }
     ids.push(id);
-    persistAttachmentData(enriched, multipartParts);
+    persistAttachmentData(enriched, multipartParts, attachStore);
     forwardStatement(enriched, config).catch(err => {
       // eslint-disable-next-line no-console
       console.warn('[foxxi-lrs] forwarding failed:', (err as Error).message);
@@ -465,7 +494,7 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
  * void the target — UNLESS the target is itself a voiding Statement
  * (a Voiding Statement cannot be voided).
  */
-async function applyVoiding(stmt: Record<string, unknown>, voidingId: string): Promise<void> {
+async function applyVoiding(stmt: Record<string, unknown>, voidingId: string, store: StatementStore): Promise<void> {
   const target = isVoidingStatement(stmt);
   if (!target) return;
   const existing = await store.get(target);
@@ -513,7 +542,11 @@ function collectAttachmentHashes(batch: Record<string, unknown>[]): Set<string> 
 }
 
 /** Persist a Statement's attachment bytes so `?attachments=true` can serve them. */
-function persistAttachmentData(stmt: Record<string, unknown>, parts: Map<string, MultipartPart> | null): void {
+function persistAttachmentData(
+  stmt: Record<string, unknown>,
+  parts: Map<string, MultipartPart> | null,
+  attachStore: Map<string, { data: Buffer; contentType: string }>,
+): void {
   if (!parts) return;
   const attachments = stmt.attachments;
   if (!Array.isArray(attachments)) return;
@@ -523,7 +556,7 @@ function persistAttachmentData(stmt: Record<string, unknown>, parts: Map<string,
     const sha2 = typeof a.sha2 === 'string' ? a.sha2 : '';
     const part = parts.get(sha2);
     if (part) {
-      attachmentDataStore.set(sha2, {
+      attachStore.set(sha2, {
         data: part.body,
         contentType: typeof a.contentType === 'string' ? a.contentType : 'application/octet-stream',
       });
@@ -622,15 +655,16 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   }
 
   (stmt as Record<string, unknown>).id = statementId;
+  const store = statementStores.for(tenantOf(req));
   const enriched = ensureStatementFields(stmt, { homePage: config.selfBaseUrl, name: 'foxxi-lrs' });
-  await applyVoiding(enriched, statementId);
+  await applyVoiding(enriched, statementId, store);
   try {
     await store.put({ id: statementId, statement: enriched, stored: enriched.stored as string, voided: false });
   } catch (err) {
     if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
     throw err;
   }
-  persistAttachmentData(enriched, multipartParts);
+  persistAttachmentData(enriched, multipartParts, attachmentStores.for(tenantOf(req)));
   forwardStatement(enriched, config).catch(() => undefined);
   res.status(204).end();
 }
@@ -770,13 +804,15 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
 
   const langs = acceptLanguages(req);
   const wantAttachments = (req.query.attachments as string | undefined) === 'true';
+  const store = statementStores.for(tenantOf(req));
+  const attachStore = attachmentStores.for(tenantOf(req));
 
   if (statementId !== undefined) {
     if (!isUuid(statementId)) { res.status(400).json({ error: 'statementId must be a UUID' }); return; }
     const rec = await store.get(statementId);
     if (!rec || rec.voided) { res.status(404).json({ error: 'statement not found or voided' }); return; }
     res.setHeader('Last-Modified', new Date(rec.stored).toUTCString());
-    sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments);
+    sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments, attachStore);
     return;
   }
   if (voidedStatementId !== undefined) {
@@ -784,7 +820,7 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
     const rec = await store.get(voidedStatementId);
     if (!rec || !rec.voided) { res.status(404).json({ error: 'statement not voided (use ?statementId= for non-voided)' }); return; }
     res.setHeader('Last-Modified', new Date(rec.stored).toUTCString());
-    sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments);
+    sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments, attachStore);
     return;
   }
 
@@ -837,6 +873,7 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
     { statements: recs.map(r => applyFormat(r.statement, format, langs)), more: moreUrl },
     recs.map(r => r.statement),
     wantAttachments,
+    attachStore,
   );
 }
 
@@ -851,6 +888,7 @@ function sendStatementsResponse(
   payload: Record<string, unknown>,
   statements: Record<string, unknown>[],
   wantAttachments: boolean,
+  attachStore: Map<string, { data: Buffer; contentType: string }>,
 ): void {
   if (!wantAttachments) { res.status(200).json(payload); return; }
   const boundary = `foxxi-${randomUUID()}`;
@@ -861,7 +899,7 @@ function sendStatementsResponse(
   text('\r\n');
   const emitted = new Set<string>();
   for (const sha2 of collectAttachmentHashes(statements)) {
-    const data = attachmentDataStore.get(sha2);
+    const data = attachStore.get(sha2);
     if (!data || emitted.has(sha2)) continue;
     emitted.add(sha2);
     text(`--${boundary}\r\nContent-Type: ${data.contentType}\r\n`
@@ -877,7 +915,7 @@ function sendStatementsResponse(
 
 // ── /xapi/about ─────────────────────────────────────────────────────
 
-function handleAbout(_req: Request, res: Response, config: XapiLrsConfig): void {
+function handleAbout(req: Request, res: Response, config: XapiLrsConfig): void {
   const ns = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
   res.json({
     version: ABOUT_VERSIONS,
@@ -887,7 +925,8 @@ function handleAbout(_req: Request, res: Response, config: XapiLrsConfig): void 
       [`${ns}pod`]: config.podUrl,
       [`${ns}statementForwarding`]: !!config.forwardingTargets.trim(),
       [`${ns}substrateBackend`]: 'context-graphs-1.0 + solid-css',
-      [`${ns}lrsBackend`]: store.backendDescription(),
+      [`${ns}lrsBackend`]: statementStores.for(tenantOf(req)).backendDescription(),
+      [`${ns}multiTenant`]: true,
       [`${ns}xapiProfile`]: `${config.selfBaseUrl}/xapi/profile`,
       // The IEEE-LER + ADL-TLA emergent composable semantic layer —
       // dereferenceable ontologies the substrate serves.
@@ -1211,7 +1250,7 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
     if (!id) { res.status(400).json({ error: '"activityId" is a required parameter' }); return; }
     // §7.5: return the merged Activity Object — every definition seen in
     // any Statement about this Activity, combined.
-    const all = await store.listAll();
+    const all = await statementStores.for(tenantOf(req)).listAll();
     const merged: Record<string, unknown> = { objectType: 'Activity', id };
     const mergedDef: Record<string, unknown> = {};
     const collect = (o: unknown): void => {
@@ -1267,7 +1306,7 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
     const mboxSha = new Set<string>();
     const openids = new Set<string>();
     const accounts: Array<{ name: string; homePage: string }> = [];
-    const all = await store.listAll();
+    const all = await statementStores.for(tenantOf(req)).listAll();
     const matches = (ac: Record<string, unknown> | undefined): boolean => {
       if (!ac) return false;
       if (agent.mbox && ac.mbox === agent.mbox) return true;
@@ -1298,23 +1337,27 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
   })(); });
 
   // State + profile document resources — GET/PUT/POST/DELETE/HEAD.
-  const docResources: Array<[string, DocKind, Map<string, StoredDoc>]> = [
-    ['/xapi/activities/state', 'state', activityStateStore],
-    ['/xapi/activities/profile', 'activityProfile', activityProfileStore],
-    ['/xapi/agents/profile', 'agentProfile', agentProfileStore],
+  // Each resource's store is tenant-partitioned; the per-request store
+  // is resolved from the gated request's tenant.
+  const docResources: Array<[string, DocKind, TenantPartition<Map<string, StoredDoc>>]> = [
+    ['/xapi/activities/state', 'state', stateStores],
+    ['/xapi/activities/profile', 'activityProfile', activityProfileStores],
+    ['/xapi/agents/profile', 'agentProfile', agentProfileStores],
   ];
-  for (const [path, kind, docStore] of docResources) {
+  for (const [path, kind, docStores] of docResources) {
     const allowed = kind === 'state' ? STATE_PARAMS
       : kind === 'activityProfile' ? ACTIVITY_PROFILE_PARAMS : AGENT_PROFILE_PARAMS;
     const paramGate = (req: Request, res: Response, next: NextFunction): void => {
       if (rejectUnknownParams(req, res, allowed)) return;
       next();
     };
-    app.get(path, gate, paramGate, (req, res) => handleDocResource(kind, docStore, req, res));
-    app.head(path, gate, paramGate, (req, res) => handleDocResource(kind, docStore, req, res));
-    app.put(path, gate, paramGate, rawDoc, (req, res) => handleDocResource(kind, docStore, req, res));
-    app.post(path, gate, paramGate, rawDoc, (req, res) => handleDocResource(kind, docStore, req, res));
-    app.delete(path, gate, paramGate, (req, res) => handleDocResource(kind, docStore, req, res));
+    const handle = (req: Request, res: Response): void =>
+      handleDocResource(kind, docStores.for(tenantOf(req)), req, res);
+    app.get(path, gate, paramGate, handle);
+    app.head(path, gate, paramGate, handle);
+    app.put(path, gate, paramGate, rawDoc, handle);
+    app.post(path, gate, paramGate, rawDoc, handle);
+    app.delete(path, gate, paramGate, handle);
   }
 
   // Error handler — a malformed JSON body reaches here from the global
