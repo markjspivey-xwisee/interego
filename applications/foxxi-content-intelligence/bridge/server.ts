@@ -152,6 +152,7 @@ import { attachLti13Routes } from '../src/lti13.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
+import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
 import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
 import { attachOauthTokenRoute } from '../src/xapi-oauth.js';
@@ -1613,6 +1614,28 @@ const app = createVerticalBridge({
     };
     a.get('/ns/foxxi/term/:a/:b', (req, res) => sendTerm(`${req.params.a}/${req.params.b}`, res));
     a.get('/ns/foxxi/term/:a', (req, res) => sendTerm(req.params.a, res));
+
+    // ── IEEE-LER + ADL-TLA emergent composable semantic layer ────────
+    // Two scoped ontologies the bridge serves as dereferenceable linked
+    // data — content-negotiated Turtle / JSON-LD. Every ler:/tla: term
+    // IRI resolves; composed/view/role terms carry cg:constructedFrom
+    // triples naming the substrate primitives they emerge from.
+    for (const [path, fam] of [['/ns/ieee-ler', 'ler'], ['/ns/adl-tla', 'tla']] as const) {
+      a.get(path, (req, res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        if ((req.headers.accept ?? '').includes('text/turtle')) {
+          res.type('text/turtle').send(renderSemOntologyTurtle(fam));
+        } else {
+          res.type('application/ld+json').send(JSON.stringify(renderSemOntologyJsonLd(fam), null, 2));
+        }
+      });
+      const sendSemTerm = (name: string, res: import('express').Response): void => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.type('application/ld+json').send(JSON.stringify(renderSemTermJsonLd(fam, name), null, 2));
+      };
+      a.get(`${path}/term/:a/:b`, (req, res) => sendSemTerm(`${req.params.a}/${req.params.b}`, res));
+      a.get(`${path}/term/:a`, (req, res) => sendSemTerm(req.params.a, res));
+    }
 
     // LRS-admin dashboard endpoints — gated by admin or learning-engineer
     // role. The dashboard's new "xAPI / LRS" tab calls these to render

@@ -889,6 +889,10 @@ function handleAbout(_req: Request, res: Response, config: XapiLrsConfig): void 
       [`${ns}substrateBackend`]: 'context-graphs-1.0 + solid-css',
       [`${ns}lrsBackend`]: store.backendDescription(),
       [`${ns}xapiProfile`]: `${config.selfBaseUrl}/xapi/profile`,
+      // The IEEE-LER + ADL-TLA emergent composable semantic layer —
+      // dereferenceable ontologies the substrate serves.
+      [`${ns}ieeeLerOntology`]: `${config.selfBaseUrl}/ns/ieee-ler`,
+      [`${ns}adlTlaOntology`]: `${config.selfBaseUrl}/ns/adl-tla`,
     },
   });
 }

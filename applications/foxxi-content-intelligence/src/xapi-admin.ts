@@ -194,10 +194,52 @@ async function dereferenceFoxxiVerbs(vocabUrl: string): Promise<{ verbs: string[
   }
 }
 
+/**
+ * Dereference the IEEE-LER + ADL-TLA semantic layer — a runtime GET of
+ * the two ontologies the bridge serves. This is the production code path
+ * that proves the layer is live, dereferenceable linked data: the
+ * conformance surface re-grounds itself against the served ontologies on
+ * every read. Cached briefly.
+ */
+let _semLayerCache: { result: SemLayerStatus; at: number } | null = null;
+interface SemLayerStatus {
+  dereferenced: boolean;
+  ontologies: Array<{ id: string; url: string; termCount: number }>;
+  composedTermCount: number;
+}
+
+async function dereferenceSemLayer(selfBaseUrl: string): Promise<SemLayerStatus> {
+  if (_semLayerCache && Date.now() - _semLayerCache.at < FOXXI_VERB_TTL_MS) {
+    return _semLayerCache.result;
+  }
+  const ontologies: SemLayerStatus['ontologies'] = [];
+  let composed = 0;
+  try {
+    for (const slug of ['ieee-ler', 'adl-tla']) {
+      const url = `${selfBaseUrl}/ns/${slug}`;
+      const r = await fetch(url, { headers: { Accept: 'application/ld+json' } });
+      if (!r.ok) throw new Error(`${slug} HTTP ${r.status}`);
+      const doc = await r.json() as {
+        '@id'?: string;
+        terms?: Array<{ construction?: string }>;
+      };
+      const terms = doc.terms ?? [];
+      composed += terms.filter(t => t.construction && t.construction !== 'minted' && t.construction !== 'concept').length;
+      ontologies.push({ id: doc['@id'] ?? url, url, termCount: terms.length });
+    }
+    const result: SemLayerStatus = { dereferenced: true, ontologies, composedTermCount: composed };
+    _semLayerCache = { result, at: Date.now() };
+    return result;
+  } catch {
+    return { dereferenced: false, ontologies, composedTermCount: composed };
+  }
+}
+
 async function handleConformance(_req: Request, res: Response, config: AdminConfig): Promise<void> {
   const all = await listStoredStatements();
   const vocabularyUrl = `${config.selfBaseUrl}/ns/foxxi`;
   const { verbs: foxxiVerbs, dereferenced } = await dereferenceFoxxiVerbs(vocabularyUrl);
+  const semanticLayer = await dereferenceSemLayer(config.selfBaseUrl);
   const knownVerbs = new Set([...ADL_CORE_VERBS, ...foxxiVerbs]);
   let inProfile = 0;
   let outOfProfile = 0;
@@ -221,6 +263,11 @@ async function handleConformance(_req: Request, res: Response, config: AdminConf
     outOfProfileVerbs: [...outOfProfileSet],
     profileConformanceRate: all.length > 0 ? inProfile / all.length : 1,
     declaredVerbs: knownVerbs.size,
+    // The IEEE-LER + ADL-TLA semantic layer, dereferenced live — proof
+    // the two ontologies are served, composable linked data, not static
+    // files. composedTermCount is how many LER/TLA concepts are modelled
+    // as compositions / views / roles over substrate primitives.
+    semanticLayer,
   });
 }
 
