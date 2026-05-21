@@ -74,6 +74,9 @@ export interface XapiLrsConfig {
   basicAuthPairs: string;
   forwardingTargets: string;
   selfBaseUrl: string;
+  /** Optional: resolve a Bearer token to its tenant (e.g. a cmi5
+   *  auth-token minted by a launch). Returns null for unknown tokens. */
+  bearerTenantResolver?: (token: string) => TenantId | null;
 }
 
 // ── In-process statement store accessors ────────────────────────────
@@ -203,7 +206,9 @@ function makeAuthGate(config: XapiLrsConfig) {
     const bearer = bearerToken(authHeader);
     if (bearer) {
       r.xapiAuth = { kind: 'bearer', token: bearer };
-      r.xapiTenant = DEFAULT_TENANT;
+      // A cmi5 launch's auth-token resolves to the launch's tenant;
+      // any other Bearer token falls back to the default tenant.
+      r.xapiTenant = config.bearerTenantResolver?.(bearer) ?? DEFAULT_TENANT;
       return next();
     }
     res.status(401).setHeader('WWW-Authenticate', 'Basic realm="foxxi-lrs", Bearer realm="foxxi-lrs"').json({

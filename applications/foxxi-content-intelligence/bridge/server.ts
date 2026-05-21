@@ -163,6 +163,7 @@ import {
 } from '../src/policy.js';
 import { deriveAdminKeyPair } from '../src/tenant-publisher.js';
 import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal } from '../src/xapi-lrs.js';
+import { attachCmi5LmsRoutes, cmi5BearerTenant } from '../src/cmi5-lms.js';
 import { attachLti13Routes } from '../src/lti13.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
@@ -1801,6 +1802,17 @@ const app = createVerticalBridge({
       basicAuthPairs: process.env.FOXXI_LRS_BASIC_AUTH_PAIRS ?? '',
       forwardingTargets: process.env.FOXXI_LRS_FORWARDING_TARGETS ?? '',
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
+      // A cmi5 launch's auth-token resolves to the launch's tenant.
+      bearerTenantResolver: cmi5BearerTenant,
+    });
+
+    // cmi5 LMS launch contract (IEEE 9274.2.1 §7–§8) — Foxxi-as-LMS can
+    // LAUNCH content: it hands an Assignable Unit a conformant launch URL
+    // + stages LaunchData, and mints the one-time fetch token the AU
+    // exchanges for LRS auth (GET /cmi5/launch, POST /cmi5/fetch/:token).
+    attachCmi5LmsRoutes(a, {
+      selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
+      authoritativeSource,
     });
 
     // LTI 1.3 Advantage Tool Provider — JWKS / OIDC login / launch /
