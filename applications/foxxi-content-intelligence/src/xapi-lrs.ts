@@ -77,6 +77,9 @@ export interface XapiLrsConfig {
   /** Optional: resolve a Bearer token to its tenant (e.g. a cmi5
    *  auth-token minted by a launch). Returns null for unknown tokens. */
   bearerTenantResolver?: (token: string) => TenantId | null;
+  /** Optional: invoked after each Statement is stored, with its tenant.
+   *  The cmi5 LMS uses this to watch for moveOn satisfaction. */
+  onStatementStored?: (statement: Record<string, unknown>, tenant: TenantId) => void;
 }
 
 // ── In-process statement store accessors ────────────────────────────
@@ -486,6 +489,7 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
     }
     ids.push(id);
     persistAttachmentData(enriched, multipartParts, attachStore);
+    notifyStatementStored(enriched, tenantOf(req), config);
     forwardStatement(enriched, config).catch(err => {
       // eslint-disable-next-line no-console
       console.warn('[foxxi-lrs] forwarding failed:', (err as Error).message);
@@ -670,8 +674,20 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
     throw err;
   }
   persistAttachmentData(enriched, multipartParts, attachmentStores.for(tenantOf(req)));
+  notifyStatementStored(enriched, tenantOf(req), config);
   forwardStatement(enriched, config).catch(() => undefined);
   res.status(204).end();
+}
+
+/** Fire the post-store hook (the cmi5 LMS watches moveOn through it). */
+function notifyStatementStored(stmt: Record<string, unknown>, tenant: TenantId, config: XapiLrsConfig): void {
+  if (!config.onStatementStored) return;
+  try {
+    config.onStatementStored(stmt, tenant);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[foxxi-lrs] onStatementStored hook threw:', (err as Error).message);
+  }
 }
 
 // ── Statement format projection (§4.2.3) ────────────────────────────

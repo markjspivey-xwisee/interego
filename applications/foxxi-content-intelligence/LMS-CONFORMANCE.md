@@ -38,7 +38,8 @@ time with `node bin/console_runner.js -x 2.0.0 -e <bridge>/xapi -a -u <u> -p <p>
 | **AU launch contract** — launch URL (`endpoint`/`fetch`/`actor`/`activityId`/`registration`) + `LMS.LaunchData` | **Implemented** | `src/cmi5-lms.ts`, `GET /cmi5/launch` |
 | **Fetch endpoint** — one-time `auth-token` exchange (cmi5 §8) | **Implemented** | `POST /cmi5/fetch/:token`, single-use enforced |
 | AU auth-token accepted by the LRS, tenant-scoped | **Implemented** | `cmi5BearerTenant` → LRS auth gate |
-| moveOn **orchestration** — auto-emit `satisfied` when an AU reports completion + the rule is met | **Roadmap** | the evaluator exists; the consume-`terminated`→decide-`satisfied` loop is the next slice |
+| moveOn **orchestration** — auto-emit `satisfied` when an AU's statements meet the moveOn rule (cmi5 §11) | **Implemented** | `observeCmi5Statement` in `src/cmi5-lms.ts`, wired via `XapiLrsConfig.onStatementStored`; verified: a `completed` statement auto-fires `satisfied` |
+| Prerequisite gating — a launch is refused (409) until the learner has satisfied the prerequisite AUs | **Implemented** | `GET /cmi5/launch?prereq=`; `GET /cmi5/registration/:reg` inspects state |
 | cmi5.xml course-structure block sequencing | **Partial** | AUs parsed (`_shared/scorm`); `<block>` gating not yet enforced |
 
 Foxxi can now **launch cmi5 content** — the contract that makes it an

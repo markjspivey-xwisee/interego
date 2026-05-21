@@ -162,8 +162,8 @@ import {
   type CallerContext,
 } from '../src/policy.js';
 import { deriveAdminKeyPair } from '../src/tenant-publisher.js';
-import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal } from '../src/xapi-lrs.js';
-import { attachCmi5LmsRoutes, cmi5BearerTenant } from '../src/cmi5-lms.js';
+import { attachXapiLrsRoutes, listStoredStatements, storeStatementInternal, getStatementStore } from '../src/xapi-lrs.js';
+import { attachCmi5LmsRoutes, cmi5BearerTenant, observeCmi5Statement } from '../src/cmi5-lms.js';
 import { attachLti13Routes } from '../src/lti13.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
@@ -1804,6 +1804,16 @@ const app = createVerticalBridge({
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       // A cmi5 launch's auth-token resolves to the launch's tenant.
       bearerTenantResolver: cmi5BearerTenant,
+      // cmi5 moveOn orchestration — after each Statement is stored, the
+      // LMS re-evaluates the AU's moveOn and auto-emits `satisfied`.
+      onStatementStored: (stmt, tenant) => {
+        void observeCmi5Statement(stmt, tenant, {
+          statementsForRegistration: async (reg) =>
+            (await getStatementStore(tenant).query({ registration: reg, limit: 500 }))
+              .statements.map(r => r.statement),
+          emit: (s) => { storeStatementInternal(s, tenant); },
+        }).catch(() => undefined);
+      },
     });
 
     // cmi5 LMS launch contract (IEEE 9274.2.1 §7–§8) — Foxxi-as-LMS can
