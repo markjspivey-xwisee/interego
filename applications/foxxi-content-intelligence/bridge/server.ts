@@ -168,6 +168,7 @@ import { attachLti13Routes } from '../src/lti13.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { attachScormSequencingRoutes } from '../src/scorm-sequencing.js';
 import { attachPerformanceRoutes } from '../src/performance-routes.js';
+import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
@@ -1861,6 +1862,17 @@ const app = createVerticalBridge({
     // POST /performance/plan, /content/compose-course, /content/personalize.
     attachPerformanceRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
+    });
+
+    // Content delivery — closes the loop. A composed course is generated
+    // into a cmi5 package + a SCORM .zip, registered on the cmi5 LMS
+    // (launchable, trackable), and its runnable AUs served; job aids are
+    // published and channel-delivered (chat/email/SMS/document), every
+    // delivery instrumented as an xAPI statement into the live LRS.
+    attachContentDeliveryRoutes(a, {
+      selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
+      authoritativeSource,
+      emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
     });
 
     // OpenAPI 3.1 — machine-readable contract for non-MCP integrators
