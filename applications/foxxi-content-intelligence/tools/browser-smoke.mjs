@@ -545,12 +545,29 @@ try {
   console.log(`  xAPI Profile id dereferences to itself: ${profSelfConsistent}`);
   console.log(`  profile template dereferences as its own resource: ${tplOk}`);
   console.log(`  conformance check actually dereferenced the vocab in production: ${vocabDereferencedInProd} (Case 7, admin session)`);
+  // The IEEE-LER + ADL-TLA emergent composable semantic layer — both
+  // ontologies dereference, and composed/view terms carry the
+  // cg:constructedFrom triples that make the composition machine-readable.
+  let semOk = true;
+  for (const slug of ['ieee-ler', 'adl-tla']) {
+    const r = await fetch(`${BRIDGE}/ns/${slug}`, { headers: { Accept: 'application/ld+json' } });
+    const doc = await r.json();
+    const t = Array.isArray(doc.terms) ? doc.terms : [];
+    const composed = t.filter(x => ['composed', 'view', 'role'].includes(x.construction)
+      && Array.isArray(x.constructedFrom) && x.constructedFrom.length > 0);
+    const ttlR = await fetch(`${BRIDGE}/ns/${slug}`, { headers: { Accept: 'text/turtle' } });
+    const ttlBody = await ttlR.text();
+    const slugOk = r.status === 200 && t.length > 20 && composed.length > 0
+      && ttlR.status === 200 && ttlBody.includes('cg:constructedFrom');
+    console.log(`  GET /ns/${slug} → HTTP ${r.status}, ${t.length} terms, ${composed.length} emergent (composed/view/role): ${slugOk}`);
+    if (!slugOk) semOk = false;
+  }
   okVocab = !!vocabLink && vocabRes.status === 200 && terms.length > 10 && hasAffordanceInvoked
-    && termOk && ttlOk && profSelfConsistent && tplOk && vocabDereferencedInProd;
+    && termOk && ttlOk && profSelfConsistent && tplOk && vocabDereferencedInProd && semOk;
 } catch (err) {
   console.log(`  ✗ ${err.message}`);
 }
-console.log(`\n=== Foxxi vocabulary dereferenceable: ${okVocab ? 'PASS' : 'FAIL'} ===`);
+console.log(`\n=== Foxxi vocabulary + LER/TLA semantic layer dereferenceable: ${okVocab ? 'PASS' : 'FAIL'} ===`);
 
 const ok = okAuthed && okAnon && okDeepLinks && okTabs && okNoMcp && okOob && okElr && okSelectiveDisclosure && okPerformance && okAgentPerf && okVocab;
 console.log(`\n=== overall: ${ok ? 'PASS' : 'FAIL'} ===`);
