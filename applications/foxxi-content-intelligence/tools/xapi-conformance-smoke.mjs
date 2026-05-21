@@ -145,7 +145,13 @@ let canonicalStmt;
   const body = await r.json();
   check('Verb-filtered query returns statements array', Array.isArray(body.statements), '§4.2');
   check('"more" continuation field present (may be empty)', typeof body.more === 'string', '§4.2');
-  check('All returned statements match the verb filter', body.statements.every(s => s.verb?.id === 'http://adlnet.gov/expapi/verbs/experienced'), '§4.2');
+  // xAPI 2.0 §4.2.3: a verb-filtered query MUST ALSO return voiding
+  // Statements that void a Statement matching the filter — so a `voided`
+  // Statement is a conformant result here, not a filter leak.
+  const VOIDED_VERB = 'http://adlnet.gov/expapi/verbs/voided';
+  check('Returned statements honour the verb filter (incl. §4.2.3 voiding statements)',
+    body.statements.every(s => s.verb?.id === 'http://adlnet.gov/expapi/verbs/experienced' || s.verb?.id === VOIDED_VERB),
+    '§4.2.3');
 }
 
 // ── §6.3 — state resource ETag concurrency ──
@@ -156,6 +162,11 @@ let canonicalStmt;
   const stateId = 'progress';
   const qs = `activityId=${encodeURIComponent(activityId)}&agent=${encodeURIComponent(agent)}&stateId=${stateId}`;
   const url = `${BRIDGE}/xapi/activities/state?${qs}`;
+
+  // Start from a clean slate: an unconditional PUT of an EXISTING state
+  // document is a 409 per xAPI 2.0 §6.3 concurrency, so a re-run of this
+  // smoke would otherwise (correctly) be rejected. Delete any leftover.
+  await fetch(url, { method: 'DELETE', headers: H });
 
   const r1 = await fetch(url, { method: 'PUT', headers: H, body: JSON.stringify({ slide: 3 }) });
   const etag = r1.headers.get('ETag');
