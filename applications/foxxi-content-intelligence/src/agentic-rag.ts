@@ -42,7 +42,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { IRI } from '../../../src/index.js';
+import type { IRI } from '@interego/core';
 import type { FoxxiCourseContent } from './course-qa.js';
 
 // ─────────────────────────────────────────────────────────────────────

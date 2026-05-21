@@ -27,7 +27,7 @@ import {
   type UserWallet,
   type TrainingContentRecord,
 } from '../../learner-performer-companion/src/grounded-answer.js';
-import type { IRI } from '../../../src/index.js';
+import type { IRI } from '@interego/core';
 
 // ─────────────────────────────────────────────────────────────────────
 //  Foxxi course-content shape (what the parser emits + the wallet wants)

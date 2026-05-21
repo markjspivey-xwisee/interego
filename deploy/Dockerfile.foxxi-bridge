@@ -3,9 +3,12 @@
 #
 #  Preserves the on-disk repo layout under /app so the bridge's
 #  relative imports (`../affordances.ts`, `../src/...`, `../../_shared/...`,
-#  `../../../src/...`, `../../learner-performer-companion/src/grounded-answer.js`)
-#  work unchanged. Runs via tsx for the vertical's TS sources (no
-#  separate compile step needed for the vertical).
+#  `../../learner-performer-companion/src/grounded-answer.js`) work
+#  unchanged. The Interego substrate is imported as the `@interego/core`
+#  package (see the symlink step below), not via relative paths — so a
+#  future extraction of the foxxi vertical into its own repo is mechanical.
+#  Runs via tsx for the vertical's TS sources (no separate compile step
+#  needed for the vertical).
 # ────────────────────────────────────────────────────────────
 
 ARG NODE_BASE=node:20-slim
@@ -38,10 +41,16 @@ COPY applications/learner-performer-companion/src/ ./applications/learner-perfor
 # foxxi bridge composes for foxxi.query_experience_index.
 COPY applications/lrs-adapter/src/ ./applications/lrs-adapter/src/
 
-# Compile @interego/core (the bridge resolves `@interego/core` via package
-# resolution — but the bridge actually uses RELATIVE imports to ../../../src,
-# so the compiled dist is just for any package-resolved imports inside src/).
+# Compile @interego/core → dist/. The foxxi vertical imports the substrate
+# as the `@interego/core` package, and that package's exports map resolves
+# to dist/ — so the compile is now load-bearing for the vertical at runtime.
 RUN npx tsc
+
+# Make `@interego/core` resolvable by name. The repo root IS the
+# @interego/core package; symlink it into node_modules so Node resolves
+# `@interego/core` (from anywhere under /app) to the root package.json,
+# whose `exports` map points at the dist/ just compiled.
+RUN mkdir -p node_modules/@interego && ln -sfn /app node_modules/@interego/core
 
 # ────────────────────────────────────────────────────────────
 #  Runtime stage

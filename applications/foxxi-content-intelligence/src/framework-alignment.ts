@@ -15,7 +15,7 @@
  * lifts these into the exported CFDocument.
  */
 
-import type { IRI } from '../../../src/index.js';
+import type { IRI } from '@interego/core';
 
 export type AlignmentRelation =
   | 'isAlignedTo'

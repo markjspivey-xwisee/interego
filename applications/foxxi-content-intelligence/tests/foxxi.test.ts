@@ -24,7 +24,7 @@ import {
   verifyAttestedHomomorphicDistribution,
 } from '../../_shared/aggregate-privacy/index.js';
 import { affordanceToMcpToolSchema } from '../../_shared/affordance-mcp/index.js';
-import type { IRI } from '../../../src/index.js';
+import type { IRI } from '@interego/core';
 
 const TENANT_POD = 'https://interego-css.example/acme-training/';
 const AUTH_DID = 'did:web:acme-training.example' as IRI;

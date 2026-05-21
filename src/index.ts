@@ -308,6 +308,7 @@ export {
   resolveWebFinger,
   didWebToUrl,
   resolveDidWeb,
+  resolveDid,
   extractPublicKey,
   findStorageEndpoint,
   // IPFS Anchoring

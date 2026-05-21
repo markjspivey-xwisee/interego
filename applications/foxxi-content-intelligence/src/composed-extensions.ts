@@ -22,9 +22,9 @@
  *   J. Tenant pod backup         — single-file dump of every descriptor
  */
 
-import { discover, fetchGraphContent, publish } from '../../../src/index.js';
-import type { ContextDescriptorData, IRI } from '../../../src/index.js';
-import type { FetchFn, PublishResult } from '../../../src/solid/types.js';
+import { discover, fetchGraphContent, publish } from '@interego/core';
+import type { ContextDescriptorData, IRI } from '@interego/core';
+import type { FetchFn, PublishResult } from '@interego/core';
 import { TENANT_TYPES } from './tenant-publisher.js';
 import type { AuditChain } from './composed-flows.js';
 import type { CohortIntelligence } from './cohort-intel.js';

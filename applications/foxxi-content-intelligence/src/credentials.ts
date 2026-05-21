@@ -37,12 +37,12 @@ import {
   verifyDataIntegrityProof,
   type VerifiableCredentialJson,
 } from '../../_shared/vc-jwt/data-integrity-jcs.js';
-import { publish } from '../../../src/index.js';
+import { publish } from '@interego/core';
 import type {
   ContextDescriptorData,
   IRI,
-} from '../../../src/index.js';
-import type { FetchFn, PublishResult } from '../../../src/solid/types.js';
+} from '@interego/core';
+import type { FetchFn, PublishResult } from '@interego/core';
 import { createHash } from 'node:crypto';
 
 const FXA = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';

@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Foxxi content-intelligence vertical — shared deps for src/ modules consumed by both the bridge and the dashboard.",
   "dependencies": {
+    "@interego/core": "file:../../",
     "ethers": "^6.16.0"
   }
 }

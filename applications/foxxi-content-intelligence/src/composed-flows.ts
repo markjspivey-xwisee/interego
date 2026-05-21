@@ -20,8 +20,8 @@
  * surface the access decision + the chain steps + any failure reasons.
  */
 
-import { discover, fetchGraphContent } from '../../../src/index.js';
-import type { IRI } from '../../../src/index.js';
+import { discover, fetchGraphContent } from '@interego/core';
+import type { IRI } from '@interego/core';
 import {
   issueDataIntegrityProof,
   verifyDataIntegrityProof,

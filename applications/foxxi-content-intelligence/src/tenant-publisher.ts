@@ -18,13 +18,13 @@
  * the publisher orthogonal to ongoing schema evolution.
  */
 
-import { publish } from '../../../src/index.js';
+import { publish } from '@interego/core';
 import type {
   ContextDescriptorData,
   IRI,
-} from '../../../src/index.js';
-import type { FetchFn, PublishResult } from '../../../src/solid/types.js';
-import { generateKeyPair, deriveEncryptionKeyPair, type EncryptionKeyPair } from '../../../src/crypto/encryption.js';
+} from '@interego/core';
+import type { FetchFn, PublishResult } from '@interego/core';
+import { generateKeyPair, deriveEncryptionKeyPair, type EncryptionKeyPair } from '@interego/core';
 import { attachDeterministicAddresses } from './auth.js';
 import { createHash } from 'node:crypto';
 

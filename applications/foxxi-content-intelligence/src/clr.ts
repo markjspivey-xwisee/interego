@@ -20,9 +20,9 @@
  *   - Open Badges 3.0 (each entry IS an OB3 credential)
  */
 
-import { discover, fetchGraphContent } from '../../../src/index.js';
-import type { ManifestEntry } from '../../../src/solid/types.js';
-import type { IRI } from '../../../src/index.js';
+import { discover, fetchGraphContent } from '@interego/core';
+import type { ManifestEntry } from '@interego/core';
+import type { IRI } from '@interego/core';
 import {
   verifyDataIntegrityProof,
   type VerifiableCredentialJson,

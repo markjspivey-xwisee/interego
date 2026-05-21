@@ -17,7 +17,7 @@
  * cohort asked about X, 64% about Y" → reinforcement signal.
  */
 
-import { discover, fetchGraphContent } from '../../../src/index.js';
+import { discover, fetchGraphContent } from '@interego/core';
 
 export interface CohortQAEntry {
   learnerDid: string;

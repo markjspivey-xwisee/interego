@@ -36,7 +36,7 @@
  * modal, poly-granular, composable descriptor trajectory.
  */
 
-import { union, type ContextDescriptorData, type IRI } from '../../../src/index.js';
+import { union, type ContextDescriptorData, type IRI } from '@interego/core';
 import { PERFORMED_VERB, PERF_EXT } from './learner-record.js';
 
 const FOXXI_VOCAB = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';

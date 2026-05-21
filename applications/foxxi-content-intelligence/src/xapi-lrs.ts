@@ -53,7 +53,7 @@ import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adap
 import { createStatementStore, ConflictError, matchesFilter, type StatementStore, type StoredStatement } from './statement-store.js';
 import { validateStatement, validateAgentObject } from './xapi-validate.js';
 import { TenantPartition, DEFAULT_TENANT, parseTenantCredentials, type TenantId } from './tenant-context.js';
-import type { IRI } from '../../../src/index.js';
+import type { IRI } from '@interego/core';
 
 void _unusedTypeAnchor;
 

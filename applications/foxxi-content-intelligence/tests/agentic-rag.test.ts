@@ -16,7 +16,7 @@ import {
   courseContentToAgenticCourse,
   type FoxxiAgenticPayload, type FoxxiAgenticCourse,
 } from '../src/agentic-rag.js';
-import type { IRI } from '../../../src/index.js';
+import type { IRI } from '@interego/core';
 
 const IMPORTED = join(import.meta.dirname ?? '', '..', 'imported');
 
