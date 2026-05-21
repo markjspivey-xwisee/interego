@@ -376,6 +376,106 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
   },
 
   {
+    action: 'urn:cg:action:foxxi:open-agent-evaluation' as IRI,
+    toolName: 'foxxi.open_agent_evaluation',
+    title: 'Open an agent / harness evaluation cohort',
+    description: 'Open a named, shared evaluation — the place where several teams\' competing agents or harnesses are compared head-to-head. Carries the decision the cohort exists to inform (e.g. "should we standardise on one agentic harness, or fund several?") and an optional shared task set so the comparison is apples-to-apples. The motivating case: an enterprise where multiple teams independently build agents/harnesses and cannot agree how to evaluate one against another. Candidates enrol via foxxi.request_evaluation_enrollment; runs are recorded via foxxi.record_external_agent_run; the portfolio read is foxxi.compare_agent_evaluation.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/open_agent_evaluation',
+    inputs: [
+      { name: 'name', type: 'string', required: true, description: 'Human-readable name for the evaluation cohort.' },
+      { name: 'decision_question', type: 'string', required: true, description: 'The decision this cohort exists to inform — e.g. "Which coding-agent harness should the platform team adopt — or should we keep more than one?".' },
+      { name: 'task_set', type: 'array', itemType: 'object', required: false, description: 'Optional shared task set for apples-to-apples comparison. Each: { name, id?, description? } (a plain string is accepted as a task name).' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+  },
+
+  {
+    action: 'urn:cg:action:foxxi:request-evaluation-enrollment' as IRI,
+    toolName: 'foxxi.request_evaluation_enrollment',
+    title: 'Request enrollment of an agent into an evaluation cohort (cross-pod delegation)',
+    description: 'A team requests that its agent / harness join an evaluation cohort as a candidate. The candidate agent is identified by its own DID — which may live on a different team\'s pod — so enrolling it is a cross-pod delegation: the request starts as `requested` and does not enter the comparison until the evaluation owner accepts it (foxxi.decide_evaluation_candidate). This request → accept handshake is the delegation grant. Records the team, and the harness/runtime the agent is built on, so the portfolio read can attribute behaviour to the harness.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/request_evaluation_enrollment',
+    inputs: [
+      { name: 'evaluation_id', type: 'string', required: true, description: 'The evaluation cohort to enrol into.' },
+      { name: 'agent_did', type: 'string', required: true, description: 'The candidate agent\'s DID — may resolve to another team\'s pod.' },
+      { name: 'agent_name', type: 'string', required: false, description: 'Display name for the candidate agent.' },
+      { name: 'team', type: 'string', required: true, description: 'The team that owns / submitted this candidate.' },
+      { name: 'harness', type: 'object', required: false, description: 'The harness / runtime the agent is built on: { name?, version?, runtime? }.' },
+      { name: 'pod_url', type: 'string', required: false, description: 'Pod where the candidate agent\'s records live, when cross-pod.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+  },
+
+  {
+    action: 'urn:cg:action:foxxi:decide-evaluation-candidate' as IRI,
+    toolName: 'foxxi.decide_evaluation_candidate',
+    title: 'Accept or decline a candidate agent (the cross-pod delegation grant)',
+    description: 'The evaluation owner accepts or declines a requested candidate. Accepting it IS the cross-pod delegation grant — the candidate agent (whose DID may belong to another team / pod) becomes a managed member of the cohort and may record runs into it. This closes the gap where Interego could register an agent on your own pod but had no turnkey flow to authorise an external agent into a shared, managed evaluation.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/decide_evaluation_candidate',
+    inputs: [
+      { name: 'evaluation_id', type: 'string', required: true, description: 'The evaluation cohort.' },
+      { name: 'candidate_id', type: 'string', required: true, description: 'The candidate to decide on (from request_evaluation_enrollment).' },
+      { name: 'decision', type: 'string', required: true, description: 'accept | decline.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+  },
+
+  {
+    action: 'urn:cg:action:foxxi:record-external-agent-run' as IRI,
+    toolName: 'foxxi.record_external_agent_run',
+    title: 'Record one completed run of an external agent (Codex, OpenClaw, Hermes, enterprise)',
+    description: 'The one-call adapter for an EXTERNAL agent — one that does its work outside Foxxi (a Codex doing real coding, an OpenClaw or Hermes agent, a custom enterprise agent) and is therefore invisible to the trajectory layer and the ELR. Emit a single completed RUN and the bridge normalises it into a genuine agentic-native trajectory AND xAPI `performed` statements, so the run becomes visible to disposition assessment, the IEEE P2997 ELR, and — if bound to an evaluation — the portfolio read. Two input shapes: `tool_calls` (a flat list — an un-instrumented agent wires this in ~10 lines) or `steps` (the full modal / poly-granular trajectory, for an agent that already tracks intentions + counterfactual branches). Bind the run to a cohort with evaluation_id (+ optionally candidate_id).',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/record_external_agent_run',
+    inputs: [
+      { name: 'agent_did', type: 'string', required: true, description: 'The external agent\'s DID.' },
+      { name: 'agent_name', type: 'string', required: false, description: 'Display name for the agent.' },
+      { name: 'task_name', type: 'string', required: true, description: 'What the run accomplished (becomes the xAPI Activity name).' },
+      { name: 'task_id', type: 'string', required: false, description: 'Stable task identifier; derived from task_name if omitted.' },
+      { name: 'task_description', type: 'string', required: false, description: 'Optional longer task description.' },
+      { name: 'success', type: 'boolean', required: true, description: 'Did the run succeed overall?' },
+      { name: 'quality', type: 'number', required: false, minimum: 0, maximum: 1, description: 'Outcome quality 0..1.' },
+      { name: 'duration_iso', type: 'string', required: false, description: 'ISO 8601 duration the run took (e.g. PT12M).' },
+      { name: 'cost_usd', type: 'number', required: false, description: 'Cost of the run in USD — agent-economics signal for the portfolio read.' },
+      { name: 'tool_calls', type: 'array', itemType: 'object', required: false, description: 'Simple form — a flat list of tool invocations. Each: { tool, object_name?, object_id?, success?, quality?, note? }.' },
+      { name: 'steps', type: 'array', itemType: 'object', required: false, description: 'Rich form — the full modal / poly-granular trajectory. Each: { modal_status, granularity, verb, object_id, object_name, id?, parent_id?, supersedes_id?, was_derived_from?[], result? }. Provide tool_calls OR steps.' },
+      { name: 'evaluation_id', type: 'string', required: false, description: 'Bind this run to an evaluation cohort.' },
+      { name: 'candidate_id', type: 'string', required: false, description: 'The candidate this run belongs to; resolved from agent_did within the evaluation if omitted.' },
+      { name: 'harness', type: 'object', required: false, description: 'The harness / runtime: { name?, version?, runtime? }.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+  },
+
+  {
+    action: 'urn:cg:action:foxxi:get-agent-evaluation' as IRI,
+    toolName: 'foxxi.get_agent_evaluation',
+    title: 'Get an evaluation cohort — its candidates and their enrollment status',
+    description: 'Return an evaluation cohort: the decision question, the shared task set, and every candidate with its team, harness, enrollment status (requested / accepted / declined) and run count. The read view for tracking who is in the bake-off and how much evidence each candidate has accumulated.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/get_agent_evaluation',
+    inputs: [
+      { name: 'evaluation_id', type: 'string', required: true, description: 'The evaluation cohort to read.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+  },
+
+  {
+    action: 'urn:cg:action:foxxi:compare-agent-evaluation' as IRI,
+    toolName: 'foxxi.compare_agent_evaluation',
+    title: 'Compare the cohort — the complexity-aware portfolio read (NOT a leaderboard)',
+    description: 'Produce the comparative read for an evaluation cohort — deliberately NOT a benchmark leaderboard and it emits no overall score. A leaderboard assumes the choice is Complicated (a knowable best, found by measurement); whether to standardise on one agentic harness is usually a COMPLEX-domain decision where premature convergence is the ideal-future-state trap. So this returns a PORTFOLIO READ: the Cynefin domain of the WORK itself (pooled across all candidates\' runs), each candidate\'s disposition + how well it COHERES with that work, a diagnosis of what KIND of decision the executives face, and a direct answer to "should we develop only one harness?" — converge (Clear/Complicated work: analysis can name a direction), parallel (Complex work: the competing teams ARE the correct safe-to-fail probe portfolio — keep them), recombine (complementary dispositions: compose the harnesses via the substrate\'s union operator rather than pick), or gather-evidence (thin run history). Following Snowden / Cynefin and Pearl: retrospective coherence, not prediction.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/compare_agent_evaluation',
+    inputs: [
+      { name: 'evaluation_id', type: 'string', required: true, description: 'The evaluation cohort to compare.' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+  },
+
+  {
     action: 'urn:cg:action:foxxi:export-case-framework' as IRI,
     toolName: 'foxxi.export_case_framework',
     title: '[admin] Export the tenant\'s competency framework as 1EdTech CASE 1.0 JSON-LD',

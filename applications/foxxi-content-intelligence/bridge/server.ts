@@ -67,6 +67,9 @@ import {
   assessDisposition, buildProbe, computeCausalRead, snapshot,
   type PerformanceProbe, type ProbeCoherence,
 } from '../src/agent-disposition.js';
+import { ingestExternalRun, type ExternalRunInput, type ToolCallInput, type HarnessMeta } from '../src/agent-run-ingest.js';
+import { EvaluationRegistry, type CandidateRun } from '../src/agent-evaluation.js';
+import { comparePortfolio, type CandidateEvidence } from '../src/agent-portfolio.js';
 
 /** Agentic-native trajectory store — the source of truth (modal +
  *  poly-granular), keyed by agent DID. xAPI statements are projected
@@ -78,6 +81,12 @@ const AGENT_TRAJECTORY_MAX = 5_000;
  *  team key (sorted agent DIDs). A team accumulates a probe portfolio. */
 const performanceProbes = new Map<string, PerformanceProbe[]>();
 const teamKey = (dids: readonly string[]): string => [...dids].sort().join('|');
+
+/** Agent-evaluation cohort registry — competing agents/harnesses brought
+ *  together for a head-to-head portfolio read. Cross-pod: a candidate's
+ *  DID may live on another team's pod. In-memory (demo-sized); the runs'
+ *  xAPI evidence persists durably in Foxxi-as-LRS regardless. */
+const evaluationRegistry = new EvaluationRegistry();
 import { frameworkToCase, type FoxxiSkillFramework } from '../src/case-exporter.js';
 import { buildPassedSessionTrace } from '../src/cmi5.js';
 import { pushFrameworkToCass } from '../src/cass-connector.js';
@@ -830,6 +839,211 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       note: 'Safe-to-fail probe recorded as a Pearl do(x) intervention; the team disposition was snapshotted as the causal baseline. Re-assess the team to read the rung-2/rung-3 causal effect. A safe-to-fail probe is allowed — expected, even — to fail cheaply.',
       accessDecision: trace,
     };
+  },
+
+  // ── Multi-team agent / harness evaluation ─────────────────────────
+
+  'foxxi.record_external_agent_run': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return { error: resolved.error };
+    const { ctx } = resolved;
+    const agentDid = args.agent_did as string;
+    if (!agentDid) return { error: 'agent_did is required' };
+    const taskName = args.task_name as string;
+    if (!taskName || !taskName.trim()) return { error: 'task_name is required' };
+    if (typeof args.success !== 'boolean') return { error: 'success (boolean) is required' };
+    const rawToolCalls = args.tool_calls as Array<Record<string, unknown>> | undefined;
+    const rawSteps = args.steps as Array<Record<string, unknown>> | undefined;
+    if ((!Array.isArray(rawToolCalls) || rawToolCalls.length === 0)
+      && (!Array.isArray(rawSteps) || rawSteps.length === 0)) {
+      return { error: 'provide tool_calls (simple form) or steps (rich modal form)' };
+    }
+    const runInput: ExternalRunInput = {
+      agentDid,
+      agentName: args.agent_name as string | undefined,
+      task: {
+        id: args.task_id as string | undefined,
+        name: taskName,
+        description: args.task_description as string | undefined,
+      },
+      outcome: {
+        success: args.success as boolean,
+        quality: typeof args.quality === 'number' ? args.quality as number : undefined,
+        durationIso: args.duration_iso as string | undefined,
+        costUsd: typeof args.cost_usd === 'number' ? args.cost_usd as number : undefined,
+      },
+      observedBy: ctx.webId,
+      evaluationId: args.evaluation_id as string | undefined,
+      candidateId: args.candidate_id as string | undefined,
+      harness: args.harness && typeof args.harness === 'object' ? args.harness as HarnessMeta : undefined,
+    };
+    if (Array.isArray(rawSteps) && rawSteps.length > 0) {
+      runInput.steps = rawSteps.map(s => ({
+        id: s.id as string | undefined,
+        modalStatus: (s.modal_status as TrajectoryStepInput['modalStatus']) ?? 'Asserted',
+        granularity: (s.granularity as TrajectoryStepInput['granularity']) ?? 'tool-call',
+        verb: (s.verb as string) ?? 'acted',
+        objectId: (s.object_id as string) ?? `urn:foxxi:run-object:${Date.now()}`,
+        objectName: (s.object_name as string) ?? 'step',
+        parentId: s.parent_id as string | undefined,
+        supersedesId: s.supersedes_id as string | undefined,
+        wasDerivedFrom: s.was_derived_from as string[] | undefined,
+        result: s.result as TrajectoryStepInput['result'],
+      }));
+    } else {
+      runInput.toolCalls = (rawToolCalls ?? []).map((tc): ToolCallInput => ({
+        tool: (tc.tool as string) ?? 'tool',
+        objectName: tc.object_name as string | undefined,
+        objectId: tc.object_id as string | undefined,
+        success: typeof tc.success === 'boolean' ? tc.success as boolean : undefined,
+        quality: typeof tc.quality === 'number' ? tc.quality as number : undefined,
+        note: tc.note as string | undefined,
+      }));
+    }
+    const ingested = ingestExternalRun(runInput);
+    for (const stmt of ingested.statements) storeStatementInternal({ id: randomUUID(), ...stmt });
+    if (agentTrajectories.size >= AGENT_TRAJECTORY_MAX && !agentTrajectories.has(agentDid)) {
+      const oldest = agentTrajectories.keys().next().value;
+      if (oldest) agentTrajectories.delete(oldest);
+    }
+    agentTrajectories.set(agentDid, ingested.trajectory);
+    let boundTo: string | null = null;
+    if (runInput.evaluationId) {
+      const candidate = runInput.candidateId
+        ? evaluationRegistry.get(runInput.evaluationId)?.candidates.find(c => c.candidateId === runInput.candidateId)
+        : evaluationRegistry.findCandidateByAgent(runInput.evaluationId, agentDid);
+      if (!candidate) {
+        return { error: `agent ${agentDid} is not a candidate of ${runInput.evaluationId} — request + accept enrollment first` };
+      }
+      const run: CandidateRun = {
+        trajectory: ingested.trajectory,
+        success: runInput.outcome.success,
+        quality: runInput.outcome.quality,
+        costUsd: runInput.outcome.costUsd,
+        durationIso: runInput.outcome.durationIso,
+        recordedAt: new Date().toISOString(),
+      };
+      const added = evaluationRegistry.addRun(runInput.evaluationId, candidate.candidateId, run);
+      if ('error' in added) return { error: added.error };
+      boundTo = `${runInput.evaluationId} / ${candidate.candidateId}`;
+    }
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.record_external_agent_run', decision: 'allow', appliedPolicies: ['external-agent-run-ingest'] });
+    return {
+      recorded: true,
+      agentDid,
+      ...ingested.summary,
+      boundToEvaluation: boundTo,
+      note: 'External run normalised into an agentic-native trajectory + xAPI performed statements — now visible to disposition assessment, the ELR, and (if bound) the evaluation portfolio read.',
+      accessDecision: trace,
+    };
+  },
+
+  'foxxi.open_agent_evaluation': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return { error: resolved.error };
+    const { ctx } = resolved;
+    const name = args.name as string;
+    const decisionQuestion = args.decision_question as string;
+    if (!name || !name.trim()) return { error: 'name is required' };
+    if (!decisionQuestion || !decisionQuestion.trim()) return { error: 'decision_question is required' };
+    const rawTasks = args.task_set as Array<Record<string, unknown> | string> | undefined;
+    const taskSet = Array.isArray(rawTasks)
+      ? rawTasks.map(t => typeof t === 'string'
+        ? { name: t }
+        : { name: (t.name as string) ?? 'task', id: t.id as string | undefined, description: t.description as string | undefined })
+      : undefined;
+    const ev = evaluationRegistry.open({ name, decisionQuestion, taskSet, openedBy: ctx.webId });
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.open_agent_evaluation', decision: 'allow', appliedPolicies: ['agent-evaluation-owner'] });
+    return { opened: true, evaluationId: ev.id, evaluation: ev, accessDecision: trace };
+  },
+
+  'foxxi.request_evaluation_enrollment': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return { error: resolved.error };
+    const { ctx } = resolved;
+    const evaluationId = args.evaluation_id as string;
+    const agentDid = args.agent_did as string;
+    const team = args.team as string;
+    if (!evaluationId || !agentDid || !team) return { error: 'evaluation_id, agent_did and team are required' };
+    const c = evaluationRegistry.requestEnrollment(evaluationId, {
+      agentDid,
+      agentName: (args.agent_name as string) || agentDid,
+      team,
+      harness: args.harness && typeof args.harness === 'object' ? args.harness as HarnessMeta : undefined,
+      podUrl: args.pod_url as string | undefined,
+      requestedBy: ctx.webId,
+    });
+    if ('error' in c) return { error: c.error };
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.request_evaluation_enrollment', decision: 'allow', appliedPolicies: ['cross-pod-delegation-request'] });
+    return {
+      requested: true, candidateId: c.candidateId, status: c.status,
+      note: 'Enrollment requested. A candidate agent is a cross-pod delegate — its DID may live on another team\'s pod; the evaluation owner must accept it (foxxi.decide_evaluation_candidate) before it joins the comparison.',
+      accessDecision: trace,
+    };
+  },
+
+  'foxxi.decide_evaluation_candidate': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return { error: resolved.error };
+    const { ctx } = resolved;
+    const evaluationId = args.evaluation_id as string;
+    const candidateId = args.candidate_id as string;
+    const decision = args.decision as string;
+    if (!evaluationId || !candidateId) return { error: 'evaluation_id and candidate_id are required' };
+    if (decision !== 'accept' && decision !== 'decline') return { error: 'decision must be accept | decline' };
+    const c = evaluationRegistry.decide(evaluationId, candidateId, decision, ctx.webId);
+    if ('error' in c) return { error: c.error };
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.decide_evaluation_candidate', decision: 'allow', appliedPolicies: ['agent-evaluation-owner'] });
+    return {
+      decided: true, candidateId: c.candidateId, status: c.status, agentDid: c.agentDid,
+      note: decision === 'accept'
+        ? 'Candidate accepted — the cross-pod delegation grant. It can now record runs into the cohort.'
+        : 'Candidate declined.',
+      accessDecision: trace,
+    };
+  },
+
+  'foxxi.get_agent_evaluation': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return { error: resolved.error };
+    const { ctx } = resolved;
+    const evaluationId = args.evaluation_id as string;
+    if (!evaluationId) return { error: 'evaluation_id is required' };
+    const state = evaluationRegistry.get(evaluationId);
+    if (!state) return { error: `no evaluation ${evaluationId}` };
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.get_agent_evaluation', decision: 'allow', appliedPolicies: ['agent-evaluation-owner'] });
+    return {
+      evaluation: state.evaluation,
+      candidates: state.candidates.map(c => ({
+        candidateId: c.candidateId, agentDid: c.agentDid, agentName: c.agentName,
+        team: c.team, harness: c.harness, status: c.status, runCount: c.runs.length,
+      })),
+      accessDecision: trace,
+    };
+  },
+
+  'foxxi.compare_agent_evaluation': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return { error: resolved.error };
+    const { ctx } = resolved;
+    const evaluationId = args.evaluation_id as string;
+    if (!evaluationId) return { error: 'evaluation_id is required' };
+    const state = evaluationRegistry.get(evaluationId);
+    if (!state) return { error: `no evaluation ${evaluationId}` };
+    const accepted = state.candidates.filter(c => c.status === 'accepted');
+    if (accepted.length === 0) {
+      return { error: 'no accepted candidates — request, accept, and record runs for at least two candidates first' };
+    }
+    const evidence: CandidateEvidence[] = accepted.map(c => ({
+      candidateId: c.candidateId,
+      agentName: c.agentName,
+      team: c.team,
+      harness: c.harness,
+      runs: c.runs,
+    }));
+    const read = comparePortfolio(state.evaluation, evidence);
+    const trace = emitAccessDecision({ ctx, tool: 'foxxi.compare_agent_evaluation', decision: 'allow', appliedPolicies: ['agent-evaluation-owner'] });
+    return { ...read, accessDecision: trace };
   },
 
   'foxxi.emit_cmi5_session': async (args) => {

@@ -80,6 +80,9 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'actorKind', kind: 'Extension', label: 'actorKind', definition: 'Whether the actor is a `human` or an `agent`.' },
   { name: 'projectedFromTrajectoryStep', kind: 'Extension', label: 'projectedFromTrajectoryStep', definition: 'IRI of the agentic-native trajectory step an xAPI statement was projected from.' },
   { name: 'bundleJson', kind: 'Extension', label: 'bundleJson', definition: 'Base64-encoded JSON payload (e.g. a signed VC) embedded in a descriptor graph.' },
+  { name: 'evaluationId', kind: 'Extension', label: 'evaluationId', definition: 'IRI of the agent/harness evaluation cohort a `performed` run is bound to — ties an external-agent run to a head-to-head portfolio comparison.' },
+  { name: 'candidateId', kind: 'Extension', label: 'candidateId', definition: 'IRI of the evaluation candidate (one team\'s agent/harness) a run is attributed to within an evaluation cohort.' },
+  { name: 'harness', kind: 'Extension', label: 'harness', definition: 'The harness / runtime label an external agent is built on (name, version, runtime) — lets a portfolio read attribute behaviour to the harness.' },
 ];
 
 const TERM_INDEX = new Map(FOXXI_TERMS.map(t => [t.name, t]));
