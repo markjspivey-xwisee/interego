@@ -31,9 +31,13 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Express, Request, Response } from 'express';
-import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
+import express, { type Express, type Request, type Response } from 'express';
+import { DEFAULT_TENANT, TenantPartition, tenantIdOf, type TenantId } from './tenant-context.js';
 import { buildCmi5Statement, evaluateMoveOn } from './cmi5.js';
+import {
+  parseCmi5Course, auById, precedingAu, flatAus, flatBlocks, blockAuIds,
+  type Cmi5Course,
+} from './cmi5-course.js';
 
 const CMI5_CATEGORY = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
 const V_PASSED = 'http://adlnet.gov/expapi/verbs/passed';
@@ -146,6 +150,82 @@ function markAuSatisfied(tenant: TenantId, learnerId: string, auId: string): voi
 /** The AU ids a learner has satisfied within a tenant. */
 export function learnerSatisfiedAus(tenant: TenantId, learnerId: string): string[] {
   return [...(satisfiedAus.get(tenant)?.get(learnerId) ?? [])];
+}
+
+// ── Course-structure registry + satisfaction rollup ─────────────────
+
+/** Registered cmi5 course structures, per tenant, keyed by course id. */
+const courseRegistry = new TenantPartition<Map<string, Cmi5Course>>(() => new Map());
+/** Per tenant|course|learner — the block/course ids already emitted `satisfied`. */
+const rollupEmitted = new Map<string, Set<string>>();
+/** Per tenant|course|learner — the (stable) registration for course-level statements. */
+const courseEnrollmentReg = new Map<string, string>();
+
+/** Register a cmi5 course structure (from a parsed cmi5.xml). */
+export function registerCmi5Course(tenant: TenantId, course: Cmi5Course): void {
+  courseRegistry.for(tenant).set(course.id, course);
+}
+
+export function getCmi5Course(tenant: TenantId, courseId: string): Cmi5Course | undefined {
+  return courseRegistry.for(tenant).get(courseId);
+}
+
+/** Find a registered course (in a tenant) that contains the given AU. */
+function courseContainingAu(tenant: TenantId, auId: string): Cmi5Course | undefined {
+  for (const course of courseRegistry.for(tenant).values()) {
+    if (flatAus(course).some(a => a.id === auId)) return course;
+  }
+  return undefined;
+}
+
+/**
+ * Roll satisfaction up the course tree. Called when an AU is satisfied:
+ * for any registered course containing it, emit a cmi5 `satisfied`
+ * statement (cmi5 §9.6) for every block all of whose AUs are now
+ * satisfied, and for the course itself once every AU is — each emitted
+ * at most once per learner.
+ */
+function rollupCourse(
+  tenant: TenantId,
+  learner: { id: string; name?: string },
+  authoritativeSource: string,
+  emit: (statement: Record<string, unknown>) => void,
+  auId: string,
+): void {
+  const course = courseContainingAu(tenant, auId);
+  if (!course) return;
+  const key = `${tenant}|${course.id}|${learner.id}`;
+  const satisfied = new Set(learnerSatisfiedAus(tenant, learner.id));
+  let emitted = rollupEmitted.get(key);
+  if (!emitted) { emitted = new Set(); rollupEmitted.set(key, emitted); }
+  let reg = courseEnrollmentReg.get(key);
+  if (!reg) { reg = randomUUID(); courseEnrollmentReg.set(key, reg); }
+
+  const emitSatisfied = (activityId: string): void => {
+    emit(buildCmi5Statement({
+      verb: 'satisfied',
+      actor: {
+        account: { homePage: authoritativeSource, name: learner.id },
+        ...(learner.name ? { name: learner.name } : {}),
+      },
+      session: { registration: reg!, auActivityId: activityId, courseActivityId: course.id },
+    }) as unknown as Record<string, unknown>);
+  };
+
+  // Blocks first (a block can be satisfied before the whole course is).
+  for (const block of flatBlocks(course)) {
+    const ids = blockAuIds(block);
+    if (ids.length > 0 && ids.every(id => satisfied.has(id)) && !emitted.has(block.id)) {
+      emitted.add(block.id);
+      emitSatisfied(block.id);
+    }
+  }
+  // The course is satisfied once every AU is.
+  const allAus = flatAus(course).map(a => a.id);
+  if (allAus.length > 0 && allAus.every(id => satisfied.has(id)) && !emitted.has(course.id)) {
+    emitted.add(course.id);
+    emitSatisfied(course.id);
+  }
 }
 
 function sweepExpired(): void {
@@ -324,7 +404,7 @@ export async function observeCmi5Statement(
     return { registration, satisfied: false, reason: decision.reason, emittedSatisfied: false };
   }
 
-  // moveOn met — record it and emit the cmi5 `satisfied` statement.
+  // moveOn met — record it and emit the AU's cmi5 `satisfied` statement.
   launch.satisfied = true;
   launch.satisfiedAt = new Date().toISOString();
   markAuSatisfied(tenant, launch.learner.id, launch.auId);
@@ -341,6 +421,9 @@ export async function observeCmi5Statement(
     },
   });
   deps.emit(satisfied as unknown as Record<string, unknown>);
+  // Roll satisfaction up the course structure — emit `satisfied` for any
+  // block now fully satisfied, and for the course once every AU is.
+  rollupCourse(tenant, launch.learner, launch.authoritativeSource, deps.emit, launch.auId);
   return { registration, satisfied: true, reason: decision.reason, emittedSatisfied: true };
 }
 
@@ -376,44 +459,99 @@ export function attachCmi5LmsRoutes(app: Express, config: {
     res.status(result.status).json(result.body);
   });
 
+  // ── Register a cmi5 course structure (POST the cmi5.xml). ─────────
+  // A text-body parser for the XML — the global JSON parser handles the
+  // `{ cmi5_xml }` form; this captures a raw text/xml body.
+  const xmlBody = express.text({
+    type: (req) => !(((req.headers['content-type'] as string | undefined) ?? '').toLowerCase().includes('application/json')),
+    limit: '5mb',
+  });
+  app.post('/cmi5/course', xmlBody, (req: Request, res: Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const xml = typeof req.body === 'string' ? req.body
+      : Buffer.isBuffer(req.body) ? req.body.toString('utf8')
+      : (req.body && typeof req.body === 'object' && typeof (req.body as { cmi5_xml?: string }).cmi5_xml === 'string')
+        ? (req.body as { cmi5_xml: string }).cmi5_xml : '';
+    if (!xml.trim()) { res.status(400).json({ error: 'POST the cmi5.xml document as the body (text/xml) or { "cmi5_xml": "..." }' }); return; }
+    let course: Cmi5Course;
+    try { course = parseCmi5Course(xml); }
+    catch (e) { res.status(400).json({ error: (e as Error).message }); return; }
+    registerCmi5Course(tenant, course);
+    res.status(200).json({
+      registered: true,
+      courseId: course.id,
+      title: course.title,
+      auCount: flatAus(course).length,
+      blockCount: flatBlocks(course).length,
+      aus: flatAus(course).map(a => ({ id: a.id, title: a.title, moveOn: a.moveOn })),
+    });
+  });
+
+  // ── Inspect a registered course structure. ───────────────────────
+  app.get('/cmi5/course/:id', (req: Request, res: Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const course = getCmi5Course(tenant, String(req.params.id ?? ''));
+    if (!course) { res.status(404).json({ error: 'no registered course with that id' }); return; }
+    res.status(200).json(course);
+  });
+
   // ── The launch endpoint — given an AU + a learner, return a
   //    conformant cmi5 launch (URL + LaunchData + actor). ─────────────
   app.get('/cmi5/launch', (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const auId = req.query.au_id as string | undefined;
-    const auUrl = req.query.au_url as string | undefined;
     const learnerId = req.query.learner as string | undefined;
-    if (!auId || !auUrl || !learnerId) {
-      res.status(400).json({ error: 'au_id, au_url and learner are required query parameters' });
+    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const courseId = req.query.course_id as string | undefined;
+    if (!auId || !learnerId) {
+      res.status(400).json({ error: 'au_id and learner are required query parameters' });
       return;
     }
+
+    // If the AU belongs to a registered course, take its url / moveOn /
+    // masteryScore / title from the course structure (the caller need
+    // not repeat them), and derive the sequential prerequisite.
+    const course = courseId ? getCmi5Course(tenant, courseId) : undefined;
+    const auNode = course ? auById(course, auId) : undefined;
+    const auUrl = (req.query.au_url as string | undefined) ?? auNode?.url;
+    if (!auUrl) {
+      res.status(400).json({ error: 'au_url is required (or pass course_id for a registered course that contains au_id)' });
+      return;
+    }
+
     const lrsEndpoint = (req.query.endpoint as string | undefined)
       ?? config.defaultLrsEndpoint
       ?? `${config.selfBaseUrl}/xapi`;
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
 
-    // cmi5 §8.1 course gating — the AU may declare prerequisite AUs.
-    // The LMS refuses the launch until the learner has satisfied them.
-    const prereq = (req.query.prereq as string | undefined)?.split(',').map(s => s.trim()).filter(Boolean) ?? [];
+    // Course gating (cmi5 §8.1): an explicit `prereq` list, OR — for an
+    // AU in a registered course — the AU that precedes it in the
+    // structure (sequential progression).
+    const explicitPrereq = (req.query.prereq as string | undefined)?.split(',').map(s => s.trim()).filter(Boolean);
+    const structuralPrereq = course && auNode ? precedingAu(course, auId)?.id : undefined;
+    const prereq = explicitPrereq ?? (structuralPrereq ? [structuralPrereq] : []);
     if (prereq.length > 0) {
       const done = new Set(learnerSatisfiedAus(tenant, learnerId));
       const missing = prereq.filter(p => !done.has(p));
       if (missing.length > 0) {
         res.status(409).json({
-          error: 'launch gated — prerequisite AUs not yet satisfied by this learner',
+          error: 'launch gated — prerequisite AU(s) not yet satisfied by this learner',
           missingPrerequisites: missing,
           satisfied: [...done],
+          gate: structuralPrereq && !explicitPrereq ? 'sequential course-structure progression' : 'explicit prerequisite',
         });
         return;
       }
     }
+
     const launch = buildCmi5Launch({
       au: {
         id: auId,
         url: auUrl,
-        moveOn: req.query.move_on as Cmi5MoveOn | undefined,
-        masteryScore: req.query.mastery_score !== undefined ? Number(req.query.mastery_score) : undefined,
-        title: req.query.title as string | undefined,
+        moveOn: (req.query.move_on as Cmi5MoveOn | undefined) ?? auNode?.moveOn,
+        masteryScore: req.query.mastery_score !== undefined ? Number(req.query.mastery_score) : auNode?.masteryScore,
+        title: (req.query.title as string | undefined) ?? auNode?.title,
       },
       learner: { id: learnerId, name: req.query.learner_name as string | undefined },
       lrsEndpoint,
@@ -422,11 +560,12 @@ export function attachCmi5LmsRoutes(app: Express, config: {
       tenant,
       launchMode: req.query.launch_mode as Cmi5LaunchMode | undefined,
       returnUrl: req.query.return_url as string | undefined,
-      courseId: req.query.course_id as string | undefined,
+      courseId: courseId ?? course?.id,
     });
     res.status(200).json({
       ...launch,
-      note: 'Navigate the learner to launchUrl. Stage launchData into the LRS State resource as stateId=LMS.LaunchData for this activityId+agent+registration. The AU will POST the fetch URL once for its auth-token. The LMS watches this registration: when the AU\'s statements meet the moveOn criterion it auto-emits the cmi5 `satisfied` statement.',
+      ...(course ? { course: { id: course.id, prerequisiteGate: structuralPrereq ?? null } } : {}),
+      note: 'Navigate the learner to launchUrl. Stage launchData into the LRS State resource as stateId=LMS.LaunchData. The AU POSTs the fetch URL once for its auth-token. The LMS watches the registration: when the AU\'s statements meet moveOn it auto-emits `satisfied`, and rolls satisfaction up the course structure to blocks and the course.',
     });
   });
 

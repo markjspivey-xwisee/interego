@@ -40,7 +40,9 @@ time with `node bin/console_runner.js -x 2.0.0 -e <bridge>/xapi -a -u <u> -p <p>
 | AU auth-token accepted by the LRS, tenant-scoped | **Implemented** | `cmi5BearerTenant` → LRS auth gate |
 | moveOn **orchestration** — auto-emit `satisfied` when an AU's statements meet the moveOn rule (cmi5 §11) | **Implemented** | `observeCmi5Statement` in `src/cmi5-lms.ts`, wired via `XapiLrsConfig.onStatementStored`; verified: a `completed` statement auto-fires `satisfied` |
 | Prerequisite gating — a launch is refused (409) until the learner has satisfied the prerequisite AUs | **Implemented** | `GET /cmi5/launch?prereq=`; `GET /cmi5/registration/:reg` inspects state |
-| cmi5.xml course-structure block sequencing | **Partial** | AUs parsed (`_shared/scorm`); `<block>` gating not yet enforced |
+| cmi5.xml course-structure (cmi5 §13) — full `<courseStructure>` parse into a course → block → AU tree | **Implemented** | `src/cmi5-course.ts` (dependency-free XML reader); `POST /cmi5/course`, `GET /cmi5/course/:id` |
+| Sequential course progression — an AU is gated on the preceding AU in the structure, derived automatically | **Implemented** | `precedingAu()` → the launch gate; verified: AU2 409s until AU1 is satisfied |
+| Block + course satisfaction rollup — a block emits `satisfied` when all its AUs are, the course when all its blocks/AUs are | **Implemented** | `rollupCourse()` in `src/cmi5-lms.ts`; verified: completing both AUs emits 4 `satisfied` statements (2 AUs + block + course) |
 
 Foxxi can now **launch cmi5 content** — the contract that makes it an
 LMS. Verified end-to-end locally: launch → fetch → one-time → the AU
@@ -108,11 +110,14 @@ An incumbent xAPI LRS becomes a *data source under the substrate* — see
 
 - **Foxxi-as-LRS**: production-conformant xAPI 2.0 (1435/1435), multi-tenant,
   interoperable with any external LRS.
-- **Foxxi-as-LMS**: it can now **launch cmi5 content** (the defining LMS
-  capability), runs SCORM 1.2/2004 content via a conformant RTE, is an
-  LTI 1.3 Tool, and exposes a OneRoster roster.
+- **Foxxi-as-LMS**: the full cmi5 launch-and-track loop now closes inside
+  Foxxi — register a cmi5.xml course structure, launch an AU (sequential
+  gating derived from the structure), the AU runs and reports, moveOn
+  auto-evaluates, `satisfied` is emitted, and satisfaction rolls up
+  blocks → course. It also runs SCORM 1.2/2004 content via a conformant
+  RTE, is an LTI 1.3 Tool, and exposes a OneRoster roster.
 - **The honest gaps**, prioritised, are listed above as Roadmap/Partial —
-  chiefly cmi5 moveOn orchestration, SCORM sequencing enforcement, the
-  LTI Advantage stubs, and the OneRoster consumer apply-step. None of
-  these blocks the core launch-and-track loop; each is a bounded,
+  chiefly SCORM 2004 sequencing-rule enforcement, the LTI Advantage
+  stubs (NRPS / Deep Linking / line-item management), and the OneRoster
+  consumer apply-step. None blocks the core LMS loop; each is a bounded,
   separately-shippable unit.
