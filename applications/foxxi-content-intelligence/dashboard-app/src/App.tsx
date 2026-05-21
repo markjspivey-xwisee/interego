@@ -45,6 +45,7 @@ import { LearnerShell } from './components/LearnerShell.js';
 import { CatalogTab, PoliciesTab, CoverageTab, AccessTab, IntegrationsTab, AuditTab } from './components/AdminShell.js';
 import { LrsAdminPanel } from './components/LrsAdminPanel.js';
 import { AgentPerformancePanel } from './components/AgentPerformancePanel.js';
+import { PerformanceDemoSuitePanel } from './components/PerformanceDemoSuitePanel.js';
 import { Header, Card } from './components/common.js';
 import { loadSession, saveSession, clearSession, type FoxxiSession } from './auth/session.js';
 import { getTransport, resetTransportProbe } from './interego/client.js';
@@ -129,6 +130,7 @@ function AppRoutes() {
           {isPriv && <Route path="/statements/:statementSub" element={<StatementsPage session={session} />} />}
           {isPriv && <Route path="/lrs-config" element={<StatementsPage session={session} />} />}
           {isPriv && <Route path="/agent-performance" element={<AgentPerformancePage session={session} />} />}
+          <Route path="/demo-suite" element={<DemoSuitePage />} />
 
           {/* Convenience redirects — `/me` and `/profile` resolve to the
               caller's canonical profile item URL. They're not resources
@@ -200,6 +202,7 @@ function TopNav({ session }: { session: FoxxiSession }) {
     }}>
       <NavLink to={ownProfileUrl} label="My profile" />
       <NavLink to="/courses" label="Courses" />
+      <NavLink to="/demo-suite" label="Demo suite" />
       {isPriv && <span style={{ width: 12 }} />}
       {isPriv && <NavLink to="/profiles" label="Profiles" />}
       {isPriv && <NavLink to="/policies" label="Policies" />}
@@ -287,6 +290,9 @@ function StatementsPage({ session }: { session: FoxxiSession }) {
 }
 function AgentPerformancePage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><AgentPerformancePanel session={session} /></div>;
+}
+function DemoSuitePage() {
+  return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><PerformanceDemoSuitePanel /></div>;
 }
 
 function NotFound() {
