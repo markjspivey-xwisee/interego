@@ -173,8 +173,27 @@ check('an agent and a human get the same grounded retrieval (identical cited sou
   { human: srcIds(asHuman.json), agent: srcIds(asAgent.json) });
 check('the agent ask records the asker kind', asAgent.json.asker?.kind === 'agent', asAgent.json.asker);
 
-// ── 8. ASK — an off-topic question, an honest no-match ──────────────
-h('8. ASK — an off-topic question (it must refuse to guess)');
+// ── 8. ASK — scope: narrow to the vertical, or pass through to all ──
+h('8. ASK — scope (Interego passes through to what composes it)');
+const golfQ = 'Do I have anything about golf?';
+const golfVertical = await ask(golfQ, { learner: LEARNER, scope: 'vertical' });
+console.log(`   scope:vertical → grounded: ${golfVertical.json.grounded}`);
+check('scope:vertical narrows the ask to the Foxxi vertical',
+  golfVertical.json.scope === 'vertical' && golfVertical.json.grounded === false, golfVertical.json);
+const golfInterego = await ask(golfQ, { learner: LEARNER, scope: 'interego' });
+console.log(`   scope:interego → grounded: ${golfInterego.json.grounded} · descriptors reached: ${golfInterego.json.contextSummary?.interegoDescriptors}`);
+check('scope:interego passes through to the wider substrate (discover())',
+  golfInterego.json.scope === 'interego' && (golfInterego.json.contextSummary?.interegoDescriptors ?? 0) > 0,
+  golfInterego.json.contextSummary);
+check('the pass-through surfaces a descriptor the vertical alone never saw',
+  golfInterego.json.grounded === true
+  && (golfInterego.json.sources ?? []).some(s => s.kind === 'interego-context'), golfInterego.json.sources);
+const dfltScope = await ask('What courses are available?', { learner: LEARNER });
+check('the default scope is interego — a Foxxi user is an Interego user',
+  dfltScope.json.scope === 'interego', dfltScope.json.scope);
+
+// ── 9. ASK — an off-topic question, an honest no-match ──────────────
+h('9. ASK — an off-topic question (it must refuse to guess)');
 const miss = await ask('What is the boiling point of water?', { learner: LEARNER });
 console.log(`   answer: ${String(miss.json.answer).split('\n')[0]}`);
 check('an off-topic question returns an honest no-match',
@@ -182,8 +201,8 @@ check('an off-topic question returns an honest no-match',
 check('the no-match answer explicitly refuses to confabulate',
   /won't guess|couldn't find/i.test(String(miss.json.answer)), miss.json.answer);
 
-// ── 9. VERIFY — every ask is instrumented into the live LRS ─────────
-h('9. VERIFY — the asks themselves joined the LRS trace graph');
+// ── 10. VERIFY — every ask is instrumented into the live LRS ────────
+h('10. VERIFY — the asks themselves joined the LRS trace graph');
 const token = await mintSessionToken({ userId: 'u-joshua', webId: WEB_ID, ttlMs: 30 * 60 * 1000 });
 const lrsRes = await fetch(
   `${BRIDGE}/xapi/statements?verb=${encodeURIComponent('http://adlnet.gov/expapi/verbs/interacted')}`

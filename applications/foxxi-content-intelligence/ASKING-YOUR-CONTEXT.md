@@ -41,7 +41,7 @@ build the front door.
 
 One route — `POST /content/ask` — takes a natural-language question from
 any user (human or agent) and answers it. The module is **composition
-glue, not new machinery** — four design decisions:
+glue, not new machinery** — five design decisions:
 
 **Intent classification.** A deterministic, keyword-routed classifier
 maps the question to one of six intents — `assignments`, `progress`,
@@ -56,6 +56,19 @@ be retrieved over), the job-aid registry, the live LRS (the learner's
 xAPI activity), and — when the tenant directory is seeded — their
 policy-driven assignments. Nothing new is stored; the context is read
 off what the substrate already holds.
+
+**Scope — Interego passes through to what composes it.** A Foxxi user
+is an Interego user — Foxxi is one vertical composing the substrate, not
+a thing apart from it. So the *default* scope is `interego`: the
+assembly also discovers Context Descriptors across the wider substrate
+(`@interego/core`'s `discover()` over the pod's published manifest) and
+folds them in alongside the Foxxi content — the same retrieval runs over
+everything. `scope: "vertical"` narrows the ask to the Foxxi slice (the
+vertical's intersection with Interego). The two are the composition
+algebra made literal: `interego` is the union; `vertical` is a
+restriction of it. A vertical-scoped no-match tells the user to widen.
+The whole, not the sum of verticals — the whole, passed through to each
+part.
 
 **Content questions delegate to the existing agentic RAG.** This module
 does not reinvent retrieval. Content questions (`concept` / `procedure`
@@ -88,32 +101,35 @@ graph.
 
 Built and deployed:
 
-- `src/context-chat.ts` — the intent classifier, the networked-context
-  assembler, the `Course` / job-aid → `FoxxiAgenticCourse` adapters, the
-  per-intent answer composers (content questions delegating to
-  `askAgenticRag` / `retrieveCourseContext`), and
-  `attachContextChatRoutes` — `POST /content/ask`.
+- `src/context-chat.ts` — the intent classifier, the `scope` toggle, the
+  networked-context assembler, the `Course` / job-aid / discovered-
+  descriptor → `FoxxiAgenticCourse` adapters, the per-intent answer
+  composers (content questions delegating to `askAgenticRag` /
+  `retrieveCourseContext`), and `attachContextChatRoutes` —
+  `POST /content/ask`.
 - `src/content-delivery.ts` — the published-course registry now retains
   the source emergent `Course` (so the companion can retrieve over it)
   and exposes the job-aid registry.
 - Wired into the bridge: `attachContextChatRoutes` with `emitStatement`
   bound to the LRS, a `resolveAssignments` resolver that reads the
-  tenant directory for policy-driven assignments, and — for the content
-  path — the same `FOXXI_LLM_API_KEY` and the same per-IP rate limiter
-  the agentic-ask MCP handler already uses.
+  tenant directory for policy-driven assignments, the same
+  `FOXXI_LLM_API_KEY` + per-IP rate limiter the agentic-ask MCP handler
+  uses, and a `discoverInteregoContext` resolver that composes
+  `@interego/core`'s `discover()` over the pod manifest — the substrate
+  pass-through for `scope: "interego"`.
 
-Verified before deploy by `tools/context-chat-smoke.ts` (36/36): intent
+Verified before deploy by `tools/context-chat-smoke.ts` (41/41): intent
 classification, the grounded + sourced answers, the agentic-RAG trace,
-the honest no-match, and the `POST /content/ask` route over a throwaway
-app — a course + job aid published, then asked about, every content
-answer checked to cite a real source.
+the honest no-match, the `scope` toggle (interego pass-through vs
+vertical narrowing), and the `POST /content/ask` route over a throwaway
+app.
 
 ## 4. Verification — in production
 
 `tools/ask-your-context-example.mjs` runs the whole thing against the
 live bridge, LMS and LRS, with a **real headless browser** completing a
 **real generated course** so the chat has genuine progress to read —
-24/24:
+28/28:
 
 1. **Publish** — a course + a job aid into the networked context.
 2. **Ask "what does the refund authority threshold mean?"** — answered
@@ -130,11 +146,16 @@ live bridge, LMS and LRS, with a **real headless browser** completing a
 6. **Ask "what's my progress?"** — now grounded in the learner's live
    LRS activity.
 7. **Ask as an agent** — the identical question returns the identical
-   grounded answer; only the recorded asker kind differs.
-8. **Ask an off-topic question** — an honest no-match: it refuses to
+   grounded retrieval (same cited sources); only the asker kind differs.
+8. **Ask the same question at each scope** — `scope: "vertical"` finds
+   nothing about "golf" (it's not in the Foxxi vertical); `scope:
+   "interego"` passes through to the substrate, discovers the
+   `course:golf-explained` Context Descriptor on the pod, and surfaces
+   it. The pass-through reaches what the vertical alone never saw.
+9. **Ask an off-topic question** — an honest no-match: it refuses to
    guess.
-9. **Verify** — every ask is in the live LRS as an xAPI `interacted`
-   statement carrying the question it answered.
+10. **Verify** — every ask is in the live LRS as an xAPI `interacted`
+    statement carrying the question it answered.
 
 So any human or agent user genuinely just chats — "what does this
 mean?", "do I have courses assigned?", "what's my progress?" — and the
@@ -159,6 +180,16 @@ cited sources for the same question. What this module adds is the front
 door: intent routing + networked-context assembly + the adapters that
 let the agentic RAG run over emergent courses and job aids, not just
 parsed SCORM payloads.
+
+The `scope: "interego"` pass-through discovers the Context Descriptors
+on the pod's published manifest — it *surfaces* them (you see, cite, and
+can follow each one). Deep Q&A *inside* a discovered descriptor's graph
+is the next hop: follow the link, fetch the graph. The pass-through is
+honest about that — it answers at the descriptor level ("your wider
+context holds X, at this IRI") and hands you the link. Today it
+discovers over the configured tenant pod; discovering across a user's
+own pod + federated pods is the same `discover()` call pointed at more
+pods — a bounded extension.
 
 `POST /content/ask` is open in this deployment so the demo is
 self-contained, and the LLM-synthesis path on the bridge key reuses the

@@ -51,7 +51,10 @@ for (const [q, expected] of intentCases) {
 // ── Direct answerContextQuestion — honest no-match ──────────────────
 
 console.log('\nGrounded answers — direct');
-const emptyCtx: NetworkedContext = { learner: 'did:web:x', courses: [], jobAids: [], enrollments: [], activity: [] };
+const emptyCtx: NetworkedContext = {
+  learner: 'did:web:x', scope: 'interego',
+  courses: [], jobAids: [], interegoContext: [], enrollments: [], activity: [],
+};
 const noMatch = await answerContextQuestion({
   asker: { id: 'did:web:x', kind: 'human' }, question: 'what is photosynthesis?', context: emptyCtx,
 });
@@ -91,6 +94,16 @@ async function testRoutes(): Promise<void> {
     selfBaseUrl: 'http://localhost',
     authoritativeSource: 'did:web:test',
     emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
+    // A stub for the substrate pass-through — one descriptor that exists
+    // in the wider Interego context but NOT in the Foxxi vertical.
+    discoverInteregoContext: async () => ([
+      {
+        descriptorUrl: 'https://pod.example/markj/notes/quarterly-objectives.ttl',
+        label: 'quarterly objectives',
+        summary: 'Interego context descriptor "quarterly objectives" — the quarterly '
+          + 'objective is to cut the refund escalation rate by 30 percent.',
+      },
+    ]),
   });
   const server = app.listen(0);
   await new Promise<void>(r => server.once('listening', () => r()));
@@ -184,6 +197,22 @@ async function testRoutes(): Promise<void> {
       asHuman.json.grounded === true && asAgent.json.grounded === true
       && asHuman.json.answer === asAgent.json.answer, { human: asHuman.json.answer, agent: asAgent.json.answer });
     check('the agent ask records the asker kind', (asAgent.json.asker as Record<string, unknown>)?.kind === 'agent');
+
+    // ── Scope — the interego pass-through vs vertical narrowing ──────
+    const wideQ = 'What are our quarterly objectives?';
+    const vertical = await ask({ question: wideQ, learner: LEARNER, scope: 'vertical' });
+    check('scope:vertical narrows to the Foxxi slice — no match for wider context',
+      vertical.json.scope === 'vertical' && vertical.json.grounded === false, vertical.json);
+    check('a vertical-scoped no-match suggests trying the interego scope',
+      /scope "interego"/i.test(vertical.json.answer as string), vertical.json.answer);
+    const wide = await ask({ question: wideQ, learner: LEARNER, scope: 'interego' });
+    check('scope:interego passes through to the wider Interego context',
+      wide.json.scope === 'interego' && wide.json.grounded === true, wide.json);
+    check('the interego-scoped answer cites an interego-context source',
+      (wide.json.sources ?? []).some(s => s.kind === 'interego-context'), wide.json.sources);
+    const dflt = await ask({ question: wideQ, learner: LEARNER });
+    check('the default scope is interego (the whole networked context)',
+      dflt.json.scope === 'interego' && dflt.json.grounded === true, dflt.json.scope);
 
     // ── A missing question is rejected ──────────────────────────────
     const bad = await ask({ learner: LEARNER });

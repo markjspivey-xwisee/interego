@@ -96,7 +96,7 @@ function callTenant(args: Record<string, unknown>): TenantId {
 import { frameworkToCase, type FoxxiSkillFramework } from '../src/case-exporter.js';
 import { buildPassedSessionTrace } from '../src/cmi5.js';
 import { pushFrameworkToCass } from '../src/cass-connector.js';
-import { resolveDid } from '@interego/core';
+import { resolveDid, discover } from '@interego/core';
 import { queryFederatedStatements, type FederatedLrsEndpoint } from '../../lrs-adapter/src/experience-index.js';
 import {
   issueBbsCompletionCredential,
@@ -169,7 +169,7 @@ import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { attachScormSequencingRoutes } from '../src/scorm-sequencing.js';
 import { attachPerformanceRoutes } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
-import { attachContextChatRoutes, type ContextEnrollment } from '../src/context-chat.js';
+import { attachContextChatRoutes, type ContextEnrollment, type DiscoveredDescriptor } from '../src/context-chat.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
@@ -272,6 +272,41 @@ async function autoFetchCourse(args: Record<string, unknown>, courseId: string):
   } catch (err) {
     console.error('[foxxi-bridge] autoFetchCourse failed:', (err as Error).message);
     return null;
+  }
+}
+
+// ── Interego substrate pass-through ─────────────────────────────────
+// The Context Companion's 'interego' scope reaches everything composed
+// into the user's networked context, not just the Foxxi vertical. It
+// discovers Context Descriptors from the pod's published manifest via
+// @interego/core's discover() — Interego passing through to what
+// composes it. Cached briefly (the manifest is stable between publishes).
+let interegoDiscoverCache: { at: number; entries: DiscoveredDescriptor[] } | null = null;
+const INTEREGO_DISCOVER_TTL_MS = 60_000;
+
+async function fetchInteregoDescriptors(): Promise<DiscoveredDescriptor[]> {
+  if (!tenantPodUrl) return [];
+  if (interegoDiscoverCache && Date.now() - interegoDiscoverCache.at < INTEREGO_DISCOVER_TTL_MS) {
+    return interegoDiscoverCache.entries;
+  }
+  try {
+    const entries = await discover(tenantPodUrl);
+    const mapped = entries.map((e): DiscoveredDescriptor => {
+      const described = e.describes[0] ?? e.descriptorUrl;
+      const tail = described.split(/[:/#]/).filter(Boolean).pop() ?? described;
+      const label = tail.replace(/[-_]+/g, ' ').trim() || described;
+      const summary = `Interego context descriptor "${label}" — published at ${e.descriptorUrl}`
+        + `; describes ${e.describes.join(', ') || described}`
+        + (e.facetTypes.length ? `; facets ${e.facetTypes.join('/')}` : '')
+        + (e.conformsTo && e.conformsTo.length ? `; conforms to ${e.conformsTo.join(', ')}` : '')
+        + (e.modalStatus ? `; modal status ${e.modalStatus}` : '') + '.';
+      return { descriptorUrl: e.descriptorUrl, label, summary };
+    });
+    interegoDiscoverCache = { at: Date.now(), entries: mapped };
+    return mapped;
+  } catch (err) {
+    console.error('[foxxi-bridge] fetchInteregoDescriptors failed:', (err as Error).message);
+    return [];
   }
 }
 
@@ -1894,6 +1929,9 @@ const app = createVerticalBridge({
         const rl = checkAgenticRateLimit(clientIp);
         return rl.ok ? { ok: true } : { ok: false, retryAfterSeconds: rl.retryAfterSeconds };
       },
+      // Scope 'interego' — pass through to everything composed into the
+      // user's networked context, via the substrate's discover().
+      discoverInteregoContext: () => fetchInteregoDescriptors(),
       resolveAssignments: async (learner): Promise<ContextEnrollment[] | undefined> => {
         const admin = await autoFetchAdmin({});
         if (!admin) return undefined;

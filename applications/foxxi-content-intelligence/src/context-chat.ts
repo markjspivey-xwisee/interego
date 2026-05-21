@@ -31,6 +31,13 @@
  * The answer is the same whether a human or an agent asks — the asker's
  * kind is recorded, not branched on.
  *
+ * Scope. A Foxxi user is an Interego user — so the default scope is the
+ * whole networked context: Interego passes through to everything that
+ * composes it. The assembly discovers Context Descriptors across the
+ * wider substrate (`@interego/core`'s `discover()`) and folds them in
+ * alongside the Foxxi content. `scope: "vertical"` narrows the ask to
+ * the Foxxi slice — the vertical's intersection with Interego.
+ *
  * Layer: L3 vertical. Composes the substrate + the existing Foxxi
  * modules (agentic-rag, content-delivery, the LRS); no L1/L2/L3
  * ontology change.
@@ -56,6 +63,14 @@ const INTERACTED = 'http://adlnet.gov/expapi/verbs/interacted';
 
 export type AskerKind = 'human' | 'agent';
 
+/**
+ * How wide the networked context reaches. A Foxxi user is an Interego
+ * user, so the default is the whole substrate — Interego passes through
+ * to everything that composes it. `vertical` narrows to the Foxxi slice
+ * (the vertical's intersection with Interego).
+ */
+export type ContextScope = 'interego' | 'vertical';
+
 /** What the question is asking for — drives which surface answers it. */
 export type ContextIntent =
   | 'assignments'  // "do I have any courses assigned to me?"
@@ -67,7 +82,7 @@ export type ContextIntent =
 
 /** One cited source backing an answer — auditable, click-through-able. */
 export interface GroundedSource {
-  kind: 'course-fragment' | 'job-aid' | 'assignment' | 'progress' | 'course';
+  kind: 'course-fragment' | 'job-aid' | 'assignment' | 'progress' | 'course' | 'interego-context';
   /** The descriptor id the answer is drawn from. */
   id: string;
   /** Readable provenance: course › lesson, or the course title. */
@@ -110,14 +125,29 @@ export interface ContextActivity {
   objectId: string;
   timestamp?: string;
 }
+/** A Context Descriptor surfaced from the wider Interego substrate —
+ *  the pass-through reach beyond the Foxxi vertical's own surfaces. */
+export interface DiscoveredDescriptor {
+  /** The descriptor resource IRI. */
+  descriptorUrl: string;
+  /** A short human-readable label (derived from what it describes). */
+  label: string;
+  /** A one-line summary — what it describes, facets, conformance. */
+  summary: string;
+}
 export interface NetworkedContext {
   learner: string;
+  /** How wide this context reaches. */
+  scope: ContextScope;
   /** Published courses, as agentic-RAG course graphs (the shape the
    *  vertical's existing retrieval consumes). */
   courses: FoxxiAgenticCourse[];
   /** Job aids, each as a one-slide agentic-RAG course graph — so content
    *  retrieval federates over courses + job aids uniformly. */
   jobAids: FoxxiAgenticCourse[];
+  /** Descriptors passed through from the wider Interego substrate
+   *  (always empty under scope 'vertical'). */
+  interegoContext: FoxxiAgenticCourse[];
   enrollments: ContextEnrollment[];
   activity: ContextActivity[];
 }
@@ -200,6 +230,37 @@ function emergentCourseToAgenticCourse(course: Course): FoxxiAgenticCourse {
   };
 }
 
+/**
+ * Adapt a descriptor discovered on the wider Interego substrate into a
+ * one-slide agentic-RAG course graph — so the same retrieval that runs
+ * over Foxxi content also passes through to everything else composed
+ * into the user's networked context. The `cg-` courseId prefix lets a
+ * cited source be tagged back as `interego-context`.
+ */
+function discoveredToAgenticCourse(d: DiscoveredDescriptor): FoxxiAgenticCourse {
+  const cid = conceptId(d.label);
+  const courseId = `cg-${slug(d.descriptorUrl)}`;
+  return {
+    courseIri: d.descriptorUrl as IRI,
+    title: d.label,
+    courseLabel: 'Interego context',
+    courseId,
+    authoritativeSource: 'did:web:interego' as IRI,
+    // The concept is taught in the one slide — keyed by the slide id
+    // (the descriptor URL), so edge-expansion finds it.
+    concepts: [{ id: cid, label: d.label, confidence: 1, tier: 1, is_free_standing: true, taught_in_slides: [d.descriptorUrl] }],
+    slides: [{
+      id: d.descriptorUrl,
+      title: d.label,
+      sequence_index: 0,
+      concept_ids: [cid],
+      transcript_combined: d.summary,
+    }],
+    modifier_pairs: [],
+    prereq_edges: [],
+  };
+}
+
 /** Adapt a published job aid into a one-slide agentic-RAG course graph. */
 function jobAidToAgenticCourse(aid: { id: string; competencyPoint: string; triggerContext: string; body: string }): FoxxiAgenticCourse {
   const cid = conceptId(aid.competencyPoint);
@@ -231,12 +292,18 @@ const plural = (n: number, s: string, p = `${s}s`): string => `${n} ${n === 1 ? 
 
 /** Map the agentic-RAG cited slides into the companion's source shape. */
 function citedSlidesToSources(retrieval: RetrievalContext): GroundedSource[] {
-  return retrieval.citedSlides.map(cs => ({
-    kind: cs.course.courseId.startsWith('aid-') ? 'job-aid' as const : 'course-fragment' as const,
-    id: cs.slideId,
-    locator: `${cs.course.title} › ${cs.slideTitle}`,
-    excerpt: cs.transcriptCombined,
-  }));
+  return retrieval.citedSlides.map(cs => {
+    const cid = cs.course.courseId;
+    const kind: GroundedSource['kind'] = cid.startsWith('aid-') ? 'job-aid'
+      : cid.startsWith('cg-') ? 'interego-context'
+      : 'course-fragment';
+    return {
+      kind,
+      id: cs.slideId,
+      locator: kind === 'interego-context' ? `Interego substrate › ${cs.slideTitle}` : `${cs.course.title} › ${cs.slideTitle}`,
+      excerpt: cs.transcriptCombined,
+    };
+  });
 }
 
 /** The retrieval scaffold, rendered for an agent to synthesise from. */
@@ -246,14 +313,17 @@ function scaffold(retrieval: RetrievalContext): string {
   return `From your content (sourced excerpts — synthesise your answer from these):\n\n${blocks}`;
 }
 
-function honestNoMatch(question: string, content: FoxxiAgenticCourse[]): string {
+function honestNoMatch(question: string, content: FoxxiAgenticCourse[], scope: ContextScope): string {
   const topic = question.trim().replace(/[?.!]+$/, '');
   const covered = [...new Set(content.flatMap(c => c.concepts.map(x => x.label)))];
   const hint = covered.length > 0
-    ? ` What your content does cover: ${covered.slice(0, 6).join('; ')}.`
+    ? ` What your context does cover: ${covered.slice(0, 6).join('; ')}.`
     : ` There is no published content in your context yet.`;
-  return `I couldn't find anything in your content about "${topic}". `
-    + `Nothing in the published courses or job aids covers it — so I won't guess.${hint}`;
+  const scopeHint = scope === 'vertical'
+    ? ` (This was a vertical-scoped ask — ask again with scope "interego" to reach your wider networked context.)`
+    : '';
+  return `I couldn't find anything in your context about "${topic}". `
+    + `Nothing covers it — so I won't guess.${hint}${scopeHint}`;
 }
 
 interface LlmConfig { apiKey?: string; model?: string; keySource: LlmKeySource }
@@ -266,9 +336,11 @@ interface LlmConfig { apiKey?: string; model?: string; keySource: LlmKeySource }
 async function answerContent(
   question: string, askerId: string, ctx: NetworkedContext, llm: LlmConfig,
 ): Promise<Pick<ContextAnswer, 'answer' | 'grounded' | 'sources' | 'llm' | 'trace'>> {
-  const all = [...ctx.courses, ...ctx.jobAids];
+  // Foxxi content + (under interego scope) everything else composed into
+  // the user's networked context — retrieved over uniformly.
+  const all = [...ctx.courses, ...ctx.jobAids, ...ctx.interegoContext];
   if (all.length === 0) {
-    return { answer: honestNoMatch(question, all), grounded: false, sources: [] };
+    return { answer: honestNoMatch(question, all, ctx.scope), grounded: false, sources: [] };
   }
   const primary = all[0]!;
   const federation = all.slice(1);
@@ -277,7 +349,7 @@ async function answerContent(
   // concept in the networked context matches the question.
   const probe = buildGraphContext({ question, primary, federation });
   if (probe.seedConcepts.length === 0) {
-    return { answer: honestNoMatch(question, all), grounded: false, sources: [] };
+    return { answer: honestNoMatch(question, all, ctx.scope), grounded: false, sources: [] };
   }
 
   const result = llm.apiKey
@@ -372,7 +444,7 @@ function answerProgress(ctx: NetworkedContext): Pick<ContextAnswer, 'answer' | '
 }
 
 function answerCatalog(ctx: NetworkedContext): Pick<ContextAnswer, 'answer' | 'grounded' | 'sources'> {
-  if (ctx.courses.length === 0 && ctx.jobAids.length === 0) {
+  if (ctx.courses.length === 0 && ctx.jobAids.length === 0 && ctx.interegoContext.length === 0) {
     return { answer: `There is no published content in your context yet.`, grounded: false, sources: [] };
   }
   const courseLines = ctx.courses.map(c =>
@@ -382,13 +454,26 @@ function answerCatalog(ctx: NetworkedContext): Pick<ContextAnswer, 'answer' | 'g
     ? `\n\nThere ${ctx.jobAids.length === 1 ? 'is' : 'are'} also ${plural(ctx.jobAids.length, 'job aid')} `
       + `for in-the-flow support: ${ctx.jobAids.map(a => a.concepts[0]?.label ?? a.title).join('; ')}.`
     : '';
+  const interegoNote = ctx.interegoContext.length > 0
+    ? `\n\nBeyond this vertical, your Interego context surfaces ${plural(ctx.interegoContext.length, 'descriptor')}: `
+      + `${ctx.interegoContext.slice(0, 8).map(d => d.title).join('; ')}.`
+    : '';
+  const lead = ctx.courses.length > 0
+    ? `There ${ctx.courses.length === 1 ? 'is' : 'are'} ${plural(ctx.courses.length, 'course')} available:\n\n${courseLines}`
+    : `There are no courses published in this vertical yet.`;
   return {
-    answer: `There ${ctx.courses.length === 1 ? 'is' : 'are'} ${plural(ctx.courses.length, 'course')} available:\n\n${courseLines}${aidNote}`,
-    grounded: ctx.courses.length > 0 || ctx.jobAids.length > 0,
-    sources: ctx.courses.map(c => ({
-      kind: 'course' as const, id: c.courseId, locator: c.title,
-      excerpt: `${c.slides.length} lesson(s); covers ${c.concepts.map(x => x.label).join(', ') || 'n/a'}`,
-    })),
+    answer: `${lead}${aidNote}${interegoNote}`,
+    grounded: true,
+    sources: [
+      ...ctx.courses.map(c => ({
+        kind: 'course' as const, id: c.courseId, locator: c.title,
+        excerpt: `${c.slides.length} lesson(s); covers ${c.concepts.map(x => x.label).join(', ') || 'n/a'}`,
+      })),
+      ...ctx.interegoContext.map(d => ({
+        kind: 'interego-context' as const, id: d.courseId, locator: `Interego substrate › ${d.title}`,
+        excerpt: d.slides[0]?.transcript_combined ?? d.title,
+      })),
+    ],
   };
 }
 
@@ -487,6 +572,14 @@ export interface ContextChatConfig {
    * actually launched on the LMS.
    */
   resolveAssignments?: (learner: string, tenant: TenantId) => Promise<ContextEnrollment[] | undefined>;
+  /**
+   * Optional — discover Context Descriptors across the wider Interego
+   * substrate: the pass-through reach under scope 'interego'. The bridge
+   * wires this by composing `@interego/core`'s `discover()` over the
+   * user's networked pod(s). Absent → 'interego' scope behaves like
+   * 'vertical' (the Foxxi surfaces only).
+   */
+  discoverInteregoContext?: (learner: string, tenant: TenantId) => Promise<DiscoveredDescriptor[]>;
   /** LLM key for agentic-RAG synthesis (the bridge's FOXXI_LLM_API_KEY).
    *  Absent → content answers return the retrieval scaffold instead. */
   llmApiKey?: string;
@@ -498,7 +591,7 @@ export interface ContextChatConfig {
 
 /** Assemble a learner's networked context from the substrate's surfaces. */
 export async function assembleNetworkedContext(
-  learner: string, tenant: TenantId, config: ContextChatConfig,
+  learner: string, tenant: TenantId, config: ContextChatConfig, scope: ContextScope,
 ): Promise<NetworkedContext> {
   const courses: FoxxiAgenticCourse[] = [];
   for (const pub of _publishedCourses().values()) {
@@ -527,7 +620,18 @@ export async function assembleNetworkedContext(
   } else {
     enrollments = engagement;
   }
-  return { learner, courses, jobAids, enrollments, activity };
+
+  // Pass through to the wider Interego substrate. A Foxxi user is an
+  // Interego user, so the default ('interego') reaches everything
+  // composed into their networked context; 'vertical' narrows to the
+  // Foxxi slice.
+  let interegoContext: FoxxiAgenticCourse[] = [];
+  if (scope === 'interego' && config.discoverInteregoContext) {
+    const discovered = await config.discoverInteregoContext(learner, tenant).catch(() => []);
+    interegoContext = discovered.map(discoveredToAgenticCourse);
+  }
+
+  return { learner, scope, courses, jobAids, interegoContext, enrollments, activity };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -564,6 +668,8 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
       };
       const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
       const intent = classifyContextIntent(question);
+      // Default: the whole Interego context. 'vertical' narrows to Foxxi.
+      const scope: ContextScope = b.scope === 'vertical' ? 'vertical' : 'interego';
 
       // LLM key precedence: per-request BYOK > the bridge's env key.
       const byok = typeof b.llm_api_key === 'string' ? b.llm_api_key.trim() : '';
@@ -589,7 +695,7 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
 
       let context: NetworkedContext;
       try {
-        context = await assembleNetworkedContext(learner, tenant, config);
+        context = await assembleNetworkedContext(learner, tenant, config, scope);
       } catch (e) {
         res.status(500).json({ error: `could not assemble networked context: ${(e as Error).message}` });
         return;
@@ -621,18 +727,23 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
       res.json({
         ...answer,
         learner,
+        scope,
         instrumented,
         contextSummary: {
           courses: context.courses.length,
           jobAids: context.jobAids.length,
+          interegoDescriptors: context.interegoContext.length,
           enrollments: context.enrollments.length,
           activityStatements: context.activity.length,
         },
-        note: `Intent classified as "${answer.intent}". `
+        note: `Intent "${answer.intent}", scope "${scope}" `
+          + (scope === 'interego'
+            ? '(the whole networked context — Interego passes through to everything that composes it). '
+            : '(narrowed to the Foxxi vertical). ')
           + (isContentIntent(answer.intent)
             ? `Answered by the vertical's agentic RAG (${answer.llm?.keySource ?? 'none'}); `
               + (answer.grounded
-                ? 'cited slides + the modal-statused Interego trace are attached.'
+                ? 'cited sources + the modal-statused Interego trace are attached.'
                 : 'no concept matched — answered honestly rather than confabulating.')
             : 'Answered from the substrate\'s assignment / LRS surfaces.'),
       });
