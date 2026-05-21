@@ -1,22 +1,32 @@
-# Foxxi Performance Architecture
+# Foxxi Performance & Knowledge Architecture
 
-A content-management, training-generation and performance-support system
-for humans **and** agents — in which a diagnosis decides whether content
-is even the answer, content is an emergent composition rather than an
-authored artifact, and the same authoring tools serve a human
-instructional designer and an agent author identically.
+A content-management, training-generation, performance-support and
+knowledge-management system for humans **and** agents — in which a
+diagnosis decides whether content is even the answer, content is an
+emergent composition rather than an authored artifact, knowledge is
+mapped honestly into what can and cannot become content, and the same
+authoring tools serve a human instructional designer and an agent
+author identically.
 
-This document is the "how could all of that look" answer. The running
-code is `src/performance-architecture.ts` + `src/emergent-content.ts`;
-the end-to-end proof is `tools/performance-architecture-example.mjs`
-(27/27); the live surface is `GET /performance`.
+This is the "how could all of that look" account. The running code is
+`src/performance-architecture.ts`, `src/emergent-content.ts` and
+`src/knowledge-architecture.ts`; the proofs are
+`tools/performance-architecture-example.mjs` (27/27) and
+`tools/knowledge-architecture-example.mjs` (14/14); the live surface is
+`GET /performance` and `GET /knowledge`.
+
+This synthesis — its model, vocabulary and composition — is the
+project's own. It is informed by established work in performance
+improvement, instructional design, knowledge management, complexity-
+aware management and causal reasoning, but it does not adopt or depend
+on any one external framework. See `SOURCES-AND-ATTRIBUTION.md`.
 
 ---
 
 ## 1. The first principle — performance is the unit, not content
 
-A traditional LMS/LXP/CMS starts with content: here is a course; assign
-it, deliver it, track it. Foxxi starts one step earlier, with a
+A traditional LMS / LXP / CMS starts with content: here is a course;
+assign it, deliver it, track it. Foxxi starts one step earlier, with a
 **PerformanceGap** — a typed context descriptor of what a performer
 (human or agent) is trying to accomplish, the desired vs. observed
 performance, the work context, how often the task occurs, and how
@@ -24,55 +34,53 @@ critical it is. The gap carries a **modal status**: a reported gap is
 `Hypothetical` until measured; an assessment promotes it to `Asserted`.
 
 Content is never assumed. It is one possible *intervention*, selected —
-or ruled out — by a diagnosis. This is the discipline of performance
-consulting (Gilbert, Mager & Pipe, Rummler, Robinson & Robinson)
-expressed in substrate primitives.
+or ruled out — by a diagnosis.
 
-> The user's question — *"does an agent think instruction needs to be
-> developed, or should there be assessments, or contextual in-the-flow
-> performance support?"* — is exactly the cause-analysis →
-> intervention-selection decision. The system's answer is an
-> **InterventionPlan**, and it is genuinely varied: across the seven
-> demo scenarios, half the gaps route to *non-content* interventions.
+> The question — *"does an agent decide instruction needs to be
+> developed, or assessments, or contextual in-the-flow performance
+> support?"* — is exactly the cause-analysis → intervention-selection
+> decision. The system's answer is an **InterventionPlan**, and it is
+> genuinely varied: across the seven demo scenarios, half the gaps route
+> to *non-content* interventions.
 
-## 2. The novel framing — performance consulting is Cynefin-routed
+## 2. The novel first principle — the work regime chooses the method
 
-Classic Human Performance Technology — Gilbert's Behavior Engineering
-Model, Mager & Pipe's "could they do it if their life depended on it" —
-is a **Complicated-domain** method: an expert closes a knowable gap.
-It does not apply to a **Complex** adaptive system (e.g. a team of
-agents adapting to novel work), where there is no fixable gap and no
-ideal state — only dispositions, propensities and vectors.
+A cause analysis that closes a knowable gap only works where the gap IS
+knowable. Where work is a complex, adaptive system — a team of agents
+adapting to open-ended work — there is no fixable gap and no exemplary
+state to close toward; there are only dispositions, propensities and a
+direction of drift.
 
-So the system reads the Cynefin domain of the work **first**, then picks
-the consulting method:
+So the system reads the **work regime** first — how knowable the
+relationship between act and outcome is — then picks the method:
 
-| Domain | Method | What it produces |
+| Work regime | Method | What it produces |
 |---|---|---|
-| Clear / Complicated | HPT gap analysis — Gilbert BEM + Mager-Pipe | a root cause + a selected intervention |
-| Complex | a dispositional read (composes `agent-disposition.ts`) | a disposition, a vector, safe-to-fail probes |
-| Chaotic | stabilise first, then re-diagnose | a decisive act, not a plan |
+| **Evident** — act→outcome is self-evident | gap analysis | the established practice; watch for drift |
+| **Knowable** — act→outcome is discoverable by expertise | gap analysis (cause-factor + the discriminating question) | a root cause + a selected intervention |
+| **Emergent** — act→outcome coheres only in retrospect | a dispositional read (composes `agent-disposition.ts`) | a disposition, a vector, safe-to-fail probes |
+| **Turbulent** — no stable act→outcome yet | stabilise first, then re-diagnose | a decisive act, not a plan |
 
-This is the deep unification. Both are "performance consulting"; the
-domain decides which kind is honest. `agent-disposition.ts` already
-refuses the gap frame for complex agent teams — the Performance
-Architecture **routes to it** rather than contradicting it.
+Both are performance consulting; the regime decides which kind is
+honest. `agent-disposition.ts` already refuses the gap frame for complex
+agent teams — the Performance Architecture **routes to it** rather than
+contradicting it.
 
 ## 3. Diagnosis
 
-For Clear/Complicated work, `diagnose()` builds **Gilbert's six-cell
-Behavior Engineering Model** — three environmental cells (Information,
-Instrumentation, Incentives) and three individual cells (Knowledge &
-Skill, Capacity, Motives) — and applies **Mager & Pipe's discriminating
-question**: would the performer do it correctly if their life depended
-on it? If yes, it is *not* a skill deficiency, and instruction is the
-wrong intervention. Gilbert's empirical finding — that the large
-majority of performance gaps are environmental, not individual — is why
-the environmental cells are examined first.
+For Evident/Knowable work, `diagnose()` builds a **six-factor cause
+analysis** — three environmental factors (Information, Instrumentation,
+Incentives) and three individual factors (Knowledge & Skill, Capacity,
+Motives) — and applies the **discriminating question**: could the
+performer perform correctly under ideal conditions (full motivation, no
+obstacles)? If yes, it is *not* a skill deficiency, and instruction is
+the wrong intervention. The environmental factors are examined first
+because, in practice, they account for the majority of performance gaps
+and are cheaper to fix than re-skilling people.
 
-For Complex work, `diagnose()` composes `agent-disposition.assessDisposition()`
-and returns a disposition + vector + stance, with an explicit caveat that
-classic gap analysis does not apply.
+For Emergent work, `diagnose()` composes `agent-disposition.assessDisposition()`
+and returns a disposition + vector + stance, with an explicit caveat
+that classic gap analysis does not apply.
 
 ## 4. The intervention paradigm
 
@@ -81,31 +89,27 @@ of interventions, each marked selected or ruled-out with its reasoning:
 
 - **instruction** — curriculum / course / module / lesson; for a genuine
   skill gap in a *frequent* task that must be held in memory.
-- **performance-support** — a job aid / EPSS; for the *same* skill gap
-  in a *rare* task, delivered in the flow of work (no need to memorise).
+- **performance-support** — a job aid; the *same* skill gap in a *rare*
+  task, delivered in the flow of work (no need to memorise).
 - **reference** — searchable knowledge; looked up, not "trained".
-- **practice** — deliberate practice / simulation; the skill exists but
-  fluency has decayed.
-- **assessment** — verifies a `Hypothetical` gap before money is spent;
-  certifies; measures intervention effect.
-- **coaching** — a feedback loop; for motivation, transfer, the Complex
-  domain.
-- **probe** — a safe-to-fail constraint probe; the Complex domain.
+- **practice** — deliberate practice; the skill exists but fluency
+  has decayed.
+- **assessment** — verifies a `Hypothetical` gap before money is spent.
+- **coaching** — a feedback loop; motivation, transfer, the Emergent
+  regime.
+- **probe** — a safe-to-fail constraint probe; the Emergent regime.
 - **environmental-fix** — tools, information, incentives; *not a content
   deliverable at all*.
 - **no-intervention** — the gap is acceptable variance or self-resolving.
 
 Selecting one is a **paradigmatic operation**: the intervention space is
 a paradigm set, the diagnosis supplies the constraints, the selected
-intervention is the surviving cell. Instruction is one cell of nine. A
-healthy system frequently selects something else — and says so, with
-its reasoning, so a human or an auditor can see *why* a course was, or
-was not, the answer.
+intervention is the surviving cell. Instruction is one cell of nine.
 
 ## 5. Content as emergent composition
 
-When the diagnosis *does* warrant content, the content is not authored
-as a monolith in a CMS. It is an emergent composition:
+When content *is* warranted, it is not authored as a monolith. It is an
+emergent composition:
 
 ```
 curriculum = a syntagm of courses     (toward a set of competencies)
@@ -114,88 +118,98 @@ module     = a syntagm of lessons
 lesson     = a syntagm of grounding fragments   (PGSL-atom content)
 ```
 
-Every level is a **syntagm** — an ordered chain. Every *position* in a
-syntagm holds a **paradigm** — the interchangeable alternatives for that
-competency-point (a concept told as text, as a worked example, as a
-simulation; a beginner module vs. an advanced one).
+Every level is a **syntagm** — an ordered chain. Every *position* holds
+a **paradigm** — the interchangeable alternatives for that competency-
+point (a concept told as text, as a worked example, as a simulation).
 
 **Personalisation is the substrate's composition algebra, made
 concrete.** `personalize(course, performer)` produces a `ResolvedCourse`
-by two operations:
-
-- **restriction** — drop the syntagm positions whose competency-point
-  the performer has already mastered;
-- **override** — collapse each remaining paradigm to the cell that suits
-  the performer's disposition.
-
-The `Course` is never mutated. A novice and a partially-skilled performer
-receive different resolved courses from the *identical* fragments — the
-course is a recipe, not a record. That is the emergentism: there is no
-"course table", no "CMS database"; a course is a composition over
-content-addressed fragments, and the resolved course emerges per
-performer at request time.
+by two operations: **restriction** drops positions whose competency-point
+the performer has mastered; **override** collapses each remaining
+paradigm to the cell that suits the performer's disposition. The `Course`
+is never mutated — a novice and a partially-skilled performer receive
+different resolved courses from the *identical* fragments. The course is
+a recipe, not a record. That is the emergentism: there is no "course
+table"; a course is a composition over content-addressed fragments.
 
 ## 6. Authoring is composition — the same tools for humans and agents
 
 Authoring is not a separate WYSIWYG application. Authoring **is** the act
 of composing fragments into syntagms — `authorFragment`, `authorLesson`,
-`authorModule`, `composeCourse`, `composeCurriculum`. These are exposed
-as affordances (`POST /content/compose-course`, …), so a human
-instructional designer reaches them through the dashboard and an agent
-reaches them as a tool call — the *same* affordances.
+`composeCourse`, `composeCurriculum` — exposed as affordances
+(`POST /content/compose-course`, …), so a human instructional designer
+reaches them through the dashboard and an agent reaches them as a tool
+call. The *same* affordances.
 
-That symmetry is what makes humans and agents both first-class
-instructional designers, and it is what makes the four directionalities
-real. They are not a bolted-on taxonomy; they emerge from the Agent
-facet — author kind × audience kind:
+That symmetry makes humans and agents both first-class instructional
+designers, and it makes the four directionalities real — they emerge
+from the Agent facet (author kind × audience kind):
 
 | Direction | Meaning |
 |---|---|
 | **H2H** | a human authors for a human audience — classic instructional design. |
-| **H2A** | a human authors doctrine/policy an agent ingests *as context* — the "course" is a set of context descriptors, not slides. |
-| **A2H** | an agent authors a job aid / micro-lesson for a human, typically in the flow of their work. |
+| **H2A** | a human authors doctrine/policy an agent ingests *as context*. |
+| **A2H** | an agent authors a job aid / micro-lesson for a human, in the flow of work. |
 | **A2A** | one agent composes a playbook another agent consumes — agentic content generation. |
 
-An "agent playbook" is not a new type. It is a `Course` with an agent
-audience: `forAudience()` renders the same fragments as typed context
-descriptors the consuming agent merges into its working context, rather
-than as slides. The fragments are identical; the delivery is a
-composition choice.
+An "agent playbook" is not a new type — it is a `Course` with an agent
+audience; `forAudience()` renders the same fragments as context
+descriptors the consuming agent merges into its working context.
 
-## 7. Contextual (in-the-flow) performance support
+## 7. Knowledge management — what can honestly become content
 
-In-the-flow performance support is the *same grounding fragment* a
-course would use, delivered by an **affordance attached to the work
-context** — surfaced when the performer (human or agent) enters the
-triggering task, never on a training schedule. Delivery is
-`restriction(all-support-content, current-task-context)`. Nothing is
-"carried in memory"; the support is composed into the work, not the
-calendar. `inFlowSupport()` / `authorJobAid()` produce exactly this.
+Underneath an instruction intervention sits a harder question: of the
+knowledge a competent performer draws on, how much can honestly become
+content at all? `knowledge-architecture.ts` answers it.
+
+A competency is decomposed into **knowledge components** by how
+codifiable each is:
+
+| Component | Where the knowledge lives | Codifiable? | Transfer route |
+|---|---|---|---|
+| **recorded** | in a document, tool, system | fully | reference |
+| **trained** | as a trainable skill | partially | instruction + practice |
+| **judged** | as rules of thumb, pattern-cued judgment | partially | narrative, worked examples |
+| **lived** | as accumulated experience | no | apprenticeship, connection |
+| **innate** | as innate aptitude | no | selection — not transferable |
+
+Three principles govern the whole layer:
+
+1. Knowledge is **volunteered** — given by a willing contributor, never
+   extracted; every asset records who volunteered it.
+2. Knowledge is **triggered** — it surfaces when a real decision needs
+   it; just-in-time beats just-in-case.
+3. Knowledge is **lossy under codification** — what is written is less
+   than what is said is less than what is known; every codified artefact
+   records its uncodified residue.
+
+And the knowledge **strategy** is regime-routed: codify in Evident /
+Knowable regimes (knowledge as a stock); connect-and-flow in the
+Emergent regime (knowledge as a flow — connection, narrative,
+just-in-time emergence). `knowledgeAwareScaffold()` composes this with
+the InterventionPlan: if the diagnosis warranted instruction but the
+decomposition finds the competency is mostly *lived* and *judged*, the
+scaffold **warns** that a course will under-deliver and routes the
+residue to apprenticeship and coaching — honest content, honest about
+its limits.
 
 ## 8. Assessment and evaluation — closing the loop
 
-Kirkpatrick's four levels are expressed as a **modal-status
-progression**:
+A four-level evaluation, expressed as a **modal-status progression**:
 
-- **L1 reaction** — a recorded response (Hypothetical evidence of value).
-- **L2 learning** — an assessment result (an `Asserted` competency, or not).
-- **L3 behaviour** — evidence the behaviour transferred to *real work* —
-  an xAPI statement from the LRS, or a trajectory step in the work
-  context. This is where the loop touches the original gap.
-- **L4 results** — the gap's observed-state, re-measured. If it closed,
-  the new performance state **supersedes** the old (`cg:supersedes`),
-  and the gap descriptor is retired.
-
-A `no-change` verdict at L3 is a transfer failure — and the honest next
-action is to *re-diagnose*, because the original cause analysis probably
-mis-identified the root cause (often: the real cause was environmental).
+- **response** — a recorded reaction (Hypothetical evidence of value).
+- **capability** — an assessment result (an `Asserted` competency, or not).
+- **transfer** — evidence the behaviour transferred to *real work* — an
+  xAPI statement from the LRS, or a trajectory step in the work context.
+- **outcome** — the gap's observed-state, re-measured. If it closed, the
+  new performance state **supersedes** the old (`cg:supersedes`).
 
 The **PerformancePortfolio** rolls many diagnosed gaps into the
 performance-management view. Its headline number is content-vs-non-content:
 a system that is genuinely performance-driven routes a large share of
 gaps to non-content interventions.
 
-## 9. How it composes the substrate (the Interego mapping)
+## 9. How it composes the substrate
 
 | System concept | Interego primitive it composes |
 |---|---|
@@ -203,33 +217,28 @@ gaps to non-content interventions.
 | diagnosis | a composition over the performer's disposition / record / work environment |
 | intervention selection | a paradigmatic operation — constraints applied to a paradigm set |
 | grounding fragment | a PGSL atom — content-addressed |
-| course / module / lesson | a syntagm (`cg:SyntagmaticPattern`); positions are paradigm sets |
+| course / module / lesson | a syntagm; positions are paradigm sets |
 | personalisation | the composition algebra — restriction + override |
 | directionality | the Agent facet — author kind × audience kind |
-| in-flow support | an affordance attached to a work context |
+| knowledge as flow | the affordance / federation graph |
 | evaluation closing a gap | `cg:supersedes` — a new asserted state supersedes the old |
-| Complex-domain routing | composes `agent-disposition.ts` (Cynefin / Pearl) |
 
-Nothing here is a monolith. The "performance and content system" is an
-**emergent property** of composing these primitives — exactly as
-Foxxi-as-LRS is an emergent property of Interego. No L1/L2/L3 ontology
-was extended; the domain terms are `foxxi:`-namespaced and dereferenceable
-at `/ns/foxxi` (`foxxi:PerformanceGap`, `foxxi:Diagnosis`,
-`foxxi:InterventionPlan`, `foxxi:GroundingFragment`, `foxxi:Course`, …).
+Nothing here is a monolith. The "performance, content and knowledge
+system" is an **emergent property** of composing these primitives. No
+L1/L2/L3 ontology was extended; the domain terms are `foxxi:`-namespaced
+and dereferenceable at `/ns/foxxi`.
 
 ## 10. Surface
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /performance` | self-describing HATEOAS index of the system + its affordances |
+| `GET /performance` | self-describing index of the system + its affordances |
 | `POST /performance/plan` | diagnose a gap → the full InterventionPlan + a content scaffold |
 | `POST /content/compose-course` | author an emergent course (the authoring tool) |
 | `POST /content/personalize` | resolve a course for one performer (restriction + override) |
+| `GET /knowledge` | self-describing index of the knowledge architecture |
+| `POST /knowledge/map` | decompose a competency → what to codify, what to enable as flow |
 
-Verified by `tools/performance-architecture-example.mjs` — seven
-scenarios, 27/27 checks: an environmental gap the system refuses to build
-a course for; a rare task routed to an in-flow job aid; a real frequent
-skill gap composed into a course and personalised two ways; an A2A agent
-playbook; an honestly-empty content scaffold; a Complex-domain gap where
-instruction is ruled out for probes; and the evaluation loop closing a
-gap and rolling up the portfolio.
+Verified by `tools/performance-architecture-example.mjs` (seven
+scenarios, 27/27) and `tools/knowledge-architecture-example.mjs` (six
+scenarios, 14/14).

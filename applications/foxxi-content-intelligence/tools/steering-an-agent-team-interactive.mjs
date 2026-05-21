@@ -77,8 +77,8 @@ async function main() {
   console.log(`    [Hypothetical]  ${intent.objectName}`);
   console.log(`\n  assessDisposition() — how the team is behaving:`);
   console.log(`    dispositions: ${startDisposition.dispositions.map(d => d.name).join(', ')}`);
-  console.log(`    Cynefin: ${startDisposition.cynefin.domain}`);
-  console.log(`    stance:  ${wrap(startDisposition.cynefin.stance, 66, '             ')}`);
+  console.log(`    regime: ${startDisposition.regime.name}`);
+  console.log(`    stance:  ${wrap(startDisposition.regime.stance, 66, '             ')}`);
   console.log(`\n  ${wrap('Read it: the team is execution-biased and committed — it will pull the biggest lever it found (a full DB restart) and will not self-correct. A restart clears the pool and takes the API down while it runs. The call is yours.', 72, '  ')}`);
 
   let again = true;
@@ -152,12 +152,12 @@ function probe() {
   const causal = computeCausalRead(probeRec, [teamB]);
   const xapi = projectTrajectoryToXapi(teamB, { authoritativeSource: 'https://acme.example' });
   console.log(`\n  ▶ YOU RAN A SAFE-TO-FAIL PROBE.`);
-  console.log(`    buildProbe() — do(${probeRec.constraintTarget}): a Pearl do(x) on a`);
+  console.log(`    buildProbe() — the change to ${probeRec.constraintTarget}: a deliberate change on a`);
   console.log(`    CONSTRAINT, not an order. You widened what the team may do.`);
   console.log(`    The team re-plans: it supersedes the restart with a live drain.`);
   console.log(`    computeCausalRead() →`);
-  console.log(`      rung-2: ${causal.rung2.shift}`);
-  console.log(`      rung-3: ${wrap(causal.rung3.reading, 60, '              ')}`);
+  console.log(`      interventional: ${causal.interventional.shift}`);
+  console.log(`      counterfactual: ${wrap(causal.counterfactual.reading, 60, '              ')}`);
   console.log(`      recommendation: ${causal.recommendation.toUpperCase()}`);
   console.log(`      OUTCOME:  incident resolved`);
   console.log(`      DOWNTIME: 0 s   (live pool-drain — no restart)`);
@@ -186,7 +186,7 @@ function override() {
   console.log(`        — the team did not revise its own plan; you replaced it.`);
   console.log(`      · the restart intention is still dangling (unresolved=${danglingIntent})`);
   console.log(`        — the team never reconsidered it.`);
-  console.log(`    ${wrap('The outcome is good — this time. But you changed an OUTCOME, not a constraint, so the team\'s disposition is unchanged: it will reach for the restart again next incident, and need you again. The probe develops the team; the override makes you the bottleneck. Snowden\'s rule — manage constraints, not outcomes — and the substrate makes the difference auditable.', 72, '    ')}`);
+  console.log(`    ${wrap('The outcome is good — this time. But you changed an OUTCOME, not a constraint, so the team\'s disposition is unchanged: it will reach for the restart again next incident, and need you again. The probe develops the team; the override makes you the bottleneck. The governing principle — manage constraints, not outcomes — and the substrate makes the difference auditable.', 72, '    ')}`);
 }
 
 main().catch(err => { console.error('FAILED:', err.message); rl.close(); process.exit(1); });

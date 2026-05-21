@@ -428,8 +428,8 @@ console.log(`=== performance record → performance-verified competency: ${okPer
 
 // ── Case 7 — Agent Performance Consultant ──
 // Seed a demo agent team's trajectories (API), then sign in as admin,
-// open /agent-performance, read the disposition (Cynefin placement, no
-// gap/score), run a safe-to-fail probe, and confirm the rung-2/rung-3
+// open /agent-performance, read the disposition (Work-regime placement, no
+// gap/score), run a safe-to-fail probe, and confirm the interventional + counterfactual
 // causal read renders.
 console.log('\n=== Case 7: Agent Performance Consultant (APT) ===');
 let okAgentPerf = false;
@@ -479,9 +479,9 @@ if (await jordan7.count() > 0) {
   const panelPresent = await page7.locator('text=/Agent Performance Consultant/i').count() > 0;
   const aptBadge = await page7.locator('text=/complexity-aware/i').count() > 0;
   await page7.locator('button:has-text("Read disposition")').first().click();
-  await page7.waitForSelector('text=/Cynefin placement/i', { timeout: 20_000 }).catch(() => null);
+  await page7.waitForSelector('text=/Work-regime placement/i', { timeout: 20_000 }).catch(() => null);
   await page7.waitForTimeout(2000);
-  const cynefinShown = await page7.locator('text=/Cynefin placement/i').count() > 0;
+  const regimeShown = await page7.locator('text=/Work-regime placement/i').count() > 0;
   const noScore = await page7.locator('text=/no score, no gap/i').count() > 0;
   await page7.locator('button:has-text("Run probe")').first().click();
   await page7.waitForSelector('text=/Causal read/i', { timeout: 20_000 }).catch(() => null);
@@ -489,10 +489,10 @@ if (await jordan7.count() > 0) {
   const causalShown = await page7.locator('text=/Causal read/i').count() > 0;
   const rungShown = await page7.locator('text=/Rung 2/i').count() > 0;
   console.log(`  consultant panel present: ${panelPresent} · APT badge: ${aptBadge}`);
-  console.log(`  assess_agent_disposition invoked: ${apAssessCalled} · Cynefin placement shown: ${cynefinShown}`);
+  console.log(`  assess_agent_disposition invoked: ${apAssessCalled} · Work-regime placement shown: ${regimeShown}`);
   console.log(`  "no score, no gap" framing present: ${noScore}`);
   console.log(`  run_performance_probe invoked: ${apProbeCalled} · causal read (rung 2/3) shown: ${causalShown && rungShown}`);
-  okAgentPerf = panelPresent && aptBadge && apAssessCalled && cynefinShown && noScore
+  okAgentPerf = panelPresent && aptBadge && apAssessCalled && regimeShown && noScore
     && apProbeCalled && causalShown && rungShown;
 
   // While signed in as the admin, open the LRS Conformance tab — its

@@ -8,7 +8,7 @@
  * ship A." That reflex is wrong, and this module refuses it.
  *
  * It refuses it for the same reason agent-disposition.ts refuses gap
- * analysis. A leaderboard assumes the choice is Complicated — a knowable
+ * analysis. A leaderboard assumes the choice is Knowable — a knowable
  * best, found by measurement. But whether to standardise on one agentic
  * harness is usually a COMPLEX-domain decision: the work the harnesses
  * do is itself complex, the "best" depends on the task mix, and
@@ -16,7 +16,7 @@
  * portfolio's optionality before the domain has shown its shape.
  *
  * So this module produces a PORTFOLIO READ, not a ranking:
- *   1. it reads the Cynefin domain of the WORK itself (pooled across
+ *   1. it reads the work regime of the WORK itself (pooled across
  *      every candidate's runs) — what KIND of problem are these
  *      harnesses being asked to solve;
  *   2. it reads each candidate's DISPOSITION (via agent-disposition.ts)
@@ -24,9 +24,9 @@
  *      not a score, a fit;
  *   3. it diagnoses what kind of DECISION the executives face, and
  *      answers "should we develop only one?" accordingly:
- *        · Clear / Complicated work  → converging is sound; analysis
+ *        · Evident / Knowable work  → converging is sound; analysis
  *          can name a direction without losing optionality;
- *        · Complex work              → do NOT converge yet; the
+ *        · Emergent work              → do NOT converge yet; the
  *          competing teams ARE the safe-to-fail probe portfolio —
  *          keeping them is the correct strategy, not waste;
  *        · complementary dispositions → recombine: compose the
@@ -39,7 +39,7 @@
  * Layer: L3 vertical.
  */
 
-import { assessDisposition, type CynefinDomain, type TeamDisposition } from './agent-disposition.js';
+import { assessDisposition, type WorkRegime, type TeamDisposition } from './agent-disposition.js';
 import type { AgentTrajectory } from './agent-trajectory.js';
 import type { AgentEvaluation, CandidateRun, HarnessMeta } from './agent-evaluation.js';
 
@@ -72,7 +72,7 @@ export interface CandidatePortfolioProfile {
   };
   /** The candidate's dispositional read. */
   disposition: {
-    cynefinDomain: CynefinDomain;
+    regime: WorkRegime;
     named: Array<{ name: string; reading: string }>;
     toolCallSuccessRate: number;
     vector: string;
@@ -83,15 +83,15 @@ export interface CandidatePortfolioProfile {
 
 export interface PortfolioRead {
   evaluation: { id: string; name: string; decisionQuestion: string };
-  /** The Cynefin domain of the WORK, pooled across every candidate's runs. */
-  workDomain: { domain: CynefinDomain; rationale: string };
+  /** The work regime of the WORK, pooled across every candidate's runs. */
+  workDomain: { domain: WorkRegime; rationale: string };
   candidates: CandidatePortfolioProfile[];
   /** Candidates enrolled but with no runs yet — noted, not compared. */
   awaitingEvidence: string[];
   /** What KIND of decision this is — and the direct answer to
    *  "should we develop only one harness?". */
   decision: {
-    type: CynefinDomain;
+    type: WorkRegime;
     reading: string;
     convergenceGuidance: string;
   };
@@ -119,18 +119,18 @@ export function comparePortfolio(
   const withRuns = evidence.filter(e => e.runs.length > 0);
   const awaitingEvidence = evidence.filter(e => e.runs.length === 0).map(e => e.agentName);
 
-  const method = 'Portfolio read (Cynefin / safe-to-fail portfolio). This is NOT a benchmark leaderboard and emits no overall score. It reads the complexity of the work, each candidate\'s disposition + fit, and what kind of decision the cohort faces.';
-  const caveat = 'Retrospective coherence, not prediction. This frames the decision and reports fit; it does not forecast which harness will win. In a Complex domain "the best harness" is not a knowable fact ahead of time.';
+  const method = 'Portfolio read (work-regime / safe-to-fail portfolio). This is NOT a benchmark leaderboard and emits no overall score. It reads the complexity of the work, each candidate\'s disposition + fit, and what kind of decision the cohort faces.';
+  const caveat = 'Retrospective coherence, not prediction. This frames the decision and reports fit; it does not forecast which harness will win. In a Emergent domain "the best harness" is not a knowable fact ahead of time.';
 
   // ── Thin-evidence guard ──────────────────────────────────────────
   if (withRuns.length < 2) {
     return {
       evaluation,
-      workDomain: { domain: 'Chaotic', rationale: 'fewer than two candidates have recorded runs — there is nothing to compare yet.' },
-      candidates: withRuns.map(e => candidateProfile(e, 'Chaotic')),
+      workDomain: { domain: 'Turbulent', rationale: 'fewer than two candidates have recorded runs — there is nothing to compare yet.' },
+      candidates: withRuns.map(e => candidateProfile(e, 'Turbulent')),
       awaitingEvidence,
       decision: {
-        type: 'Chaotic',
+        type: 'Turbulent',
         reading: 'No decision is supportable yet — a comparison needs at least two candidates with runs.',
         convergenceGuidance: 'Do not converge or rule anything out. Get every candidate executing real runs first.',
       },
@@ -143,7 +143,7 @@ export function comparePortfolio(
 
   const allTrajectories: AgentTrajectory[] = withRuns.flatMap(e => e.runs.map(r => r.trajectory));
   const pooled = assessDisposition(allTrajectories);
-  const workDomain = { domain: pooled.cynefin.domain, rationale: pooled.cynefin.rationale };
+  const workDomain = { domain: pooled.regime.name, rationale: pooled.regime.rationale };
 
   const candidates = withRuns.map(e => candidateProfile(e, workDomain.domain));
 
@@ -182,39 +182,39 @@ export function comparePortfolio(
   let convergenceGuidance: string;
   let decisionReading: string;
 
-  if (workDomain.domain === 'Chaotic') {
+  if (workDomain.domain === 'Turbulent') {
     portfolioStance = 'parallel';
-    decisionReading = 'The work is Chaotic — the harnesses\' behaviour is not yet patterned, so a comparison cannot yet separate them.';
-    stanceRationale = 'Chaotic work: keep every candidate running to let a pattern emerge. Ranking now would lock in noise.';
+    decisionReading = 'The work is Turbulent — the harnesses\' behaviour is not yet patterned, so a comparison cannot yet separate them.';
+    stanceRationale = 'Turbulent work: keep every candidate running to let a pattern emerge. Ranking now would lock in noise.';
     convergenceGuidance = 'Do NOT converge. There is no stable signal to converge toward. Keep all candidates; re-read once behaviour patterns.';
-  } else if (workDomain.domain === 'Complex') {
-    decisionReading = 'The work is Complex — cause and effect cohere only in retrospect, so "the best harness" is not a fact knowable ahead of time. The competing teams are, whether the org named it or not, a portfolio of safe-to-fail probes.';
+  } else if (workDomain.domain === 'Emergent') {
+    decisionReading = 'The work is Emergent — cause and effect cohere only in retrospect, so "the best harness" is not a fact knowable ahead of time. The competing teams are, whether the org named it or not, a portfolio of safe-to-fail probes.';
     if (complementary) {
       portfolioStance = 'recombine';
       recombination = {
         candidates: candidates.map(c => c.agentName),
         reading: 'The candidates\' dispositions are complementary — they span the deliberation / exploration / plan-revision axes rather than clustering. The highest-leverage move is not to pick one but to COMPOSE them: route tasks to the harness whose disposition fits, or build one harness that takes each team\'s cohering trait. The substrate\'s `union` operator composes their trajectories directly — composition is a first-class move, not a workaround.',
       };
-      stanceRationale = 'Complex work + complementary dispositions: the candidates are not really rivals, they are parts. Recombining beats choosing.';
+      stanceRationale = 'Emergent work + complementary dispositions: the candidates are not really rivals, they are parts. Recombining beats choosing.';
       convergenceGuidance = 'Do NOT converge on one — and do not merely keep them parallel either. The candidates are complementary; commission a composition (task-routing or a merged harness). Picking one would discard a capability another already has.';
     } else {
       portfolioStance = 'parallel';
-      stanceRationale = 'Complex work: keep ≥2 candidates as a deliberate safe-to-fail probe portfolio. Amplify the ones cohering with the work, dampen the oblique, let the rest run. The internal competition is the correct exploration strategy.';
-      convergenceGuidance = 'Do NOT converge on one harness yet. Multiple teams independently building is not duplicated effort in a Complex domain — it IS the right move: a portfolio of safe-to-fail probes. Premature standardisation is the ideal-future-state trap. Fund the cohering candidates to continue; treat the oblique ones as cheap, informative failures.';
+      stanceRationale = 'Emergent work: keep ≥2 candidates as a deliberate safe-to-fail probe portfolio. Amplify the ones cohering with the work, dampen the oblique, let the rest run. The internal competition is the correct exploration strategy.';
+      convergenceGuidance = 'Do NOT converge on one harness yet. Multiple teams independently building is not duplicated effort in a Emergent domain — it IS the right move: a portfolio of safe-to-fail probes. Premature standardisation is the ideal-future-state trap. Fund the cohering candidates to continue; treat the oblique ones as cheap, informative failures.';
     }
   } else {
-    // Clear or Complicated — analysable. Naming a direction is appropriate.
+    // Evident or Knowable — analysable. Naming a direction is appropriate.
     const best = pickCoherer(candidates);
-    decisionReading = workDomain.domain === 'Clear'
-      ? 'The work is Clear — the relationship between a harness\'s behaviour and its outcomes is self-evident. This is a genuinely analysable choice.'
-      : 'The work is Complicated — structured, analysable work with reliable outcomes. Expert analysis CAN name a sound direction here; this is not a Complex domain where convergence is premature.';
-    if (best && complementary && workDomain.domain === 'Complicated') {
+    decisionReading = workDomain.domain === 'Evident'
+      ? 'The work is Evident — the relationship between a harness\'s behaviour and its outcomes is self-evident. This is a genuinely analysable choice.'
+      : 'The work is Knowable — structured, analysable work with reliable outcomes. Expert analysis CAN name a sound direction here; this is not a Emergent domain where convergence is premature.';
+    if (best && complementary && workDomain.domain === 'Knowable') {
       portfolioStance = 'recombine';
       recombination = {
         candidates: candidates.map(c => c.agentName),
         reading: 'Even though the work is analysable, the candidates\' dispositions are complementary — composing them (task-routing, or merging each team\'s cohering trait via the substrate\'s `union` operator) yields more than picking the single best.',
       };
-      stanceRationale = 'Complicated work but complementary candidates: a merged harness dominates any single one.';
+      stanceRationale = 'Knowable work but complementary candidates: a merged harness dominates any single one.';
       convergenceGuidance = 'Converging on one is defensible — but the candidates are complementary, so composing them is strictly better. Prefer a merged harness; fall back to the single coherer below if a merge is not feasible.';
     } else if (best) {
       portfolioStance = 'converge';
@@ -257,7 +257,7 @@ export function comparePortfolio(
 
 // ── Per-candidate profile ────────────────────────────────────────────
 
-function candidateProfile(e: CandidateEvidence, workDomain: CynefinDomain): CandidatePortfolioProfile {
+function candidateProfile(e: CandidateEvidence, workDomain: WorkRegime): CandidatePortfolioProfile {
   const disposition = assessDisposition(e.runs.map(r => r.trajectory));
   const runProfile = computeRunProfile(e.runs);
   return {
@@ -268,7 +268,7 @@ function candidateProfile(e: CandidateEvidence, workDomain: CynefinDomain): Cand
     runCount: e.runs.length,
     runProfile,
     disposition: {
-      cynefinDomain: disposition.cynefin.domain,
+      regime: disposition.regime.name,
       named: disposition.dispositions.map(d => ({ name: d.name, reading: d.reading })),
       toolCallSuccessRate: disposition.toolCallSuccessRate,
       vector: disposition.vector.direction,
@@ -292,37 +292,37 @@ function computeRunProfile(runs: CandidateRun[]): CandidatePortfolioProfile['run
 }
 
 /** How a candidate's disposition fits the work domain — a fit, not a score. */
-function readCoherence(workDomain: CynefinDomain, d: TeamDisposition): { rating: CoherenceRating; reading: string } {
+function readCoherence(workDomain: WorkRegime, d: TeamDisposition): { rating: CoherenceRating; reading: string } {
   const has = (name: string): boolean => d.dispositions.some(x => x.name === name);
   const tcs = d.toolCallSuccessRate;
-  if (workDomain === 'Complex') {
+  if (workDomain === 'Emergent') {
     if (has('exploratory') || has('plan-revising')) {
-      return { rating: 'coheres', reading: 'explores branches and revises plans in flight — the disposition a Complex domain rewards.' };
+      return { rating: 'coheres', reading: 'explores branches and revises plans in flight — the disposition a Emergent domain rewards.' };
     }
     if (has('execution-biased') && has('committed') && has('plan-adhering')) {
-      return { rating: 'mismatched', reading: 'commits to its first line and rarely revises — brittle in a Complex domain where the plan must adapt.' };
+      return { rating: 'mismatched', reading: 'commits to its first line and rarely revises — brittle in a Emergent domain where the plan must adapt.' };
     }
-    return { rating: 'oblique', reading: 'a mixed disposition — neither strongly adaptive nor strongly rigid for Complex work.' };
+    return { rating: 'oblique', reading: 'a mixed disposition — neither strongly adaptive nor strongly rigid for Emergent work.' };
   }
-  if (workDomain === 'Complicated') {
+  if (workDomain === 'Knowable') {
     if (has('plan-adhering') && tcs >= 0.6) {
-      return { rating: 'coheres', reading: 'executes a planned line reliably — the disposition Complicated, analysable work rewards.' };
+      return { rating: 'coheres', reading: 'executes a planned line reliably — the disposition Knowable, analysable work rewards.' };
     }
     if (has('exploratory') || tcs < 0.4) {
       return { rating: 'mismatched', reading: 'explores heavily or executes unreliably — wasted motion in an analysable domain with a knowable good practice.' };
     }
     return { rating: 'oblique', reading: 'an adequate but not distinctive fit for analysable work.' };
   }
-  if (workDomain === 'Clear') {
+  if (workDomain === 'Evident') {
     if (has('committed') && has('plan-adhering') && tcs >= 0.7) {
-      return { rating: 'coheres', reading: 'commits and executes reliably — exactly what Clear, best-practice work needs.' };
+      return { rating: 'coheres', reading: 'commits and executes reliably — exactly what Evident, best-practice work needs.' };
     }
     if (tcs < 0.5) {
       return { rating: 'mismatched', reading: 'unreliable execution on work where the act-outcome link is self-evident.' };
     }
-    return { rating: 'oblique', reading: 'a workable fit for Clear work.' };
+    return { rating: 'oblique', reading: 'a workable fit for Evident work.' };
   }
-  return { rating: 'oblique', reading: 'the work is Chaotic — no stable domain to cohere with yet.' };
+  return { rating: 'oblique', reading: 'the work is Turbulent — no stable domain to cohere with yet.' };
 }
 
 /** The candidate that coheres best, with the strongest run evidence;

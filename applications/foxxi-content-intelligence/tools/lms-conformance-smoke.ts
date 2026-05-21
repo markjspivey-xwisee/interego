@@ -307,10 +307,10 @@ async function testHttpRoutes(): Promise<void> {
         gap: {
           performer: { id: 'u-1', kind: 'human' }, workContext: 'support', competency: 'escalation',
           desired: 'escalates in SLA', observed: 'does not escalate', frequency: 'frequent',
-          criticality: 'high', modalStatus: 'Asserted', domain: 'Complicated',
+          criticality: 'high', modalStatus: 'Asserted', domain: 'Knowable',
         },
-        couldDoIfLifeDependedOnIt: true,
-        bemEvidence: { incentives: { adequate: false, evidence: 'metric punishes escalation' } },
+        couldPerformUnderIdealConditions: true,
+        factorEvidence: { incentives: { adequate: false, evidence: 'metric punishes escalation' } },
       }),
     }).then(r => r.json()) as { plan?: { contentWarranted?: boolean; selected?: Array<{ type: string }> } };
     check('POST /performance/plan routes an environmental gap away from content',
@@ -324,10 +324,10 @@ async function testHttpRoutes(): Promise<void> {
         gap: {
           performer: { id: 'u-2', kind: 'human' }, workContext: 'disputes', competency: 'resolving disputes',
           desired: 'resolves in policy', observed: 'over-escalates', frequency: 'continuous',
-          criticality: 'moderate', modalStatus: 'Asserted', domain: 'Complicated',
+          criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
         },
-        couldDoIfLifeDependedOnIt: false,
-        bemEvidence: { knowledgeSkill: { adequate: false, evidence: 'does not know the policy' } },
+        couldPerformUnderIdealConditions: false,
+        factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'does not know the policy' } },
       }),
     }).then(r => r.json()) as { plan?: { contentWarranted?: boolean; selected?: Array<{ type: string }> } };
     check('POST /performance/plan warrants instruction for a real skill gap',
@@ -343,7 +343,7 @@ async function testHttpRoutes(): Promise<void> {
         modules: [{
           title: 'Core', competencyPoint: 'resolving disputes',
           lessons: [{ title: 'Thresholds', competencyPoint: 'thresholds', fragments: [
-            { modality: 'concept', body: 'rep authority is $500', bloom: 'remember' },
+            { modality: 'concept', body: 'rep authority is $500', level: 'foundational' },
           ] }],
         }],
       }),

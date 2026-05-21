@@ -128,7 +128,7 @@ const evidence = state.candidates
 const read = comparePortfolio(state.evaluation, evidence);
 
 console.log('  ┌─ PORTFOLIO READ ' + '─'.repeat(56));
-console.log(`  │  work domain (Cynefin):  ${read.workDomain.domain}`);
+console.log(`  │  work regime:  ${read.workDomain.domain}`);
 console.log(`  │  ${read.workDomain.rationale}`);
 console.log('  │');
 for (const c of read.candidates) {

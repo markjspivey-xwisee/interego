@@ -160,11 +160,11 @@ qa(5, 'Where did the team REVISE its plan in flight?',
   'NO — xAPI cannot link an executed step to the intention it replaced. Revision is unrepresentable.',
   `YES — ${revised.length} steps carry a cg:supersedes edge. e.g. the cache query supersedes the original DB-first plan.`);
 
-// Q6 — disposition + Cynefin
+// Q6 — disposition + work regime
 const disposition = assessDisposition([team]);
 qa(6, 'What is the team\'s DISPOSITION — and what KIND of situation am I in?',
   'NO — xAPI yields counts and success rates. It has no concept of disposition, and nothing tells Mara whether to analyse-and-fix or probe-and-sense.',
-  `YES — assessDisposition(): ${disposition.dispositions.map(d => d.name).join(', ')}. Cynefin = ${disposition.cynefin.domain}. Stance: ${truncate(disposition.cynefin.stance, 96)}`);
+  `YES — assessDisposition(): ${disposition.dispositions.map(d => d.name).join(', ')}. work regime = ${disposition.regime.name}. Stance: ${truncate(disposition.regime.stance, 96)}`);
 
 // Q7 — intervene
 console.log(`\n  Q7. I want to INTERVENE — safely, mid-flight. Can I act through the system?`);
@@ -181,8 +181,8 @@ const probe = buildProbe({
   recordedBy: MARA,
 }, baseline);
 interegoYes++; xapiYes += 0;
-console.log(`      Interego + Foxxi  ✓  YES — Mara runs a SAFE-TO-FAIL PROBE: a Pearl do(x) on a constraint`);
-console.log(`                           (not an outcome). do(${probe.constraintTarget}). The substrate snapshots`);
+console.log(`      Interego + Foxxi  ✓  YES — Mara runs a SAFE-TO-FAIL PROBE: a deliberate, reversible change to a constraint`);
+console.log(`                           (not an outcome). the change to ${probe.constraintTarget}. The substrate snapshots`);
 console.log(`                           the disposition at intervention time as the causal baseline.`);
 
 // Q8 — did the intervention help — the post-probe run + causal read
@@ -196,8 +196,8 @@ const causal = computeCausalRead(probe, [teamAfter]);
 console.log(`\n  Q8. Did my intervention actually help — and was it MY doing?`);
 console.log(`      xAPI for agents   ✗  NO — you could eyeball success rates before/after, but xAPI cannot tie the change to your intervention. There is no probe, no baseline.`);
 console.log(`      Interego + Foxxi  ✓  YES — computeCausalRead():`);
-console.log(`                           rung-2 (interventional): ${causal.rung2.shift}`);
-console.log(`                           rung-3 (counterfactual): ${truncate(causal.rung3.reading, 92)}`);
+console.log(`                           interventional: ${causal.interventional.shift}`);
+console.log(`                           counterfactual: ${truncate(causal.counterfactual.reading, 92)}`);
 console.log(`                           recommendation: ${causal.recommendation.toUpperCase()} — ${truncate(causal.recommendationRationale, 84)}`);
 console.log(`                           ${truncate(causal.caveat, 96)}`);
 interegoYes++;

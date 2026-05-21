@@ -8,28 +8,28 @@
  * never assumed — it is one possible intervention, selected (or ruled
  * out) by a diagnosis.
  *
- * The novel first principle is that **performance consulting is
- * Cynefin-routed**. Classic Human Performance Technology — Gilbert's
- * Behavior Engineering Model, Mager & Pipe's "could they do it if their
- * life depended on it" — is a Complicated-domain method: an expert
- * closes a knowable gap. It does NOT apply to a Complex adaptive system
- * (e.g. a team of agents). So this module reads the domain FIRST, then
- * picks the consulting method:
+ * The novel first principle is that the consulting method is chosen by
+ * the WORK REGIME — how knowable the relationship between act and
+ * outcome is. A cause analysis that closes a knowable gap only works
+ * where the gap IS knowable. Where work is Emergent — a complex,
+ * adaptive system such as a team of agents — there is no fixable gap
+ * and no exemplary state to close toward. So this module reads the
+ * regime FIRST, then picks the method:
  *
- *   · Clear / Complicated → HPT gap analysis (Gilbert BEM + Mager-Pipe).
- *     A knowable gap; an intervention can be analysed and selected.
- *   · Complex            → a dispositional read (composes
- *     `agent-disposition.ts`): no gap, no ideal state — probes, vectors,
- *     constraints. You cannot instruct your way through the Complex
- *     domain.
- *   · Chaotic            → stabilise first, then re-read.
+ *   · Evident / Knowable → gap analysis. A cause analysis across
+ *     environmental and individual factors isolates a root cause; an
+ *     intervention can be selected.
+ *   · Emergent → a dispositional read (composes `agent-disposition.ts`):
+ *     no gap, no ideal state — probes, vectors, constraints. You cannot
+ *     instruct your way through Emergent work.
+ *   · Turbulent → stabilise first, then re-read.
  *
  * The output is an InterventionPlan — the full *paradigm* of possible
  * interventions (instruction, performance-support, assessment,
  * coaching, probe, environmental-fix, …), each marked selected or
  * ruled-out with its reasoning. Crucially the plan can conclude that no
- * content should be built at all — Gilbert's finding that most
- * performance gaps are environmental, not individual.
+ * content should be built at all: most performance gaps turn out to be
+ * environmental, and no course fixes a broken tool or a bad incentive.
  *
  * Emergent from Interego: a PerformanceGap is a typed context
  * descriptor with a modal status; diagnosis is a composition over the
@@ -39,11 +39,16 @@
  * intervention is the surviving cell). The evaluation loop closes with
  * `cg:supersedes` — a measured new performance state supersedes the old.
  *
+ * This is the project's own synthesis. It is informed by established
+ * practice in performance improvement, instructional design, and
+ * complexity-aware management, but introduces its own vocabulary and
+ * model (see SOURCES-AND-ATTRIBUTION.md).
+ *
  * Layer: L3 vertical. Composes the substrate; no L1/L2/L3 ontology
  * change. Domain terms are `foxxi:`-namespaced (see foxxi-vocab.ts).
  */
 
-import { assessDisposition, type CynefinDomain } from './agent-disposition.js';
+import { assessDisposition, type WorkRegime } from './agent-disposition.js';
 import type { AgentTrajectory } from './agent-trajectory.js';
 
 // ── Performers + directionality ─────────────────────────────────────
@@ -104,44 +109,50 @@ export interface PerformanceGap {
   /** Where the gap signal came from (an LRS statement, a trajectory, a
    *  manager observation, a self-report). */
   provenance: string;
-  /** The Cynefin domain of the WORK, if the caller already knows it. */
-  domain?: CynefinDomain;
+  /** The work regime, if the caller already knows it. */
+  domain?: WorkRegime;
 }
 
-// ── Gilbert's Behavior Engineering Model (the Complicated-domain tool) ─
+// ── The cause-analysis factor model ─────────────────────────────────
 
-/** One of Gilbert's six cells. */
-export interface CellReading {
-  cell: string;
-  /** Environmental cells are the workplace's responsibility; individual
-   *  cells are the performer's repertory. */
+/** One factor in the cause analysis. */
+export interface FactorReading {
+  factor: string;
+  /** Environmental factors are the workplace's responsibility;
+   *  individual factors are the performer's repertory. */
   category: 'environmental' | 'individual';
   adequate: boolean;
   evidence: string;
-  /** If this cell is the deficiency, the intervention class it implies. */
+  /** If this factor is the deficiency, the intervention class it implies. */
   impliesIntervention: InterventionType;
 }
 
-export interface BehaviorEngineeringModel {
-  /** Environmental — Gilbert found these account for the majority of gaps. */
-  information: CellReading;
-  instrumentation: CellReading;
-  incentives: CellReading;
+/**
+ * Six factors of performance — three environmental (the workplace's
+ * responsibility) and three individual (the performer's repertory).
+ * Environmental factors usually dominate and are cheaper to fix than
+ * re-skilling people, so the diagnosis examines them first.
+ */
+export interface PerformanceFactors {
+  /** Environmental. */
+  information: FactorReading;
+  instrumentation: FactorReading;
+  incentives: FactorReading;
   /** Individual. */
-  knowledgeSkill: CellReading;
-  capacity: CellReading;
-  motives: CellReading;
+  knowledgeSkill: FactorReading;
+  capacity: FactorReading;
+  motives: FactorReading;
 }
 
-type BemCellKey = keyof BehaviorEngineeringModel;
+type FactorKey = keyof PerformanceFactors;
 
-const BEM_TEMPLATE: Record<BemCellKey, { category: CellReading['category']; cell: string; implies: InterventionType }> = {
-  information: { category: 'environmental', cell: 'Information — expectations, guidance, feedback', implies: 'performance-support' },
-  instrumentation: { category: 'environmental', cell: 'Instrumentation — tools, resources, processes', implies: 'environmental-fix' },
-  incentives: { category: 'environmental', cell: 'Incentives — consequences, rewards, alignment', implies: 'environmental-fix' },
-  knowledgeSkill: { category: 'individual', cell: 'Knowledge & Skill — what the performer knows / can do', implies: 'instruction' },
-  capacity: { category: 'individual', cell: 'Capacity — fit between performer and task demands', implies: 'environmental-fix' },
-  motives: { category: 'individual', cell: 'Motives — does the performer want to perform', implies: 'coaching' },
+const FACTOR_TEMPLATE: Record<FactorKey, { category: FactorReading['category']; factor: string; implies: InterventionType }> = {
+  information: { category: 'environmental', factor: 'Information — expectations, guidance, feedback', implies: 'performance-support' },
+  instrumentation: { category: 'environmental', factor: 'Instrumentation — tools, resources, processes', implies: 'environmental-fix' },
+  incentives: { category: 'environmental', factor: 'Incentives — consequences, rewards, alignment', implies: 'environmental-fix' },
+  knowledgeSkill: { category: 'individual', factor: 'Knowledge & Skill — what the performer knows / can do', implies: 'instruction' },
+  capacity: { category: 'individual', factor: 'Capacity — fit between performer and task demands', implies: 'environmental-fix' },
+  motives: { category: 'individual', factor: 'Motives — does the performer want to perform', implies: 'coaching' },
 };
 
 // ── The intervention paradigm ───────────────────────────────────────
@@ -157,8 +168,8 @@ export type InterventionType =
   | 'reference'            // searchable knowledge — looked up, not "trained"
   | 'practice'             // deliberate practice / simulation — the skill exists, needs fluency
   | 'assessment'           // verify or certify — measure, do not teach
-  | 'coaching'             // a feedback loop — transfer, motivation, the Complex domain
-  | 'probe'                // a safe-to-fail constraint probe — the Complex domain
+  | 'coaching'             // a feedback loop — transfer, motivation, the Emergent regime
+  | 'probe'                // a safe-to-fail constraint probe — the Emergent regime
   | 'environmental-fix'    // tools / information / incentives — not a content deliverable
   | 'no-intervention';     // the gap is acceptable or self-resolving
 
@@ -175,60 +186,61 @@ export interface InterventionOption {
 
 // ── Diagnosis ───────────────────────────────────────────────────────
 
-export type PerformanceMethod = 'hpt-gap-analysis' | 'dispositional-read' | 'stabilise-then-read';
+export type PerformanceMethod = 'gap-analysis' | 'dispositional-read' | 'stabilise-first';
 
 export interface Diagnosis {
   gapId: string;
-  domain: CynefinDomain;
+  domain: WorkRegime;
   method: PerformanceMethod;
-  /** For the HPT method — the six-cell reading. Absent for Complex. */
-  bem?: BehaviorEngineeringModel;
-  /** The dominant deficiency cell(s) by name. */
+  /** For the gap-analysis method — the six-factor reading. Absent for Emergent. */
+  factors?: PerformanceFactors;
+  /** The dominant deficiency factor(s) by name. */
   rootCauses: string[];
   /**
-   * Mager & Pipe's discriminating question: would the performer do it
-   * correctly if their life depended on it? If yes, it is NOT a skill
-   * deficiency — and instruction is the wrong intervention.
+   * The discriminating question: could the performer perform correctly
+   * under ideal conditions (full motivation, no obstacles)? If yes, it
+   * is NOT a skill deficiency — and instruction is the wrong intervention.
    */
   skillDeficiency: boolean;
   /** Whether the performer has performed this competency well before —
    *  decay of fluency rather than absence of the skill. */
   performedWellBefore?: boolean;
   /** For the dispositional method — the disposition read instead of a gap. */
-  disposition?: { domain: CynefinDomain; vector: string; stance: string; method: string };
+  disposition?: { domain: WorkRegime; vector: string; stance: string; method: string };
   reasoning: string[];
-  /** An honest note when classic HPT is the wrong frame for this gap. */
+  /** An honest note when gap analysis is the wrong frame for this gap. */
   caveat?: string;
 }
 
 export interface DiagnoseInput {
   gap: PerformanceGap;
-  /** Evidence about the six BEM cells — for Clear/Complicated gaps.
-   *  Any cell not supplied is assumed adequate. */
-  bemEvidence?: Partial<Record<BemCellKey, { adequate: boolean; evidence: string }>>;
-  /** Agent trajectories — for Complex gaps, the dispositional read
+  /** Evidence about the six performance factors — for Evident/Knowable
+   *  gaps. Any factor not supplied is assumed adequate. */
+  factorEvidence?: Partial<Record<FactorKey, { adequate: boolean; evidence: string }>>;
+  /** Agent trajectories — for Emergent gaps, the dispositional read
    *  composes `agent-disposition.ts` off these. */
   trajectories?: readonly AgentTrajectory[];
-  /** Mager-Pipe — could the performer do it if their life depended on it? */
-  couldDoIfLifeDependedOnIt?: boolean;
+  /** The discriminating question — could the performer perform correctly
+   *  under ideal conditions? */
+  couldPerformUnderIdealConditions?: boolean;
   /** Has the performer ever performed this competency well before? */
   performedWellBefore?: boolean;
 }
 
-/** Decide which consulting method the work's Cynefin domain calls for. */
-function methodForDomain(domain: CynefinDomain): PerformanceMethod {
-  if (domain === 'Complex') return 'dispositional-read';
-  if (domain === 'Chaotic') return 'stabilise-then-read';
-  return 'hpt-gap-analysis';
+/** Decide which consulting method the work regime calls for. */
+function methodForRegime(domain: WorkRegime): PerformanceMethod {
+  if (domain === 'Emergent') return 'dispositional-read';
+  if (domain === 'Turbulent') return 'stabilise-first';
+  return 'gap-analysis';
 }
 
-/** Build the six-cell BEM from supplied evidence (unsupplied = adequate). */
-function buildBem(evidence: DiagnoseInput['bemEvidence']): BehaviorEngineeringModel {
-  const cell = (key: BemCellKey): CellReading => {
-    const t = BEM_TEMPLATE[key];
+/** Build the six-factor reading from supplied evidence (unsupplied = adequate). */
+function buildFactors(evidence: DiagnoseInput['factorEvidence']): PerformanceFactors {
+  const readFactor = (key: FactorKey): FactorReading => {
+    const t = FACTOR_TEMPLATE[key];
     const e = evidence?.[key];
     return {
-      cell: t.cell,
+      factor: t.factor,
       category: t.category,
       adequate: e?.adequate ?? true,
       evidence: e?.evidence ?? 'no deficiency evidence supplied — assumed adequate.',
@@ -236,65 +248,65 @@ function buildBem(evidence: DiagnoseInput['bemEvidence']): BehaviorEngineeringMo
     };
   };
   return {
-    information: cell('information'),
-    instrumentation: cell('instrumentation'),
-    incentives: cell('incentives'),
-    knowledgeSkill: cell('knowledgeSkill'),
-    capacity: cell('capacity'),
-    motives: cell('motives'),
+    information: readFactor('information'),
+    instrumentation: readFactor('instrumentation'),
+    incentives: readFactor('incentives'),
+    knowledgeSkill: readFactor('knowledgeSkill'),
+    capacity: readFactor('capacity'),
+    motives: readFactor('motives'),
   };
 }
 
 /**
- * Diagnose a performance gap. Routes on the Cynefin domain of the work:
- * HPT gap analysis for Clear/Complicated, a dispositional read for
- * Complex, stabilisation for Chaotic.
+ * Diagnose a performance gap. Routes on the work regime: gap analysis
+ * for Evident/Knowable work, a dispositional read for Emergent work,
+ * stabilisation for Turbulent work.
  */
 export function diagnose(input: DiagnoseInput): Diagnosis {
   const { gap } = input;
 
-  // Determine the domain. Honour an explicit domain; else, for an agent
+  // Determine the regime. Honour an explicit one; else, for an agent
   // with trajectories, read it off the disposition; else default to
-  // Complicated (most structured workplace tasks live there).
-  let domain: CynefinDomain;
+  // Knowable (most structured workplace tasks live there).
+  let domain: WorkRegime;
   if (gap.domain) {
     domain = gap.domain;
   } else if (gap.performer.kind === 'agent' && input.trajectories && input.trajectories.length > 0) {
-    domain = assessDisposition(input.trajectories).cynefin.domain;
+    domain = assessDisposition(input.trajectories).regime.name;
   } else {
-    domain = 'Complicated';
+    domain = 'Knowable';
   }
-  const method = methodForDomain(domain);
+  const method = methodForRegime(domain);
   const reasoning: string[] = [];
 
-  // ── Complex domain — refuse the gap frame, read disposition. ──
+  // ── Emergent regime — refuse the gap frame, read disposition. ──
   if (method === 'dispositional-read') {
     const traj = input.trajectories ?? [];
     const disp = traj.length > 0 ? assessDisposition(traj) : null;
-    reasoning.push('The work sits in the Complex domain — a complex adaptive system has dispositions and propensities, not a fixable gap. Classic HPT gap analysis (actual vs. exemplary) does not apply.');
+    reasoning.push('The work sits in the Emergent regime — a complex, adaptive system has dispositions and propensities, not a fixable gap. A classic actual-vs-exemplary gap analysis does not apply.');
     reasoning.push('Composing agent-disposition.ts: read the disposition and the vector of change, not a score against an ideal.');
     return {
       gapId: gap.id,
       domain,
       method,
-      rootCauses: ['not applicable — the Complex domain has no single fixable root cause'],
+      rootCauses: ['not applicable — the Emergent regime has no single fixable root cause'],
       skillDeficiency: false,
       ...(disp ? {
         disposition: {
-          domain: disp.cynefin.domain,
+          domain: disp.regime.name,
           vector: `${disp.vector.direction} — ${disp.vector.basis}`,
-          stance: disp.cynefin.stance,
+          stance: disp.regime.stance,
           method: disp.method,
         },
       } : {}),
       reasoning,
-      caveat: 'This gap was framed as actual-vs-desired, but the work is Complex. Do NOT build instruction toward an ideal state. Run safe-to-fail probes (agent-disposition.buildProbe), sense which cohere, and steer by vector.',
+      caveat: 'This gap was framed as actual-vs-desired, but the work is Emergent. Do NOT build instruction toward an ideal state. Run safe-to-fail probes (agent-disposition.buildProbe), sense which cohere, and steer by vector.',
     };
   }
 
-  // ── Chaotic domain — stabilise first. ──
-  if (method === 'stabilise-then-read') {
-    reasoning.push('The work sits in the Chaotic domain — behaviour is not yet patterned. No intervention can be analysed until the situation is stabilised.');
+  // ── Turbulent regime — stabilise first. ──
+  if (method === 'stabilise-first') {
+    reasoning.push('The work sits in the Turbulent regime — behaviour is not yet patterned. No intervention can be analysed until the situation is stabilised.');
     return {
       gapId: gap.id,
       domain,
@@ -302,44 +314,45 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
       rootCauses: ['instability — there is no patterned behaviour to diagnose'],
       skillDeficiency: false,
       reasoning,
-      caveat: 'Act first to stabilise (act ▸ sense ▸ respond), THEN re-diagnose. Authoring instruction now would be instruction toward a target that does not yet exist.',
+      caveat: 'Act first to stabilise (act, then read), THEN re-diagnose. Authoring instruction now would be instruction toward a target that does not yet exist.',
     };
   }
 
-  // ── Clear / Complicated — HPT gap analysis (Gilbert + Mager-Pipe). ──
-  const bem = buildBem(input.bemEvidence);
-  reasoning.push(`The work sits in the ${domain} domain — a knowable gap; HPT gap analysis (Gilbert BEM + Mager-Pipe) applies.`);
+  // ── Evident / Knowable — gap analysis (cause-factor + discriminator). ──
+  const factors = buildFactors(input.factorEvidence);
+  reasoning.push(`The work sits in the ${domain} regime — a knowable gap; cause-factor gap analysis applies.`);
 
-  // Gilbert: examine the environmental cells first — they account for
-  // most performance gaps and are cheaper to fix than re-skilling people.
-  const deficientCells = (Object.keys(bem) as BemCellKey[])
-    .map(k => bem[k])
+  // Examine the environmental factors first — they account for most
+  // performance gaps and are cheaper to fix than re-skilling people.
+  const deficientFactors = (Object.keys(factors) as FactorKey[])
+    .map(k => factors[k])
     .filter(c => !c.adequate);
-  const envDeficient = deficientCells.filter(c => c.category === 'environmental');
-  const indDeficient = deficientCells.filter(c => c.category === 'individual');
+  const envDeficient = deficientFactors.filter(c => c.category === 'environmental');
+  const indDeficient = deficientFactors.filter(c => c.category === 'individual');
 
-  // Mager & Pipe: is this genuinely a skill/knowledge deficiency?
-  // If they could do it if their life depended on it → it is NOT.
+  // The discriminating question: is this genuinely a skill/knowledge
+  // deficiency? If the performer could do it under ideal conditions, it
+  // is not — instruction would teach what is already known.
   let skillDeficiency: boolean;
-  if (input.couldDoIfLifeDependedOnIt === true) {
+  if (input.couldPerformUnderIdealConditions === true) {
     skillDeficiency = false;
-    reasoning.push('Mager-Pipe: the performer COULD do it if their life depended on it — therefore it is not a skill deficiency. Instruction will not help; look to incentives, tools, or expectations.');
-  } else if (input.couldDoIfLifeDependedOnIt === false) {
+    reasoning.push('Discriminating question: the performer COULD perform under ideal conditions — therefore it is not a skill deficiency. Instruction will not help; look to incentives, tools, or expectations.');
+  } else if (input.couldPerformUnderIdealConditions === false) {
     skillDeficiency = true;
-    reasoning.push('Mager-Pipe: the performer could NOT do it even if their life depended on it — a genuine skill/knowledge deficiency.');
+    reasoning.push('Discriminating question: the performer could NOT perform even under ideal conditions — a genuine skill/knowledge deficiency.');
   } else {
-    skillDeficiency = bem.knowledgeSkill.adequate === false;
-    reasoning.push(`Mager-Pipe question not answered directly; inferring from the Knowledge & Skill cell (${skillDeficiency ? 'deficient' : 'adequate'}).`);
+    skillDeficiency = factors.knowledgeSkill.adequate === false;
+    reasoning.push(`Discriminating question not answered directly; inferring from the Knowledge & Skill factor (${skillDeficiency ? 'deficient' : 'adequate'}).`);
   }
 
   const rootCauses: string[] = [];
   if (envDeficient.length > 0) {
-    reasoning.push(`Environmental deficiencies found (${envDeficient.length}) — Gilbert: the workplace, not the performer, is the dominant lever. Fix these before considering instruction.`);
-    rootCauses.push(...envDeficient.map(c => c.cell));
+    reasoning.push(`Environmental deficiencies found (${envDeficient.length}) — the workplace, not the performer, is the dominant lever. Fix these before considering instruction.`);
+    rootCauses.push(...envDeficient.map(c => c.factor));
   }
-  if (skillDeficiency) rootCauses.push(bem.knowledgeSkill.cell);
-  if (indDeficient.some(c => c.cell.startsWith('Motives'))) rootCauses.push(bem.motives.cell);
-  if (indDeficient.some(c => c.cell.startsWith('Capacity'))) rootCauses.push(bem.capacity.cell);
+  if (skillDeficiency) rootCauses.push(factors.knowledgeSkill.factor);
+  if (indDeficient.some(c => c.factor.startsWith('Motives'))) rootCauses.push(factors.motives.factor);
+  if (indDeficient.some(c => c.factor.startsWith('Capacity'))) rootCauses.push(factors.capacity.factor);
   if (rootCauses.length === 0) {
     rootCauses.push('no deficiency isolated — the gap may be acceptable variance, or the desired state may be mis-stated.');
   }
@@ -352,7 +365,7 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
     gapId: gap.id,
     domain,
     method,
-    bem,
+    factors,
     rootCauses,
     skillDeficiency,
     ...(input.performedWellBefore !== undefined ? { performedWellBefore: input.performedWellBefore } : {}),
@@ -417,31 +430,31 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
   const rationale = new Map<InterventionType, string>();
   const ruledOut = new Map<InterventionType, string>();
 
-  // ── Complex domain — probes + coaching, never instruction. ──
+  // ── Emergent regime — probes + coaching, never instruction. ──
   if (diagnosis.method === 'dispositional-read') {
     select.add('probe');
-    rationale.set('probe', 'The Complex domain calls for safe-to-fail constraint probes (probe ▸ sense ▸ respond). Compose agent-disposition.buildProbe; amplify what coheres.');
+    rationale.set('probe', 'The Emergent regime calls for safe-to-fail constraint probes — change a constraint, observe, steer. Compose agent-disposition.buildProbe; amplify what coheres.');
     select.add('coaching');
-    rationale.set('coaching', 'A feedback loop steers a Complex system by vector. Coaching reads the disposition with the performer rather than prescribing a target.');
-    ruledOut.set('instruction', 'You cannot instruct your way through the Complex domain — instruction presumes a knowable ideal state, which a complex adaptive system does not have.');
-    ruledOut.set('assessment', 'A score-vs-exemplary assessment imports the gap frame the Complex domain rejects.');
+    rationale.set('coaching', 'A feedback loop steers an Emergent system by vector. Coaching reads the disposition with the performer rather than prescribing a target.');
+    ruledOut.set('instruction', 'You cannot instruct your way through the Emergent regime — instruction presumes a knowable ideal state, which a complex, adaptive system does not have.');
+    ruledOut.set('assessment', 'A score-vs-exemplary assessment imports the gap frame the Emergent regime rejects.');
     for (const t of ALL_INTERVENTIONS) {
       if (!select.has(t) && !ruledOut.has(t) && t !== 'no-intervention') {
-        ruledOut.set(t, 'not the primary lever for a Complex-domain disposition — probes and coaching come first.');
+        ruledOut.set(t, 'not the primary lever for an Emergent-regime disposition — probes and coaching come first.');
       }
     }
-  } else if (diagnosis.method === 'stabilise-then-read') {
+  } else if (diagnosis.method === 'stabilise-first') {
     select.add('environmental-fix');
-    rationale.set('environmental-fix', 'Chaotic work must be stabilised by a decisive act before any content intervention can be designed.');
+    rationale.set('environmental-fix', 'Turbulent work must be stabilised by a decisive act before any content intervention can be designed.');
     for (const t of ALL_INTERVENTIONS) {
       if (!select.has(t) && t !== 'no-intervention') {
         ruledOut.set(t, 'premature — the situation is not yet patterned enough to design this intervention against.');
       }
     }
   } else {
-    // ── Clear / Complicated — HPT selection. ──
-    const bem = diagnosis.bem!;
-    const envDeficient = [bem.information, bem.instrumentation, bem.incentives].filter(c => !c.adequate);
+    // ── Evident / Knowable — gap-analysis selection. ──
+    const factors = diagnosis.factors!;
+    const envDeficient = [factors.information, factors.instrumentation, factors.incentives].filter(c => !c.adequate);
 
     // 0. An unverified gap is verified before anything is built.
     if (gap.modalStatus === 'Hypothetical') {
@@ -449,14 +462,14 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
       rationale.set('assessment', 'The gap is still Hypothetical — measure it before investing in any intervention. An assessment promotes the gap claim to Asserted (or dismisses it).');
     }
 
-    // 1. Environmental deficiencies dominate — Gilbert. Fix the workplace.
-    if (bem.instrumentation.adequate === false || bem.incentives.adequate === false) {
+    // 1. Environmental deficiencies dominate — fix the workplace.
+    if (factors.instrumentation.adequate === false || factors.incentives.adequate === false) {
       select.add('environmental-fix');
-      rationale.set('environmental-fix', `Environmental deficiency in ${[!bem.instrumentation.adequate ? 'tools/process' : '', !bem.incentives.adequate ? 'incentives/consequences' : ''].filter(Boolean).join(' + ')}. Gilbert: the workplace is the lever — a course cannot fix a broken tool or a misaligned incentive.`);
+      rationale.set('environmental-fix', `Environmental deficiency in ${[!factors.instrumentation.adequate ? 'tools/process' : '', !factors.incentives.adequate ? 'incentives/consequences' : ''].filter(Boolean).join(' + ')}. The workplace is the lever — a course cannot fix a broken tool or a misaligned incentive.`);
     }
-    if (bem.information.adequate === false) {
+    if (factors.information.adequate === false) {
       select.add('performance-support');
-      rationale.set('performance-support', 'The Information cell is deficient — expectations or guidance are not available at the moment of performance. A job aid delivers the information in the flow of work; it does not require it to be carried in memory.');
+      rationale.set('performance-support', 'The Information factor is deficient — expectations or guidance are not available at the moment of performance. A job aid delivers the information in the flow of work; it does not require it to be carried in memory.');
     }
 
     // 2. Genuine skill deficiency — but instruction vs. job aid vs.
@@ -480,16 +493,16 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     }
 
     // 3. Motivation — coaching, not content.
-    if (bem.motives.adequate === false) {
+    if (factors.motives.adequate === false) {
       select.add('coaching');
-      rationale.set('coaching', 'The Motives cell is deficient — the performer can perform but is not choosing to. A course cannot install motivation; a coaching feedback loop addresses it.');
+      rationale.set('coaching', 'The Motives factor is deficient — the performer can perform but is not choosing to. A course cannot install motivation; a coaching feedback loop addresses it.');
       ruledOut.set('instruction', (ruledOut.get('instruction') ?? '') + ' A motivation gap is not closed by teaching what is already known.');
     }
 
     // 4. Capacity — an environmental/selection matter, not content.
-    if (bem.capacity.adequate === false) {
+    if (factors.capacity.adequate === false) {
       select.add('environmental-fix');
-      rationale.set('environmental-fix', (rationale.get('environmental-fix') ? rationale.get('environmental-fix') + ' ' : '') + 'The Capacity cell is deficient — the fit between performer and task is wrong. This is a selection / job-design matter, not a content matter.');
+      rationale.set('environmental-fix', (rationale.get('environmental-fix') ? rationale.get('environmental-fix') + ' ' : '') + 'The Capacity factor is deficient — the fit between performer and task is wrong. This is a selection / job-design matter, not a content matter.');
     }
 
     // Default ruled-out reasons for anything still unselected.
@@ -497,7 +510,7 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
       if (select.has(t) || ruledOut.has(t) || t === 'no-intervention') continue;
       if (t === 'instruction') ruledOut.set(t, 'No genuine skill deficiency in a frequent task was found — instruction is not warranted.');
       else if (t === 'reference') ruledOut.set(t, 'The diagnosis did not isolate a look-it-up knowledge need.');
-      else if (t === 'probe') ruledOut.set(t, 'Probes are a Complex-domain tool; this work is Clear/Complicated, where a gap can be analysed directly.');
+      else if (t === 'probe') ruledOut.set(t, 'Probes are an Emergent-regime tool; this work is Evident/Knowable, where a gap can be analysed directly.');
       else ruledOut.set(t, 'Not indicated by the diagnosis.');
     }
   }
@@ -509,7 +522,6 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
       type,
       selected,
       rationale: selected ? (rationale.get(type) ?? 'selected by the diagnosis.') : (ruledOut.get(type) ?? 'not selected.'),
-      ...(selected && ruledOut.has(type) ? {} : {}),
       ...(!selected && ruledOut.has(type) ? { ruledOutBecause: ruledOut.get(type)! } : {}),
     };
     const authoring = selected ? authoringFor(type, direction) : undefined;
@@ -525,8 +537,8 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
   const summary = contentWarranted
     ? `Content IS warranted for this gap: ${headline}. Authored ${describeDirection(direction)}`
     : `Content is NOT the answer for this gap: ${headline}. ${diagnosis.method === 'dispositional-read'
-        ? 'The Complex domain calls for probes, not courses.'
-        : 'The diagnosis isolated an environmental / motivational / capacity cause that no course can fix — Gilbert\'s finding that most gaps are environmental.'}`;
+        ? 'The Emergent regime calls for probes, not courses.'
+        : 'The diagnosis isolated an environmental / motivational / capacity cause that no course can fix — the common finding that most gaps are environmental.'}`;
 
   return {
     gapId: gap.id,
@@ -539,25 +551,25 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
   };
 }
 
-// ── Evaluation — closing the loop (Kirkpatrick → cg:supersedes) ──────
+// ── Evaluation — closing the loop (four-level evaluation → cg:supersedes) ─
 
 /**
- * Kirkpatrick's four levels expressed as a modal-status progression:
- *   L1 reaction  — a recorded response (Hypothetical evidence of value).
- *   L2 learning  — an assessment result (Asserted competency, or not).
- *   L3 behaviour — evidence the behaviour transferred to real work
- *                  (an LRS statement / a trajectory step in the work
- *                  context — this is where the loop touches the gap).
- *   L4 results   — the gap's observed-state, re-measured. If it closed,
- *                  the intervention worked; the new state supersedes the
- *                  old (`cg:supersedes`).
+ * A four-level evaluation, expressed as a modal-status progression:
+ *   response   — a recorded reaction (Hypothetical evidence of value).
+ *   capability — an assessment result (Asserted competency, or not).
+ *   transfer   — evidence the behaviour transferred to real work (an LRS
+ *                statement / a trajectory step in the work context —
+ *                this is where the loop touches the gap).
+ *   outcome    — the gap's observed-state, re-measured. If it closed,
+ *                the intervention worked; the new state supersedes the
+ *                old (`cg:supersedes`).
  */
 export interface EvaluateInput {
   plan: InterventionPlan;
   gap: PerformanceGap;
-  level1Reaction?: { favourable: boolean; note: string };
-  level2Learning?: { assessed: boolean; passed: boolean; note: string };
-  level3Behaviour?: { transferred: boolean; evidence: string };
+  response?: { favourable: boolean; note: string };
+  capability?: { assessed: boolean; passed: boolean; note: string };
+  transfer?: { transferred: boolean; evidence: string };
   /** The re-measured observed performance after the intervention. */
   newObserved?: string;
 }
@@ -566,10 +578,10 @@ export interface InterventionEvaluation {
   gapId: string;
   interventions: InterventionType[];
   levels: {
-    level1?: { favourable: boolean; note: string };
-    level2?: { assessed: boolean; passed: boolean; note: string };
-    level3?: { transferred: boolean; evidence: string };
-    level4?: { gapClosed: boolean; before: string; after: string };
+    response?: { favourable: boolean; note: string };
+    capability?: { assessed: boolean; passed: boolean; note: string };
+    transfer?: { transferred: boolean; evidence: string };
+    outcome?: { gapClosed: boolean; before: string; after: string };
   };
   verdict: 'closed' | 'improved' | 'no-change' | 'worsened' | 'too-early';
   /** The descriptor state this evaluation supersedes — the old gap.observed. */
@@ -581,17 +593,17 @@ export interface InterventionEvaluation {
 export function evaluateIntervention(input: EvaluateInput): InterventionEvaluation {
   const { plan, gap } = input;
   const levels: InterventionEvaluation['levels'] = {};
-  if (input.level1Reaction) levels.level1 = input.level1Reaction;
-  if (input.level2Learning) levels.level2 = input.level2Learning;
-  if (input.level3Behaviour) levels.level3 = input.level3Behaviour;
+  if (input.response) levels.response = input.response;
+  if (input.capability) levels.capability = input.capability;
+  if (input.transfer) levels.transfer = input.transfer;
 
   let verdict: InterventionEvaluation['verdict'] = 'too-early';
-  let nextAction = 'Continue tracking — Level 3 (transfer to real work) and Level 4 (gap re-measured) evidence is not yet in.';
+  let nextAction = 'Continue tracking — transfer (to real work) and outcome (gap re-measured) evidence is not yet in.';
 
   if (input.newObserved !== undefined) {
     const gapClosed = input.newObserved.trim().toLowerCase() === gap.desired.trim().toLowerCase()
-      || (input.level3Behaviour?.transferred === true && input.level2Learning?.passed === true);
-    levels.level4 = { gapClosed, before: gap.observed, after: input.newObserved };
+      || (input.transfer?.transferred === true && input.capability?.passed === true);
+    levels.outcome = { gapClosed, before: gap.observed, after: input.newObserved };
     if (gapClosed) {
       verdict = 'closed';
       nextAction = `The gap is closed. Emit a cg:supersedes-linked PerformanceGap descriptor whose observed-state is "${input.newObserved}" and modalStatus Asserted; retire the intervention.`;
@@ -599,12 +611,12 @@ export function evaluateIntervention(input: EvaluateInput): InterventionEvaluati
       verdict = 'improved';
       nextAction = 'Performance improved but the gap is not fully closed. Re-diagnose against the new observed-state — the remaining gap may now have a different root cause.';
     } else {
-      verdict = input.level2Learning?.passed === false ? 'no-change' : 'no-change';
-      nextAction = 'No change in observed performance despite the intervention. This is a Level 3 transfer failure — re-diagnose; the original cause analysis likely mis-identified the root cause (often: the real cause was environmental).';
+      verdict = 'no-change';
+      nextAction = 'No change in observed performance despite the intervention. This is a transfer failure — re-diagnose; the original cause analysis likely mis-identified the root cause (often: the real cause was environmental).';
     }
-  } else if (input.level3Behaviour?.transferred === false) {
+  } else if (input.transfer?.transferred === false) {
     verdict = 'no-change';
-    nextAction = 'Level 2 may have passed but the behaviour did not transfer to real work — a classic transfer failure. Add performance-support / coaching at the point of work, or re-diagnose.';
+    nextAction = 'Capability may have been demonstrated but the behaviour did not transfer to real work — a classic transfer failure. Add performance-support / coaching at the point of work, or re-diagnose.';
   }
 
   return {

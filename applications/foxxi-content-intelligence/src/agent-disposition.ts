@@ -1,43 +1,49 @@
 /**
- * Agent Performance Technology — the complexity-aware, causally-grounded
- * practice of a human consulting on a team of AI agents.
+ * Agent Performance Technology — reading a team of agents as a complex,
+ * adaptive system rather than a fixable machine.
  *
- * This is deliberately NOT Human Performance Technology applied to
- * agents. HPT's gap analysis (actual vs. exemplary, close-the-gap to an
- * ideal future state — Gilbert's Behavior Engineering Model) is a
- * Complicated-domain method: sense ▸ analyse ▸ respond, an expert closes
- * a knowable gap. A team of agents is a COMPLEX adaptive system.
+ * A single agent on a knowable task can be gap-analysed: measure actual
+ * against exemplary, close the difference. A *team* of agents adapting
+ * to open-ended work cannot. It has no single exemplary state to close
+ * toward — it has dispositions and propensities, and a direction of
+ * drift. So this module refuses the gap / ideal-state frame and instead:
+ *   · reads DISPOSITION — what the team is propense to do — not a score;
+ *   · classifies the WORK REGIME — how knowable the cause→effect
+ *     relationship is — because that decides which method is even valid;
+ *   · manages CONSTRAINTS through safe-to-fail probes, not outcomes;
+ *   · steers by VECTOR — a direction from the present — not toward a
+ *     fixed destination.
  *
- * So this module refuses the gap/ideal-state frame. Following Snowden
- * (Cynefin ▸ Estuarine mapping, Vector Theory of Change):
- *   · a complex system has DISPOSITIONS and propensities, not a fixable
- *     gap — so we read disposition, not a score-vs-ideal;
- *   · you manage CONSTRAINTS, not outcomes — so a probe nudges a
- *     constraint, never prescribes a target;
- *   · you steer by VECTOR (direction from the present), not toward a
- *     destination;
- *   · you run SAFE-TO-FAIL probes — probe ▸ sense ▸ respond.
+ * It needs no separate causal apparatus: the substrate's own modal
+ * statuses already carry it. An Asserted step is something observed; a
+ * Hypothetical step is an intention or a probe — a deliberate change
+ * whose effect is read after the fact; a Counterfactual step is a road
+ * the team considered and did not take. Observation, intervention, and
+ * the road-not-taken — nothing more is needed.
  *
- * And Pearl's ladder, which locks into the above rather than fighting it:
- *   · "no causality" in a complex system means no *forward predictive*
- *     causality. Pearl rung 2 (do(x), intervention) IS a safe-to-fail
- *     probe; rung 3 (counterfactual) IS retrospective coherence.
- *   · The agent-trajectory layer already records this: Asserted steps
- *     are observed (rung 1), Hypothetical steps are intentions/probes
- *     (rung 2), Counterfactual steps are the rung-3 roads not taken.
+ * This synthesis is the project's own. It is informed by established
+ * work in complexity science, sense-making and performance improvement,
+ * but introduces its own vocabulary and model (see
+ * SOURCES-AND-ATTRIBUTION.md).
  *
- * Emergent from Interego: composes the agent-trajectory layer; an agent
- * team's disposition is read off its descriptor trajectories. No new
- * ontology term; no gap; no ideal future state.
+ * Emergent from Interego: composes the agent-trajectory layer; a team's
+ * disposition is read off its descriptor trajectories. No new ontology
+ * term; no gap; no ideal future state.
  */
 
 import type { AgentTrajectory, TrajectoryStep } from './agent-trajectory.js';
 
 // ── Dispositional reading ───────────────────────────────────────────
 
-export type CynefinDomain = 'Clear' | 'Complicated' | 'Complex' | 'Chaotic';
+/**
+ * The work regime — how knowable the relationship between act and
+ * outcome is. The regime, not the team, decides which method is valid:
+ * you can gap-analyse Evident/Knowable work; you can only probe Emergent
+ * work; Turbulent work must first be stabilised.
+ */
+export type WorkRegime = 'Evident' | 'Knowable' | 'Emergent' | 'Turbulent';
 
-/** A compact disposition snapshot — the rung-2 baseline for a probe. */
+/** A compact disposition snapshot — the baseline a probe is read against. */
 export interface DispositionSnapshot {
   asserted: number;
   hypothetical: number;
@@ -45,7 +51,7 @@ export interface DispositionSnapshot {
   deliberationRatio: number;
   explorationRatio: number;
   toolCallSuccessRate: number;
-  cynefinDomain: CynefinDomain;
+  regime: WorkRegime;
   takenAt: string;
 }
 
@@ -68,8 +74,8 @@ export interface TeamDisposition {
   toolCallSuccessRate: number;
   /** Named propensities read off the signals — descriptive, not good/bad. */
   dispositions: Array<{ name: string; reading: string; signal: string }>;
-  /** Cynefin placement of the team's behaviour + the stance it calls for. */
-  cynefin: { domain: CynefinDomain; rationale: string; stance: string };
+  /** Work-regime placement of the team's behaviour + the stance it calls for. */
+  regime: { name: WorkRegime; rationale: string; stance: string };
   /** Vector of change — direction from the present. NOT a target/gap. */
   vector: { direction: string; basis: string };
   /** Stated plainly so no consumer mistakes this for a gap analysis. */
@@ -126,28 +132,28 @@ export function assessDisposition(trajectories: readonly AgentTrajectory[]): Tea
     granularityBalance: { task, subtask, toolCall },
     toolCallSuccessRate,
     dispositions,
-    cynefin: placeCynefin({ explorationRatio, planRevisionRatio, task, subtask, toolCall, total, toolCallSuccessRate }),
+    regime: placeRegime({ explorationRatio, planRevisionRatio, task, subtask, toolCall, total, toolCallSuccessRate }),
     vector: readVector(trajectories),
-    method: 'Dispositional read (Cynefin / Vector Theory of Change). This is NOT a gap analysis — there is no ideal future state and no score-vs-exemplary. It describes what the team is propense to do and which way it is drifting.',
+    method: 'Dispositional read. This is NOT a gap analysis — there is no ideal future state and no score-vs-exemplary. It describes what the team is propense to do and which way it is drifting.',
   };
 }
 
-/** Heuristic Cynefin placement of the team's behaviour. */
-function placeCynefin(s: {
+/** Heuristic work-regime placement of the team's behaviour. */
+function placeRegime(s: {
   explorationRatio: number; planRevisionRatio: number;
   task: number; subtask: number; toolCall: number; total: number; toolCallSuccessRate: number;
-}): TeamDisposition['cynefin'] {
+}): TeamDisposition['regime'] {
   const structured = (s.task + s.subtask) / (s.total || 1) >= 0.25;
   if (s.toolCallSuccessRate < 0.34 && !structured) {
-    return { domain: 'Chaotic', rationale: 'low success, no structure — behaviour is not yet patterned.', stance: 'act ▸ sense ▸ respond — stabilise first with a decisive intervention, then re-read.' };
+    return { name: 'Turbulent', rationale: 'low success, no structure — behaviour is not yet patterned.', stance: 'act, then read — stabilise first with a decisive intervention, then re-read.' };
   }
   if (s.explorationRatio >= 0.12 || s.planRevisionRatio >= 0.25) {
-    return { domain: 'Complex', rationale: 'the team explores counterfactual branches and revises plans in flight — cause and effect are only coherent in retrospect.', stance: 'probe ▸ sense ▸ respond — run safe-to-fail constraint probes; amplify what coheres, dampen what does not. Do NOT gap-analyse.' };
+    return { name: 'Emergent', rationale: 'the team explores counterfactual branches and revises plans in flight — cause and effect are only coherent in retrospect.', stance: 'probe, observe, and steer — run safe-to-fail constraint probes; amplify what coheres, dampen what does not. Do NOT gap-analyse.' };
   }
   if (structured && s.toolCallSuccessRate >= 0.6) {
-    return { domain: 'Complicated', rationale: 'structured, hierarchically planned work with reliable outcomes — expert analysis applies.', stance: 'sense ▸ analyse ▸ respond — good practice exists; analysis can find a sound intervention.' };
+    return { name: 'Knowable', rationale: 'structured, hierarchically planned work with reliable outcomes — expert analysis applies.', stance: 'analyse, then apply — good practice exists; analysis can find a sound intervention.' };
   }
-  return { domain: 'Clear', rationale: 'repetitive, reliable, low-variance behaviour — the relationship between act and outcome is self-evident.', stance: 'sense ▸ categorise ▸ respond — apply best practice; watch only for drift.' };
+  return { name: 'Evident', rationale: 'repetitive, reliable, low-variance behaviour — the relationship between act and outcome is self-evident.', stance: 'categorise, then apply — apply the established practice; watch only for drift.' };
 }
 
 /** Direction of drift from the present — NOT a destination. */
@@ -182,24 +188,23 @@ export function snapshot(d: TeamDisposition): DispositionSnapshot {
     deliberationRatio: d.modalBalance.deliberationRatio,
     explorationRatio: d.modalBalance.explorationRatio,
     toolCallSuccessRate: d.toolCallSuccessRate,
-    cynefinDomain: d.cynefin.domain,
+    regime: d.regime.name,
     takenAt: new Date().toISOString(),
   };
 }
 
-// ── Safe-to-fail probes (Pearl rung 2 — do(constraint)) ─────────────
+// ── Safe-to-fail probes (a deliberate, reversible change to a constraint) ─
 
-/** Snowden's safe-to-fail portfolio: probes are run in parallel, some
- *  coherent with the current disposition, some oblique, some deliberately
- *  contradictory. */
+/** A portfolio of probes run in parallel — some coherent with the current
+ *  disposition, some oblique, some deliberately contradictory. */
 export type ProbeCoherence = 'coherent' | 'oblique' | 'contradictory';
 
 export interface PerformanceProbeInput {
   team: string[];
-  /** The CONSTRAINT being nudged — never an outcome. (Snowden: manage
-   *  constraints + constructors, not targets.) */
+  /** The CONSTRAINT being nudged — never an outcome. (Manage constraints
+   *  and constructors, not targets.) */
   constraintTarget: string;
-  /** Human description of the nudge — a do(x) intervention. */
+  /** Human description of the nudge — a deliberate, reversible change. */
   change: string;
   coherence: ProbeCoherence;
   hypothesizedEffect: string;
@@ -212,7 +217,7 @@ export interface PerformanceProbeInput {
 export interface PerformanceProbe extends PerformanceProbeInput {
   id: string;
   recordedAt: string;
-  /** Pearl rung-2 baseline — the disposition at do(x) time. */
+  /** The disposition at the moment the change was made — the causal baseline. */
   preDisposition: DispositionSnapshot;
 }
 
@@ -226,24 +231,24 @@ export function buildProbe(input: PerformanceProbeInput, preDisposition: Disposi
   };
 }
 
-// ── Causal read (Pearl rung 2 interventional + rung 3 counterfactual) ─
+// ── Causal read (interventional + counterfactual) ───────────────────
 
 export interface CausalRead {
   probeId: string;
   constraintTarget: string;
-  /** Rung 2 — interventional: did the disposition shift after do(probe)? */
-  rung2: {
+  /** Interventional — did the disposition shift after the deliberate change? */
+  interventional: {
     before: DispositionSnapshot;
     after: DispositionSnapshot;
     shift: string;
     movedAsHypothesised: boolean;
   };
-  /** Rung 3 — counterfactual: what the team would otherwise have done,
-   *  read from the Counterfactual branches its agents recorded. */
-  rung3: { reading: string; basis: string };
+  /** Counterfactual — what the team would otherwise have done, read from
+   *  the Counterfactual branches its agents recorded. */
+  counterfactual: { reading: string; basis: string };
   /** Honest epistemics — this is retrospective coherence, not prediction. */
   caveat: string;
-  /** Snowden: amplify what coheres, dampen what does not, else let it run. */
+  /** Amplify what coheres, dampen what does not, else let it run. */
   recommendation: 'amplify' | 'dampen' | 'let-run';
   recommendationRationale: string;
 }
@@ -259,28 +264,28 @@ export function computeCausalRead(
   const dSuccess = round2(after.toolCallSuccessRate - before.toolCallSuccessRate);
   const dExploration = round2(after.explorationRatio - before.explorationRatio);
   const dDeliberation = round2(after.deliberationRatio - before.deliberationRatio);
-  const domainChanged = before.cynefinDomain !== after.cynefinDomain;
+  const regimeChanged = before.regime !== after.regime;
 
   const shiftParts: string[] = [];
   if (dSuccess !== 0) shiftParts.push(`tool-call success ${dSuccess > 0 ? '+' : ''}${dSuccess}`);
   if (dExploration !== 0) shiftParts.push(`exploration ${dExploration > 0 ? '+' : ''}${dExploration}`);
   if (dDeliberation !== 0) shiftParts.push(`deliberation ${dDeliberation > 0 ? '+' : ''}${dDeliberation}`);
-  if (domainChanged) shiftParts.push(`Cynefin domain ${before.cynefinDomain} → ${after.cynefinDomain}`);
+  if (regimeChanged) shiftParts.push(`work regime ${before.regime} → ${after.regime}`);
   const shift = shiftParts.length > 0 ? shiftParts.join(', ') : 'no measurable shift in the disposition snapshot';
 
   // The probe hypothesised an effect; did the disposition move at all in a
   // direction consistent with a real intervention effect?
-  const movedAsHypothesised = dSuccess > 0 || domainChanged || Math.abs(dExploration) > 0.05;
+  const movedAsHypothesised = dSuccess > 0 || regimeChanged || Math.abs(dExploration) > 0.05;
 
-  // Rung 3 — counterfactual reading from the recorded Counterfactual steps.
+  // Counterfactual reading from the recorded Counterfactual steps.
   const cfSteps = currentTrajectories.flatMap(t => t.steps).filter(s => s.modalStatus === 'Counterfactual');
-  const rung3 = cfSteps.length > 0
+  const counterfactual = cfSteps.length > 0
     ? {
         reading: `Absent the probe, the team's recorded counterfactual branches indicate it would otherwise have pursued: ${[...new Set(cfSteps.map(s => s.objectName))].slice(0, 4).join('; ')}.`,
         basis: `${cfSteps.length} Counterfactual trajectory step(s) — the roads the agents considered and rejected.`,
       }
     : {
-        reading: 'No counterfactual branches were recorded, so the rung-3 reading is unavailable — the team did not surface the roads it did not take.',
+        reading: 'No counterfactual branches were recorded, so the counterfactual reading is unavailable — the team did not surface the roads it did not take.',
         basis: '0 Counterfactual trajectory steps.',
       };
 
@@ -288,10 +293,10 @@ export function computeCausalRead(
   let recommendationRationale: string;
   if (movedAsHypothesised && dSuccess >= 0) {
     recommendation = 'amplify';
-    recommendationRationale = `the disposition moved in a coherent direction after do(${probe.constraintTarget}); amplify — run more probes of this kind.`;
-  } else if (dSuccess < -0.05 || (domainChanged && after.cynefinDomain === 'Chaotic')) {
+    recommendationRationale = `the disposition moved in a coherent direction after the change to ${probe.constraintTarget}; amplify — run more probes of this kind.`;
+  } else if (dSuccess < -0.05 || (regimeChanged && after.regime === 'Turbulent')) {
     recommendation = 'dampen';
-    recommendationRationale = `the disposition degraded after do(${probe.constraintTarget}); dampen — withdraw this probe (it was safe-to-fail; this is the cheap failure working as intended).`;
+    recommendationRationale = `the disposition degraded after the change to ${probe.constraintTarget}; dampen — withdraw this probe (it was safe-to-fail; this is the cheap failure working as intended).`;
   } else {
     recommendation = 'let-run';
     recommendationRationale = 'no clear coherence yet; let the probe run longer before judging — complex systems show their shape only over time.';
@@ -300,8 +305,8 @@ export function computeCausalRead(
   return {
     probeId: probe.id,
     constraintTarget: probe.constraintTarget,
-    rung2: { before, after, shift, movedAsHypothesised },
-    rung3,
+    interventional: { before, after, shift, movedAsHypothesised },
+    counterfactual,
     caveat: 'This is RETROSPECTIVE COHERENCE, not a predictive causal claim. In a complex system the disposition shifted after the intervention; that the probe *caused* it can only ever be read in hindsight, never forecast.',
     recommendation,
     recommendationRationale,

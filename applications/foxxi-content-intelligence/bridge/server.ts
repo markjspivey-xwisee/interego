@@ -795,7 +795,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       return { error: 'no recorded trajectories for any agent in the team — record_agent_trajectory first' };
     }
     const disposition = assessDisposition(trajectories);
-    // If the team has a probe portfolio, fold in the rung-2/rung-3 causal read.
+    // If the team has a probe portfolio, fold in the interventional + counterfactual causal read.
     const probes = performanceProbes.get(teamKey(agentDids)) ?? [];
     const causalReads = probes.map(p => computeCausalRead(p, trajectories));
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.assess_agent_disposition', decision: 'allow', appliedPolicies: ['agent-performance-consultant'] });
@@ -831,7 +831,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (trajectories.length === 0) {
       return { error: 'no recorded trajectories for the team — record_agent_trajectory before probing' };
     }
-    // Snapshot the disposition at do(x) time — the Pearl rung-2 baseline.
+    // Snapshot the disposition before the change — the causal baseline.
     const preDisposition = snapshot(assessDisposition(trajectories));
     const probe = buildProbe({
       team: agentDids,
@@ -851,7 +851,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     return {
       recorded: true,
       probe,
-      note: 'Safe-to-fail probe recorded as a Pearl do(x) intervention; the team disposition was snapshotted as the causal baseline. Re-assess the team to read the rung-2/rung-3 causal effect. A safe-to-fail probe is allowed — expected, even — to fail cheaply.',
+      note: 'Safe-to-fail probe recorded as a deliberate, reversible change to a constraint; the team disposition was snapshotted as the causal baseline. Re-assess the team to read the interventional + counterfactual causal effect. A safe-to-fail probe is allowed — expected, even — to fail cheaply.',
       accessDecision: trace,
     };
   },
@@ -1855,8 +1855,8 @@ const app = createVerticalBridge({
 
     // Foxxi Performance Architecture — the diagnosis → intervention
     // spine + the emergent-content authoring tools. A performance gap is
-    // diagnosed (Cynefin-routed: HPT gap analysis for Clear/Complicated,
-    // dispositional probes for Complex); content is composed only when
+    // diagnosed (regime-routed: gap analysis for Evident/Knowable work,
+    // dispositional probes for Emergent work); content is composed only when
     // the diagnosis says it is the answer. Routes: GET /performance,
     // POST /performance/plan, /content/compose-course, /content/personalize.
     attachPerformanceRoutes(a, {

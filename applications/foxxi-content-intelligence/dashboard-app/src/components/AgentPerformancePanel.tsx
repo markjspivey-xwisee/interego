@@ -1,13 +1,13 @@
 /**
- * Agent Performance Consultant — the human-facing surface of Agent
- * Performance Technology.
+ * Agent Performance Consultant — the human-facing surface for consulting
+ * on a team of agents.
  *
- * Deliberately NOT a performance dashboard in the HPT sense. There is no
- * score, no gap, no "% to ideal", no target bar — by design. A team of
- * agents is a Complex adaptive system; this view presents its
- * DISPOSITION (Cynefin placement, modal propensities, drift vector) and
- * lets the consultant run safe-to-fail constraint probes, then reads the
- * Pearl rung-2 / rung-3 causal effect in hindsight.
+ * Deliberately NOT a gap-style performance dashboard. There is no score,
+ * no gap, no "% to ideal", no target bar — by design. A team of agents
+ * is a complex, adaptive system; this view presents its DISPOSITION
+ * (work-regime placement, modal propensities, drift vector) and lets the
+ * consultant run safe-to-fail constraint probes, then reads the
+ * interventional + counterfactual causal effect in hindsight.
  */
 
 import React, { useState } from 'react';
@@ -30,14 +30,14 @@ interface TeamDisposition {
   };
   toolCallSuccessRate: number;
   dispositions: Array<{ name: string; reading: string; signal: string }>;
-  cynefin: { domain: string; rationale: string; stance: string };
+  regime: { name: string; rationale: string; stance: string };
   vector: { direction: string; basis: string };
   method: string;
 }
 interface CausalRead {
   probeId: string; constraintTarget: string;
-  rung2: { before: Record<string, unknown>; after: Record<string, unknown>; shift: string; movedAsHypothesised: boolean };
-  rung3: { reading: string; basis: string };
+  interventional: { before: Record<string, unknown>; after: Record<string, unknown>; shift: string; movedAsHypothesised: boolean };
+  counterfactual: { reading: string; basis: string };
   caveat: string;
   recommendation: 'amplify' | 'dampen' | 'let-run';
   recommendationRationale: string;
@@ -104,7 +104,7 @@ export function AgentPerformancePanel({ session }: { session: FoxxiSession }) {
         },
       }) as { recorded?: boolean; error?: string };
       if (r.error) { setProbeMsg(`✗ ${r.error}`); }
-      else { setProbeMsg('✓ probe recorded as a do(x) intervention — re-assessing for the causal read…'); await assess(); }
+      else { setProbeMsg('✓ probe recorded as a deliberate change — re-assessing for the causal read…'); await assess(); }
     } catch (err) {
       setProbeMsg(`✗ ${(err as Error).message}`);
     } finally {
@@ -117,13 +117,13 @@ export function AgentPerformancePanel({ session }: { session: FoxxiSession }) {
   return (
     <Card
       title="Agent Performance Consultant"
-      right={<Pill tone="accent" title="Agent Performance Technology — complexity-aware, not Human Performance Technology">APT · complexity-aware</Pill>}
+      right={<Pill tone="accent" title="Consulting on a team of agents — complexity-aware, disposition-based, not gap-based">APT · complexity-aware</Pill>}
     >
       <div style={{ marginBottom: 14, color: 'var(--text-dim)', fontSize: 12, lineHeight: 1.55 }}>
-        You are consulting on a <strong>team of AI agents</strong> — a Complex adaptive system. This view has
+        You are consulting on a <strong>team of AI agents</strong> — a complex, adaptive system. This view has
         <strong> no score, no gap, no ideal future state</strong> by design. It reads the team's{' '}
-        <strong>disposition</strong> (Cynefin / Vector Theory of Change), and you steer by running{' '}
-        <strong>safe-to-fail probes</strong> on its constraints, then reading the Pearl rung-2 / rung-3
+        <strong>disposition</strong> (the project's own work-regime model), and you steer by running{' '}
+        <strong>safe-to-fail probes</strong> on its constraints, then reading the interventional + counterfactual
         causal effect in hindsight.
       </div>
 
@@ -148,21 +148,21 @@ export function AgentPerformancePanel({ session }: { session: FoxxiSession }) {
 
       {d && (
         <div>
-          {/* Cynefin placement — the headline. NOT a score. */}
+          {/* Work-regime placement — the headline. NOT a score. */}
           <div style={{
             padding: 14, marginBottom: 14, borderRadius: 6,
             background: 'var(--panel-2)', border: '1px solid var(--border)',
-            borderLeft: `3px solid ${cynefinColor(d.cynefin.domain)}`,
+            borderLeft: `3px solid ${regimeColor(d.regime.name)}`,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-              <span className="label">Cynefin placement</span>
-              <Pill tone="accent">{d.cynefin.domain}</Pill>
+              <span className="label">Work-regime placement</span>
+              <Pill tone="accent">{d.regime.name}</Pill>
               <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>
                 {d.team.trajectoryCount} agents · {d.team.stepCount} trajectory steps
               </span>
             </div>
-            <div style={{ fontSize: 13, marginBottom: 6 }}>{d.cynefin.rationale}</div>
-            <div style={{ fontSize: 13, fontWeight: 500 }}>Stance: {d.cynefin.stance}</div>
+            <div style={{ fontSize: 13, marginBottom: 6 }}>{d.regime.rationale}</div>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>Stance: {d.regime.stance}</div>
           </div>
 
           {/* Modal balance — propensities, descriptive. */}
@@ -205,10 +205,10 @@ export function AgentPerformancePanel({ session }: { session: FoxxiSession }) {
           </Section>
 
           {/* Safe-to-fail probe. */}
-          <Section title="Run a safe-to-fail probe (Pearl do(x) on a constraint)">
+          <Section title="Run a safe-to-fail probe (a deliberate change to a constraint)">
             <div style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
               <TextInput value={constraintTarget} onChange={setConstraintTarget} placeholder="constraint to nudge" />
-              <TextInput value={change} onChange={setChange} placeholder="the do(x) change" />
+              <TextInput value={change} onChange={setChange} placeholder="the constraint change" />
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>safe-to-fail role:</span>
                 {(['coherent', 'oblique', 'contradictory'] as const).map(c => (
@@ -229,7 +229,7 @@ export function AgentPerformancePanel({ session }: { session: FoxxiSession }) {
 
           {/* Causal reads. */}
           {result && result.causalReads.length > 0 && (
-            <Section title={`Causal read — ${result.causalReads.length} probe${result.causalReads.length === 1 ? '' : 's'} (Pearl rung 2 + rung 3)`}>
+            <Section title={`Causal read — ${result.causalReads.length} probe${result.causalReads.length === 1 ? '' : 's'} (interventional + counterfactual)`}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {result.causalReads.map((cr, i) => (
                   <div key={i} style={{ padding: 10, background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 6 }}>
@@ -240,10 +240,10 @@ export function AgentPerformancePanel({ session }: { session: FoxxiSession }) {
                       <code style={{ fontSize: 11 }}>do({cr.constraintTarget})</code>
                     </div>
                     <div style={{ fontSize: 12, marginBottom: 4 }}>
-                      <strong>Rung 2 (interventional):</strong> {cr.rung2.shift}
+                      <strong>Interventional read:</strong> {cr.interventional.shift}
                     </div>
                     <div style={{ fontSize: 12, marginBottom: 4 }}>
-                      <strong>Rung 3 (counterfactual):</strong> {cr.rung3.reading}
+                      <strong>Counterfactual read:</strong> {cr.counterfactual.reading}
                     </div>
                     <div style={{ fontSize: 12, marginBottom: 4, color: 'var(--text-dim)' }}>{cr.recommendationRationale}</div>
                     <div style={{ fontSize: 11, color: 'var(--warn)', fontStyle: 'italic' }}>{cr.caveat}</div>
@@ -277,9 +277,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function cynefinColor(domain: string): string {
-  return domain === 'Complex' ? 'var(--accent)'
-    : domain === 'Complicated' ? 'var(--good)'
-    : domain === 'Chaotic' ? 'var(--bad)'
+function regimeColor(regime: string): string {
+  return regime === 'Emergent' ? 'var(--accent)'
+    : regime === 'Knowable' ? 'var(--good)'
+    : regime === 'Turbulent' ? 'var(--bad)'
     : 'var(--warn)';
 }

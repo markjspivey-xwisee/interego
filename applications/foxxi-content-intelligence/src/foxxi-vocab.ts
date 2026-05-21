@@ -65,15 +65,21 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
 
   // ── Performance architecture ───────────────────────────────────────
   { name: 'PerformanceGap', kind: 'Type', label: 'Performance Gap', definition: 'A typed, modal-statused descriptor of desired-vs-observed performance for a human or agent performer in a work context. The unit the system reasons from — content is never assumed.' },
-  { name: 'Diagnosis', kind: 'Type', label: 'Diagnosis', definition: 'A Cynefin-routed cause analysis of a performance gap: Gilbert\'s Behavior Engineering Model + Mager-Pipe for Clear/Complicated work, a dispositional read for Complex work.' },
+  { name: 'Diagnosis', kind: 'Type', label: 'Diagnosis', definition: 'A regime-routed cause analysis of a performance gap: a cause-factor analysis for Evident/Knowable work, a dispositional read for Emergent work.' },
   { name: 'InterventionPlan', kind: 'Type', label: 'Intervention Plan', definition: 'The full paradigm of interventions for a diagnosed gap — instruction, performance-support, assessment, coaching, probe, environmental-fix, no-intervention — each marked selected or ruled-out with its reasoning.' },
-  { name: 'InterventionEvaluation', kind: 'Type', label: 'Intervention Evaluation', definition: 'Kirkpatrick\'s four levels as a modal-status progression; a closed gap supersedes the prior observed-state (cg:supersedes).' },
-  { name: 'GroundingFragment', kind: 'Type', label: 'Grounding Fragment', definition: 'A content-addressed atomic content unit (a PGSL atom) — the leaf of an emergent course; carries modality, Bloom level, provenance and disposition-suitability.' },
+  { name: 'InterventionEvaluation', kind: 'Type', label: 'Intervention Evaluation', definition: 'A four-level evaluation — response, capability, transfer, outcome — as a modal-status progression; a closed gap supersedes the prior observed-state (cg:supersedes).' },
+  { name: 'GroundingFragment', kind: 'Type', label: 'Grounding Fragment', definition: 'A content-addressed atomic content unit (a PGSL atom) — the leaf of an emergent course; carries modality, cognitive level, provenance and disposition-suitability.' },
   { name: 'Lesson', kind: 'Type', label: 'Lesson', definition: 'A syntagm of grounding fragments toward one competency-point; each position holds a paradigm of interchangeable alternatives.' },
   { name: 'Module', kind: 'Type', label: 'Module', definition: 'A syntagm of lessons.' },
   { name: 'Course', kind: 'Type', label: 'Course', definition: 'A syntagm of modules. Not a stored artifact — a composition recipe that personalises (restriction + override) into a different resolved course per performer.' },
   { name: 'Curriculum', kind: 'Type', label: 'Curriculum', definition: 'A syntagm of courses toward a set of target competencies.' },
   { name: 'InFlowPerformanceSupport', kind: 'Type', label: 'In-Flow Performance Support', definition: 'A job-aid fragment delivered by an affordance attached to the work context — surfaced when a performer enters the triggering task, not on a training schedule.' },
+
+  // ── Knowledge architecture ─────────────────────────────────────────
+  { name: 'WorkRegime', kind: 'Type', label: 'Work Regime', definition: 'How knowable the relationship between act and outcome is for a piece of work — Evident, Knowable, Emergent, or Turbulent. The regime decides which consulting and knowledge method is valid.' },
+  { name: 'CompetenceDecomposition', kind: 'Type', label: 'Competence Decomposition', definition: 'A competency broken into knowledge components (recorded / trained / judged / lived / innate) by codifiability — how much of it can honestly become content.' },
+  { name: 'KnowledgeAsset', kind: 'Type', label: 'Knowledge Asset', definition: 'A unit of knowledge — a codified artefact, a narrative, or a connection to a holder; carries a codification level and, for codified assets, an explicit uncodified residue.' },
+  { name: 'KnowledgeMap', kind: 'Type', label: 'Knowledge Map', definition: 'A regime-routed knowledge strategy for a competency: what to codify into content and what to enable as a flow — connection, narrative, apprenticeship.' },
 
   // ── Extensions / properties ────────────────────────────────────────
   { name: 'slideId', kind: 'Extension', label: 'slideId', definition: 'Identifier of the slide a statement is about.' },

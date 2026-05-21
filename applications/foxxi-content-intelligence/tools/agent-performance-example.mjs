@@ -3,18 +3,18 @@
  * Agent Performance Technology example — a human consulting on a team of
  * AI agents, the complexity-aware way.
  *
- * NOT Human Performance Technology applied to agents. No gap analysis,
- * no ideal future state, no score. Following Snowden (Cynefin / Vector
- * Theory of Change) + Pearl (rung-2 interventions, rung-3 counterfactuals):
+ * NOT a gap analysis applied to agents. No ideal future state, no score.
+ * This uses the project's own dispositional method — read the work
+ * regime, manage constraints, and read the causal effect after the fact:
  *
  *   1. record the team's agentic-native trajectories;
- *   2. READ the team's disposition (assess_agent_disposition) — Cynefin
+ *   2. READ the team's disposition (assess_agent_disposition) — work regime
  *      placement, modal propensities, drift vector;
  *   3. run a safe-to-fail PROBE on a constraint (run_performance_probe)
- *      — a Pearl do(x), with the disposition snapshotted as the baseline;
+ *      — a deliberate change, with the disposition snapshotted as the baseline;
  *   4. the team acts on (record more trajectory steps);
- *   5. RE-READ — now with the rung-2 interventional + rung-3
- *      counterfactual causal read, and an amplify/dampen recommendation.
+ *   5. RE-READ — now with the interventional + counterfactual causal
+ *      read, and an amplify/dampen recommendation.
  *
  * Run:
  *   node --experimental-strip-types \
@@ -92,15 +92,15 @@ console.log(`  recorded trajectories for ${TEAM.length} agents\n`);
 console.log('--- reading the team disposition (no gap, no score, no ideal state) ---');
 const before = await callTool(token, 'foxxi.assess_agent_disposition', { agent_dids: TEAM });
 const d0 = before.disposition;
-console.log(`  Cynefin domain:   ${d0.cynefin.domain}  —  ${d0.cynefin.rationale}`);
-console.log(`  stance:           ${d0.cynefin.stance}`);
+console.log(`  work regime:   ${d0.regime.name}  —  ${d0.regime.rationale}`);
+console.log(`  stance:           ${d0.regime.stance}`);
 console.log(`  modal balance:    deliberation ${d0.modalBalance.deliberationRatio} · exploration ${d0.modalBalance.explorationRatio} · plan-revision ${d0.modalBalance.planRevisionRatio}`);
 console.log(`  tool-call success: ${d0.toolCallSuccessRate}`);
 console.log(`  dispositions:     ${d0.dispositions.map(x => x.name).join(', ')}`);
 console.log(`  vector:           ${d0.vector.direction}\n`);
 
-// ── 3. Run a safe-to-fail probe — a Pearl do(x) on a constraint ─────
-console.log('--- running a safe-to-fail probe (Pearl do(x) on a constraint) ---');
+// ── 3. Run a safe-to-fail probe — a deliberate, reversible change to a constraint ─────
+console.log('--- running a safe-to-fail probe (a deliberate change on a constraint) ---');
 const probe = await callTool(token, 'foxxi.run_performance_probe', {
   agent_dids: TEAM,
   constraint_target: 'delegation-scope:research→retrieval',
@@ -110,8 +110,8 @@ const probe = await callTool(token, 'foxxi.run_performance_probe', {
   amplify_signal: 'tool-call success rises and duplicated retrieval disappears.',
   dampen_signal: 'delegation loops or duplicated retrieval work emerge.',
 });
-console.log(`  probe recorded: do(${probe.probe.constraintTarget}) · coherence=${probe.probe.coherence}`);
-console.log(`  baseline disposition snapshotted (Pearl rung-2 baseline)\n`);
+console.log(`  probe recorded: change to ${probe.probe.constraintTarget} · coherence=${probe.probe.coherence}`);
+console.log(`  baseline disposition snapshotted (causal baseline)\n`);
 
 // ── 4. The team acts on the loosened constraint ─────────────────────
 // Re-record with additional successful tool-calls — the agents respond.
@@ -134,25 +134,25 @@ await callTool(token, 'foxxi.record_agent_trajectory', {
 });
 console.log('  team re-recorded with post-probe work\n');
 
-// ── 5. Re-read — now with the rung-2 / rung-3 causal read ───────────
+// ── 5. Re-read — now with the interventional / counterfactual causal read ───────────
 console.log('--- re-reading the disposition + causal read ---');
 const after = await callTool(token, 'foxxi.assess_agent_disposition', { agent_dids: TEAM });
 const cr = after.causalReads[after.causalReads.length - 1];
 console.log(`  causal reads: ${after.causalReads.length}`);
-console.log(`  rung 2 (interventional): ${cr.rung2.shift}`);
-console.log(`  rung 3 (counterfactual): ${cr.rung3.reading}`);
+console.log(`  interventional read: ${cr.interventional.shift}`);
+console.log(`  counterfactual read: ${cr.counterfactual.reading}`);
 console.log(`  recommendation:          ${cr.recommendation.toUpperCase()} — ${cr.recommendationRationale}`);
 console.log(`  caveat:                  ${cr.caveat}`);
 
 // Note: the bridge's probe store is in-memory and accumulates a probe
 // portfolio across runs — so we check that THIS run's probe added a
 // causal read, not that the team started probe-free.
-const ok = d0.cynefin.domain.length > 0
+const ok = d0.regime.name.length > 0
   && d0.dispositions.length >= 1
   && probe.recorded === true
   && after.causalReads.length > before.causalReads.length
   && ['amplify', 'dampen', 'let-run'].includes(cr.recommendation)
-  && typeof cr.rung2.shift === 'string';
-console.log(`\n=== ${ok ? 'PASS' : 'FAIL'} — disposition read (no gap/ideal-state), do(x) probe run, ` +
-  `rung-2/rung-3 causal read produced with an amplify/dampen recommendation ===`);
+  && typeof cr.interventional.shift === 'string';
+console.log(`\n=== ${ok ? 'PASS' : 'FAIL'} — disposition read (no gap/ideal-state), constraint probe run, ` +
+  `interventional + counterfactual causal read produced with an amplify/dampen recommendation ===`);
 process.exit(ok ? 0 : 1);

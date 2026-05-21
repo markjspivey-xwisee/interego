@@ -1,22 +1,26 @@
 /**
- * Bridge routes for the Foxxi Performance Architecture.
+ * Bridge routes for the Foxxi Performance & Knowledge Architecture.
  *
- * Exposes the diagnosis → intervention spine (performance-architecture.ts)
- * and the emergent-content authoring tools (emergent-content.ts) as HTTP
- * endpoints. The endpoints ARE the authoring tools: a human instructional
- * designer reaches them through the dashboard, an agent reaches them as a
- * tool call — the same affordances, which is what makes H2H / H2A / A2H /
- * A2A authoring symmetric.
+ * Exposes the diagnosis → intervention spine (performance-architecture.ts),
+ * the emergent-content authoring tools (emergent-content.ts) and the
+ * knowledge map (knowledge-architecture.ts) as HTTP endpoints. The
+ * endpoints ARE the authoring tools: a human instructional designer
+ * reaches them through the dashboard, an agent reaches them as a tool
+ * call — the same affordances, which is what makes H2H / H2A / A2H / A2A
+ * authoring symmetric.
  *
  *   GET  /performance                  self-describing HATEOAS index
  *   POST /performance/plan             diagnose a gap → an InterventionPlan
  *   POST /content/compose-course       author an emergent course
  *   POST /content/personalize          personalise a course for a performer
+ *   GET  /knowledge                    self-describing knowledge index
+ *   POST /knowledge/map                map a competency's knowledge
  *
- * Layer: L3 vertical. Thin HTTP adapter over the two pure modules.
+ * Layer: L3 vertical. Thin HTTP adapter over the pure modules.
  */
 
 import type { Express, Request, Response } from 'express';
+import type { WorkRegime } from './agent-disposition.js';
 import {
   diagnose, recommendInterventions,
   type PerformanceGap, type Performer, type DiagnoseInput,
@@ -25,8 +29,11 @@ import {
   authorFragment, authorLesson, authorModule, composeCourse,
   personalize, forAudience, courseToCmi5Outline, scaffoldFromPlan,
   type Course, type Module, type Lesson, type GroundingFragment,
-  type FragmentModality, type BloomLevel,
+  type FragmentModality, type CognitiveLevel,
 } from './emergent-content.js';
+import {
+  mapKnowledge, type KnowledgeComponent, type ComponentInput,
+} from './knowledge-architecture.js';
 
 function bad(res: Response, msg: string): void {
   res.status(400).json({ error: msg });
@@ -51,7 +58,7 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.json({
       system: 'Foxxi Performance Architecture',
-      principle: 'Performance is the unit, not content. A diagnosis decides the intervention; content is composed only when it is the answer. Performance consulting is Cynefin-routed — HPT gap analysis for Clear/Complicated work, dispositional probes for Complex.',
+      principle: 'Performance is the unit, not content. A diagnosis decides the intervention; content is composed only when it is the answer. The consulting method is chosen by the work regime — gap analysis for Evident/Knowable work, dispositional probes for Emergent work.',
       directionalities: ['H2H', 'H2A', 'A2H', 'A2A'],
       interventionParadigm: [
         'instruction', 'performance-support', 'reference', 'practice',
@@ -61,6 +68,7 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
         diagnoseAndPlan: { method: 'POST', href: `${base}/performance/plan`, note: 'Diagnose a performance gap and return the full intervention paradigm — selected and ruled-out, with reasoning.' },
         composeCourse: { method: 'POST', href: `${base}/content/compose-course`, note: 'Author an emergent course — a syntagm of modules → lessons → grounding fragments. The same tool for human and agent authors.' },
         personalizeCourse: { method: 'POST', href: `${base}/content/personalize`, note: 'Resolve a course for one performer via the composition algebra (restriction + override).' },
+        knowledgeIndex: { method: 'GET', href: `${base}/knowledge`, note: 'The knowledge architecture — how much of a competency can honestly become content.' },
       },
       vocabulary: `${base}/ns/foxxi`,
       demo: 'tools/performance-architecture-example.mjs',
@@ -89,13 +97,13 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
       criticality: (['low', 'moderate', 'high', 'safety-critical'].includes(g.criticality as string) ? g.criticality : 'moderate') as PerformanceGap['criticality'],
       modalStatus: g.modalStatus === 'Asserted' ? 'Asserted' : 'Hypothetical',
       provenance: typeof g.provenance === 'string' ? g.provenance : 'caller-supplied',
-      ...(['Clear', 'Complicated', 'Complex', 'Chaotic'].includes(g.domain as string) ? { domain: g.domain as PerformanceGap['domain'] } : {}),
+      ...(['Evident', 'Knowable', 'Emergent', 'Turbulent'].includes(g.domain as string) ? { domain: g.domain as PerformanceGap['domain'] } : {}),
     };
     const diagnoseInput: DiagnoseInput = {
       gap,
-      ...(typeof body.couldDoIfLifeDependedOnIt === 'boolean' ? { couldDoIfLifeDependedOnIt: body.couldDoIfLifeDependedOnIt } : {}),
+      ...(typeof body.couldPerformUnderIdealConditions === 'boolean' ? { couldPerformUnderIdealConditions: body.couldPerformUnderIdealConditions } : {}),
       ...(typeof body.performedWellBefore === 'boolean' ? { performedWellBefore: body.performedWellBefore } : {}),
-      ...(body.bemEvidence && typeof body.bemEvidence === 'object' ? { bemEvidence: body.bemEvidence as DiagnoseInput['bemEvidence'] } : {}),
+      ...(body.factorEvidence && typeof body.factorEvidence === 'object' ? { factorEvidence: body.factorEvidence as DiagnoseInput['factorEvidence'] } : {}),
     };
     const diagnosis = diagnose(diagnoseInput);
     const author = asPerformer(body.author, { id: 'urn:foxxi:agent:performance-consultant', kind: 'agent', role: 'performance consultant' })!;
@@ -126,7 +134,7 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
             modality: (f.modality as FragmentModality) ?? 'concept',
             competencyPoint: String(f.competencyPoint ?? l.competencyPoint ?? m.competencyPoint ?? body.competency),
             body: String(f.body ?? ''),
-            bloom: (f.bloom as BloomLevel) ?? 'understand',
+            level: (f.level as CognitiveLevel) ?? 'working',
             authoredBy: author,
             ...(typeof f.suitsDisposition === 'string' ? { suitsDisposition: f.suitsDisposition } : {}),
           }));
@@ -182,5 +190,43 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
     });
     const rendering = forAudience(resolved, course.authoredBy);
     res.json({ resolved, rendering });
+  });
+
+  // ── GET /knowledge — self-describing knowledge index. ─────────────
+  app.get('/knowledge', (_req: Request, res: Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json({
+      system: 'Foxxi Knowledge Architecture',
+      principle: 'Of the knowledge a competent performer draws on, only part can honestly become content. The work regime decides the strategy: codify in Evident/Knowable regimes, connect-and-flow in the Emergent regime.',
+      knowledgeComponents: ['recorded', 'trained', 'judged', 'lived', 'innate'],
+      _affordances: {
+        mapKnowledge: { method: 'POST', href: `${base}/knowledge/map`, note: 'Decompose a competency into knowledge components, choose a regime-routed strategy, and split it into what to codify (content) and what to enable as a flow.' },
+      },
+    });
+  });
+
+  // ── POST /knowledge/map — decompose a competency's knowledge. ──────
+  app.post('/knowledge/map', (req: Request, res: Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof body.competency !== 'string' || !body.competency) { bad(res, 'competency (string) is required'); return; }
+    const regime: WorkRegime = ['Evident', 'Knowable', 'Emergent', 'Turbulent'].includes(body.regime as string)
+      ? body.regime as WorkRegime : 'Knowable';
+    const valid = ['recorded', 'trained', 'judged', 'lived', 'innate'];
+    const components: ComponentInput[] = Array.isArray(body.components)
+      ? (body.components as Array<Record<string, unknown>>)
+          .filter(c => valid.includes(c.component as string) && typeof c.description === 'string')
+          .map(c => ({ component: c.component as KnowledgeComponent, description: c.description as string }))
+      : [];
+    if (components.length === 0) {
+      bad(res, 'components[] is required — each { component: "recorded"|"trained"|"judged"|"lived"|"innate", description }');
+      return;
+    }
+    const performer = asPerformer(body.performer);
+    const knowledgeMap = mapKnowledge({
+      competency: body.competency, regime, components,
+      ...(performer ? { performer } : {}),
+    });
+    res.json({ knowledgeMap });
   });
 }

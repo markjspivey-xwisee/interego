@@ -15,7 +15,7 @@
  *      same course personalised two different ways (H2H)
  *   D  an agent authors a playbook for another agent (A2A)
  *   E  the scaffold from a plan — honestly empty when no content is due
- *   F  the Complex domain — instruction is ruled out; probes instead
+ *   F  the Emergent regime — instruction is ruled out; probes instead
  *   G  the evaluation loop + the performance-management portfolio read
  *
  * Exits non-zero if any assertion fails.
@@ -50,12 +50,12 @@ const gapA = {
   desired: 'escalates within SLA whenever a ticket needs a specialist',
   observed: 'closes out-of-scope tickets unresolved instead of escalating',
   frequency: 'frequent', criticality: 'high', modalStatus: 'Asserted',
-  provenance: 'manager observation + LRS statements', domain: 'Complicated',
+  provenance: 'manager observation + LRS statements', domain: 'Knowable',
 };
 const diagA = diagnose({
   gap: gapA,
-  couldDoIfLifeDependedOnIt: true, // Mager-Pipe: they COULD — so not a skill gap
-  bemEvidence: {
+  couldPerformUnderIdealConditions: true, // the discriminating question: they COULD — so not a skill gap
+  factorEvidence: {
     incentives: { adequate: false, evidence: 'reps are measured on tickets-closed-per-hour; an escalation counts against that number — the incentive punishes the desired behaviour.' },
   },
 });
@@ -66,7 +66,7 @@ console.log(`   ${planA.summary}`);
 for (const o of planA.selected) console.log(`     • selected: ${o.type}`);
 const ruledA = planA.paradigm.find(o => o.type === 'instruction');
 console.log(`     • instruction ruled out: ${ruledA.ruledOutBecause}`);
-check('A: Mager-Pipe → not a skill deficiency', diagA.skillDeficiency === false);
+check('A: discriminating question → not a skill deficiency', diagA.skillDeficiency === false);
 check('A: content is NOT warranted', planA.contentWarranted === false);
 check('A: environmental-fix is selected', planA.selected.some(o => o.type === 'environmental-fix'));
 check('A: instruction is ruled out', !planA.selected.some(o => o.type === 'instruction'));
@@ -82,12 +82,12 @@ const gapB = {
   desired: 'files Form X with every schedule complete and correct',
   observed: 'omitted schedule 3 and mis-tagged two line items',
   frequency: 'rare', criticality: 'safety-critical', modalStatus: 'Asserted',
-  provenance: 'external audit finding', domain: 'Complicated',
+  provenance: 'external audit finding', domain: 'Knowable',
 };
 const diagB = diagnose({
   gap: gapB,
-  couldDoIfLifeDependedOnIt: false, // a genuine skill/knowledge gap
-  bemEvidence: { knowledgeSkill: { adequate: false, evidence: 'the analyst has never been shown the schedule-3 procedure.' } },
+  couldPerformUnderIdealConditions: false, // a genuine skill/knowledge gap
+  factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'the analyst has never been shown the schedule-3 procedure.' } },
 });
 const planB = recommendInterventions({ diagnosis: diagB, gap: gapB, author: consultant });
 console.log(`\n   diagnosis: skill deficiency = ${diagB.skillDeficiency}, frequency = ${gapB.frequency}`);
@@ -120,15 +120,15 @@ const gapC = {
   desired: 'resolves in-policy disputes on first contact without escalating',
   observed: 'escalates 60% of disputes that policy permits a rep to resolve',
   frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted',
-  provenance: 'LRS statements + QA review', domain: 'Complicated',
+  provenance: 'LRS statements + QA review', domain: 'Knowable',
 };
 // A human SME will author the content, so the plan is recommended with
 // the SME as the author — the directionality the content is authored in.
 const sme = { id: 'did:web:acme#sme-lee', kind: 'human', role: 'refund-policy SME' };
 const diagC = diagnose({
   gap: gapC,
-  couldDoIfLifeDependedOnIt: false,
-  bemEvidence: { knowledgeSkill: { adequate: false, evidence: 'reps cannot recall the refund-policy decision tree and resolution authority limits.' } },
+  couldPerformUnderIdealConditions: false,
+  factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'reps cannot recall the refund-policy decision tree and resolution authority limits.' } },
 });
 const planC = recommendInterventions({ diagnosis: diagC, gap: gapC, author: sme });
 console.log(`\n   ${planC.summary}`);
@@ -137,22 +137,22 @@ check('C: content IS warranted', planC.contentWarranted === true);
 // A position with a TWO-cell paradigm: the same point told as a concept
 // OR as a worked example. personalize() collapses it per disposition.
 const conceptThresholds = authorFragment({
-  modality: 'concept', competencyPoint: 'refund authority thresholds', bloom: 'remember',
+  modality: 'concept', competencyPoint: 'refund authority thresholds', level: 'foundational',
   body: 'A rep may authorise refunds up to $500; $500–$2000 needs a lead; over $2000 needs finance.',
   authoredBy: sme,
 });
 const exampleThresholds = authorFragment({
-  modality: 'worked-example', competencyPoint: 'refund authority thresholds', bloom: 'understand',
+  modality: 'worked-example', competencyPoint: 'refund authority thresholds', level: 'working',
   body: 'Worked example: a $420 dispute → the rep resolves it directly. A $1,300 dispute → route to a lead. Walk through both tickets end to end.',
   authoredBy: sme, suitsDisposition: 'prefers-worked-examples',
 });
 const decisionTree = authorFragment({
-  modality: 'concept', competencyPoint: 'refund decision tree', bloom: 'apply',
+  modality: 'concept', competencyPoint: 'refund decision tree', level: 'applied',
   body: 'Decision tree: is the item returned? → is it within the window? → is the reason covered? → apply the threshold rule.',
   authoredBy: sme,
 });
 const exampleTree = authorFragment({
-  modality: 'worked-example', competencyPoint: 'refund decision tree', bloom: 'apply',
+  modality: 'worked-example', competencyPoint: 'refund decision tree', level: 'applied',
   body: 'Worked example: a returned, in-window, covered-reason $90 dispute — walk every branch of the tree on this real ticket and resolve it.',
   authoredBy: sme, suitsDisposition: 'prefers-worked-examples',
 });
@@ -207,7 +207,7 @@ h('SCENARIO D — an agent authors a playbook for another agent (A2A).');
 const seniorAgent = { id: 'did:web:acme#agent-atlas', kind: 'agent', role: 'senior incident-response agent' };
 const juniorAgent = { id: 'did:web:acme#agent-nova', kind: 'agent', role: 'incident-response agent' };
 const doctrineTriage = authorFragment({
-  modality: 'context-descriptor', competencyPoint: 'sev-2 incident triage', bloom: 'apply',
+  modality: 'context-descriptor', competencyPoint: 'sev-2 incident triage', level: 'applied',
   body: 'Doctrine: on a sev-2, first bound the blast radius, then notify the owning service, then attempt the documented rollback before any novel fix. Never improvise a fix before rollback is ruled out.',
   authoredBy: seniorAgent,
 });
@@ -245,7 +245,7 @@ check('E: scaffold for the instruction plan calls compose_course',
   scaffoldC.toAuthor.some(t => t.affordance === 'foxxi.compose_course'));
 
 // ════════════════════════════════════════════════════════════════════
-h('SCENARIO F — the Complex domain. Instruction is ruled out; probe instead.');
+h('SCENARIO F — the Emergent regime. Instruction is ruled out; probe instead.');
 // ════════════════════════════════════════════════════════════════════
 // A minimal agent trajectory — assessDisposition reads the steps directly.
 const t0 = '2026-05-21T10:00:00.000Z';
@@ -280,9 +280,9 @@ console.log(`   disposition: ${diagF.disposition?.vector ?? 'n/a'}`);
 console.log(`   caveat: ${diagF.caveat}`);
 console.log(`   ${planF.summary}`);
 for (const o of planF.selected) console.log(`     • selected: ${o.type}`);
-check('F: the Complex domain was detected from the trajectory', diagF.domain === 'Complex');
+check('F: the Emergent regime was detected from the trajectory', diagF.domain === 'Emergent');
 check('F: the method is a dispositional read, not gap analysis', diagF.method === 'dispositional-read');
-check('F: instruction is NOT selected in the Complex domain', !planF.selected.some(o => o.type === 'instruction'));
+check('F: instruction is NOT selected in the Emergent regime', !planF.selected.some(o => o.type === 'instruction'));
 check('F: a probe is selected instead', planF.selected.some(o => o.type === 'probe'));
 check('F: content is not warranted', planF.contentWarranted === false);
 
@@ -291,15 +291,15 @@ h('SCENARIO G — the evaluation loop + the performance-management portfolio.');
 // ════════════════════════════════════════════════════════════════════
 const evalC = evaluateIntervention({
   plan: planC, gap: gapC,
-  level1Reaction: { favourable: true, note: 'reps rated the course relevant to live disputes' },
-  level2Learning: { assessed: true, passed: true, note: 'all reps passed the decision-tree assessment' },
-  level3Behaviour: { transferred: true, evidence: 'LRS shows first-contact resolution on 14 of the next 16 in-policy disputes' },
+  response: { favourable: true, note: 'reps rated the course relevant to live disputes' },
+  capability: { assessed: true, passed: true, note: 'all reps passed the decision-tree assessment' },
+  transfer: { transferred: true, evidence: 'LRS shows first-contact resolution on 14 of the next 16 in-policy disputes' },
   newObserved: gapC.desired,
 });
-console.log(`\n   intervention evaluation (Kirkpatrick → cg:supersedes):`);
-console.log(`     L2 learning  : ${evalC.levels.level2.passed ? 'passed' : 'failed'}`);
-console.log(`     L3 behaviour : ${evalC.levels.level3.transferred ? 'transferred to real work' : 'did not transfer'}`);
-console.log(`     L4 results   : gap ${evalC.levels.level4.gapClosed ? 'CLOSED' : 'open'}`);
+console.log(`\n   intervention evaluation (four-level evaluation → cg:supersedes):`);
+console.log(`     capability : ${evalC.levels.capability.passed ? 'passed' : 'failed'}`);
+console.log(`     transfer   : ${evalC.levels.transfer.transferred ? 'transferred to real work' : 'did not transfer'}`);
+console.log(`     outcome    : gap ${evalC.levels.outcome.gapClosed ? 'CLOSED' : 'open'}`);
 console.log(`     verdict      : ${evalC.verdict} — supersedes observed-state "${evalC.supersedes}"`);
 console.log(`     next action  : ${evalC.nextAction}`);
 check('G: the evaluation verdict is "closed"', evalC.verdict === 'closed');

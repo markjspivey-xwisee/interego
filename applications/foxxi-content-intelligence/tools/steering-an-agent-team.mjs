@@ -117,8 +117,8 @@ const startDisposition = assessDisposition([startingPoint]);
 console.log('  STEP 2 — SHE READS THE TEAM\'S DISPOSITION — TO KNOW HOW TO ACT.');
 console.log(`    assessDisposition() →`);
 console.log(`      dispositions: ${startDisposition.dispositions.map(d => d.name).join(', ')}`);
-console.log(`      Cynefin: ${startDisposition.cynefin.domain}`);
-console.log(`      stance:  ${wrap(startDisposition.cynefin.stance, 66, '               ')}`);
+console.log(`      regime: ${startDisposition.regime.name}`);
+console.log(`      stance:  ${wrap(startDisposition.regime.stance, 66, '               ')}`);
 console.log('    ' + wrap(`This tells Mara two things. The team is execution-biased and committed — it will pull the biggest lever it found and will not self-correct. And the situation calls for a decisive but SAFE-TO-FAIL move — not an override.`, 72, '    '));
 
 // STEP 3 — she intervenes by changing a constraint, not giving orders.
@@ -133,7 +133,7 @@ const probe = buildProbe({
   recordedBy: MARA,
 }, snapshot(startDisposition));
 console.log(`\n  STEP 3 — SHE INTERVENES — BY CHANGING A CONSTRAINT, NOT GIVING ORDERS.`);
-console.log('    ' + wrap(`buildProbe() — a safe-to-fail Pearl do(x) intervention. do(${probe.constraintTarget}): "${probe.change}". The substrate snapshots the disposition as the causal baseline. Mara did not command "do not restart" — she WIDENED what the team may do. The agents still choose.`, 72, '    '));
+console.log('    ' + wrap(`buildProbe() — a safe-to-fail a deliberate change intervention. the change to ${probe.constraintTarget}: "${probe.change}". The substrate snapshots the disposition as the causal baseline. Mara did not command "do not restart" — she WIDENED what the team may do. The agents still choose.`, 72, '    '));
 
 // STEP 4 — the team re-plans; the substrate shows the revision.
 const scoutB = buildTrajectory(SCOUT, 'Scout', [
@@ -160,8 +160,8 @@ console.log(`      Counterfactual road not taken.`);
 const causal = computeCausalRead(probe, [teamB]);
 console.log(`\n  STEP 5 — SHE CONFIRMS HER INTERVENTION IS WHAT DID IT.`);
 console.log(`    computeCausalRead() →`);
-console.log(`      rung-2 (interventional): ${causal.rung2.shift}`);
-console.log(`      rung-3 (counterfactual): ${wrap(causal.rung3.reading, 64, '                               ')}`);
+console.log(`      interventional: ${causal.interventional.shift}`);
+console.log(`      counterfactual: ${wrap(causal.counterfactual.reading, 64, '                               ')}`);
 console.log(`      recommendation: ${causal.recommendation.toUpperCase()}`);
 
 const downtimeB = '0 s';
@@ -188,10 +188,10 @@ console.log(`
   human — and made possible, at every step, by a substrate primitive:
 
     she SAW the plan       ← modal status: Hypothetical, before Asserted
-    she knew HOW to act    ← the disposition read: Cynefin stance
-    she ACTED on it        ← the safe-to-fail probe: do(x) on a constraint
+    she knew HOW to act    ← the disposition read: work-regime stance
+    she ACTED on it        ← the safe-to-fail probe: a change to a constraint
     the team RE-PLANNED    ← the cg:supersedes chain
-    she KNEW it worked     ← the causal read: rung-2 / rung-3
+    she KNEW it worked     ← the causal read: interventional / counterfactual
 
   None of these is a feature bolted onto a log. Each is the substrate
   being modal, poly-granular, composable, and ACTABLE. That is what
