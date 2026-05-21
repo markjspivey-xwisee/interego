@@ -167,6 +167,7 @@ import { attachCmi5LmsRoutes, cmi5BearerTenant, observeCmi5Statement } from '../
 import { attachLti13Routes } from '../src/lti13.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { attachScormSequencingRoutes } from '../src/scorm-sequencing.js';
+import { attachPerformanceRoutes } from '../src/performance-routes.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
@@ -1849,6 +1850,16 @@ const app = createVerticalBridge({
     // conditions, rollup) rather than merely transcribe it. Routes:
     // POST /scorm/sequencing/session, .../navigate, .../commit; GET .../:id.
     attachScormSequencingRoutes(a, {
+      selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
+    });
+
+    // Foxxi Performance Architecture — the diagnosis → intervention
+    // spine + the emergent-content authoring tools. A performance gap is
+    // diagnosed (Cynefin-routed: HPT gap analysis for Clear/Complicated,
+    // dispositional probes for Complex); content is composed only when
+    // the diagnosis says it is the answer. Routes: GET /performance,
+    // POST /performance/plan, /content/compose-course, /content/personalize.
+    attachPerformanceRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
     });
 

@@ -63,6 +63,18 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'AdaptiveSequencingPolicy', kind: 'Type', label: 'Adaptive Sequencing Policy', definition: 'A descriptor declaring an adaptive content-sequencing policy.' },
   { name: 'PackageUpload', kind: 'Type', label: 'Package Upload', definition: 'A descriptor recording a SCORM / cmi5 package upload.' },
 
+  // ── Performance architecture ───────────────────────────────────────
+  { name: 'PerformanceGap', kind: 'Type', label: 'Performance Gap', definition: 'A typed, modal-statused descriptor of desired-vs-observed performance for a human or agent performer in a work context. The unit the system reasons from — content is never assumed.' },
+  { name: 'Diagnosis', kind: 'Type', label: 'Diagnosis', definition: 'A Cynefin-routed cause analysis of a performance gap: Gilbert\'s Behavior Engineering Model + Mager-Pipe for Clear/Complicated work, a dispositional read for Complex work.' },
+  { name: 'InterventionPlan', kind: 'Type', label: 'Intervention Plan', definition: 'The full paradigm of interventions for a diagnosed gap — instruction, performance-support, assessment, coaching, probe, environmental-fix, no-intervention — each marked selected or ruled-out with its reasoning.' },
+  { name: 'InterventionEvaluation', kind: 'Type', label: 'Intervention Evaluation', definition: 'Kirkpatrick\'s four levels as a modal-status progression; a closed gap supersedes the prior observed-state (cg:supersedes).' },
+  { name: 'GroundingFragment', kind: 'Type', label: 'Grounding Fragment', definition: 'A content-addressed atomic content unit (a PGSL atom) — the leaf of an emergent course; carries modality, Bloom level, provenance and disposition-suitability.' },
+  { name: 'Lesson', kind: 'Type', label: 'Lesson', definition: 'A syntagm of grounding fragments toward one competency-point; each position holds a paradigm of interchangeable alternatives.' },
+  { name: 'Module', kind: 'Type', label: 'Module', definition: 'A syntagm of lessons.' },
+  { name: 'Course', kind: 'Type', label: 'Course', definition: 'A syntagm of modules. Not a stored artifact — a composition recipe that personalises (restriction + override) into a different resolved course per performer.' },
+  { name: 'Curriculum', kind: 'Type', label: 'Curriculum', definition: 'A syntagm of courses toward a set of target competencies.' },
+  { name: 'InFlowPerformanceSupport', kind: 'Type', label: 'In-Flow Performance Support', definition: 'A job-aid fragment delivered by an affordance attached to the work context — surfaced when a performer enters the triggering task, not on a training schedule.' },
+
   // ── Extensions / properties ────────────────────────────────────────
   { name: 'slideId', kind: 'Extension', label: 'slideId', definition: 'Identifier of the slide a statement is about.' },
   { name: 'sceneTitle', kind: 'Extension', label: 'sceneTitle', definition: 'Title of the scene grouping.' },

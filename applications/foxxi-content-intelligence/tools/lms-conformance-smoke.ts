@@ -17,6 +17,7 @@ import {
   parseManifest, createSession, processNavigation, commitTracking,
 } from '../src/scorm-sequencing.js';
 import { attachScormSequencingRoutes } from '../src/scorm-sequencing.js';
+import { attachPerformanceRoutes } from '../src/performance-routes.js';
 import { attachLti13Routes } from '../src/lti13.js';
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { applyCsvBundle, tenantOrUsers } from '../src/oneroster.js';
@@ -181,6 +182,7 @@ async function testHttpRoutes(): Promise<void> {
   });
   attachOneRosterRoutes(app, { tenantDid: 'did:web:test' });
   attachScormSequencingRoutes(app, { selfBaseUrl: 'http://localhost' });
+  attachPerformanceRoutes(app, { selfBaseUrl: 'http://localhost' });
 
   const server = app.listen(0);
   await new Promise<void>(r => server.once('listening', () => r()));
@@ -293,6 +295,71 @@ async function testHttpRoutes(): Promise<void> {
     });
     const navBody = await nav.json() as { delivered?: { activityId?: string } };
     check('SCORM navigate(start) delivers over HTTP', navBody.delivered?.activityId === 'SCO-A1', navBody);
+
+    // ── Performance Architecture routes ──
+    const perfIndex = await fetch(`${base}/performance`).then(r => r.json()) as { _affordances?: Record<string, unknown> };
+    check('GET /performance is a self-describing index', !!perfIndex._affordances, perfIndex);
+
+    // A gap whose cause is environmental — the plan must NOT warrant content.
+    const envPlan = await fetch(`${base}/performance/plan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gap: {
+          performer: { id: 'u-1', kind: 'human' }, workContext: 'support', competency: 'escalation',
+          desired: 'escalates in SLA', observed: 'does not escalate', frequency: 'frequent',
+          criticality: 'high', modalStatus: 'Asserted', domain: 'Complicated',
+        },
+        couldDoIfLifeDependedOnIt: true,
+        bemEvidence: { incentives: { adequate: false, evidence: 'metric punishes escalation' } },
+      }),
+    }).then(r => r.json()) as { plan?: { contentWarranted?: boolean; selected?: Array<{ type: string }> } };
+    check('POST /performance/plan routes an environmental gap away from content',
+      envPlan.plan?.contentWarranted === false && !!envPlan.plan?.selected?.some(o => o.type === 'environmental-fix'),
+      envPlan.plan);
+
+    // A genuine frequent skill gap — the plan must warrant instruction.
+    const instrPlan = await fetch(`${base}/performance/plan`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gap: {
+          performer: { id: 'u-2', kind: 'human' }, workContext: 'disputes', competency: 'resolving disputes',
+          desired: 'resolves in policy', observed: 'over-escalates', frequency: 'continuous',
+          criticality: 'moderate', modalStatus: 'Asserted', domain: 'Complicated',
+        },
+        couldDoIfLifeDependedOnIt: false,
+        bemEvidence: { knowledgeSkill: { adequate: false, evidence: 'does not know the policy' } },
+      }),
+    }).then(r => r.json()) as { plan?: { contentWarranted?: boolean; selected?: Array<{ type: string }> } };
+    check('POST /performance/plan warrants instruction for a real skill gap',
+      instrPlan.plan?.contentWarranted === true && !!instrPlan.plan?.selected?.some(o => o.type === 'instruction'),
+      instrPlan.plan);
+
+    // Author a course, then personalise it.
+    const composed = await fetch(`${base}/content/compose-course`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Dispute Resolution', competency: 'resolving disputes', audience: 'human',
+        authoredBy: { id: 'sme-1', kind: 'human' },
+        modules: [{
+          title: 'Core', competencyPoint: 'resolving disputes',
+          lessons: [{ title: 'Thresholds', competencyPoint: 'thresholds', fragments: [
+            { modality: 'concept', body: 'rep authority is $500', bloom: 'remember' },
+          ] }],
+        }],
+      }),
+    });
+    const composedBody = await composed.json() as { course?: { syntagm?: unknown[] }; cmi5Outline?: { blocks?: unknown[] } };
+    check('POST /content/compose-course authors an emergent course',
+      composed.status === 200 && Array.isArray(composedBody.course?.syntagm) && !!composedBody.cmi5Outline,
+      composed.status);
+    const personalized = await fetch(`${base}/content/personalize`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ course: composedBody.course, performer: { id: 'u-2', kind: 'human' } }),
+    });
+    const personalizedBody = await personalized.json() as { resolved?: { lessons?: unknown[] }; rendering?: { direction?: string } };
+    check('POST /content/personalize resolves the course (composition algebra)',
+      personalized.status === 200 && Array.isArray(personalizedBody.resolved?.lessons) && !!personalizedBody.rendering?.direction,
+      personalized.status);
   } finally {
     server.close();
   }
