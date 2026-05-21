@@ -52,7 +52,7 @@ for (const [q, expected] of intentCases) {
 
 console.log('\nGrounded answers — direct');
 const emptyCtx: NetworkedContext = { learner: 'did:web:x', courses: [], jobAids: [], enrollments: [], activity: [] };
-const noMatch = answerContextQuestion({
+const noMatch = await answerContextQuestion({
   asker: { id: 'did:web:x', kind: 'human' }, question: 'what is photosynthesis?', context: emptyCtx,
 });
 check('a question with no content → honest no-match (grounded:false)', noMatch.grounded === false && noMatch.sources.length === 0);
@@ -117,17 +117,19 @@ async function testRoutes(): Promise<void> {
     });
     check('the job aid publishes into the networked context', aidRes.status === 200);
 
-    // ── A concept question — grounded, sourced from a fragment ──────
+    // ── A concept question — answered by the agentic RAG ────────────
     const concept = await ask({ question: 'What does the refund authority threshold mean?', learner: LEARNER });
     check('concept question → intent concept', concept.json.intent === 'concept', concept.json.intent);
     check('concept answer is grounded', concept.json.grounded === true, concept.json);
     const cSources = (concept.json.sources ?? []) as Array<Record<string, unknown>>;
     check('concept answer cites a course-fragment source', cSources.some(s => s.kind === 'course-fragment'), cSources);
-    check('the cited source carries a course › module › lesson locator',
+    check('the cited source carries a course › lesson provenance locator',
       cSources.some(s => typeof s.locator === 'string' && (s.locator as string).includes('›')), cSources);
-    check('the answer quotes the verbatim fragment body',
-      typeof concept.json.answer === 'string' && (concept.json.answer as string).includes('authorise refunds up to $500'),
-      concept.json.answer);
+    check('the cited source quotes the verbatim content',
+      cSources.some(s => typeof s.excerpt === 'string' && (s.excerpt as string).includes('authorise refunds up to $500')),
+      cSources);
+    check('the answer carries the agentic-RAG Interego trace',
+      Array.isArray(concept.json.trace) && (concept.json.trace as unknown[]).length >= 2, concept.json.trace);
     check('the ask was instrumented into the LRS', concept.json.instrumented === true);
 
     // ── A procedure question — grounded, sourced from the job aid ───

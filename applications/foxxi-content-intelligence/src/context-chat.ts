@@ -2,43 +2,51 @@
  * Foxxi Context Companion — chat over a user's networked context.
  *
  * The whole point of Interego is that a user's context is networked: one
- * substrate holds their assigned courses, the content fragments those
- * courses are composed from, the job aids, and their xAPI activity. So a
- * user — human OR agent — should never have to know which surface to
- * call. They should be able to just ask:
+ * substrate holds their assigned courses, the content those courses are
+ * composed from, the job aids, and their xAPI activity. So a user —
+ * human OR agent — should never have to know which surface to call. They
+ * should be able to just ask:
  *
  *   "do I have any courses assigned to me?"   → the assignment surface
- *   "what does this concept mean?"            → grounded in the content
- *   "how do I handle X?"                      → grounded in the job aids
+ *   "what does this concept mean?"            → the content
+ *   "how do I handle X?"                      → the content + job aids
  *   "what's my progress?"                     → the live LRS
  *
- * This module is that single front door. `POST /content/ask` takes a
- * natural-language question, classifies its intent, assembles the asker's
- * networked context from the substrate's own surfaces (the published-course
- * registry, the job-aid registry, the live LRS), and answers — with
- * **sourced** answers: every claim about content quotes the verbatim
- * fragment it came from and carries the descriptor IRI + the
- * course › module › lesson provenance trail. It never confabulates: a
- * question nothing in the networked context covers gets an honest
- * no-match, exactly the discipline `course-qa.ts` borrows from LPC's
- * grounded-answer.
+ * This module is that single front door — `POST /content/ask`. It does
+ * NOT reinvent retrieval. It is composition glue:
  *
- * The answer is identical whether a human or an agent asks — the asker's
- * kind is recorded, not branched on. That symmetry is the same one
- * `emergent-content.ts` relies on: humans and agents are the same kind of
- * user of the same substrate.
+ *   · intent classification routes the question to a surface;
+ *   · the networked context is assembled from the substrate's own
+ *     surfaces — the published-course registry, the job-aid registry,
+ *     the live LRS, and (when the pod is seeded) the enrollment surface;
+ *   · content questions delegate to the vertical's existing **agentic
+ *     RAG** (`agentic-rag.ts`) — concept-graph retrieval + prereq-edge
+ *     expansion + LLM synthesis + the modal-statused Interego trace.
+ *     With an LLM key (the bridge's `FOXXI_LLM_API_KEY`, or per-request
+ *     BYOK) the answer is synthesised; without one it falls back to
+ *     `retrieveCourseContext` — the retrieval scaffold the *calling
+ *     agent's own subscription* synthesises from. Either way the answer
+ *     is sourced: cited slides carry the descriptor id + provenance.
  *
- * Layer: L3 vertical. Composes the substrate (the published-content
- * registries, the LRS, the emergent-content Course shape); no L1/L2/L3
+ * The answer is the same whether a human or an agent asks — the asker's
+ * kind is recorded, not branched on.
+ *
+ * Layer: L3 vertical. Composes the substrate + the existing Foxxi
+ * modules (agentic-rag, content-delivery, the LRS); no L1/L2/L3
  * ontology change.
  */
 
 import type { Express, Request, Response } from 'express';
+import type { IRI } from '@interego/core';
 import { tenantIdOf, type TenantId } from './tenant-context.js';
 import { _publishedCourses, _publishedJobAids } from './content-delivery.js';
 import { listStoredStatements } from './xapi-lrs.js';
 import { flattenCourse } from './content-package.js';
 import type { Course } from './emergent-content.js';
+import {
+  askAgenticRag, retrieveCourseContext, buildGraphContext,
+  type FoxxiAgenticCourse, type RetrievalContext, type AgentTraceDescriptor, type LlmKeySource,
+} from './agentic-rag.js';
 
 const INTERACTED = 'http://adlnet.gov/expapi/verbs/interacted';
 
@@ -53,19 +61,17 @@ export type ContextIntent =
   | 'assignments'  // "do I have any courses assigned to me?"
   | 'progress'     // "what's my progress?" / "have I completed X?"
   | 'concept'      // "what does X mean?" / "explain X"
-  | 'procedure'    // "how do I X?" — answered from job aids
+  | 'procedure'    // "how do I X?"
   | 'catalog'      // "what courses are available?"
-  | 'general';     // fall back to a content search
+  | 'general';     // any other content question
 
 /** One cited source backing an answer — auditable, click-through-able. */
 export interface GroundedSource {
   kind: 'course-fragment' | 'job-aid' | 'assignment' | 'progress' | 'course';
-  /** The descriptor IRI / id the answer is drawn from. */
+  /** The descriptor id the answer is drawn from. */
   id: string;
-  /** Readable provenance: course › module › lesson, or the course title. */
+  /** Readable provenance: course › lesson, or the course title. */
   locator: string;
-  /** Who authored / asserted it, when known. */
-  authoredBy?: string;
   /** The verbatim excerpt the answer cites. */
   excerpt: string;
 }
@@ -74,45 +80,21 @@ export interface ContextAnswer {
   intent: ContextIntent;
   question: string;
   asker: { id: string; kind: AskerKind };
-  /** The conversational answer — readable on its own, citations inline. */
+  /** The conversational answer. */
   answer: string;
   /** True iff the answer is backed by ≥1 source. An honest no-match is false. */
   grounded: boolean;
   sources: GroundedSource[];
   /** Follow-up prompts / topics actually present in the networked context. */
   suggestions: string[];
+  /** For content answers — which LLM (or none) synthesised it. */
+  llm?: { model: string; keySource: LlmKeySource };
+  /** For content answers — the agentic-RAG modal-statused Interego trace. */
+  trace?: readonly AgentTraceDescriptor[];
 }
 
 // ── The networked context — what the substrate knows about this user ──
 
-export interface ContextFragment {
-  id: string;
-  modality: string;
-  competencyPoint: string;
-  level: string;
-  body: string;
-  authoredBy?: string;
-}
-export interface ContextLesson {
-  lessonId: string;
-  moduleTitle: string;
-  lessonTitle: string;
-  fragments: ContextFragment[];
-}
-export interface ContextCourse {
-  courseId: string;
-  title: string;
-  competency: string;
-  authoredBy?: string;
-  lessons: ContextLesson[];
-}
-export interface ContextJobAid {
-  id: string;
-  competencyPoint: string;
-  triggerContext: string;
-  body: string;
-  authoredBy?: string;
-}
 export interface ContextEnrollment {
   courseId: string;
   courseTitle: string;
@@ -130,8 +112,12 @@ export interface ContextActivity {
 }
 export interface NetworkedContext {
   learner: string;
-  courses: ContextCourse[];
-  jobAids: ContextJobAid[];
+  /** Published courses, as agentic-RAG course graphs (the shape the
+   *  vertical's existing retrieval consumes). */
+  courses: FoxxiAgenticCourse[];
+  /** Job aids, each as a one-slide agentic-RAG course graph — so content
+   *  retrieval federates over courses + job aids uniformly. */
+  jobAids: FoxxiAgenticCourse[];
   enrollments: ContextEnrollment[];
   activity: ContextActivity[];
 }
@@ -155,93 +141,85 @@ export function classifyContextIntent(question: string): ContextIntent {
   return 'general';
 }
 
-// ─────────────────────────────────────────────────────────────────────
-//  Term-overlap retrieval — the same honesty discipline as course-qa.ts
-// ─────────────────────────────────────────────────────────────────────
-
-const STOP = new Set(
-  ('a an and any are about as at be by can do does for from has have how i if in into is it its '
-   + 'me my of on or our should so that the their them then there these this to up was we were '
-   + 'what when where which who will with you your com mean means explain define tell show give '
-   + 'course courses lesson content please').split(/\s+/),
-);
-
-/** The distinct, content-bearing terms of a string. */
-function terms(s: string): string[] {
-  return [...new Set(
-    (s.toLowerCase().match(/[a-z0-9][a-z0-9'$-]*/g) ?? [])
-      .map(t => t.replace(/'s$/, '').replace(/[$]/g, ''))
-      .filter(t => t.length >= 3 && !STOP.has(t)),
-  )];
+/** True iff this intent is a content question (answered by agentic RAG). */
+function isContentIntent(intent: ContextIntent): boolean {
+  return intent === 'concept' || intent === 'procedure' || intent === 'general';
 }
 
-interface Atom {
-  source: GroundedSource;
-  /** Full searchable text (competency point + body). */
-  haystack: string;
-  competencyPoint: string;
-  modality: string;
-}
+// ─────────────────────────────────────────────────────────────────────
+//  Adapters — the substrate's content shapes → the agentic-RAG shape
+// ─────────────────────────────────────────────────────────────────────
 
-/** Flatten the networked context's content into searchable grounding atoms. */
-function contentAtoms(ctx: NetworkedContext): Atom[] {
-  const atoms: Atom[] = [];
-  for (const course of ctx.courses) {
-    for (const lesson of course.lessons) {
-      for (const f of lesson.fragments) {
-        atoms.push({
-          source: {
-            kind: 'course-fragment',
-            id: f.id,
-            locator: `${course.title} › ${lesson.moduleTitle} › ${lesson.lessonTitle}`,
-            ...(f.authoredBy ? { authoredBy: f.authoredBy } : {}),
-            excerpt: f.body,
-          },
-          haystack: `${f.competencyPoint} ${f.body}`.toLowerCase(),
-          competencyPoint: f.competencyPoint,
-          modality: f.modality,
-        });
-      }
+function slug(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'x';
+}
+const conceptId = (competencyPoint: string): string => `urn:foxxi:concept:${slug(competencyPoint)}`;
+
+/**
+ * Adapt an emergent `Course` into the `FoxxiAgenticCourse` shape the
+ * vertical's agentic RAG already consumes — each lesson becomes a slide
+ * (its fragment bodies the transcript), each distinct competency point a
+ * free-standing concept. This is the third such adapter, alongside
+ * `payloadToAgenticCourse` + `courseContentToAgenticCourse`: same target
+ * shape, a different source — composition, not reinvention.
+ */
+function emergentCourseToAgenticCourse(course: Course): FoxxiAgenticCourse {
+  const flat = flattenCourse(course);
+  const slides = flat.map((fl, i) => ({
+    id: fl.lesson.id,
+    title: fl.lesson.title,
+    sequence_index: i,
+    concept_ids: [...new Set(fl.fragments.map(f => conceptId(f.competencyPoint)))],
+    transcript_combined: fl.fragments.map(f => `[${f.modality}] ${f.body}`).join('\n\n'),
+  }));
+  const cpLabels = new Map<string, string>();
+  const cpSlides = new Map<string, string[]>();
+  for (const fl of flat) {
+    for (const f of fl.fragments) {
+      const cid = conceptId(f.competencyPoint);
+      cpLabels.set(cid, f.competencyPoint);
+      const arr = cpSlides.get(cid) ?? [];
+      if (!arr.includes(fl.lesson.id)) arr.push(fl.lesson.id);
+      cpSlides.set(cid, arr);
     }
   }
-  for (const aid of ctx.jobAids) {
-    atoms.push({
-      source: {
-        kind: 'job-aid',
-        id: aid.id,
-        locator: `Job aid — ${aid.competencyPoint} (surfaced: ${aid.triggerContext})`,
-        ...(aid.authoredBy ? { authoredBy: aid.authoredBy } : {}),
-        excerpt: aid.body,
-      },
-      haystack: `${aid.competencyPoint} ${aid.triggerContext} ${aid.body}`.toLowerCase(),
-      competencyPoint: aid.competencyPoint,
-      modality: 'job-aid',
-    });
-  }
-  return atoms;
+  const concepts = [...cpLabels.entries()].map(([cid, label]) => ({
+    id: cid, label, confidence: 1, tier: 1, is_free_standing: true,
+    taught_in_slides: cpSlides.get(cid) ?? [],
+  }));
+  return {
+    courseIri: course.id as IRI,
+    title: course.title,
+    courseLabel: course.title,
+    courseId: course.id,
+    authoritativeSource: `${course.authoredBy.kind}:${course.authoredBy.id}` as IRI,
+    concepts,
+    slides,
+    modifier_pairs: [],
+    prereq_edges: [],
+  };
 }
 
-interface ScoredAtom { atom: Atom; score: number; matched: number; }
-
-/** Score every atom against the query; return the matches, best first. */
-function retrieve(qTerms: string[], atoms: Atom[], intent: ContextIntent): ScoredAtom[] {
-  if (qTerms.length === 0) return [];
-  const scored: ScoredAtom[] = [];
-  for (const atom of atoms) {
-    const cp = atom.competencyPoint.toLowerCase();
-    let score = 0, matched = 0;
-    for (const t of qTerms) {
-      if (cp.includes(t)) { score += 2; matched++; }
-      else if (atom.haystack.includes(t)) { score += 1; matched++; }
-    }
-    if (matched === 0) continue;
-    // Intent-aware nudge — a procedure question prefers a job aid; a
-    // concept question prefers a told concept.
-    if (intent === 'procedure' && atom.modality === 'job-aid') score += 1.5;
-    if (intent === 'concept' && (atom.modality === 'concept' || atom.modality === 'reference')) score += 1;
-    scored.push({ atom, score, matched });
-  }
-  return scored.sort((a, b) => b.score - a.score || b.matched - a.matched);
+/** Adapt a published job aid into a one-slide agentic-RAG course graph. */
+function jobAidToAgenticCourse(aid: { id: string; competencyPoint: string; triggerContext: string; body: string }): FoxxiAgenticCourse {
+  const cid = conceptId(aid.competencyPoint);
+  return {
+    courseIri: aid.id as IRI,
+    title: `Job aid — ${aid.competencyPoint}`,
+    courseLabel: 'Job aid',
+    courseId: aid.id,
+    authoritativeSource: 'did:web:foxxi' as IRI,
+    concepts: [{ id: cid, label: aid.competencyPoint, confidence: 1, tier: 1, is_free_standing: true, taught_in_slides: [aid.id] }],
+    slides: [{
+      id: aid.id,
+      title: `Job aid — ${aid.competencyPoint}`,
+      sequence_index: 0,
+      concept_ids: [cid],
+      transcript_combined: `When ${aid.triggerContext}: ${aid.body}`,
+    }],
+    modifier_pairs: [],
+    prereq_edges: [],
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -251,45 +229,77 @@ function retrieve(qTerms: string[], atoms: Atom[], intent: ContextIntent): Score
 /** "1 course" / "3 courses" / "1 is" / "2 are" — count + pluralised noun. */
 const plural = (n: number, s: string, p = `${s}s`): string => `${n} ${n === 1 ? s : p}`;
 
-/** Topic phrase for a question — its content terms, or a fallback. */
-function topicOf(question: string): string {
-  const t = terms(question);
-  return t.length > 0 ? t.join(' ') : question.trim().replace(/[?.!]+$/, '');
+/** Map the agentic-RAG cited slides into the companion's source shape. */
+function citedSlidesToSources(retrieval: RetrievalContext): GroundedSource[] {
+  return retrieval.citedSlides.map(cs => ({
+    kind: cs.course.courseId.startsWith('aid-') ? 'job-aid' as const : 'course-fragment' as const,
+    id: cs.slideId,
+    locator: `${cs.course.title} › ${cs.slideTitle}`,
+    excerpt: cs.transcriptCombined,
+  }));
 }
 
-function answerContent(
-  intent: ContextIntent, question: string, ctx: NetworkedContext,
-): { answer: string; grounded: boolean; sources: GroundedSource[] } {
-  const qTerms = terms(question);
-  const hits = retrieve(qTerms, contentAtoms(ctx), intent).slice(0, 3);
-  const topic = topicOf(question);
+/** The retrieval scaffold, rendered for an agent to synthesise from. */
+function scaffold(retrieval: RetrievalContext): string {
+  const blocks = retrieval.citedSlides.map(cs =>
+    `• ${cs.course.title} › ${cs.slideTitle}\n  "${cs.transcriptCombined}"`).join('\n\n');
+  return `From your content (sourced excerpts — synthesise your answer from these):\n\n${blocks}`;
+}
 
-  if (hits.length === 0) {
-    const covered = [...new Set(ctx.courses.flatMap(c =>
-      c.lessons.flatMap(l => l.fragments.map(f => f.competencyPoint))))];
-    const lead = `I couldn't find anything in your content about "${topic}". `
-      + `Nothing in the published courses or job aids covers it — so I won't guess.`;
-    const hint = covered.length > 0
-      ? ` What the content does cover: ${covered.slice(0, 6).join('; ')}.`
-      : ` There is no published content in your context yet.`;
-    return { answer: lead + hint, grounded: false, sources: [] };
+function honestNoMatch(question: string, content: FoxxiAgenticCourse[]): string {
+  const topic = question.trim().replace(/[?.!]+$/, '');
+  const covered = [...new Set(content.flatMap(c => c.concepts.map(x => x.label)))];
+  const hint = covered.length > 0
+    ? ` What your content does cover: ${covered.slice(0, 6).join('; ')}.`
+    : ` There is no published content in your context yet.`;
+  return `I couldn't find anything in your content about "${topic}". `
+    + `Nothing in the published courses or job aids covers it — so I won't guess.${hint}`;
+}
+
+interface LlmConfig { apiKey?: string; model?: string; keySource: LlmKeySource }
+
+/**
+ * Answer a content question by delegating to the vertical's existing
+ * agentic RAG. With an LLM key the answer is synthesised; without one it
+ * is the retrieval scaffold the calling agent synthesises from itself.
+ */
+async function answerContent(
+  question: string, askerId: string, ctx: NetworkedContext, llm: LlmConfig,
+): Promise<Pick<ContextAnswer, 'answer' | 'grounded' | 'sources' | 'llm' | 'trace'>> {
+  const all = [...ctx.courses, ...ctx.jobAids];
+  if (all.length === 0) {
+    return { answer: honestNoMatch(question, all), grounded: false, sources: [] };
+  }
+  const primary = all[0]!;
+  const federation = all.slice(1);
+
+  // Honest no-match — short-circuit before spending an LLM call when no
+  // concept in the networked context matches the question.
+  const probe = buildGraphContext({ question, primary, federation });
+  if (probe.seedConcepts.length === 0) {
+    return { answer: honestNoMatch(question, all), grounded: false, sources: [] };
   }
 
-  const leadIn = intent === 'procedure'
-    ? `Here's the guidance for that, from your content:`
-    : intent === 'concept'
-      ? `Here's what your content says about "${hits[0]!.atom.competencyPoint}":`
-      : `From your content:`;
-  const body = hits.map(h =>
-    `• "${h.atom.source.excerpt}"\n  — ${h.atom.modality} · ${h.atom.source.locator}`).join('\n\n');
+  const result = llm.apiKey
+    ? await askAgenticRag({
+        question, learnerDid: askerId as IRI, primary, federation,
+        llmApiKey: llm.apiKey, ...(llm.model ? { llmModel: llm.model } : {}), llmKeySource: llm.keySource,
+      })
+    : retrieveCourseContext({ question, learnerDid: askerId as IRI, primary, federation });
+
+  const synthesised = result.synthesizedAnswer && !result.synthesizedAnswer.startsWith('(LLM call failed')
+    ? result.synthesizedAnswer
+    : null;
   return {
-    answer: `${leadIn}\n\n${body}`,
+    answer: synthesised ?? scaffold(result.retrieval),
     grounded: true,
-    sources: hits.map(h => h.atom.source),
+    sources: citedSlidesToSources(result.retrieval),
+    llm: { model: result.llmModel, keySource: result.llmKeySource },
+    trace: result.trace,
   };
 }
 
-function answerAssignments(ctx: NetworkedContext): { answer: string; grounded: boolean; sources: GroundedSource[]; suggestions: string[] } {
+function answerAssignments(ctx: NetworkedContext): Pick<ContextAnswer, 'answer' | 'grounded' | 'sources' | 'suggestions'> {
   const assigned = ctx.enrollments.filter(e => e.status !== 'available');
   const available = ctx.enrollments.filter(e => e.status === 'available');
   const sources: GroundedSource[] = ctx.enrollments.map(e => ({
@@ -301,12 +311,15 @@ function answerAssignments(ctx: NetworkedContext): { answer: string; grounded: b
   }));
 
   if (assigned.length === 0) {
-    const lead = `You don't have any courses assigned to you right now.`;
     const more = available.length > 0
       ? ` ${plural(available.length, 'course')} ${available.length === 1 ? 'is' : 'are'} `
         + `available you could start: ${available.map(c => c.courseTitle).join('; ')}.`
       : ` There is no published course in your context yet.`;
-    return { answer: lead + more, grounded: assigned.length > 0, sources, suggestions: available.map(c => `Start "${c.courseTitle}"`) };
+    return {
+      answer: `You don't have any courses assigned to you right now.${more}`,
+      grounded: false, sources,
+      suggestions: available.map(c => `Start "${c.courseTitle}"`),
+    };
   }
 
   const line = (e: ContextEnrollment): string =>
@@ -322,20 +335,18 @@ function answerAssignments(ctx: NetworkedContext): { answer: string; grounded: b
   if (done.length > 0) summary += ` You've completed ${done.length}.`;
   return {
     answer: `${summary}\n\n${assigned.map(line).join('\n')}`,
-    grounded: true,
-    sources,
+    grounded: true, sources,
     suggestions: assigned.filter(e => e.status !== 'completed').map(e => `Resume "${e.courseTitle}"`),
   };
 }
 
-function answerProgress(ctx: NetworkedContext): { answer: string; grounded: boolean; sources: GroundedSource[] } {
+function answerProgress(ctx: NetworkedContext): Pick<ContextAnswer, 'answer' | 'grounded' | 'sources'> {
   const completed = ctx.enrollments.filter(e => e.status === 'completed');
   if (ctx.activity.length === 0 && completed.length === 0) {
     return {
       answer: `I don't see any completed or in-progress training for you yet. `
         + `Once you launch a course, every step you take is recorded in your learning record — ask me again then.`,
-      grounded: false,
-      sources: [],
+      grounded: false, sources: [],
     };
   }
   const verbCounts = new Map<string, number>();
@@ -360,21 +371,23 @@ function answerProgress(ctx: NetworkedContext): { answer: string; grounded: bool
   };
 }
 
-function answerCatalog(ctx: NetworkedContext): { answer: string; grounded: boolean; sources: GroundedSource[] } {
+function answerCatalog(ctx: NetworkedContext): Pick<ContextAnswer, 'answer' | 'grounded' | 'sources'> {
   if (ctx.courses.length === 0 && ctx.jobAids.length === 0) {
     return { answer: `There is no published content in your context yet.`, grounded: false, sources: [] };
   }
   const courseLines = ctx.courses.map(c =>
-    `• ${c.title} — ${c.competency} (${plural(c.lessons.length, 'lesson')})`).join('\n');
+    `• ${c.title} — ${plural(c.slides.length, 'lesson')}`
+    + (c.concepts.length > 0 ? `, covers: ${c.concepts.slice(0, 4).map(x => x.label).join('; ')}` : '')).join('\n');
   const aidNote = ctx.jobAids.length > 0
     ? `\n\nThere ${ctx.jobAids.length === 1 ? 'is' : 'are'} also ${plural(ctx.jobAids.length, 'job aid')} `
-      + `for in-the-flow support: ${ctx.jobAids.map(a => a.competencyPoint).join('; ')}.`
+      + `for in-the-flow support: ${ctx.jobAids.map(a => a.concepts[0]?.label ?? a.title).join('; ')}.`
     : '';
   return {
     answer: `There ${ctx.courses.length === 1 ? 'is' : 'are'} ${plural(ctx.courses.length, 'course')} available:\n\n${courseLines}${aidNote}`,
     grounded: ctx.courses.length > 0 || ctx.jobAids.length > 0,
     sources: ctx.courses.map(c => ({
-      kind: 'course' as const, id: c.courseId, locator: c.title, excerpt: c.competency,
+      kind: 'course' as const, id: c.courseId, locator: c.title,
+      excerpt: `${c.slides.length} lesson(s); covers ${c.concepts.map(x => x.label).join(', ') || 'n/a'}`,
     })),
   };
 }
@@ -382,74 +395,50 @@ function answerCatalog(ctx: NetworkedContext): { answer: string; grounded: boole
 /** Topics genuinely present in the networked context — for follow-ups. */
 function contextSuggestions(ctx: NetworkedContext): string[] {
   const out: string[] = [];
-  const cps = [...new Set(ctx.courses.flatMap(c =>
-    c.lessons.flatMap(l => l.fragments.map(f => f.competencyPoint))))];
+  const cps = [...new Set(ctx.courses.flatMap(c => c.concepts.map(x => x.label)))];
   for (const cp of cps.slice(0, 3)) out.push(`What does "${cp}" mean?`);
-  for (const aid of ctx.jobAids.slice(0, 1)) out.push(`How do I handle ${aid.triggerContext}?`);
+  for (const aid of ctx.jobAids.slice(0, 1)) out.push(`How do I handle ${aid.concepts[0]?.label ?? 'this'}?`);
   out.push('Do I have any courses assigned to me?', "What's my progress?");
   return out.slice(0, 5);
 }
 
 /**
  * Answer a natural-language question over an already-assembled networked
- * context. Pure + deterministic — the route assembles the context; this
- * routes by intent and composes a sourced answer.
+ * context. Status questions (assignments / progress / catalog) are
+ * answered from the substrate's surfaces directly; content questions
+ * delegate to the vertical's agentic RAG.
  */
-export function answerContextQuestion(input: {
+export async function answerContextQuestion(input: {
   asker: { id: string; kind: AskerKind };
   question: string;
   context: NetworkedContext;
-}): ContextAnswer {
+  llm?: LlmConfig;
+}): Promise<ContextAnswer> {
   const { asker, question, context } = input;
+  const llm: LlmConfig = input.llm ?? { keySource: 'none' };
   const intent = classifyContextIntent(question);
-  let part: { answer: string; grounded: boolean; sources: GroundedSource[]; suggestions?: string[] };
-  switch (intent) {
-    case 'assignments': part = answerAssignments(context); break;
-    case 'progress': part = answerProgress(context); break;
-    case 'catalog': part = answerCatalog(context); break;
-    case 'procedure':
-    case 'concept':
-    case 'general':
-    default: part = answerContent(intent, question, context); break;
-  }
+
+  let part: Pick<ContextAnswer, 'answer' | 'grounded' | 'sources'>
+    & Partial<Pick<ContextAnswer, 'suggestions' | 'llm' | 'trace'>>;
+  if (intent === 'assignments') part = answerAssignments(context);
+  else if (intent === 'progress') part = answerProgress(context);
+  else if (intent === 'catalog') part = answerCatalog(context);
+  else part = await answerContent(question, asker.id, context, llm);
+
   return {
-    intent,
-    question,
-    asker,
+    intent, question, asker,
     answer: part.answer,
     grounded: part.grounded,
     sources: part.sources,
     suggestions: part.suggestions ?? contextSuggestions(context),
+    ...(part.llm ? { llm: part.llm } : {}),
+    ...(part.trace ? { trace: part.trace } : {}),
   };
 }
 
 // ─────────────────────────────────────────────────────────────────────
 //  Networked-context assembly — from the substrate's live surfaces
 // ─────────────────────────────────────────────────────────────────────
-
-/** Flatten a published emergent Course into the chat's content shape. */
-function courseToContextCourse(course: Course): ContextCourse {
-  const lessons: ContextLesson[] = flattenCourse(course).map(fl => ({
-    lessonId: fl.lesson.id,
-    moduleTitle: fl.moduleTitle,
-    lessonTitle: fl.lesson.title,
-    fragments: fl.fragments.map(f => ({
-      id: f.id,
-      modality: f.modality,
-      competencyPoint: f.competencyPoint,
-      level: f.level,
-      body: f.body,
-      authoredBy: `${f.authoredBy.kind} ${f.authoredBy.id}`,
-    })),
-  }));
-  return {
-    courseId: course.id,
-    title: course.title,
-    competency: course.competency,
-    authoredBy: `${course.authoredBy.kind} ${course.authoredBy.id}`,
-    lessons,
-  };
-}
 
 /** Verb tail + object name + timestamp of an xAPI statement. */
 function statementActivity(stmt: Record<string, unknown>): ContextActivity {
@@ -471,9 +460,9 @@ function isLearnerStatement(stmt: Record<string, unknown>, learner: string): boo
 }
 
 /** What courses the learner has touched on the LMS — engagement-derived. */
-function engagementEnrollments(courses: ContextCourse[], activity: ContextActivity[]): ContextEnrollment[] {
+function engagementEnrollments(courses: FoxxiAgenticCourse[], activity: ContextActivity[]): ContextEnrollment[] {
   return courses.map(c => {
-    const lessonIds = new Set(c.lessons.map(l => l.lessonId));
+    const lessonIds = new Set(c.slides.map(s => s.id));
     const touched = activity.filter(a => a.objectId === c.courseId || lessonIds.has(a.objectId));
     const courseSatisfied = activity.some(a => a.verb === 'satisfied' && a.objectId === c.courseId);
     const allLessonsDone = lessonIds.size > 0 && [...lessonIds].every(lid =>
@@ -493,26 +482,31 @@ export interface ContextChatConfig {
   /** Persist a statement into the tenant LRS (instruments the ask). */
   emitStatement?: (statement: Record<string, unknown>, tenant: TenantId) => void;
   /**
-   * Optional — resolve the learner's policy-driven assignments (the
-   * enrollment surface). When absent, assignments are engagement-derived
-   * from what the learner has actually launched on the LMS.
+   * Optional — resolve the learner's policy-driven assignments. When
+   * absent, assignments are engagement-derived from what the learner has
+   * actually launched on the LMS.
    */
   resolveAssignments?: (learner: string, tenant: TenantId) => Promise<ContextEnrollment[] | undefined>;
+  /** LLM key for agentic-RAG synthesis (the bridge's FOXXI_LLM_API_KEY).
+   *  Absent → content answers return the retrieval scaffold instead. */
+  llmApiKey?: string;
+  /** Override the agentic-RAG model. */
+  llmModel?: string;
+  /** Reuse the bridge's per-IP rate limiter for the LLM-synthesis path. */
+  checkLlmRateLimit?: (clientIp: string) => { ok: boolean; retryAfterSeconds?: number };
 }
 
 /** Assemble a learner's networked context from the substrate's surfaces. */
 export async function assembleNetworkedContext(
   learner: string, tenant: TenantId, config: ContextChatConfig,
 ): Promise<NetworkedContext> {
-  const courses: ContextCourse[] = [];
+  const courses: FoxxiAgenticCourse[] = [];
   for (const pub of _publishedCourses().values()) {
-    if (pub.tenant === tenant) courses.push(courseToContextCourse(pub.course));
+    if (pub.tenant === tenant) courses.push(emergentCourseToAgenticCourse(pub.course));
   }
-  const jobAids: ContextJobAid[] = [];
+  const jobAids: FoxxiAgenticCourse[] = [];
   for (const aid of _publishedJobAids().values()) {
-    if (aid.tenant === tenant) {
-      jobAids.push({ id: aid.id, competencyPoint: aid.competencyPoint, triggerContext: aid.triggerContext, body: aid.body });
-    }
+    if (aid.tenant === tenant) jobAids.push(jobAidToAgenticCourse(aid));
   }
   const stored = await listStoredStatements(tenant).catch(() => []);
   const activity = stored
@@ -540,6 +534,13 @@ export async function assembleNetworkedContext(
 //  The route — the one conversational front door
 // ─────────────────────────────────────────────────────────────────────
 
+function clientIpOf(req: Request): string {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff === 'string') return (xff.split(',')[0] ?? '').trim() || 'unknown';
+  if (Array.isArray(xff)) return xff[0] ?? 'unknown';
+  return req.ip ?? 'unknown';
+}
+
 /** Attach `POST /content/ask` — chat over the networked context. */
 export function attachContextChatRoutes(app: Express, config: ContextChatConfig): void {
   const base = config.selfBaseUrl.replace(/\/+$/, '');
@@ -562,6 +563,29 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
         kind: askerIn.kind === 'agent' ? 'agent' : 'human',
       };
       const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+      const intent = classifyContextIntent(question);
+
+      // LLM key precedence: per-request BYOK > the bridge's env key.
+      const byok = typeof b.llm_api_key === 'string' ? b.llm_api_key.trim() : '';
+      const llm: LlmConfig = byok
+        ? { apiKey: byok, ...(config.llmModel ? { model: config.llmModel } : {}), keySource: 'per-request-byok' }
+        : config.llmApiKey
+          ? { apiKey: config.llmApiKey, ...(config.llmModel ? { model: config.llmModel } : {}), keySource: 'bridge-env' }
+          : { keySource: 'none' };
+
+      // Rate-limit the LLM-synthesis path when it runs on the bridge's
+      // own key (BYOK callers pay their own bill, so are exempt).
+      if (isContentIntent(intent) && !byok && config.llmApiKey && config.checkLlmRateLimit) {
+        const rl = config.checkLlmRateLimit(clientIpOf(req));
+        if (!rl.ok) {
+          res.status(429).json({
+            error: 'rate limit exceeded for the bridge-key LLM path — retry shortly, '
+              + 'or supply your own key via llm_api_key (BYOK is exempt).',
+            retryAfterSeconds: rl.retryAfterSeconds,
+          });
+          return;
+        }
+      }
 
       let context: NetworkedContext;
       try {
@@ -570,17 +594,13 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
         res.status(500).json({ error: `could not assemble networked context: ${(e as Error).message}` });
         return;
       }
-      const answer = answerContextQuestion({ asker, question, context });
+      const answer = await answerContextQuestion({ asker, question, context, llm });
 
-      // Instrument the ask into the LRS — the chat itself joins the
-      // networked context's trace graph.
+      // Instrument the ask into the LRS — the chat joins the trace graph.
       let instrumented = false;
       if (config.emitStatement) {
         config.emitStatement({
-          actor: {
-            objectType: 'Agent',
-            account: { homePage: config.authoritativeSource, name: asker.id },
-          },
+          actor: { objectType: 'Agent', account: { homePage: config.authoritativeSource, name: asker.id } },
           verb: { id: INTERACTED, display: { 'en-US': 'interacted' } },
           object: {
             objectType: 'Activity',
@@ -592,11 +612,7 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
             },
           },
           result: { response: question, success: answer.grounded },
-          context: {
-            extensions: {
-              [`${base}/ns/foxxi#contextKind`]: 'context-chat',
-            },
-          },
+          context: { extensions: { [`${base}/ns/foxxi#contextKind`]: 'context-chat' } },
           timestamp: new Date().toISOString(),
         }, tenant);
         instrumented = true;
@@ -612,11 +628,13 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
           enrollments: context.enrollments.length,
           activityStatements: context.activity.length,
         },
-        note: 'One front door over the networked context: the intent was '
-          + `classified as "${answer.intent}" and answered from the substrate's own surfaces. `
-          + (answer.grounded
-            ? 'Every claim is sourced — see sources[] for the descriptor IRIs + provenance.'
-            : 'No source covered the question — answered honestly rather than confabulating.'),
+        note: `Intent classified as "${answer.intent}". `
+          + (isContentIntent(answer.intent)
+            ? `Answered by the vertical's agentic RAG (${answer.llm?.keySource ?? 'none'}); `
+              + (answer.grounded
+                ? 'cited slides + the modal-statused Interego trace are attached.'
+                : 'no concept matched — answered honestly rather than confabulating.')
+            : 'Answered from the substrate\'s assignment / LRS surfaces.'),
       });
     })().catch((e: unknown) => {
       if (!res.headersSent) res.status(500).json({ error: (e as Error).message });

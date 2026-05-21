@@ -1880,13 +1880,20 @@ const app = createVerticalBridge({
     // networked context. POST /content/ask takes a natural-language
     // question from any human or agent user, classifies its intent, and
     // answers from the substrate's own surfaces: assignments, the
-    // published content (sourced, verbatim-cited), the job aids, and the
-    // live LRS. Policy-driven assignments are resolved from the tenant
-    // directory when the pod is seeded; otherwise engagement-derived.
+    // published content, the job aids, and the live LRS. Content
+    // questions delegate to the vertical's existing agentic RAG
+    // (concept-graph retrieval + LLM synthesis + the modal-statused
+    // Interego trace), keyed off the same FOXXI_LLM_API_KEY and the same
+    // per-IP rate limiter the agentic-ask MCP handler already uses.
     attachContextChatRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       authoritativeSource,
       emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
+      llmApiKey: (process.env.FOXXI_LLM_API_KEY ?? process.env.ANTHROPIC_API_KEY)?.trim(),
+      checkLlmRateLimit: (clientIp) => {
+        const rl = checkAgenticRateLimit(clientIp);
+        return rl.ok ? { ok: true } : { ok: false, retryAfterSeconds: rl.retryAfterSeconds };
+      },
       resolveAssignments: async (learner): Promise<ContextEnrollment[] | undefined> => {
         const admin = await autoFetchAdmin({});
         if (!admin) return undefined;

@@ -80,26 +80,31 @@ const aidRes = await post('/content/job-aid', {
 check('the job aid is published to the CMS', aidRes.status === 200 && !!aidRes.json.id, aidRes.json);
 console.log(`   course=${pub.courseId} · ${pub.aus?.length} AU(s) · job aid=${aidRes.json.id}`);
 
-// ── 2. ASK — a concept question, grounded + sourced ─────────────────
+// ── 2. ASK — a concept question, answered by the agentic RAG ────────
 h('2. ASK — "what does the refund authority threshold mean?"');
 const concept = await ask('What does the refund authority threshold mean?', { learner: LEARNER });
-console.log(`   intent: ${concept.json.intent} · grounded: ${concept.json.grounded}`);
+console.log(`   intent: ${concept.json.intent} · grounded: ${concept.json.grounded} · llm: ${concept.json.llm?.keySource}/${concept.json.llm?.model}`);
 console.log(`   answer: ${String(concept.json.answer).split('\n')[0]}`);
 check('the question is routed to the concept intent', concept.json.intent === 'concept', concept.json.intent);
 check('the answer is grounded in the content', concept.json.grounded === true, concept.json);
-check('the answer cites a course-fragment source',
-  (concept.json.sources ?? []).some(s => s.kind === 'course-fragment'), concept.json.sources);
-check('the cited source carries a course › module › lesson provenance trail',
-  (concept.json.sources ?? []).some(s => typeof s.locator === 'string' && s.locator.includes('›')), concept.json.sources);
-check('the answer quotes the verbatim fragment body (no confabulation)',
-  String(concept.json.answer).includes('authorise refunds up to $500'), concept.json.answer);
+check('it composed the vertical\'s existing agentic RAG (not a new retriever)',
+  concept.json.llm?.keySource === 'bridge-env', concept.json.llm);
+check('the answer carries the agentic-RAG modal-statused Interego trace',
+  Array.isArray(concept.json.trace) && concept.json.trace.length >= 2, concept.json.trace);
+const cSources = concept.json.sources ?? [];
+check('the answer cites a course-fragment source with a course › lesson provenance trail',
+  cSources.some(s => s.kind === 'course-fragment' && typeof s.locator === 'string' && s.locator.includes('›')), cSources);
+check('the cited source carries the verbatim content (no confabulation)',
+  cSources.some(s => typeof s.excerpt === 'string' && s.excerpt.includes('authorise refunds up to $500')), cSources);
+check('the synthesized answer speaks to the question',
+  /refund|500|lead|threshold/i.test(String(concept.json.answer)), concept.json.answer);
 
 // ── 3. ASK — a procedure question, sourced from the job aid ─────────
 h('3. ASK — "how do I handle a refund over $500?"');
 const proc = await ask('How do I handle a refund over $500?', { learner: LEARNER });
 console.log(`   intent: ${proc.json.intent} · grounded: ${proc.json.grounded}`);
 check('the question is routed to the procedure intent', proc.json.intent === 'procedure', proc.json.intent);
-check('the answer is sourced from the job aid',
+check('the answer is sourced from the job aid via the agentic RAG',
   proc.json.grounded === true && (proc.json.sources ?? []).some(s => s.kind === 'job-aid'), proc.json);
 
 // ── 4. ASK — assignments, before the learner has done anything ──────
@@ -157,10 +162,15 @@ check('after completing it, the course shows up in the learner\'s learning',
 h('7. ASK — an agent asks the same question (one substrate, both users)');
 const asHuman = await ask('Explain refund thresholds.', { asker: { id: LEARNER, kind: 'human' } });
 const asAgent = await ask('Explain refund thresholds.', { asker: { id: AGENT, kind: 'agent' } });
+const srcIds = (j) => (j.sources ?? []).map(s => s.id).sort().join(',');
 console.log(`   human grounded: ${asHuman.json.grounded} · agent grounded: ${asAgent.json.grounded}`);
-check('an agent and a human get the identical grounded answer',
+// The retrieval is deterministic; only the LLM's prose varies. So the
+// substrate symmetry is that both get the same grounded retrieval —
+// identical cited sources — not the same synthesized wording.
+check('an agent and a human get the same grounded retrieval (identical cited sources)',
   asHuman.json.grounded === true && asAgent.json.grounded === true
-  && asHuman.json.answer === asAgent.json.answer, { human: asHuman.json.answer, agent: asAgent.json.answer });
+  && srcIds(asHuman.json).length > 0 && srcIds(asHuman.json) === srcIds(asAgent.json),
+  { human: srcIds(asHuman.json), agent: srcIds(asAgent.json) });
 check('the agent ask records the asker kind', asAgent.json.asker?.kind === 'agent', asAgent.json.asker);
 
 // ── 8. ASK — an off-topic question, an honest no-match ──────────────

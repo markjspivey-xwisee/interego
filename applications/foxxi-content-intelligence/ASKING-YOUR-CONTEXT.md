@@ -40,7 +40,8 @@ build the front door.
 ## 2. Design
 
 One route — `POST /content/ask` — takes a natural-language question from
-any user (human or agent) and answers it. Four design decisions:
+any user (human or agent) and answers it. The module is **composition
+glue, not new machinery** — four design decisions:
 
 **Intent classification.** A deterministic, keyword-routed classifier
 maps the question to one of six intents — `assignments`, `progress`,
@@ -50,25 +51,34 @@ assignment surface; "what does this mean?" routes to the content.
 
 **Networked-context assembly.** For each ask, the asker's networked
 context is assembled from the substrate's *own* surfaces: the
-published-course registry (its emergent `Course`s, retained so their
-fragments carry full provenance), the job-aid registry, the live LRS
-(the learner's xAPI activity), and — when the tenant directory is
-seeded — their policy-driven assignments. Nothing new is stored; the
-context is read off what the substrate already holds.
+published-course registry (its emergent `Course`s, retained so they can
+be retrieved over), the job-aid registry, the live LRS (the learner's
+xAPI activity), and — when the tenant directory is seeded — their
+policy-driven assignments. Nothing new is stored; the context is read
+off what the substrate already holds.
 
-**Sourced answers, never confabulated.** Content answers are grounded by
-term overlap against the actual fragment bodies. Every answer quotes the
-**verbatim** fragment and carries a `GroundedSource` — the descriptor
-IRI plus the `course › module › lesson` provenance trail. A question
-nothing in the networked context covers gets an honest no-match
-(`grounded: false`, no sources) — the same discipline `course-qa.ts`
-borrows from LPC's grounded-answer. It says "I won't guess."
+**Content questions delegate to the existing agentic RAG.** This module
+does not reinvent retrieval. Content questions (`concept` / `procedure`
+/ `general`) are answered by the vertical's `agentic-rag.ts` —
+concept-graph retrieval, prereq-edge expansion, LLM synthesis, and the
+modal-statused Interego trace (question Asserted → retrieval Hypothetical
+→ LLM Hypothetical → cited-answer Asserted). The networked context's
+published courses + job aids are adapted into the `FoxxiAgenticCourse`
+shape that module already consumes — a third adapter alongside its
+existing `payloadToAgenticCourse` + `courseContentToAgenticCourse`.
+With an LLM key — the bridge's `FOXXI_LLM_API_KEY`, or per-request
+BYOK — the answer is synthesised; without one it falls back to
+`retrieveCourseContext`, the retrieval scaffold the *calling agent's own
+LLM subscription* synthesises from. Either way the answer is sourced:
+cited slides carry the descriptor id + the `course › lesson` provenance.
+A question no concept matches gets an honest no-match *before* any LLM
+call — it says "I won't guess."
 
 **Human / agent symmetry.** The asker's *kind* is recorded, never
 branched on. A human and an agent asking the same question get the
-identical grounded answer. That is the same symmetry `emergent-content.ts`
-relies on: humans and agents are the same kind of user of the same
-substrate.
+identical grounded *retrieval* — the same cited sources (only the LLM's
+prose varies). That is the same symmetry `emergent-content.ts` relies
+on: humans and agents are the same kind of user of the same substrate.
 
 The ask itself is instrumented into the LRS as an xAPI `interacted`
 statement — so the conversation joins the networked context's own trace
@@ -78,36 +88,41 @@ graph.
 
 Built and deployed:
 
-- `src/context-chat.ts` — the intent classifier, the term-overlap
-  grounded retrieval, the per-intent answer composers, the
-  networked-context assembler, and `attachContextChatRoutes` —
-  `POST /content/ask`.
+- `src/context-chat.ts` — the intent classifier, the networked-context
+  assembler, the `Course` / job-aid → `FoxxiAgenticCourse` adapters, the
+  per-intent answer composers (content questions delegating to
+  `askAgenticRag` / `retrieveCourseContext`), and
+  `attachContextChatRoutes` — `POST /content/ask`.
 - `src/content-delivery.ts` — the published-course registry now retains
-  the source emergent `Course` (so the companion can ground in its
-  fragments with provenance) and exposes the job-aid registry.
+  the source emergent `Course` (so the companion can retrieve over it)
+  and exposes the job-aid registry.
 - Wired into the bridge: `attachContextChatRoutes` with `emitStatement`
-  bound to the LRS, and a `resolveAssignments` resolver that reads the
-  tenant directory for policy-driven assignments when the pod is seeded.
+  bound to the LRS, a `resolveAssignments` resolver that reads the
+  tenant directory for policy-driven assignments, and — for the content
+  path — the same `FOXXI_LLM_API_KEY` and the same per-IP rate limiter
+  the agentic-ask MCP handler already uses.
 
-Verified before deploy by `tools/context-chat-smoke.ts` (35/35): intent
-classification, the grounded + sourced answers, the honest no-match, and
-the `POST /content/ask` route over a throwaway app — a course + job aid
-published, then asked about, every content answer checked to cite a real
-source.
+Verified before deploy by `tools/context-chat-smoke.ts` (36/36): intent
+classification, the grounded + sourced answers, the agentic-RAG trace,
+the honest no-match, and the `POST /content/ask` route over a throwaway
+app — a course + job aid published, then asked about, every content
+answer checked to cite a real source.
 
 ## 4. Verification — in production
 
 `tools/ask-your-context-example.mjs` runs the whole thing against the
 live bridge, LMS and LRS, with a **real headless browser** completing a
 **real generated course** so the chat has genuine progress to read —
-22/22:
+24/24:
 
 1. **Publish** — a course + a job aid into the networked context.
-2. **Ask "what does the refund authority threshold mean?"** — a
-   concept-routed answer, grounded, quoting the verbatim fragment with
-   its `course › module › lesson` provenance.
-3. **Ask "how do I handle a refund over $500?"** — a procedure-routed
-   answer, sourced from the job aid.
+2. **Ask "what does the refund authority threshold mean?"** — answered
+   by the vertical's agentic RAG: an LLM-synthesised answer
+   (`claude-opus-4-7`, the bridge key) grounded in the cited course
+   content, carrying the modal-statused Interego trace, with the cited
+   source holding the verbatim fragment.
+3. **Ask "how do I handle a refund over $500?"** — the agentic RAG
+   answers, sourced from the job aid.
 4. **Ask "do I have any courses assigned to me?"** — the assignment
    surface answers.
 5. **Complete** — a real Chromium browser launches and completes the
@@ -132,17 +147,24 @@ satisfied)" — the chat reflecting real, recorded activity.
 
 ## 5. Honest scope
 
-Retrieval is deterministic term overlap, not an LLM. That is a
-deliberate choice: the answer *is* the sourced content, so it is
-verifiable and auditable, and the companion works with no API key. The
-LLM-backed path still exists — `agentic-rag.ts` / `foxxi.ask_course_question_agentic`
-synthesises multi-turn answers over course payloads — and the two
-compose: this front door routes and grounds; the agentic path
-synthesises when a synthesised answer is wanted.
+The companion is composition, not new machinery: content answering *is*
+the vertical's existing agentic RAG (`agentic-rag.ts`), the same engine
+behind `foxxi.ask_course_question_agentic`. It runs in two modes, both
+pre-existing: with an LLM key (`FOXXI_LLM_API_KEY` or per-request BYOK)
+the bridge synthesises the answer; with no key, `retrieveCourseContext`
+returns the retrieval scaffold and the calling agent's own subscription
+synthesises. Retrieval is deterministic either way — only the synthesis
+varies — so the substrate's human/agent symmetry shows up as identical
+cited sources for the same question. What this module adds is the front
+door: intent routing + networked-context assembly + the adapters that
+let the agentic RAG run over emergent courses and job aids, not just
+parsed SCORM payloads.
 
 `POST /content/ask` is open in this deployment so the demo is
-self-contained. In production, progress and assignment questions about a
-specific learner should be gated behind the same wallet-signed session
-token `foxxi.discover_assigned_courses` already uses; concept, procedure
-and catalog questions over published content need no gate. Wiring that
-gate is a bounded, separate step.
+self-contained, and the LLM-synthesis path on the bridge key reuses the
+same per-IP rate limiter the agentic-ask MCP handler already has. In
+production, progress and assignment questions about a specific learner
+should be gated behind the same wallet-signed session token
+`foxxi.discover_assigned_courses` already uses; content questions over
+published content need no gate. Wiring that gate is a bounded, separate
+step.
