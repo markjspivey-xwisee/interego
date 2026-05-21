@@ -77,7 +77,7 @@ export interface StatementStore {
 
 // ── Filter / paginate helper ─────────────────────────────────────────
 
-function matchesFilter(rec: StoredStatement, f: QueryFilter): boolean {
+export function matchesFilter(rec: StoredStatement, f: QueryFilter): boolean {
   const s = rec.statement;
   if (f.agent) {
     const a = s.actor as { mbox?: string; openid?: string; account?: { name?: string; homePage?: string } } | undefined;

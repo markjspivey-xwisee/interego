@@ -1,5 +1,5 @@
 /**
- * Inbound xAPI LRS surface for the Foxxi vertical.
+ * Inbound xAPI 2.0 LRS surface for the Foxxi vertical.
  *
  * Lets external systems (LMSes, mobile apps, simulators, AI tutors,
  * other LRSes via Statement Forwarding) write learning records *into*
@@ -9,94 +9,74 @@
  * `publishIngestedStatement` so it joins the rest of the substrate's
  * trace graph.
  *
+ * This is a FULL, conformance-targeted LRS — not a demo surface. It is
+ * exercised against the ADL `lrs-conformance-test-suite` (xAPI 2.0
+ * battery). The conformance-critical behaviours implemented here:
+ *
+ *   - Every inbound Statement is schema-validated (see xapi-validate.ts);
+ *     a malformed Statement is rejected 400 Bad Request.
+ *   - Every request MUST carry a valid `X-Experience-API-Version`
+ *     header; a missing/invalid header is rejected 400 before auth.
+ *   - Every resource validates its query parameters against an exact-
+ *     case allow-list; unknown or mis-cased parameters are rejected 400.
+ *   - The State / Activity-Profile / Agent-Profile document resources
+ *     enforce their required parameters, optimistic concurrency
+ *     (ETag / If-Match / If-None-Match), JSON-document merge on POST,
+ *     and HEAD.
+ *   - `multipart/mixed` Statement requests (attachments + signed
+ *     Statements) are parsed; an attachment with no `fileUrl` MUST have
+ *     its raw data present in the multipart body; JWS signatures MUST
+ *     use an RSA-SHA2 algorithm.
+ *
  * Endpoints (xAPI 2.0 / IEEE 9274.1.1 §7):
  *
  *   GET    /xapi/about
- *   POST   /xapi/statements                     (single | batch)
+ *   POST   /xapi/statements                     (single | batch | multipart)
  *   PUT    /xapi/statements?statementId=<uuid>  (caller-provided id)
- *   GET    /xapi/statements                     (filtered query)
- *   GET    /xapi/statements?statementId=<uuid>  (single)
+ *   GET    /xapi/statements                     (filtered query | single)
  *   GET    /xapi/activities?activityId=<iri>
  *   GET    /xapi/agents?agent=<json>
- *   GET|PUT|POST|DELETE /xapi/activities/state
- *   GET|PUT|POST|DELETE /xapi/activities/profile
- *   GET|PUT|POST|DELETE /xapi/agents/profile
- *
- * Conformance:
- *   - X-Experience-API-Version negotiated (2.0.0 default, 1.0.3 supported)
- *   - Required header echoed in every response
- *   - Auth: Basic (LRS standard) OR Bearer (Foxxi session tokens), config-driven
- *   - CORS: governed by the bridge's outer middleware (no per-route override)
- *   - Voiding: POST/PUT of a voided-verb statement is recorded; GET on the
- *     voided statementId returns 404 unless voidedStatementId= is used
+ *   GET|PUT|POST|DELETE|HEAD /xapi/activities/state
+ *   GET|PUT|POST|DELETE|HEAD /xapi/activities/profile
+ *   GET|PUT|POST|DELETE|HEAD /xapi/agents/profile
  *
  * Not a "memory-only" demo — every Statement persists as a descriptor on
  * the tenant pod, queryable via cg:discover() filtered on
  * `lrs:StatementIngestion`. The state/profile resources use an in-memory
  * Map sized for demo workloads; swap for Redis/Postgres at production
- * scale.
+ * scale (the statement store is already pluggable — see statement-store.ts).
  */
 
-import type { Express, Request, Response, NextFunction } from 'express';
-import { randomUUID } from 'node:crypto';
+import express, { type Express, type Request, type Response, type NextFunction } from 'express';
+import { randomUUID, createHash } from 'node:crypto';
 import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adapter/src/pod-publisher.js';
-import { createStatementStore, ConflictError, type StatementStore, type StoredStatement } from './statement-store.js';
+import { createStatementStore, ConflictError, matchesFilter, type StatementStore, type StoredStatement } from './statement-store.js';
+import { validateStatement, validateAgentObject } from './xapi-validate.js';
 import type { IRI } from '../../../src/index.js';
 
 void _unusedTypeAnchor;
 
 // ── Pluggable backend ───────────────────────────────────────────────
-// Default is in-memory; production swaps via FOXXI_LRS_BACKEND.
-// Same store services /xapi/statements + /xapi/admin/* + the
-// instrumentation `storeStatementInternal` so the dashboard never sees
-// a stale view.
 const store: StatementStore = createStatementStore(process.env.FOXXI_LRS_BACKEND);
 
 // ── Config ──────────────────────────────────────────────────────────
 
 export interface XapiLrsConfig {
-  /**
-   * The Foxxi tenant pod where ingested statements land.
-   * Each ingested statement becomes a context descriptor at
-   * `<podUrl>foxxi/lrs/statement-<id>.ttl` (per substrate publish flow).
-   */
   podUrl: string;
-  /** Tenant's authoritative DID — sets prov:wasAttributedTo on each statement descriptor. */
   tenantDid: IRI;
-  /**
-   * Basic-auth credentials accepted on inbound calls. Format: `user:password`.
-   * Comma-separated for multiple keys (one per upstream LRS / LMS).
-   * Empty/unset → Basic auth is disabled and only Bearer tokens are accepted.
-   */
   basicAuthPairs: string;
-  /**
-   * Forward each accepted statement to these external LRS endpoints.
-   * Comma-separated `https://lrs.example/xapi||user:pass||2.0.0` triples
-   * (`||` separator). Empty → no forwarding. Statement Forwarding per
-   * xAPI §10.
-   */
   forwardingTargets: string;
-  /** Bridge URL — echoed in /xapi/about so callers know the LRS identity. */
   selfBaseUrl: string;
 }
 
 // ── In-process statement store accessors ────────────────────────────
-// Exported so the bridge can emit statements server-side (e.g. one
-// per affordance call, ABAC decision, credential issuance, etc.) and
-// surface them in the LRS-admin dashboard without an HTTP round-trip.
 
-// Back-compat name (other modules import `XapiStatementRecord`).
 export type XapiStatementRecord = StoredStatement;
 
-/** Synchronous store API for the instrumentation path (best-effort —
- * the file-backed store handles append-then-fsync via the same
- * machinery; the put is sync from the caller's perspective). */
 export function storeStatementInternal(stmt: Record<string, unknown>): string {
   const id = (typeof stmt.id === 'string' && isUuid(stmt.id)) ? stmt.id : randomUUID();
   const stored = new Date().toISOString();
   const rec: StoredStatement = { id, statement: { ...stmt, id, stored }, stored, voided: false };
-  // Fire-and-forget for async backends; errors logged but never thrown
-  // because the instrumentation path is non-blocking by design.
   void store.put(rec).catch(err => {
     // eslint-disable-next-line no-console
     console.warn('[storeStatementInternal]', (err as Error).message);
@@ -104,50 +84,53 @@ export function storeStatementInternal(stmt: Record<string, unknown>): string {
   return id;
 }
 
-export async function listStoredStatements(): Promise<StoredStatement[]> {
-  return store.listAll();
-}
-
-export async function clearStatementStore(): Promise<void> {
-  return store.clear();
-}
-
+export async function listStoredStatements(): Promise<StoredStatement[]> { return store.listAll(); }
+export async function clearStatementStore(): Promise<void> { return store.clear(); }
 export function getStatementStore(): StatementStore { return store; }
 
-// ── In-memory stores (replaceable) ──────────────────────────────────
+// ── In-memory document stores (state + profile) ─────────────────────
 
-// Statement persistence is delegated to `store` (StatementStore — see top).
-// State + profile resources are still in-memory; production-grade
-// deployments would swap these out the same way the statement store
-// did (separate concern; lower volume; not yet pluggable to keep the
-// blast radius small).
-const activityStateStore = new Map<string, { content: unknown; etag: string; updated: string; contentType: string }>();
-const activityProfileStore = new Map<string, { content: unknown; etag: string; updated: string; contentType: string }>();
-const agentProfileStore = new Map<string, { content: unknown; etag: string; updated: string; contentType: string }>();
+interface StoredDoc { content: unknown; etag: string; updated: string; contentType: string; }
+const activityStateStore = new Map<string, StoredDoc>();
+const activityProfileStore = new Map<string, StoredDoc>();
+const agentProfileStore = new Map<string, StoredDoc>();
 
-// ── Helpers ─────────────────────────────────────────────────────────
+// Raw attachment bytes, keyed by their SHA-2 hash, captured from
+// multipart/mixed Statement requests. Used to satisfy `?attachments=true`
+// GET requests, which return the original attachment data alongside the
+// Statements in a multipart response.
+const attachmentDataStore = new Map<string, { data: Buffer; contentType: string }>();
+
+// ── Constants ───────────────────────────────────────────────────────
 
 const VOIDED_VERB = 'http://adlnet.gov/expapi/verbs/voided';
-const ABOUT_VERSIONS = ['2.0.0', '1.0.3'];
+const SIGNATURE_USAGE_TYPE = 'http://adlnet.gov/expapi/attachments/signature';
+/** Versions advertised by /xapi/about. */
+const ABOUT_VERSIONS = ['2.0.0', '1.0.3', '1.0.2', '1.0.1', '1.0.0'];
+/** `X-Experience-API-Version` request-header values this LRS accepts. */
+const ACCEPTED_VERSION_RE = /^(2\.0(\.\d+)?|1\.0(\.\d+)?)$/;
+/** JWS algorithms permitted for signed Statements (xAPI §4.1.11). */
+const ALLOWED_JWS_ALGS = new Set(['RS256', 'RS384', 'RS512']);
 
-function uuidv4(): string { return randomUUID(); }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(s: unknown): s is string { return typeof s === 'string' && UUID_RE.test(s); }
+function nowIso(): string { return new Date().toISOString(); }
 
-function isUuid(s: unknown): s is string {
-  return typeof s === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$/;
+function isIsoTimestamp(s: unknown): boolean {
+  return typeof s === 'string' && ISO_TIMESTAMP_RE.test(s) && !Number.isNaN(Date.parse(s));
 }
 
-function negotiateVersion(req: Request): string {
-  const v = (req.headers['x-experience-api-version'] ?? req.headers['X-Experience-API-Version']) as string | undefined;
-  if (typeof v === 'string' && ABOUT_VERSIONS.includes(v)) return v;
-  // xAPI 2.0 §6.2: requests without the header MAY be accepted. We default
-  // to 2.0.0 (current spec) — legacy 1.0.3 clients are still served, since
-  // they explicitly send `X-Experience-API-Version: 1.0.3`.
-  return '2.0.0';
-}
+// ── Version + auth gate ─────────────────────────────────────────────
 
 function setXapiHeaders(res: Response, version: string): void {
   res.setHeader('X-Experience-API-Version', version);
-  res.setHeader('X-Experience-API-Consistent-Through', new Date().toISOString());
+  res.setHeader('X-Experience-API-Consistent-Through', nowIso());
+}
+
+function negotiateVersion(req: Request): string {
+  const v = req.headers['x-experience-api-version'];
+  return typeof v === 'string' && v ? v : '2.0.0';
 }
 
 function basicAuthOk(header: string | undefined, pairs: string): boolean {
@@ -163,12 +146,29 @@ function bearerToken(header: string | undefined): string | undefined {
   return m ? m[1]!.trim() : undefined;
 }
 
-// ── Auth gate ───────────────────────────────────────────────────────
-
+/**
+ * The single gate on every LRS resource. Order matters and is
+ * conformance-driven:
+ *   1. `X-Experience-API-Version` MUST be present and a value the LRS
+ *      accepts — otherwise 400, *before* auth is even considered.
+ *   2. Authentication (Basic key OR Foxxi Bearer token) — otherwise 401.
+ */
 function makeAuthGate(config: XapiLrsConfig) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const version = negotiateVersion(req);
-    setXapiHeaders(res, version);
+    const rawVersion = req.headers['x-experience-api-version'];
+    const version = typeof rawVersion === 'string' ? rawVersion : '';
+    if (!version) {
+      setXapiHeaders(res, '2.0.0');
+      res.status(400).json({ error: 'every xAPI request MUST include an X-Experience-API-Version header (§6.2)' });
+      return;
+    }
+    if (!ACCEPTED_VERSION_RE.test(version)) {
+      setXapiHeaders(res, '2.0.0');
+      res.status(400).json({ error: `unsupported X-Experience-API-Version "${version}" — this LRS accepts 1.0.x and 2.0.x` });
+      return;
+    }
+    setXapiHeaders(res, version.startsWith('2.') ? version : version);
+
     const authHeader = (req.headers['authorization'] ?? req.headers['Authorization']) as string | undefined;
     if (basicAuthOk(authHeader, config.basicAuthPairs)) {
       (req as Request & { xapiAuth: { kind: 'basic'; principal: string } }).xapiAuth = { kind: 'basic', principal: 'lrs-key' };
@@ -186,40 +186,66 @@ function makeAuthGate(config: XapiLrsConfig) {
   };
 }
 
+// ── Query-parameter allow-lists (exact case) ────────────────────────
+
+const STATEMENTS_GET_PARAMS = [
+  'statementId', 'voidedStatementId', 'agent', 'verb', 'activity', 'registration',
+  'related_activities', 'related_agents', 'since', 'until', 'limit', 'format',
+  'attachments', 'ascending', 'cursor', 'continuationToken',
+];
+const STATE_PARAMS = ['activityId', 'agent', 'registration', 'stateId', 'since'];
+const ACTIVITY_PROFILE_PARAMS = ['activityId', 'profileId', 'since'];
+const AGENT_PROFILE_PARAMS = ['agent', 'profileId', 'since'];
+
+/**
+ * Reject (400) any request carrying a query parameter not in the exact-
+ * case allow-list. xAPI requires that an unrecognised *or mis-cased*
+ * parameter be a hard error — `?StatementId=` is as wrong as `?foo=`.
+ * Returns true when a response was sent.
+ */
+function rejectUnknownParams(req: Request, res: Response, allowed: string[]): boolean {
+  const bad = Object.keys(req.query).filter(k => !allowed.includes(k));
+  if (bad.length > 0) {
+    res.status(400).json({ error: `unrecognised or mis-cased query parameter(s): ${bad.join(', ')}` });
+    return true;
+  }
+  return false;
+}
+
 // ── Statement normalisation ─────────────────────────────────────────
 
-function nowIso(): string { return new Date().toISOString(); }
+/**
+ * xAPI §4.1.6.2: an LRS returns each contextActivities value as an
+ * ARRAY even when the caller supplied a single Activity. Normalise on
+ * ingest so every stored + returned Statement is array-shaped.
+ */
+function normalizeContextActivities(ctx: unknown): void {
+  if (!ctx || typeof ctx !== 'object') return;
+  const ca = (ctx as Record<string, unknown>).contextActivities;
+  if (!ca || typeof ca !== 'object') return;
+  for (const key of ['parent', 'grouping', 'category', 'other']) {
+    const v = (ca as Record<string, unknown>)[key];
+    if (v !== undefined && !Array.isArray(v)) {
+      (ca as Record<string, unknown>)[key] = [v];
+    }
+  }
+}
 
 function ensureStatementFields(stmt: Record<string, unknown>, authority: { homePage: string; name: string }): Record<string, unknown> {
   const out = { ...stmt };
-  if (typeof out.id !== 'string' || !isUuid(out.id)) out.id = uuidv4();
+  if (typeof out.id !== 'string' || !isUuid(out.id)) out.id = randomUUID();
   if (typeof out.timestamp !== 'string') out.timestamp = nowIso();
-  if (typeof out.stored !== 'string') out.stored = nowIso();
+  // `stored` is always LRS-assigned (§4.1.8) — overwrite any caller value.
+  out.stored = nowIso();
   if (!out.authority || typeof out.authority !== 'object') {
-    out.authority = {
-      objectType: 'Agent',
-      account: { homePage: authority.homePage, name: authority.name },
-    };
+    out.authority = { objectType: 'Agent', account: { homePage: authority.homePage, name: authority.name } };
   }
-  // xAPI 2.0 §4.1.10: version is set by the LRS if not provided. We set it
-  // explicitly so downstream consumers (forwarding targets, profile-aware
-  // analytics) know exactly which spec the statement was authored against.
   if (!out.version) out.version = '2.0.0';
 
-  // xAPI 2.0 §4.1.2: actor.objectType is REQUIRED for Agent / Group / Anonymous
-  // Group actors. Add if absent to keep statements 2.0-conformant.
   const actor = out.actor as Record<string, unknown> | undefined;
   if (actor && typeof actor === 'object' && !actor.objectType) {
-    // Identifying a Group: it has a `member` array (Anonymous Group) OR
-    // any IFI (Identified Group). Otherwise it's a plain Agent.
     actor.objectType = (Array.isArray(actor.member) || actor.member) ? 'Group' : 'Agent';
   }
-
-  // xAPI 2.0 §4.1.4: object can be Activity / Agent / Group / StatementRef
-  // / SubStatement. If no objectType + has activity-shape `id`, it's
-  // implicitly an Activity. Sub-statements need their own actor.objectType
-  // normalized too (recursive case — sub-statements forbidden to nest
-  // further per §4.1.4.1, so one level of recursion is enough).
   const object = out.object as Record<string, unknown> | undefined;
   if (object && typeof object === 'object') {
     if (!object.objectType) object.objectType = 'Activity';
@@ -232,9 +258,10 @@ function ensureStatementFields(stmt: Record<string, unknown>, authority: { homeP
       if (subObject && typeof subObject === 'object' && !subObject.objectType) {
         subObject.objectType = 'Activity';
       }
+      normalizeContextActivities(object.context);
     }
   }
-
+  normalizeContextActivities(out.context);
   return out;
 }
 
@@ -247,227 +274,728 @@ function isVoidingStatement(stmt: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+// ── multipart/mixed parsing ─────────────────────────────────────────
+
+interface MultipartPart { headers: Record<string, string>; body: Buffer; }
+
+/**
+ * Parse a `multipart/mixed` body (RFC 2046 §5.1) from a raw Buffer.
+ * Returns each part with its decoded headers and raw body bytes. The
+ * first part is expected to be the `application/json` Statement payload.
+ */
+function parseMultipart(buf: Buffer, boundary: string): MultipartPart[] {
+  const parts: MultipartPart[] = [];
+  const delimiter = Buffer.from(`--${boundary}`);
+  const segments: Buffer[] = [];
+  let idx = buf.indexOf(delimiter);
+  while (idx !== -1) {
+    const next = buf.indexOf(delimiter, idx + delimiter.length);
+    if (next === -1) break;
+    // Slice between this delimiter and the next, dropping the leading CRLF.
+    let start = idx + delimiter.length;
+    if (buf[start] === 0x0d && buf[start + 1] === 0x0a) start += 2;
+    segments.push(buf.subarray(start, next));
+    idx = next;
+  }
+  for (const seg of segments) {
+    const headerEnd = seg.indexOf('\r\n\r\n');
+    if (headerEnd === -1) continue;
+    const headerText = seg.subarray(0, headerEnd).toString('utf8');
+    const headers: Record<string, string> = {};
+    for (const line of headerText.split('\r\n')) {
+      const c = line.indexOf(':');
+      if (c > 0) headers[line.slice(0, c).trim().toLowerCase()] = line.slice(c + 1).trim();
+    }
+    let body = seg.subarray(headerEnd + 4);
+    // Trim a single trailing CRLF that precedes the next boundary.
+    if (body.length >= 2 && body[body.length - 2] === 0x0d && body[body.length - 1] === 0x0a) {
+      body = body.subarray(0, body.length - 2);
+    }
+    parts.push({ headers, body });
+  }
+  return parts;
+}
+
+/** Decode a base64url string. */
+function b64urlDecode(s: string): Buffer {
+  return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+}
+
+/**
+ * Validate a JWS compact serialisation used as a Statement signature
+ * (xAPI §4.1.11 / Data 2.6). Returns an error string, or null when the
+ * signature is well-formed. Checks:
+ *   - exactly three base64url segments;
+ *   - the JOSE protected header is JSON with an RSA-SHA2 `alg`
+ *     (`none` and symmetric algorithms are forbidden);
+ *   - the payload is a valid JSON serialisation of a Statement.
+ */
+function checkJwsSignature(jws: Buffer): string | null {
+  const compact = jws.toString('utf8').trim();
+  const segs = compact.split('.');
+  if (segs.length !== 3 || segs.some(s => s.length === 0)) {
+    return 'signature attachment is not a valid JWS compact serialisation';
+  }
+  let header: Record<string, unknown>;
+  try {
+    header = JSON.parse(b64urlDecode(segs[0]!).toString('utf8')) as Record<string, unknown>;
+  } catch {
+    return 'signature JWS protected header is not valid JSON';
+  }
+  const alg = header.alg;
+  if (typeof alg !== 'string' || !ALLOWED_JWS_ALGS.has(alg)) {
+    return `signed Statements MUST use a JWS algorithm of RS256, RS384 or RS512 (got ${JSON.stringify(alg)})`;
+  }
+  // §4.1.11 / XAPI-00116: the JWS payload MUST be a valid JSON
+  // serialisation of the complete Statement.
+  let payload: unknown;
+  try {
+    payload = JSON.parse(b64urlDecode(segs[1]!).toString('utf8'));
+  } catch {
+    return 'the JWS signature payload is not a valid JSON serialisation of the Statement';
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return 'the JWS signature payload must be a JSON Statement object';
+  }
+  return null;
+}
+
 // ── /xapi/statements POST ───────────────────────────────────────────
 
 async function handlePostStatements(req: Request, res: Response, config: XapiLrsConfig): Promise<void> {
-  // xAPI 2.0 §4.1.11: requests MAY use `multipart/mixed` to attach signed-
-  // statement JWS payloads, file uploads, etc. The first part is always
-  // `application/json` containing the statement(s). We extract that and
-  // ignore the rest for now (the bridge stores the statement; attachment
-  // bodies are passed-through by reference via the statement's own
-  // attachments[] descriptors).
-  const ct = (req.headers['content-type'] as string | undefined) ?? '';
-  let raw = req.body;
+  if (rejectUnknownParams(req, res, [])) return;
+  const ct = ((req.headers['content-type'] as string | undefined) ?? '').toLowerCase();
+
+  let batch: Record<string, unknown>[];
+  let multipartParts: Map<string, MultipartPart> | null = null;
+
   if (ct.startsWith('multipart/mixed')) {
-    raw = extractFirstJsonPart(req);
-    if (!raw) { res.status(400).json({ error: 'multipart/mixed body must start with application/json statement part' }); return; }
+    const m = /boundary=(?:"([^"]+)"|([^;]+))/.exec(ct);
+    const boundary = (m?.[1] ?? m?.[2] ?? '').trim();
+    if (!boundary) { res.status(400).json({ error: 'multipart/mixed request requires a boundary parameter' }); return; }
+    if (!Buffer.isBuffer(req.body)) { res.status(400).json({ error: 'multipart/mixed body could not be read' }); return; }
+    const parts = parseMultipart(req.body, boundary);
+    if (parts.length === 0) { res.status(400).json({ error: 'multipart/mixed body contained no parts' }); return; }
+    const first = parts[0]!;
+    if (!(first.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+      res.status(400).json({ error: 'the first part of a multipart/mixed request MUST be application/json' });
+      return;
+    }
+    const partErr = validateMultipartPartHeaders(parts);
+    if (partErr) { res.status(400).json({ error: partErr }); return; }
+    let parsed: unknown;
+    try { parsed = JSON.parse(first.body.toString('utf8')); }
+    catch { res.status(400).json({ error: 'the application/json part is not valid JSON' }); return; }
+    batch = Array.isArray(parsed) ? parsed as Record<string, unknown>[] : [parsed as Record<string, unknown>];
+    multipartParts = indexAttachmentParts(parts);
+  } else if (ct.startsWith('application/json') || ct === '') {
+    const raw = req.body;
+    if (raw === undefined || raw === null || (typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length === 0 && ct === '')) {
+      res.status(400).json({ error: 'request body is empty or missing' });
+      return;
+    }
+    batch = Array.isArray(raw) ? raw as Record<string, unknown>[] : [raw as Record<string, unknown>];
+  } else {
+    res.status(400).json({ error: `unsupported Content-Type "${ct}" — statements require application/json or multipart/mixed` });
+    return;
   }
 
-  const batch: Record<string, unknown>[] = Array.isArray(raw) ? raw : [raw];
+  // §7.2: a batch MUST NOT reuse a Statement id within itself.
+  const seenIds = new Set<string>();
+  for (const stmt of batch) {
+    const sid = stmt && typeof stmt === 'object' ? (stmt as Record<string, unknown>).id : undefined;
+    if (typeof sid === 'string') {
+      if (seenIds.has(sid)) {
+        res.status(400).json({ error: `statement id ${sid} appears more than once in the batch` });
+        return;
+      }
+      seenIds.add(sid);
+    }
+  }
+
+  // Validate every Statement BEFORE persisting any of them — a batch is
+  // all-or-nothing (§7.2: "if any Statement ... is rejected ... reject all").
+  for (let i = 0; i < batch.length; i++) {
+    const stmt = batch[i]!;
+    const errs = validateStatement(stmt);
+    if (errs.length > 0) {
+      res.status(400).json({ error: `statement[${i}] is not a conformant xAPI Statement`, violations: errs });
+      return;
+    }
+    const attachErr = checkStatementAttachments(stmt, multipartParts);
+    if (attachErr) { res.status(400).json({ error: `statement[${i}]: ${attachErr}` }); return; }
+  }
+
+  // §4.1.11: every multipart attachment part MUST be referenced by an
+  // attachment in the Statements — excess parts are rejected.
+  if (multipartParts) {
+    const referenced = collectAttachmentHashes(batch);
+    for (const hash of multipartParts.keys()) {
+      if (!referenced.has(hash)) {
+        res.status(400).json({ error: 'multipart request contains an attachment part not referenced by any Statement' });
+        return;
+      }
+    }
+  }
+
   const ids: string[] = [];
   const authority = { homePage: config.selfBaseUrl, name: 'foxxi-lrs' };
-
   for (const stmt of batch) {
-    if (!stmt || typeof stmt !== 'object') {
-      res.status(400).json({ error: 'invalid statement: not an object' });
-      return;
-    }
-    if (!stmt.actor || !stmt.verb || !stmt.object) {
-      res.status(400).json({ error: 'invalid statement: actor, verb, and object are required (xAPI 2.0 §4.1)' });
-      return;
-    }
     const enriched = ensureStatementFields(stmt, authority);
     const id = enriched.id as string;
-
-    // Voiding semantics — process *before* writing the voiding statement
-    // so the target is voided in the same transaction.
-    const voidedTarget = isVoidingStatement(enriched);
-    if (voidedTarget) {
-      await store.markVoided(voidedTarget, id);
-    }
-
-    // Statement-id conflict per xAPI 2.0 §4.1.1 — delegated to the store.
+    await applyVoiding(enriched, id);
     try {
       await store.put({ id, statement: enriched, stored: enriched.stored as string, voided: false });
     } catch (err) {
-      if (err instanceof ConflictError) {
-        res.status(409).json({ error: err.message });
-        return;
-      }
+      if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
       throw err;
     }
     ids.push(id);
-
-    // Fire-and-forget forwarding to upstream LRSs.
+    persistAttachmentData(enriched, multipartParts);
     forwardStatement(enriched, config).catch(err => {
       // eslint-disable-next-line no-console
       console.warn('[foxxi-lrs] forwarding failed:', (err as Error).message);
     });
   }
-
   res.status(200).json(ids);
 }
 
-// Minimal multipart/mixed parser — extracts the first body part whose
-// Content-Type is application/json and returns the parsed payload. Full
-// MIME RFC 2046 §5.1.1 boundary handling: --<boundary>\r\nheaders\r\n\r\nbody.
-function extractFirstJsonPart(req: Request): unknown {
-  try {
-    const ct = (req.headers['content-type'] as string | undefined) ?? '';
-    const m = /boundary=(?:"([^"]+)"|([^;]+))/.exec(ct);
-    const boundary = (m?.[1] ?? m?.[2] ?? '').trim();
-    if (!boundary) return null;
-    const raw = typeof req.body === 'string' ? req.body
-      : Buffer.isBuffer(req.body) ? req.body.toString('utf8')
-      : null;
-    if (!raw) return null;
-    const parts = raw.split(`--${boundary}`).filter(p => p && !p.startsWith('--'));
-    for (const part of parts) {
-      const headerEnd = part.indexOf('\r\n\r\n');
-      if (headerEnd === -1) continue;
-      const headers = part.slice(0, headerEnd).toLowerCase();
-      if (!headers.includes('content-type: application/json')) continue;
-      const body = part.slice(headerEnd + 4).trimEnd();
-      return JSON.parse(body);
+/**
+ * Apply xAPI §4.1.7 voiding semantics for an inbound voiding Statement:
+ * void the target — UNLESS the target is itself a voiding Statement
+ * (a Voiding Statement cannot be voided).
+ */
+async function applyVoiding(stmt: Record<string, unknown>, voidingId: string): Promise<void> {
+  const target = isVoidingStatement(stmt);
+  if (!target) return;
+  const existing = await store.get(target);
+  if (existing && isVoidingStatement(existing.statement)) return; // can't void a voiding Statement
+  await store.markVoided(target, voidingId);
+}
+
+/** Validate the structural headers of every non-first multipart part. */
+function validateMultipartPartHeaders(parts: MultipartPart[]): string | null {
+  for (let i = 1; i < parts.length; i++) {
+    const h = parts[i]!.headers;
+    if ((h['content-transfer-encoding'] ?? '').toLowerCase() !== 'binary') {
+      return 'every multipart attachment part MUST carry a "Content-Transfer-Encoding: binary" header';
     }
-  } catch { /* fall through to null */ }
+    if (!h['x-experience-api-hash']) {
+      return 'every multipart attachment part MUST carry an "X-Experience-API-Hash" header';
+    }
+  }
+  return null;
+}
+
+/** Index the attachment parts of a multipart body by SHA-2 hash. */
+function indexAttachmentParts(parts: MultipartPart[]): Map<string, MultipartPart> {
+  const byHash = new Map<string, MultipartPart>();
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts[i]!;
+    byHash.set(p.headers['x-experience-api-hash'] ?? createHash('sha256').update(p.body).digest('hex'), p);
+  }
+  return byHash;
+}
+
+/** Collect every attachment `sha2` declared across a batch of Statements. */
+function collectAttachmentHashes(batch: Record<string, unknown>[]): Set<string> {
+  const out = new Set<string>();
+  for (const stmt of batch) {
+    const attachments = (stmt as Record<string, unknown>).attachments;
+    if (!Array.isArray(attachments)) continue;
+    for (const att of attachments) {
+      if (att && typeof att === 'object' && typeof (att as Record<string, unknown>).sha2 === 'string') {
+        out.add((att as Record<string, unknown>).sha2 as string);
+      }
+    }
+  }
+  return out;
+}
+
+/** Persist a Statement's attachment bytes so `?attachments=true` can serve them. */
+function persistAttachmentData(stmt: Record<string, unknown>, parts: Map<string, MultipartPart> | null): void {
+  if (!parts) return;
+  const attachments = stmt.attachments;
+  if (!Array.isArray(attachments)) return;
+  for (const att of attachments) {
+    if (!att || typeof att !== 'object') continue;
+    const a = att as Record<string, unknown>;
+    const sha2 = typeof a.sha2 === 'string' ? a.sha2 : '';
+    const part = parts.get(sha2);
+    if (part) {
+      attachmentDataStore.set(sha2, {
+        data: part.body,
+        contentType: typeof a.contentType === 'string' ? a.contentType : 'application/octet-stream',
+      });
+    }
+  }
+}
+
+/**
+ * Cross-check a Statement's `attachments` against the multipart body.
+ * An attachment with no `fileUrl` MUST have its raw data present in the
+ * request as a multipart part; a signature attachment MUST be
+ * `application/octet-stream` and carry a valid RSA-SHA2 JWS. Returns an
+ * error string or null.
+ */
+function checkStatementAttachments(stmt: Record<string, unknown>, parts: Map<string, MultipartPart> | null): string | null {
+  const attachments = stmt.attachments;
+  if (!Array.isArray(attachments)) return null;
+  for (const att of attachments) {
+    if (!att || typeof att !== 'object') continue;
+    const a = att as Record<string, unknown>;
+    const sha2 = typeof a.sha2 === 'string' ? a.sha2 : '';
+    const hasFileUrl = typeof a.fileUrl === 'string' && a.fileUrl.length > 0;
+    const part = parts?.get(sha2);
+    if (!hasFileUrl && !part) {
+      return 'an attachment without a "fileUrl" MUST have its raw data included in a multipart/mixed part';
+    }
+    if (a.usageType === SIGNATURE_USAGE_TYPE) {
+      // §4.1.11: a signature attachment MUST be application/octet-stream
+      // and its raw data MUST be a valid RSA-SHA2 JWS.
+      if (a.contentType !== 'application/octet-stream') {
+        return 'a signature attachment MUST have a contentType of "application/octet-stream"';
+      }
+      if (part) {
+        const sigErr = checkJwsSignature(part.body);
+        if (sigErr) return sigErr;
+      }
+    }
+  }
   return null;
 }
 
 // ── /xapi/statements PUT (caller-supplied id) ───────────────────────
 
 async function handlePutStatement(req: Request, res: Response, config: XapiLrsConfig): Promise<void> {
+  if (rejectUnknownParams(req, res, ['statementId'])) return;
   const statementId = (req.query.statementId as string | undefined) ?? '';
-  if (!isUuid(statementId)) {
-    res.status(400).json({ error: 'PUT requires ?statementId=<uuid v4>' });
+  if (!isUuid(statementId)) { res.status(400).json({ error: 'PUT requires ?statementId=<uuid>' }); return; }
+
+  const ct = ((req.headers['content-type'] as string | undefined) ?? '').toLowerCase();
+  let stmt: Record<string, unknown>;
+  let multipartParts: Map<string, MultipartPart> | null = null;
+  if (ct.startsWith('multipart/mixed')) {
+    const m = /boundary=(?:"([^"]+)"|([^;]+))/.exec(ct);
+    const boundary = (m?.[1] ?? m?.[2] ?? '').trim();
+    if (!boundary || !Buffer.isBuffer(req.body)) { res.status(400).json({ error: 'malformed multipart/mixed request' }); return; }
+    const parts = parseMultipart(req.body, boundary);
+    if (parts.length === 0 || !(parts[0]!.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+      res.status(400).json({ error: 'the first part of a multipart/mixed request MUST be application/json' });
+      return;
+    }
+    const partErr = validateMultipartPartHeaders(parts);
+    if (partErr) { res.status(400).json({ error: partErr }); return; }
+    try { stmt = JSON.parse(parts[0]!.body.toString('utf8')) as Record<string, unknown>; }
+    catch { res.status(400).json({ error: 'the application/json part is not valid JSON' }); return; }
+    multipartParts = indexAttachmentParts(parts);
+  } else if (ct.startsWith('application/json') || ct === '') {
+    stmt = req.body as Record<string, unknown>;
+  } else {
+    res.status(400).json({ error: `unsupported Content-Type "${ct}" — statements require application/json or multipart/mixed` });
     return;
   }
-  const stmt = req.body as Record<string, unknown>;
-  if (!stmt || typeof stmt !== 'object') {
-    res.status(400).json({ error: 'invalid statement body' });
+
+  if (!stmt || typeof stmt !== 'object' || Array.isArray(stmt)) {
+    res.status(400).json({ error: 'PUT body must be a single Statement object' });
     return;
   }
-  if (stmt.id && stmt.id !== statementId) {
+  if (stmt.id !== undefined && stmt.id !== statementId) {
     res.status(400).json({ error: 'statement.id and ?statementId= must match' });
     return;
   }
+  const errs = validateStatement({ ...stmt, id: statementId });
+  if (errs.length > 0) {
+    res.status(400).json({ error: 'not a conformant xAPI Statement', violations: errs });
+    return;
+  }
+  const attachErr = checkStatementAttachments(stmt, multipartParts);
+  if (attachErr) { res.status(400).json({ error: attachErr }); return; }
+  if (multipartParts) {
+    const referenced = collectAttachmentHashes([stmt]);
+    for (const hash of multipartParts.keys()) {
+      if (!referenced.has(hash)) {
+        res.status(400).json({ error: 'multipart request contains an attachment part not referenced by the Statement' });
+        return;
+      }
+    }
+  }
+
   (stmt as Record<string, unknown>).id = statementId;
-  const authority = { homePage: config.selfBaseUrl, name: 'foxxi-lrs' };
-  const enriched = ensureStatementFields(stmt, authority);
+  const enriched = ensureStatementFields(stmt, { homePage: config.selfBaseUrl, name: 'foxxi-lrs' });
+  await applyVoiding(enriched, statementId);
   try {
     await store.put({ id: statementId, statement: enriched, stored: enriched.stored as string, voided: false });
   } catch (err) {
     if (err instanceof ConflictError) { res.status(409).json({ error: err.message }); return; }
     throw err;
   }
+  persistAttachmentData(enriched, multipartParts);
   forwardStatement(enriched, config).catch(() => undefined);
   res.status(204).end();
+}
+
+// ── Statement format projection (§4.2.3) ────────────────────────────
+
+function reduceAgentIds(a: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (a.objectType) out.objectType = a.objectType;
+  for (const k of ['mbox', 'mbox_sha1sum', 'openid', 'account']) {
+    if (a[k] !== undefined) out[k] = a[k];
+  }
+  if (Array.isArray(a.member)) out.member = a.member.map(m => reduceAgentIds(m as Record<string, unknown>));
+  return out;
+}
+
+/** Project a Statement (or sub-object) to `format=ids` — identity only. */
+function toIdsFormat(stmt: Record<string, unknown>): Record<string, unknown> {
+  const reduceObject = (o: unknown): unknown => {
+    if (!o || typeof o !== 'object') return o;
+    const obj = o as Record<string, unknown>;
+    const ot = obj.objectType ?? 'Activity';
+    if (ot === 'Agent' || ot === 'Group') return reduceAgentIds(obj);
+    // §4.2.3: an Activity in `ids` form carries only its `id`.
+    if (ot === 'Activity') return { id: obj.id };
+    if (ot === 'StatementRef') return { objectType: 'StatementRef', id: obj.id };
+    if (ot === 'SubStatement') return toIdsFormat(obj);
+    return obj;
+  };
+  const out: Record<string, unknown> = { ...stmt };
+  if (stmt.actor) out.actor = reduceAgentIds(stmt.actor as Record<string, unknown>);
+  if (stmt.object) out.object = reduceObject(stmt.object);
+  if (stmt.verb && typeof stmt.verb === 'object') out.verb = { id: (stmt.verb as Record<string, unknown>).id };
+  if (stmt.context && typeof stmt.context === 'object') {
+    const ctx = { ...(stmt.context as Record<string, unknown>) };
+    if (ctx.instructor) ctx.instructor = reduceAgentIds(ctx.instructor as Record<string, unknown>);
+    if (ctx.team) ctx.team = reduceAgentIds(ctx.team as Record<string, unknown>);
+    if (ctx.contextActivities && typeof ctx.contextActivities === 'object') {
+      const ca = { ...(ctx.contextActivities as Record<string, unknown>) };
+      for (const k of ['parent', 'grouping', 'category', 'other']) {
+        if (Array.isArray(ca[k])) ca[k] = (ca[k] as unknown[]).map(reduceObject);
+      }
+      ctx.contextActivities = ca;
+    }
+    out.context = ctx;
+  }
+  return out;
+}
+
+/** Project a language map to a single entry, preferring `langs`. */
+function pickLanguage(map: Record<string, unknown>, langs: string[]): Record<string, unknown> {
+  for (const l of langs) {
+    if (map[l] !== undefined) return { [l]: map[l] };
+  }
+  const first = Object.keys(map)[0];
+  return first ? { [first]: map[first] } : map;
+}
+
+/**
+ * Project a Statement to `format=canonical` — every language map (verb
+ * display, Activity definition name/description) is reduced to a single
+ * entry chosen by the request's Accept-Language. Recurses into a
+ * SubStatement object.
+ */
+function toCanonicalFormat(stmt: Record<string, unknown>, langs: string[]): Record<string, unknown> {
+  const out = JSON.parse(JSON.stringify(stmt)) as Record<string, unknown>;
+  const reduceActivityDef = (o: unknown): void => {
+    if (!o || typeof o !== 'object') return;
+    const def = (o as Record<string, unknown>).definition as Record<string, unknown> | undefined;
+    if (!def) return;
+    if (def.name && typeof def.name === 'object') def.name = pickLanguage(def.name as Record<string, unknown>, langs);
+    if (def.description && typeof def.description === 'object') def.description = pickLanguage(def.description as Record<string, unknown>, langs);
+  };
+  const canonicalizeNode = (node: Record<string, unknown>): void => {
+    const verb = node.verb as Record<string, unknown> | undefined;
+    if (verb?.display && typeof verb.display === 'object') {
+      verb.display = pickLanguage(verb.display as Record<string, unknown>, langs);
+    }
+    const obj = node.object as Record<string, unknown> | undefined;
+    if (obj && typeof obj === 'object') {
+      const ot = obj.objectType ?? 'Activity';
+      if (ot === 'Activity') reduceActivityDef(obj);
+      else if (ot === 'SubStatement') canonicalizeNode(obj);
+    }
+    const ctx = node.context as Record<string, unknown> | undefined;
+    if (ctx?.contextActivities && typeof ctx.contextActivities === 'object') {
+      for (const k of ['parent', 'grouping', 'category', 'other']) {
+        const arr = (ctx.contextActivities as Record<string, unknown>)[k];
+        if (Array.isArray(arr)) arr.forEach(reduceActivityDef);
+      }
+    }
+  };
+  canonicalizeNode(out);
+  return out;
+}
+
+function applyFormat(stmt: Record<string, unknown>, format: string, langs: string[]): Record<string, unknown> {
+  if (format === 'ids') return toIdsFormat(stmt);
+  if (format === 'canonical') return toCanonicalFormat(stmt, langs);
+  return stmt;
+}
+
+function acceptLanguages(req: Request): string[] {
+  const h = req.headers['accept-language'];
+  if (typeof h !== 'string' || !h) return ['en-US', 'en'];
+  return h.split(',').map(s => s.split(';')[0]!.trim()).filter(Boolean);
 }
 
 // ── /xapi/statements GET ────────────────────────────────────────────
 
 async function handleGetStatements(req: Request, res: Response): Promise<void> {
+  if (rejectUnknownParams(req, res, STATEMENTS_GET_PARAMS)) return;
+
   const statementId = req.query.statementId as string | undefined;
   const voidedStatementId = req.query.voidedStatementId as string | undefined;
-  const agentFilterRaw = req.query.agent as string | undefined;
-  const verbFilter = req.query.verb as string | undefined;
-  const activityFilter = req.query.activity as string | undefined;
-  const registrationFilter = req.query.registration as string | undefined;
-  const since = req.query.since as string | undefined;
-  const until = req.query.until as string | undefined;
-  const limit = Math.min(Number(req.query.limit) || 100, 500);
-  const ascending = (req.query.ascending as string | undefined) === 'true';
-  const cursor = req.query.continuationToken as string | undefined;
+  const format = (req.query.format as string | undefined) ?? 'exact';
+  if (!['ids', 'exact', 'canonical'].includes(format)) {
+    res.status(400).json({ error: 'format must be one of: ids, exact, canonical' });
+    return;
+  }
 
-  // Single-statement lookup
-  if (statementId) {
+  // §4.2.3: statementId / voidedStatementId are mutually exclusive and
+  // cannot be combined with any filtering parameter.
+  if (statementId !== undefined && voidedStatementId !== undefined) {
+    res.status(400).json({ error: 'statementId and voidedStatementId must not be used together' });
+    return;
+  }
+  if (statementId !== undefined || voidedStatementId !== undefined) {
+    const forbidden = ['agent', 'verb', 'activity', 'registration', 'related_activities',
+      'related_agents', 'since', 'until', 'limit', 'ascending', 'cursor', 'continuationToken'];
+    const conflict = forbidden.filter(p => req.query[p] !== undefined);
+    if (conflict.length > 0) {
+      res.status(400).json({ error: `statementId/voidedStatementId cannot be combined with: ${conflict.join(', ')}` });
+      return;
+    }
+  }
+
+  const langs = acceptLanguages(req);
+  const wantAttachments = (req.query.attachments as string | undefined) === 'true';
+
+  if (statementId !== undefined) {
+    if (!isUuid(statementId)) { res.status(400).json({ error: 'statementId must be a UUID' }); return; }
     const rec = await store.get(statementId);
-    if (!rec || rec.voided) { res.status(404).json({ error: 'not found or voided' }); return; }
-    res.json(rec.statement);
+    if (!rec || rec.voided) { res.status(404).json({ error: 'statement not found or voided' }); return; }
+    res.setHeader('Last-Modified', new Date(rec.stored).toUTCString());
+    sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments);
     return;
   }
-  if (voidedStatementId) {
+  if (voidedStatementId !== undefined) {
+    if (!isUuid(voidedStatementId)) { res.status(400).json({ error: 'voidedStatementId must be a UUID' }); return; }
     const rec = await store.get(voidedStatementId);
-    if (!rec || !rec.voided) { res.status(404).json({ error: 'not voided (use ?statementId= for non-voided)' }); return; }
-    res.json(rec.statement);
+    if (!rec || !rec.voided) { res.status(404).json({ error: 'statement not voided (use ?statementId= for non-voided)' }); return; }
+    res.setHeader('Last-Modified', new Date(rec.stored).toUTCString());
+    sendStatementsResponse(res, applyFormat(rec.statement, format, langs), [rec.statement], wantAttachments);
     return;
   }
 
+  const limitRaw = req.query.limit;
+  if (limitRaw !== undefined && (Number.isNaN(Number(limitRaw)) || Number(limitRaw) < 0)) {
+    res.status(400).json({ error: 'limit must be a non-negative integer' });
+    return;
+  }
   let agent: Record<string, unknown> | undefined;
+  const agentFilterRaw = req.query.agent as string | undefined;
   if (agentFilterRaw) {
     try { agent = JSON.parse(agentFilterRaw) as Record<string, unknown>; }
-    catch { res.status(400).json({ error: 'agent filter must be JSON-encoded Agent object (xAPI 2.0 §4.2)' }); return; }
+    catch { res.status(400).json({ error: 'agent filter must be a JSON-encoded Agent object (§4.2)' }); return; }
   }
 
-  const result = await store.query({
+  const filter = {
     agent,
-    verb: verbFilter,
-    activity: activityFilter,
-    registration: registrationFilter,
-    since,
-    until,
-    ascending,
-    limit,
-    cursor,
-  });
+    verb: req.query.verb as string | undefined,
+    activity: req.query.activity as string | undefined,
+    registration: req.query.registration as string | undefined,
+    since: req.query.since as string | undefined,
+    until: req.query.until as string | undefined,
+    ascending: (req.query.ascending as string | undefined) === 'true',
+    limit: limitRaw !== undefined ? Number(limitRaw) : 100,
+    cursor: (req.query.continuationToken as string | undefined) ?? (req.query.cursor as string | undefined),
+  };
+  const result = await store.query(filter);
+
+  // §2.1.4: a query that would match a voided Statement still surfaces
+  // the Voiding Statement that voided it, so the requester sees the void.
+  let recs = [...result.statements];
+  const includedIds = new Set(recs.map(r => r.id));
+  for (const r of await store.listAll()) {
+    if (!r.voided || !r.voidingStatementId || !matchesFilter(r, filter)) continue;
+    if (includedIds.has(r.voidingStatementId)) continue;
+    const voiding = await store.get(r.voidingStatementId);
+    if (voiding) { recs.push(voiding); includedIds.add(voiding.id); }
+  }
+  // The `limit` parameter caps the *whole* result, including any Voiding
+  // Statements surfaced above.
+  if (filter.limit && filter.limit > 0 && recs.length > filter.limit) {
+    recs = recs.slice(0, filter.limit);
+  }
+
   const moreUrl = result.more
     ? `/xapi/statements?continuationToken=${encodeURIComponent(result.more)}`
     : '';
-  res.json({
-    statements: result.statements.map(r => r.statement),
-    more: moreUrl,
-  });
+  sendStatementsResponse(
+    res,
+    { statements: recs.map(r => applyFormat(r.statement, format, langs)), more: moreUrl },
+    recs.map(r => r.statement),
+    wantAttachments,
+  );
+}
+
+/**
+ * Send a Statement / StatementResult response. With `?attachments=true`
+ * (§4.2.3) the response is `multipart/mixed`: the first part is the JSON,
+ * followed by one binary part per attachment whose raw data the LRS
+ * holds. Otherwise it is plain `application/json`.
+ */
+function sendStatementsResponse(
+  res: Response,
+  payload: Record<string, unknown>,
+  statements: Record<string, unknown>[],
+  wantAttachments: boolean,
+): void {
+  if (!wantAttachments) { res.status(200).json(payload); return; }
+  const boundary = `foxxi-${randomUUID()}`;
+  const chunks: Buffer[] = [];
+  const text = (s: string): void => { chunks.push(Buffer.from(s, 'utf8')); };
+  text(`--${boundary}\r\nContent-Type: application/json\r\n\r\n`);
+  text(JSON.stringify(payload));
+  text('\r\n');
+  const emitted = new Set<string>();
+  for (const sha2 of collectAttachmentHashes(statements)) {
+    const data = attachmentDataStore.get(sha2);
+    if (!data || emitted.has(sha2)) continue;
+    emitted.add(sha2);
+    text(`--${boundary}\r\nContent-Type: ${data.contentType}\r\n`
+      + `Content-Transfer-Encoding: binary\r\nX-Experience-API-Hash: ${sha2}\r\n\r\n`);
+    chunks.push(data.data);
+    text('\r\n');
+  }
+  text(`--${boundary}--\r\n`);
+  res.status(200)
+    .setHeader('Content-Type', `multipart/mixed; boundary=${boundary}`);
+  res.send(Buffer.concat(chunks));
 }
 
 // ── /xapi/about ─────────────────────────────────────────────────────
 
 function handleAbout(_req: Request, res: Response, config: XapiLrsConfig): void {
+  const ns = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
   res.json({
     version: ABOUT_VERSIONS,
     extensions: {
-      'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#identity': config.tenantDid,
-      'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#bridge': config.selfBaseUrl,
-      'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#pod': config.podUrl,
-      'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#statementForwarding': !!config.forwardingTargets.trim(),
-      'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#substrateBackend': 'context-graphs-1.0 + solid-css',
-      'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#lrsBackend': store.backendDescription(),
-      'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#xapiProfile': `${config.selfBaseUrl}/xapi/profile`,
+      [`${ns}identity`]: config.tenantDid,
+      [`${ns}bridge`]: config.selfBaseUrl,
+      [`${ns}pod`]: config.podUrl,
+      [`${ns}statementForwarding`]: !!config.forwardingTargets.trim(),
+      [`${ns}substrateBackend`]: 'context-graphs-1.0 + solid-css',
+      [`${ns}lrsBackend`]: store.backendDescription(),
+      [`${ns}xapiProfile`]: `${config.selfBaseUrl}/xapi/profile`,
     },
   });
 }
 
-// ── Activity / agent profile + state ────────────────────────────────
+// ── State / profile document resources ──────────────────────────────
 
-function stateKey(args: { activityId: string; agent: string; stateId: string; registration?: string }): string {
-  return `${args.activityId}::${args.agent}::${args.stateId}::${args.registration ?? ''}`;
+type DocKind = 'state' | 'activityProfile' | 'agentProfile';
+
+function stateKey(activityId: string, agent: string, stateId: string, registration?: string): string {
+  return `${activityId}::${agent}::${stateId}::${registration ?? ''}`;
 }
-function profileKey(args: { iri: string; profileId: string }): string {
-  return `${args.iri}::${args.profileId}`;
+function profileKey(iri: string, profileId: string): string {
+  return `${iri}::${profileId}`;
 }
 
-function handleStateOrProfile(
-  resourceStore: Map<string, { content: unknown; etag: string; updated: string; contentType: string }>,
-  keyFn: (q: Record<string, string>) => string,
+/** Coerce the stored request body to a Buffer-or-object document value. */
+function readDocBody(req: Request): { value: unknown; contentType: string } {
+  const contentType = (req.headers['content-type'] as string | undefined) ?? 'application/octet-stream';
+  return { value: req.body, contentType };
+}
+
+/**
+ * Generic handler for the three document resources. Enforces the
+ * required-parameter rules (missing → 400), `agent` JSON validity,
+ * optimistic concurrency, JSON-document merge on POST, and HEAD.
+ */
+function handleDocResource(
+  kind: DocKind,
+  resourceStore: Map<string, StoredDoc>,
   req: Request,
   res: Response,
 ): void {
   const q = req.query as Record<string, string>;
-  const key = keyFn(q);
+  const method = req.method === 'HEAD' ? 'GET' : req.method;
 
-  if (req.method === 'GET') {
-    if (!q.stateId && !q.profileId) {
-      // List the ids of all docs under this scope (no body, per xAPI 2.0 §6.3.1)
-      const prefix = key.split('::').slice(0, -1).join('::');
+  // ── Required-parameter validation (xAPI §4.2.4 / §4.2.5 / §4.2.6) ──
+  const needsActivityId = kind === 'state' || kind === 'activityProfile';
+  const needsAgent = kind === 'state' || kind === 'agentProfile';
+  if (needsActivityId && !q.activityId) {
+    res.status(400).json({ error: '"activityId" is a required parameter' });
+    return;
+  }
+  let agentObj: Record<string, unknown> | undefined;
+  if (needsAgent) {
+    if (q.agent === undefined) {
+      res.status(400).json({ error: '"agent" is a required parameter' });
+      return;
+    }
+    try {
+      agentObj = JSON.parse(q.agent) as Record<string, unknown>;
+    } catch {
+      res.status(400).json({ error: '"agent" must be a JSON-encoded Agent object' });
+      return;
+    }
+    if (!agentObj || typeof agentObj !== 'object' || Array.isArray(agentObj)) {
+      res.status(400).json({ error: '"agent" must be a JSON-encoded Agent object' });
+      return;
+    }
+  }
+  if (q.registration !== undefined && !isUuid(q.registration)) {
+    res.status(400).json({ error: '"registration" must be a UUID' });
+    return;
+  }
+  // §4.2.x: `since` (multi-document GET) MUST be an ISO 8601 timestamp.
+  if (q.since !== undefined && !isIsoTimestamp(q.since)) {
+    res.status(400).json({ error: '"since" must be an ISO 8601 timestamp' });
+    return;
+  }
+
+  const docIdParam = kind === 'state' ? 'stateId' : 'profileId';
+  const docId = kind === 'state' ? q.stateId : q.profileId;
+
+  // PUT / POST require the document id.
+  if ((method === 'PUT' || method === 'POST') && !docId) {
+    res.status(400).json({ error: `"${docIdParam}" is a required parameter for ${method}` });
+    return;
+  }
+  // Only the State Resource supports a scoped (no docId) bulk DELETE;
+  // the Profile resources require an explicit profileId on DELETE.
+  if (method === 'DELETE' && !docId && kind !== 'state') {
+    res.status(400).json({ error: `"${docIdParam}" is a required parameter for DELETE` });
+    return;
+  }
+
+  const key = kind === 'state'
+    ? stateKey(q.activityId ?? '', q.agent ?? '', q.stateId ?? '', q.registration)
+    : profileKey((kind === 'activityProfile' ? q.activityId : q.agent) ?? '', q.profileId ?? '');
+  // The scope a multi-document GET / bulk DELETE applies to — every key
+  // under it shares this prefix followed by "::<docId>...".
+  const scopePrefix = kind === 'state'
+    ? `${q.activityId ?? ''}::${q.agent ?? ''}`
+    : `${(kind === 'activityProfile' ? q.activityId : q.agent) ?? ''}`;
+
+  // ── GET / HEAD ──────────────────────────────────────────────────
+  if (method === 'GET') {
+    if (!docId) {
+      // Multiple-document GET — return the array of document ids in scope.
+      const since = q.since ? Date.parse(q.since) : NaN;
       const ids = [...resourceStore.entries()]
-        .filter(([k]) => k.startsWith(prefix))
-        .map(([k]) => k.split('::').pop());
-      res.json(ids);
+        .filter(([k]) => k.startsWith(`${scopePrefix}::`))
+        .filter(([, v]) => Number.isNaN(since) || Date.parse(v.updated) > since)
+        .map(([k]) => k.slice(scopePrefix.length + 2).split('::')[0]);
+      res.status(200).json(ids);
       return;
     }
     const v = resourceStore.get(key);
     if (!v) { res.status(404).end(); return; }
-    // xAPI 2.0 §6.3.2 — If-None-Match: client can short-circuit if their
-    // cached copy is current. Returning 304 saves the body fetch.
     const ifNoneMatch = req.headers['if-none-match'] as string | undefined;
     if (ifNoneMatch && (ifNoneMatch === v.etag || ifNoneMatch === '*')) {
       res.status(304).setHeader('ETag', v.etag).end();
@@ -476,55 +1004,84 @@ function handleStateOrProfile(
     res.setHeader('ETag', v.etag);
     res.setHeader('Last-Modified', new Date(v.updated).toUTCString());
     res.setHeader('Content-Type', v.contentType);
-    res.send(v.content);
+    if (req.method === 'HEAD') { res.status(200).end(); return; }
+    res.status(200).send(v.content);
     return;
   }
-  if (req.method === 'PUT' || req.method === 'POST') {
-    // xAPI 2.0 §6.3.3 — If-Match: optimistic concurrency. Reject if the
-    // server's current ETag doesn't match what the caller saw.
+
+  // ── PUT / POST ──────────────────────────────────────────────────
+  if (method === 'PUT' || method === 'POST') {
     const existing = resourceStore.get(key);
     const ifMatch = req.headers['if-match'] as string | undefined;
     const ifNoneMatch = req.headers['if-none-match'] as string | undefined;
+    // §4.1.4 concurrency: a PUT that would overwrite an existing document
+    // without a precondition is rejected 409 (lost-update guard). A POST
+    // is a document *merge* and is exempt — it never needs a precondition.
+    if (method === 'PUT' && existing && !ifMatch && !ifNoneMatch) {
+      res.status(409).json({ error: 'document exists — supply If-Match or If-None-Match to replace it via PUT (§4.1.4)' });
+      return;
+    }
     if (ifMatch && (!existing || existing.etag !== ifMatch)) {
-      res.status(412).json({ error: 'If-Match precondition failed (xAPI 2.0 §6.3.3)' });
+      res.status(412).json({ error: 'If-Match precondition failed' });
       return;
     }
     if (ifNoneMatch === '*' && existing) {
       res.status(412).json({ error: 'If-None-Match: * precondition failed — document exists' });
       return;
     }
+
+    const { value, contentType } = readDocBody(req);
+    let stored: unknown = value;
+    let storedCt = contentType;
+
+    if (method === 'POST' && existing) {
+      // §4.2.x: POST merges JSON documents; if either side is non-JSON
+      // the merge is impossible and the LRS MUST respond 400.
+      const newIsJson = contentType.toLowerCase().includes('application/json');
+      const oldIsJson = existing.contentType.toLowerCase().includes('application/json');
+      if (!newIsJson || !oldIsJson) {
+        res.status(400).json({ error: 'POST can only update a document when both the stored and the new document are application/json' });
+        return;
+      }
+      if (!isPlainObject(existing.content) || !isPlainObject(value)) {
+        res.status(400).json({ error: 'POST merge requires both documents to be JSON objects' });
+        return;
+      }
+      stored = { ...(existing.content as Record<string, unknown>), ...(value as Record<string, unknown>) };
+      storedCt = 'application/json';
+    }
+
     const etag = `"${randomUUID()}"`;
-    resourceStore.set(key, {
-      content: req.body,
-      etag,
-      updated: new Date().toISOString(),
-      contentType: (req.headers['content-type'] as string | undefined) ?? 'application/json',
-    });
+    resourceStore.set(key, { content: stored, etag, updated: nowIso(), contentType: storedCt });
     res.setHeader('ETag', etag);
     res.status(204).end();
     return;
   }
-  if (req.method === 'DELETE') {
-    if (q.stateId || q.profileId) {
-      // Conditional delete per xAPI 2.0 §6.3.3
+
+  // ── DELETE ──────────────────────────────────────────────────────
+  if (method === 'DELETE') {
+    if (docId) {
       const existing = resourceStore.get(key);
       const ifMatch = req.headers['if-match'] as string | undefined;
       if (ifMatch && (!existing || existing.etag !== ifMatch)) {
-        res.status(412).json({ error: 'If-Match precondition failed (xAPI 2.0 §6.3.3)' });
+        res.status(412).json({ error: 'If-Match precondition failed' });
         return;
       }
       resourceStore.delete(key);
     } else {
-      // Bulk delete all keys matching the activity/agent prefix
-      const prefix = key.split('::').slice(0, -1).join('::');
       for (const k of Array.from(resourceStore.keys())) {
-        if (k.startsWith(prefix)) resourceStore.delete(k);
+        if (k.startsWith(`${scopePrefix}::`)) resourceStore.delete(k);
       }
     }
     res.status(204).end();
     return;
   }
+
   res.status(405).end();
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v) && !Buffer.isBuffer(v);
 }
 
 // ── Statement forwarding ────────────────────────────────────────────
@@ -541,7 +1098,7 @@ async function forwardStatement(stmt: Record<string, unknown>, config: XapiLrsCo
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Basic ${Buffer.from(creds).toString('base64')}`,
-          'X-Experience-API-Version': version || '1.0.3',
+          'X-Experience-API-Version': version || '2.0.0',
         },
         body: JSON.stringify(stmt),
       });
@@ -557,24 +1114,9 @@ async function forwardStatement(stmt: Record<string, unknown>, config: XapiLrsCo
 }
 
 // ── xAPI Profile Server ─────────────────────────────────────────────
-// Delegates to xapi-profile.ts where the full Profile-spec-2017 shape
-// (concepts + templates + patterns) lives, so the profile stays a
-// proper first-class artifact a learning-engineer can review +
-// extend, not a thin string-table.
 
 import { buildFoxxiProfileDoc } from './xapi-profile.js';
 
-/**
- * Tenant-level profile override.
- *
- * Set FOXXI_XAPI_PROFILE_URL (an HTTPS URL serving a conformant xAPI
- * Profile JSON-LD doc) and Foxxi will serve THAT profile at /xapi/profile
- * instead of the built-in Foxxi profile. The override is cached for 5
- * minutes per process so the bridge isn't hammering the upstream.
- * Tenants who already have a profile published elsewhere (an internal
- * registry, a custom partner profile, an industry-standard
- * verb set they want to declare) can flip the env and ship.
- */
 let _profileCache: { url: string; doc: Record<string, unknown>; fetchedAt: number } | null = null;
 async function fetchExternalProfile(url: string): Promise<Record<string, unknown> | null> {
   if (_profileCache && _profileCache.url === url && Date.now() - _profileCache.fetchedAt < 5 * 60 * 1000) {
@@ -589,50 +1131,13 @@ async function fetchExternalProfile(url: string): Promise<Record<string, unknown
   } catch { return null; }
 }
 
-async function buildFoxxiXapiProfile(config: XapiLrsConfig): Promise<Record<string, unknown>> {
-  void config;
+async function buildFoxxiXapiProfile(_config: XapiLrsConfig): Promise<Record<string, unknown>> {
   const override = process.env.FOXXI_XAPI_PROFILE_URL;
   if (override) {
     const ext = await fetchExternalProfile(override);
     if (ext) return ext;
-    // Fall through to built-in if override unreachable — never block
-    // the endpoint over a misconfigured override.
   }
-  return buildFoxxiProfileDoc({ generatedAt: new Date().toISOString() });
-}
-
-// Kept for back-compat (older code may import this name)
-function _buildFoxxiXapiProfileLegacy(config: XapiLrsConfig): Record<string, unknown> {
-  const baseId = `${config.selfBaseUrl}/xapi/profile`;
-  return {
-    '@context': 'https://w3id.org/xapi/profiles/context',
-    id: baseId,
-    type: 'Profile',
-    conformsTo: 'https://w3id.org/xapi/profiles#1.0',
-    prefLabel: { 'en': 'Foxxi Content Intelligence — xAPI Profile' },
-    definition: { 'en': 'xAPI vocabulary the Foxxi vertical emits when projecting substrate descriptors to LRS Statements. Covers SCORM/cmi5 verb subset plus Foxxi-specific extensions for concept-graph retrieval traces.' },
-    seeAlso: 'https://github.com/markjspivey-xwisee/interego',
-    versions: [{ id: `${baseId}/v/1`, generatedAtTime: new Date().toISOString() }],
-    author: { type: 'Organization', name: 'Acme Training Co (demo tenant)' },
-    concepts: [
-      { id: 'http://adlnet.gov/expapi/verbs/launched', type: 'Verb', prefLabel: { en: 'launched' }, definition: { en: 'cmi5 launch — start of a session' } },
-      { id: 'http://adlnet.gov/expapi/verbs/initialized', type: 'Verb', prefLabel: { en: 'initialized' }, definition: { en: 'cmi5 initialized verb' } },
-      { id: 'http://adlnet.gov/expapi/verbs/completed', type: 'Verb', prefLabel: { en: 'completed' }, definition: { en: 'cmi5 completed verb' } },
-      { id: 'http://adlnet.gov/expapi/verbs/passed', type: 'Verb', prefLabel: { en: 'passed' }, definition: { en: 'cmi5 passed verb' } },
-      { id: 'http://adlnet.gov/expapi/verbs/failed', type: 'Verb', prefLabel: { en: 'failed' }, definition: { en: 'cmi5 failed verb' } },
-      { id: 'http://adlnet.gov/expapi/verbs/satisfied', type: 'Verb', prefLabel: { en: 'satisfied' }, definition: { en: 'cmi5 satisfied verb (moveOn)' } },
-      { id: 'http://adlnet.gov/expapi/verbs/terminated', type: 'Verb', prefLabel: { en: 'terminated' }, definition: { en: 'cmi5 terminated verb' } },
-      { id: 'http://adlnet.gov/expapi/verbs/voided', type: 'Verb', prefLabel: { en: 'voided' }, definition: { en: 'xAPI voiding verb' } },
-      { id: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#asked', type: 'Verb', prefLabel: { en: 'asked' }, definition: { en: 'Foxxi extension — learner asked a content question against the concept graph' } },
-      { id: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#retrieved', type: 'Verb', prefLabel: { en: 'retrieved' }, definition: { en: 'Foxxi extension — concept-graph retrieval traced a set of slides' } },
-      { id: 'http://adlnet.gov/expapi/activities/course', type: 'ActivityType', prefLabel: { en: 'course' } },
-      { id: 'http://adlnet.gov/expapi/activities/lesson', type: 'ActivityType', prefLabel: { en: 'lesson' } },
-      { id: 'http://adlnet.gov/expapi/activities/assessment', type: 'ActivityType', prefLabel: { en: 'assessment' } },
-      { id: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#conceptGraphNode', type: 'ActivityType', prefLabel: { en: 'concept graph node' } },
-    ],
-    templates: [],
-    patterns: [],
-  };
+  return buildFoxxiProfileDoc({ generatedAt: nowIso() });
 }
 
 // ── Route attachment ────────────────────────────────────────────────
@@ -640,24 +1145,40 @@ function _buildFoxxiXapiProfileLegacy(config: XapiLrsConfig): Record<string, unk
 export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
   const gate = makeAuthGate(config);
 
-  app.get('/xapi/about', gate, (req, res) => handleAbout(req, res, config));
+  // Raw-body parser for multipart/mixed Statement requests — the global
+  // express.json() middleware skips non-JSON content types, so the
+  // stream is intact for this parser to read.
+  const rawMultipart = express.raw({
+    type: (req) => ((req.headers['content-type'] as string | undefined) ?? '').toLowerCase().startsWith('multipart/'),
+    limit: '50mb',
+  });
+  // Raw-body parser for non-JSON State/Profile documents. JSON documents
+  // are left to the already-parsed req.body object.
+  const rawDoc = express.raw({
+    type: (req) => !(((req.headers['content-type'] as string | undefined) ?? '').toLowerCase().includes('application/json')),
+    limit: '50mb',
+  });
+
+  // The About Resource is unauthenticated and exempt from the
+  // X-Experience-API-Version requirement (§3.3) — a client hits it
+  // *first* to discover which versions the LRS supports.
+  app.get('/xapi/about', (req, res) => {
+    setXapiHeaders(res, '2.0.0');
+    handleAbout(req, res, config);
+  });
 
   // xAPI Profile Server — public (no auth) so other tools can discover
-  // what vocabulary Foxxi emits. The profile's `id` IS this URL, so the
-  // profile document dereferences to itself.
+  // what vocabulary Foxxi emits. The profile's `id` IS this URL.
   app.get('/xapi/profile', (_req, res) => { void (async () => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const doc = await buildFoxxiXapiProfile(config);
     res.type('application/ld+json').json(doc);
   })(); });
 
-  // Profile sub-resources — every statement template, pattern, and
-  // version is its OWN dereferenceable resource (RESTful linked data),
-  // not merely an `@id` buried in the profile document.
   for (const kind of ['templates', 'patterns', 'v'] as const) {
     app.get(`/xapi/profile/${kind}/:name`, (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
-      const doc = buildFoxxiProfileDoc({ generatedAt: new Date().toISOString() });
+      const doc = buildFoxxiProfileDoc({ generatedAt: nowIso() });
       const list = (kind === 'v' ? doc.versions : doc[kind]) as Array<Record<string, unknown>> | undefined;
       const suffix = `/${kind}/${req.params.name}`;
       const found = (list ?? []).find(x => typeof x.id === 'string' && (x.id as string).endsWith(suffix));
@@ -669,77 +1190,139 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
       res.type('application/ld+json').json({
         '@context': 'https://w3id.org/xapi/profiles/context',
         ...found,
-        _links: {
-          self: { href: found.id },
-          profile: { href: `${config.selfBaseUrl}/xapi/profile` },
-        },
+        _links: { self: { href: found.id }, profile: { href: `${config.selfBaseUrl}/xapi/profile` } },
       });
     });
   }
 
-  // The order matters: PUT statementId needs to be checked before POST handler picks up.
-  app.post('/xapi/statements', gate, (req, res) => { void handlePostStatements(req, res, config); });
-  app.put('/xapi/statements', gate, (req, res) => { void handlePutStatement(req, res, config); });
+  // Statements resource.
+  app.post('/xapi/statements', gate, rawMultipart, (req, res) => { void handlePostStatements(req, res, config); });
+  app.put('/xapi/statements', gate, rawMultipart, (req, res) => { void handlePutStatement(req, res, config); });
   app.get('/xapi/statements', gate, (req, res) => { void handleGetStatements(req, res); });
 
-  // Activity / agent inspection helpers
+  // Activities + Agents inspection helpers.
   app.get('/xapi/activities', gate, (req, res) => { void (async () => {
+    if (rejectUnknownParams(req, res, ['activityId'])) return;
     const id = req.query.activityId as string | undefined;
-    if (!id) { res.status(400).json({ error: 'activityId required' }); return; }
+    if (!id) { res.status(400).json({ error: '"activityId" is a required parameter' }); return; }
+    // §7.5: return the merged Activity Object — every definition seen in
+    // any Statement about this Activity, combined.
     const all = await store.listAll();
-    for (const r of all) {
-      const obj = r.statement.object as { id?: string; definition?: unknown } | undefined;
-      if (obj?.id === id && obj.definition) {
-        res.json({ id, objectType: 'Activity', definition: obj.definition });
-        return;
-      }
-    }
-    res.json({ id, objectType: 'Activity' });
-  })(); });
-  app.get('/xapi/agents', gate, (req, res) => { void (async () => {
-    const agentJson = req.query.agent as string | undefined;
-    if (!agentJson) { res.status(400).json({ error: 'agent required (JSON-encoded Agent object)' }); return; }
-    try {
-      const agent = JSON.parse(agentJson);
-      const names = new Set<string>();
-      const mboxes = new Set<string>();
-      const accounts: Array<{ name: string; homePage: string }> = [];
-      const all = await store.listAll();
-      for (const r of all) {
-        const ac = r.statement.actor as { name?: string; mbox?: string; account?: { name: string; homePage: string } } | undefined;
-        if (!ac) continue;
-        const sameAgent = JSON.stringify(ac) === JSON.stringify(agent)
-          || (agent.mbox && ac.mbox === agent.mbox)
-          || (agent.account?.name && ac.account?.name === agent.account.name);
-        if (sameAgent) {
-          if (ac.name) names.add(ac.name);
-          if (ac.mbox) mboxes.add(ac.mbox);
-          if (ac.account) accounts.push(ac.account);
+    const merged: Record<string, unknown> = { objectType: 'Activity', id };
+    const mergedDef: Record<string, unknown> = {};
+    const collect = (o: unknown): void => {
+      if (!o || typeof o !== 'object') return;
+      const obj = o as Record<string, unknown>;
+      if (obj.id === id && obj.definition && typeof obj.definition === 'object') {
+        // §7.5: deep-merge so multi-language `name` / `description` maps
+        // from different Statements are combined, not overwritten.
+        for (const [k, v] of Object.entries(obj.definition as Record<string, unknown>)) {
+          const prior = mergedDef[k];
+          if ((k === 'name' || k === 'description' || k === 'extensions')
+            && prior && typeof prior === 'object' && !Array.isArray(prior)
+            && v && typeof v === 'object' && !Array.isArray(v)) {
+            mergedDef[k] = { ...(prior as Record<string, unknown>), ...(v as Record<string, unknown>) };
+          } else {
+            mergedDef[k] = v;
+          }
         }
       }
-      res.json({
-        objectType: 'Person',
-        name: Array.from(names),
-        mbox: Array.from(mboxes),
-        account: accounts,
-      });
-    } catch {
-      res.status(400).json({ error: 'invalid agent JSON' });
+    };
+    for (const r of all) {
+      collect(r.statement.object);
+      const ctx = r.statement.context as { contextActivities?: Record<string, unknown[]> } | undefined;
+      if (ctx?.contextActivities) {
+        for (const arr of Object.values(ctx.contextActivities)) {
+          if (Array.isArray(arr)) arr.forEach(collect);
+        }
+      }
     }
+    if (Object.keys(mergedDef).length > 0) merged.definition = mergedDef;
+    res.status(200).json(merged);
   })(); });
 
-  // State + profile resources
-  for (const method of ['get', 'put', 'post', 'delete'] as const) {
-    app[method]('/xapi/activities/state', gate, (req, res) =>
-      handleStateOrProfile(activityStateStore, q => stateKey({
-        activityId: q.activityId ?? '', agent: q.agent ?? '', stateId: q.stateId ?? '', registration: q.registration,
-      }), req, res),
-    );
-    app[method]('/xapi/activities/profile', gate, (req, res) =>
-      handleStateOrProfile(activityProfileStore, q => profileKey({ iri: q.activityId ?? '', profileId: q.profileId ?? '' }), req, res),
-    );
-    app[method]('/xapi/agents/profile', gate, (req, res) =>
-      handleStateOrProfile(agentProfileStore, q => profileKey({ iri: q.agent ?? '', profileId: q.profileId ?? '' }), req, res),
-    );
+  app.get('/xapi/agents', gate, (req, res) => { void (async () => {
+    if (rejectUnknownParams(req, res, ['agent'])) return;
+    const agentJson = req.query.agent as string | undefined;
+    if (!agentJson) { res.status(400).json({ error: '"agent" is a required parameter' }); return; }
+    let agent: Record<string, unknown>;
+    try { agent = JSON.parse(agentJson) as Record<string, unknown>; }
+    catch { res.status(400).json({ error: '"agent" must be a JSON-encoded Agent object' }); return; }
+    if (!agent || typeof agent !== 'object' || Array.isArray(agent)) {
+      res.status(400).json({ error: '"agent" must be a JSON-encoded Agent object' });
+      return;
+    }
+    // §7.6: the `agent` parameter MUST be a structurally valid Agent/Group.
+    const agentErrs = validateAgentObject(agent);
+    if (agentErrs.length > 0) {
+      res.status(400).json({ error: '"agent" is not a structurally valid Agent', violations: agentErrs });
+      return;
+    }
+    const names = new Set<string>();
+    const mboxes = new Set<string>();
+    const mboxSha = new Set<string>();
+    const openids = new Set<string>();
+    const accounts: Array<{ name: string; homePage: string }> = [];
+    const all = await store.listAll();
+    const matches = (ac: Record<string, unknown> | undefined): boolean => {
+      if (!ac) return false;
+      if (agent.mbox && ac.mbox === agent.mbox) return true;
+      if (agent.mbox_sha1sum && ac.mbox_sha1sum === agent.mbox_sha1sum) return true;
+      if (agent.openid && ac.openid === agent.openid) return true;
+      const aAcc = agent.account as { name?: string; homePage?: string } | undefined;
+      const cAcc = ac.account as { name?: string; homePage?: string } | undefined;
+      if (aAcc && cAcc && aAcc.name === cAcc.name && aAcc.homePage === cAcc.homePage) return true;
+      return false;
+    };
+    for (const r of all) {
+      const ac = r.statement.actor as Record<string, unknown> | undefined;
+      if (!matches(ac)) continue;
+      if (typeof ac!.name === 'string') names.add(ac!.name);
+      if (typeof ac!.mbox === 'string') mboxes.add(ac!.mbox);
+      if (typeof ac!.mbox_sha1sum === 'string') mboxSha.add(ac!.mbox_sha1sum);
+      if (typeof ac!.openid === 'string') openids.add(ac!.openid);
+      if (ac!.account) accounts.push(ac!.account as { name: string; homePage: string });
+    }
+    // §7.6: a Person Object — every identifying property is an ARRAY.
+    const person: Record<string, unknown> = { objectType: 'Person' };
+    if (names.size) person.name = [...names];
+    if (mboxes.size) person.mbox = [...mboxes];
+    if (mboxSha.size) person.mbox_sha1sum = [...mboxSha];
+    if (openids.size) person.openid = [...openids];
+    if (accounts.length) person.account = accounts;
+    res.status(200).json(person);
+  })(); });
+
+  // State + profile document resources — GET/PUT/POST/DELETE/HEAD.
+  const docResources: Array<[string, DocKind, Map<string, StoredDoc>]> = [
+    ['/xapi/activities/state', 'state', activityStateStore],
+    ['/xapi/activities/profile', 'activityProfile', activityProfileStore],
+    ['/xapi/agents/profile', 'agentProfile', agentProfileStore],
+  ];
+  for (const [path, kind, docStore] of docResources) {
+    const allowed = kind === 'state' ? STATE_PARAMS
+      : kind === 'activityProfile' ? ACTIVITY_PROFILE_PARAMS : AGENT_PROFILE_PARAMS;
+    const paramGate = (req: Request, res: Response, next: NextFunction): void => {
+      if (rejectUnknownParams(req, res, allowed)) return;
+      next();
+    };
+    app.get(path, gate, paramGate, (req, res) => handleDocResource(kind, docStore, req, res));
+    app.head(path, gate, paramGate, (req, res) => handleDocResource(kind, docStore, req, res));
+    app.put(path, gate, paramGate, rawDoc, (req, res) => handleDocResource(kind, docStore, req, res));
+    app.post(path, gate, paramGate, rawDoc, (req, res) => handleDocResource(kind, docStore, req, res));
+    app.delete(path, gate, paramGate, (req, res) => handleDocResource(kind, docStore, req, res));
   }
+
+  // Error handler — a malformed JSON body reaches here from the global
+  // express.json() parser. For xAPI resources, answer with a conformant
+  // 400 (and the version header); everything else passes through.
+  app.use((err: Error & { status?: number; type?: string }, req: Request, res: Response, next: NextFunction) => {
+    if (!req.path.startsWith('/xapi/')) { next(err); return; }
+    if (res.headersSent) { next(err); return; }
+    setXapiHeaders(res, negotiateVersion(req));
+    const isParse = err.type === 'entity.parse.failed' || err instanceof SyntaxError;
+    res.status(isParse ? 400 : (err.status ?? 500)).json({
+      error: isParse ? 'request body is not valid JSON' : (err.message || 'internal error'),
+    });
+  });
 }
