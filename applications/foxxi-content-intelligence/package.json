@@ -7,5 +7,8 @@
   "dependencies": {
     "@interego/core": "file:../../",
     "ethers": "^6.16.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
   }
 }
