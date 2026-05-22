@@ -169,7 +169,12 @@ import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { attachScormSequencingRoutes } from '../src/scorm-sequencing.js';
 import { attachPerformanceRoutes } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
-import { attachContextChatRoutes, type ContextEnrollment, type DiscoveredDescriptor } from '../src/context-chat.js';
+import type { DeliveryChannel } from '../src/content-channels.js';
+import type { ChannelWebhook } from '../src/content-transport.js';
+import {
+  attachContextChatRoutes, mergeDiscovered,
+  type ContextEnrollment, type DiscoveredDescriptor, type CallerVerification,
+} from '../src/context-chat.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
@@ -275,15 +280,17 @@ async function autoFetchCourse(args: Record<string, unknown>, courseId: string):
   }
 }
 
-// ── Interego substrate pass-through ─────────────────────────────────
+// ── Interego substrate pass-through (federated) ─────────────────────
 // The Context Companion's 'interego' scope reaches everything composed
 // into the user's networked context, not just the Foxxi vertical. It
-// discovers Context Descriptors from the pod's published manifest via
-// @interego/core's discover() — Interego passing through to what
-// composes it. A discovered COURSE descriptor is additionally fetched in
-// full (composing fetchCoursePackage + payloadToAgenticCourse) so the
-// companion answers from its actual content, not just its metadata.
-// Cached briefly (the manifest is stable between publishes).
+// discovers Context Descriptors via @interego/core's discover() — across
+// the tenant pod AND every federation peer in FOXXI_FEDERATION_PODS,
+// merged + deduped (mergeDiscovered). A discovered COURSE descriptor is
+// additionally fetched in full from its origin pod (composing
+// fetchCoursePackage + payloadToAgenticCourse) so the companion answers
+// from its actual content. Cached briefly (manifests are stable).
+const FEDERATION_PODS: string[] = (process.env.FOXXI_FEDERATION_PODS ?? '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 let interegoDiscoverCache: { at: number; entries: DiscoveredDescriptor[] } | null = null;
 const INTEREGO_DISCOVER_TTL_MS = 60_000;
 const INTEREGO_DEEP_FETCH_CAP = 8;
@@ -293,10 +300,19 @@ async function fetchInteregoDescriptors(): Promise<DiscoveredDescriptor[]> {
   if (interegoDiscoverCache && Date.now() - interegoDiscoverCache.at < INTEREGO_DISCOVER_TTL_MS) {
     return interegoDiscoverCache.entries;
   }
-  try {
-    const entries = await discover(tenantPodUrl);
-    let deepFetched = 0;
-    const mapped = await Promise.all(entries.map(async (e): Promise<DiscoveredDescriptor> => {
+  // The federated pod set — the tenant pod plus every configured peer.
+  const pods = [...new Set([tenantPodUrl, ...FEDERATION_PODS])];
+  const collected: DiscoveredDescriptor[] = [];
+  let deepFetched = 0;
+  for (const pod of pods) {
+    let entries;
+    try {
+      entries = await discover(pod);
+    } catch (err) {
+      console.error(`[foxxi-bridge] discover(${pod}) failed:`, (err as Error).message);
+      continue;
+    }
+    for (const e of entries) {
       const described = e.describes[0] ?? e.descriptorUrl;
       const tail = described.split(/[:/#]/).filter(Boolean).pop() ?? described;
       const label = tail.replace(/[-_]+/g, ' ').trim() || described;
@@ -304,30 +320,45 @@ async function fetchInteregoDescriptors(): Promise<DiscoveredDescriptor[]> {
         + `; describes ${e.describes.join(', ') || described}`
         + (e.facetTypes.length ? `; facets ${e.facetTypes.join('/')}` : '')
         + (e.conformsTo && e.conformsTo.length ? `; conforms to ${e.conformsTo.join(', ')}` : '')
-        + (e.modalStatus ? `; modal status ${e.modalStatus}` : '') + '.';
-      const descriptor: DiscoveredDescriptor = { descriptorUrl: e.descriptorUrl, label, summary };
+        + (e.modalStatus ? `; modal status ${e.modalStatus}` : '')
+        + (pod !== tenantPodUrl ? `; via federation peer ${pod}` : '') + '.';
+      const descriptor: DiscoveredDescriptor = { descriptorUrl: e.descriptorUrl, label, summary, originPod: pod };
 
       // Deep pass-through: a discovered course package is fetched in full
-      // so the companion answers from its content, not its descriptor.
+      // from its origin pod so the companion answers from its content.
       const isCoursePackage = (e.conformsTo ?? []).some(c => c.split(/[#/]/).pop() === 'CoursePackageBundle');
       const courseIdMatch = e.describes.map(g => /:course:(.+)$/.exec(g)).find((m): m is RegExpExecArray => !!m);
       if (isCoursePackage && courseIdMatch && deepFetched < INTEREGO_DEEP_FETCH_CAP) {
         deepFetched++;
         try {
-          const pkg = await fetchCoursePackage(courseIdMatch[1], fetcherConfig()) as FoxxiAgenticPayload;
+          const pkg = await fetchCoursePackage(courseIdMatch[1], { ...fetcherConfig(), podUrl: pod }) as FoxxiAgenticPayload;
           descriptor.course = payloadToAgenticCourse(pkg, authoritativeSource);
         } catch (err) {
-          console.error(`[foxxi-bridge] deep-fetch of course "${courseIdMatch[1]}" failed:`, (err as Error).message);
+          console.error(`[foxxi-bridge] deep-fetch of course "${courseIdMatch[1]}" from ${pod} failed:`, (err as Error).message);
         }
       }
-      return descriptor;
-    }));
-    interegoDiscoverCache = { at: Date.now(), entries: mapped };
-    return mapped;
-  } catch (err) {
-    console.error('[foxxi-bridge] fetchInteregoDescriptors failed:', (err as Error).message);
-    return [];
+      collected.push(descriptor);
+    }
   }
+  const merged = mergeDiscovered(collected);
+  interegoDiscoverCache = { at: Date.now(), entries: merged };
+  return merged;
+}
+
+// ── Channel transport config ────────────────────────────────────────
+// Each FOXXI_TRANSPORT_<CHANNEL> env var (a webhook URL, optionally
+// `URL||AuthHeader`) wires a real outbound send for that channel — a
+// Slack incoming webhook, an email/SMS provider HTTP API. Unset → the
+// channel falls back to the Interego-native pod-descriptor publish.
+function channelWebhooks(): Partial<Record<DeliveryChannel, ChannelWebhook>> {
+  const out: Partial<Record<DeliveryChannel, ChannelWebhook>> = {};
+  for (const ch of ['document', 'email', 'chat', 'sms'] as const) {
+    const raw = process.env[`FOXXI_TRANSPORT_${ch.toUpperCase()}`]?.trim();
+    if (!raw) continue;
+    const [url, authHeader] = raw.split('||').map(s => s.trim());
+    if (url) out[ch] = { url, ...(authHeader ? { authHeader } : {}) };
+  }
+  return out;
 }
 
 /**
@@ -1929,6 +1960,14 @@ const app = createVerticalBridge({
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       authoritativeSource,
       emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
+      // Channel transport — POST /content/deliver actually sends: a
+      // configured per-channel webhook, else the Interego-native
+      // pod-descriptor publish (the delivery becomes discoverable
+      // substrate). The pod is the tenant pod.
+      transport: {
+        webhooks: channelWebhooks(),
+        ...(tenantPodUrl ? { podUrl: tenantPodUrl } : {}),
+      },
     });
 
     // Context Companion — the one conversational front door over a user's
@@ -1952,6 +1991,25 @@ const app = createVerticalBridge({
       // Scope 'interego' — pass through to everything composed into the
       // user's networked context, via the substrate's discover().
       discoverInteregoContext: () => fetchInteregoDescriptors(),
+      // Gate progress / assignment questions behind the same wallet-
+      // signed session token the rest of the bridge verifies — a
+      // learner's own record is PII; content questions stay open.
+      verifyCaller: async (token): Promise<CallerVerification> => {
+        if (!token) return { ok: false, reason: 'Pass Authorization: Bearer <session-token>.' };
+        const admin = await autoFetchAdmin({});
+        if (!admin) return { ok: false, reason: 'the tenant directory is unavailable for verification.' };
+        const addressMap = buildAddressMap(admin.users ?? []);
+        const verified = verifySessionToken(token, addressMap);
+        if (!verified.ok) return { ok: false, reason: `the token was rejected (${verified.reason}).` };
+        const ctx = resolveCallerContext({
+          callerWebId: verified.callerDid,
+          callerUserId: verified.callerUserId,
+          users: admin.users as unknown as Parameters<typeof resolveCallerContext>[0]['users'],
+          adminWebId,
+          learningEngineerWebIds,
+        });
+        return { ok: true, webId: verified.callerDid, role: ctx.role };
+      },
       resolveAssignments: async (learner): Promise<ContextEnrollment[] | undefined> => {
         const admin = await autoFetchAdmin({});
         if (!admin) return undefined;

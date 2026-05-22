@@ -37,6 +37,9 @@ import {
 import {
   renderForChannel, DELIVERY_CHANNELS, type ContentUnit, type DeliveryChannel,
 } from './content-channels.js';
+import {
+  deliverThroughChannel, type ChannelWebhook, type TransportResult,
+} from './content-transport.js';
 
 const EXPERIENCED = 'http://adlnet.gov/expapi/verbs/experienced';
 
@@ -48,6 +51,13 @@ export interface ContentDeliveryConfig {
    *  internal statement store). When absent, job-aid views are not
    *  instrumented. */
   emitStatement?: (statement: Record<string, unknown>, tenant: TenantId) => void;
+  /** Channel transport — when set, `POST /content/deliver` actually
+   *  sends: a per-channel webhook, or the Interego-native pod-descriptor
+   *  publish. Absent → the rendering is produced + recorded, not sent. */
+  transport?: {
+    webhooks?: Partial<Record<DeliveryChannel, ChannelWebhook>>;
+    podUrl?: string;
+  };
 }
 
 interface PublishedCourse {
@@ -233,6 +243,7 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
   // launched LMS page. Each delivery is instrumented into the LRS.
   app.post('/content/deliver', (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    void (async () => {
     const b = (req.body ?? {}) as Record<string, unknown>;
     const channel = b.channel as DeliveryChannel | undefined;
     if (!channel || !DELIVERY_CHANNELS.includes(channel)) {
@@ -280,6 +291,26 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
 
     const rendering = renderForChannel(unit, channel);
     const learner = b.learner as string | undefined;
+    const recipient = typeof b.recipient === 'string' ? b.recipient : undefined;
+
+    // Actually deliver it — a configured webhook send, or the Interego-
+    // native pod-descriptor publish, or an honest recorded-only no-op.
+    let transport: TransportResult = { mode: 'none', sent: false, detail: 'transport not wired on this bridge' };
+    if (config.transport) {
+      try {
+        transport = await deliverThroughChannel({
+          channel, rendering, title: unit.title, recipient,
+          config: {
+            selfBaseUrl: base,
+            authoritativeSource: config.authoritativeSource,
+            ...config.transport,
+          },
+        });
+      } catch (e) {
+        transport = { mode: 'none', sent: false, detail: `transport error: ${(e as Error).message}` };
+      }
+    }
+
     let instrumented = false;
     if (learner && config.emitStatement) {
       config.emitStatement({
@@ -292,7 +323,9 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
         context: {
           extensions: {
             [`${base}/ns/foxxi#deliveryChannel`]: channel,
-            ...(typeof b.recipient === 'string' ? { [`${base}/ns/foxxi#recipient`]: b.recipient } : {}),
+            [`${base}/ns/foxxi#deliveredVia`]: transport.mode,
+            ...(recipient ? { [`${base}/ns/foxxi#recipient`]: recipient } : {}),
+            ...(transport.artifactUrl ? { [`${base}/ns/foxxi#substrateDescriptorIri`]: transport.artifactUrl } : {}),
           },
         },
         timestamp: new Date().toISOString(),
@@ -300,10 +333,15 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       instrumented = true;
     }
     res.json({
-      delivered: true, channel, rendering, instrumented,
-      note: instrumented
-        ? `Rendered for ${channel} and logged to the LRS as an xAPI experienced statement.`
-        : `Rendered for ${channel}. Pass a learner DID to instrument the delivery into the LRS.`,
+      delivered: true, channel, rendering, instrumented, transport,
+      note: transport.sent
+        ? `Rendered for ${channel}; ${transport.detail}; recorded in the LRS.`
+        : instrumented
+          ? `Rendered for ${channel} and recorded in the LRS. ${transport.detail}.`
+          : `Rendered for ${channel}. ${transport.detail}. Pass a learner DID to instrument the delivery.`,
+    });
+    })().catch((e: unknown) => {
+      if (!res.headersSent) res.status(500).json({ error: (e as Error).message });
     });
   });
 }

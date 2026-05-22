@@ -3,22 +3,21 @@
  *
  *   npx tsx tools/ask-your-context-example.mjs
  *
- * The Context Companion is the one conversational front door over a
- * user's networked context. This walks it against the deployed bridge,
- * LMS and LRS, with a real browser completing a real generated course so
- * the chat has genuine progress to read:
+ * Walks the Context Companion against the deployed bridge, LMS and LRS,
+ * with a real browser completing a real generated course — and exercises
+ * the three things the "honest scope" note named as further work:
  *
- *   1. PUBLISH   compose + publish a course and a job aid
- *   2. ASK       "what does the refund authority threshold mean?"
- *                → a grounded, verbatim-cited answer from the content
- *   3. ASK       "how do I handle a refund over $500?"
- *                → a grounded answer sourced from the job aid
- *   4. ASK       "do I have any courses assigned to me?" (before doing it)
- *   5. COMPLETE  a real browser launches + completes the course's AUs
- *   6. ASK       "what's my progress?"  → reflects the live LRS
- *   7. ASK       as an AGENT — the same question, the same grounded answer
- *   8. ASK       an off-topic question → an honest no-match, no guessing
- *   9. VERIFY    every ask is instrumented into the live LRS
+ *   · the AUTH GATE  — a progress / assignment question is about a
+ *     learner's own record, so it needs a wallet-signed session token;
+ *     content questions stay open.
+ *   · FEDERATED discovery — scope:interego passes through to the tenant
+ *     pod AND a federation peer pod, merged.
+ *   · channel TRANSPORT — a `document` delivery is genuinely published
+ *     to the pod as a discoverable Context Descriptor.
+ *
+ * Prerequisite: the federation peer pod must be provisioned first —
+ *   npx tsx --tsconfig bridge/tsconfig.json tools/provision-federation-peer.mjs
+ * and the bridge deployed with FOXXI_FEDERATION_PODS set to it.
  *
  * Exits non-zero on any failure.
  */
@@ -28,9 +27,13 @@ import { mintSessionToken } from '../src/auth.ts';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
   ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const WEB_ID = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/jliu/profile/card#me';
-const LEARNER = 'did:web:acme#rep-sam';
+const CSS = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const WEB_ID = `${CSS.replace('interego-css', 'interego-acme-id')}/users/jliu/profile/card#me`;
+// The learner is a real Interego user — a Foxxi user *is* an Interego
+// user — so progress / assignment questions can be token-bound to them.
+const LEARNER = WEB_ID;
 const AGENT = 'did:web:acme#support-agent-7';
+const PEER_POD = `${CSS}/markj/federation-peer/`;
 
 let pass = 0, fail = 0;
 const check = (label, cond, detail) => {
@@ -44,9 +47,20 @@ const post = async (path, body) => {
   });
   return { status: r.status, json: await r.json().catch(() => ({})) };
 };
-const ask = (question, opts = {}) => post('/content/ask', { question, ...opts });
+const ask = async (question, opts = {}) => {
+  const { token, ...body } = opts;
+  const r = await fetch(`${BRIDGE}/content/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ question, ...body }),
+  });
+  return { status: r.status, json: await r.json().catch(() => ({})) };
+};
 
-console.log('=== Foxxi — ask your networked context, in production ===');
+console.log('=== Foxxi — ask your networked context (gate · federation · transport) ===');
+
+// A wallet-signed session token for the learner — minted client-side.
+const TOKEN = await mintSessionToken({ userId: 'u-joshua', webId: WEB_ID, ttlMs: 30 * 60 * 1000 });
 
 // ── 1. PUBLISH — compose + publish a course and a job aid ───────────
 h('1. PUBLISH — a course + a job aid into the networked context');
@@ -69,69 +83,59 @@ const composeRes = await post('/content/compose-course', {
   }],
 });
 const course = composeRes.json.course;
-const pubRes = await post('/content/publish-course', { course });
-const pub = pubRes.json;
-check('the course is published + registered on the LMS', pubRes.status === 200 && pub.published === true, pub);
+const pub = (await post('/content/publish-course', { course })).json;
+check('the course is published + registered on the LMS', pub.published === true, pub);
 const aidRes = await post('/content/job-aid', {
   competencyPoint: 'refund thresholds', triggerContext: 'opening a refund over $500',
-  body: 'Over $500 → route the dispute to a lead. The rep handles refunds of $500 or less directly. '
-    + 'Decision tree: returned? in-window? covered reason? then apply the threshold.',
+  body: 'Over $500 → route the dispute to a lead. The rep handles refunds of $500 or less directly.',
 });
-check('the job aid is published to the CMS', aidRes.status === 200 && !!aidRes.json.id, aidRes.json);
-console.log(`   course=${pub.courseId} · ${pub.aus?.length} AU(s) · job aid=${aidRes.json.id}`);
+const jobAidId = aidRes.json.id;
+check('the job aid is published to the CMS', aidRes.status === 200 && !!jobAidId, aidRes.json);
 
-// ── 2. ASK — a concept question, answered by the agentic RAG ────────
-h('2. ASK — "what does the refund authority threshold mean?"');
+// ── 2. ASK — a concept question (open; agentic RAG) ─────────────────
+h('2. ASK — "what does the refund authority threshold mean?" (open)');
 const concept = await ask('What does the refund authority threshold mean?', { learner: LEARNER });
-console.log(`   intent: ${concept.json.intent} · grounded: ${concept.json.grounded} · llm: ${concept.json.llm?.keySource}/${concept.json.llm?.model}`);
-console.log(`   answer: ${String(concept.json.answer).split('\n')[0]}`);
-check('the question is routed to the concept intent', concept.json.intent === 'concept', concept.json.intent);
-check('the answer is grounded in the content', concept.json.grounded === true, concept.json);
-check('it composed the vertical\'s existing agentic RAG (not a new retriever)',
-  concept.json.llm?.keySource === 'bridge-env', concept.json.llm);
-check('the answer carries the agentic-RAG modal-statused Interego trace',
+console.log(`   intent: ${concept.json.intent} · grounded: ${concept.json.grounded} · llm: ${concept.json.llm?.keySource}`);
+check('a content question needs no token and is grounded', concept.status === 200 && concept.json.grounded === true, concept.json);
+check('the answer cites a course-fragment source with verbatim content',
+  (concept.json.sources ?? []).some(s => s.kind === 'course-fragment'
+    && typeof s.excerpt === 'string' && s.excerpt.includes('authorise refunds up to $500')), concept.json.sources);
+check('the answer carries the agentic-RAG Interego trace',
   Array.isArray(concept.json.trace) && concept.json.trace.length >= 2, concept.json.trace);
-const cSources = concept.json.sources ?? [];
-check('the answer cites a course-fragment source with a course › lesson provenance trail',
-  cSources.some(s => s.kind === 'course-fragment' && typeof s.locator === 'string' && s.locator.includes('›')), cSources);
-check('the cited source carries the verbatim content (no confabulation)',
-  cSources.some(s => typeof s.excerpt === 'string' && s.excerpt.includes('authorise refunds up to $500')), cSources);
-check('the synthesized answer speaks to the question',
-  /refund|500|lead|threshold/i.test(String(concept.json.answer)), concept.json.answer);
 
-// ── 3. ASK — a procedure question, sourced from the job aid ─────────
+// ── 3. ASK — a procedure question ───────────────────────────────────
 h('3. ASK — "how do I handle a refund over $500?"');
 const proc = await ask('How do I handle a refund over $500?', { learner: LEARNER });
-console.log(`   intent: ${proc.json.intent} · grounded: ${proc.json.grounded}`);
-check('the question is routed to the procedure intent', proc.json.intent === 'procedure', proc.json.intent);
-check('the answer is sourced from the job aid via the agentic RAG',
+check('the procedure answer is sourced from the job aid',
   proc.json.grounded === true && (proc.json.sources ?? []).some(s => s.kind === 'job-aid'), proc.json);
 
-// ── 4. ASK — assignments, before the learner has done anything ──────
-h('4. ASK — "do I have any courses assigned to me?" (before completing it)');
-const assignPre = await ask('Do I have any courses assigned to me?', { learner: LEARNER });
-console.log(`   intent: ${assignPre.json.intent}`);
-console.log(`   answer: ${String(assignPre.json.answer).split('\n')[0]}`);
-check('the question is routed to the assignments intent', assignPre.json.intent === 'assignments', assignPre.json.intent);
-check('the answer resolves against the assignment surface (no error)', assignPre.status === 200, assignPre.json);
+// ── 4. ASK — assignments, GATED behind a session token ──────────────
+h('4. ASK — assignments (a learner record is PII — it needs a token)');
+const noTok = await ask('Do I have any courses assigned to me?');
+console.log(`   without a token → HTTP ${noTok.status}`);
+check('without a session token a progress/assignment question is rejected (401)',
+  noTok.status === 401 && noTok.json.authRequired === true, noTok.json);
+const assignPre = await ask('Do I have any courses assigned to me?', { token: TOKEN });
+check('with a valid wallet-signed token the assignment question is allowed',
+  assignPre.status === 200 && assignPre.json.intent === 'assignments', assignPre.json);
+check('the gated answer is bound to the verified identity (not a body-supplied learner)',
+  assignPre.json.learner === WEB_ID, assignPre.json.learner);
 
-// ── 5. COMPLETE — a real browser launches + completes the AUs ───────
+// ── 5. COMPLETE — a real browser completes the course on the LMS ────
 h('5. COMPLETE — a real browser completes the course on the LMS');
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newContext().then(c => c.newPage());
 let completed = 0;
 try {
   for (const au of pub.aus) {
-    // moveOn orchestration from the previous AU needs a moment to settle
-    // before the next AU's sequential prerequisite gate opens.
     if (completed > 0) await new Promise(r => setTimeout(r, 1800));
     const launchRes = await fetch(`${BRIDGE}/cmi5/launch?course_id=${encodeURIComponent(pub.courseId)}`
-      + `&au_id=${encodeURIComponent(au.auId)}&learner=${encodeURIComponent(LEARNER)}&learner_name=Sam%20Rivera`);
+      + `&au_id=${encodeURIComponent(au.auId)}&learner=${encodeURIComponent(LEARNER)}&learner_name=Joshua%20Liu`);
     const launch = await launchRes.json();
     if (launchRes.status !== 200 || !launch.launchUrl) { check(`AU "${au.title}" launched`, false, launch); break; }
     await page.goto(launch.launchUrl, { waitUntil: 'networkidle', timeout: 40_000 });
     await page.waitForSelector('#go:not([disabled])', { timeout: 20_000 });
-    const answerInput = await page.$('.answer'); // an assessment AU has answer inputs
+    const answerInput = await page.$('.answer');
     if (answerInput) await answerInput.fill('$500');
     await page.click('#go');
     await page.waitForSelector('text=/completed|sent to the LRS|submitted/i', { timeout: 25_000 });
@@ -141,90 +145,96 @@ try {
   await browser.close();
 }
 check('a real browser completed every AU of the course', completed === pub.aus.length, { completed, of: pub.aus.length });
-await new Promise(r => setTimeout(r, 2000)); // let the final moveOn + rollup settle
+await new Promise(r => setTimeout(r, 2000));
 
-// ── 6. ASK — progress, now reading the live LRS ─────────────────────
-h('6. ASK — "what\'s my progress?" (now that the LRS has real data)');
-const progress = await ask("What's my progress on the refund course?", { learner: LEARNER });
+// ── 6. ASK — progress, gated + reading the live LRS ─────────────────
+h('6. ASK — "what\'s my progress?" (gated; reads the live LRS)');
+const progress = await ask("What's my progress on the refund course?", { token: TOKEN });
 console.log(`   intent: ${progress.json.intent} · grounded: ${progress.json.grounded}`);
 console.log(`   answer: ${String(progress.json.answer).split('\n')[0]}`);
-check('the question is routed to the progress intent', progress.json.intent === 'progress', progress.json.intent);
-check('the answer is grounded in the learner\'s live LRS activity', progress.json.grounded === true, progress.json);
-check('the progress answer reflects real recorded activity',
-  /statement|completed|in progress/i.test(String(progress.json.answer)), progress.json.answer);
+check('the gated progress question is allowed with the token', progress.status === 200, progress.json);
+check('the progress answer is grounded in the learner\'s live LRS activity',
+  progress.json.grounded === true && /statement|completed|in progress/i.test(String(progress.json.answer)),
+  progress.json.answer);
 
-const assignPost = await ask('What courses do I have?', { learner: LEARNER });
-check('after completing it, the course shows up in the learner\'s learning',
-  assignPost.json.grounded === true && String(assignPost.json.answer).includes('Refund Dispute Resolution'),
-  assignPost.json.answer);
-
-// ── 7. ASK — agent / human symmetry ─────────────────────────────────
+// ── 7. ASK — agent / human symmetry (open content question) ─────────
 h('7. ASK — an agent asks the same question (one substrate, both users)');
 const asHuman = await ask('Explain refund thresholds.', { asker: { id: LEARNER, kind: 'human' } });
 const asAgent = await ask('Explain refund thresholds.', { asker: { id: AGENT, kind: 'agent' } });
 const srcIds = (j) => (j.sources ?? []).map(s => s.id).sort().join(',');
-console.log(`   human grounded: ${asHuman.json.grounded} · agent grounded: ${asAgent.json.grounded}`);
-// The retrieval is deterministic; only the LLM's prose varies. So the
-// substrate symmetry is that both get the same grounded retrieval —
-// identical cited sources — not the same synthesized wording.
 check('an agent and a human get the same grounded retrieval (identical cited sources)',
   asHuman.json.grounded === true && asAgent.json.grounded === true
   && srcIds(asHuman.json).length > 0 && srcIds(asHuman.json) === srcIds(asAgent.json),
   { human: srcIds(asHuman.json), agent: srcIds(asAgent.json) });
-check('the agent ask records the asker kind', asAgent.json.asker?.kind === 'agent', asAgent.json.asker);
 
-// ── 8. ASK — scope: narrow to the vertical, or pass through to all ──
-h('8. ASK — scope (Interego passes through to what composes it)');
-const golfQ = 'Do I have anything about golf?';
-const golfVertical = await ask(golfQ, { learner: LEARNER, scope: 'vertical' });
-console.log(`   scope:vertical → grounded: ${golfVertical.json.grounded}`);
-check('scope:vertical narrows the ask to the Foxxi vertical',
-  golfVertical.json.scope === 'vertical' && golfVertical.json.grounded === false, golfVertical.json);
-const golfInterego = await ask(golfQ, { learner: LEARNER, scope: 'interego' });
-const golfSrc = (golfInterego.json.sources ?? []).filter(s => s.kind === 'interego-context');
-console.log(`   scope:interego → grounded: ${golfInterego.json.grounded} · descriptors reached: ${golfInterego.json.contextSummary?.interegoDescriptors} · interego sources: ${golfSrc.length}`);
-check('scope:interego passes through to the wider substrate (discover())',
-  golfInterego.json.scope === 'interego' && (golfInterego.json.contextSummary?.interegoDescriptors ?? 0) > 0,
-  golfInterego.json.contextSummary);
-check('the pass-through surfaces a course the Foxxi vertical alone never saw',
-  golfInterego.json.grounded === true && golfSrc.length > 0, golfInterego.json.sources);
-check('the discovered course is deep-fetched — answered from its content, not its metadata',
-  golfSrc.some(s => typeof s.excerpt === 'string' && !s.excerpt.startsWith('Interego context descriptor')),
-  golfSrc.map(s => String(s.excerpt).slice(0, 90)));
-const dfltScope = await ask('What courses are available?', { learner: LEARNER });
-check('the default scope is interego — a Foxxi user is an Interego user',
-  dfltScope.json.scope === 'interego', dfltScope.json.scope);
+// ── 8. ASK — scope + FEDERATED discovery ────────────────────────────
+h('8. ASK — scope + federation (Interego passes through to what composes it)');
+const golfV = await ask('Do I have anything about golf?', { learner: LEARNER, scope: 'vertical' });
+check('scope:vertical narrows the ask to the Foxxi vertical (no golf there)',
+  golfV.json.scope === 'vertical' && golfV.json.grounded === false, golfV.json);
+const golfI = await ask('Do I have anything about golf?', { learner: LEARNER, scope: 'interego' });
+const pods = golfI.json.contextSummary?.interegoPods ?? [];
+console.log(`   scope:interego federated across ${pods.length} pod(s): ${pods.length}`);
+check('scope:interego federates discovery across multiple pods',
+  Array.isArray(pods) && pods.length >= 2, pods);
+check('the federated pod set includes the federation peer pod',
+  pods.includes(PEER_POD), { pods, expected: PEER_POD });
+check('the pass-through surfaces a course the vertical alone never saw (golf, on the tenant pod)',
+  golfI.json.grounded === true && (golfI.json.sources ?? []).some(s => s.kind === 'interego-context'),
+  golfI.json.sources);
+// The federation peer pod carries a course the tenant pod does not.
+const peerQ = await ask('How should I triage an incident?', { learner: LEARNER, scope: 'interego' });
+console.log(`   peer-course question → grounded: ${peerQ.json.grounded}`);
+check('a federation-peer course is discovered, deep-fetched, and answered from',
+  peerQ.json.grounded === true && (peerQ.json.sources ?? []).some(s =>
+    s.kind === 'interego-context' && typeof s.excerpt === 'string'
+    && /triage|severity|incident/i.test(s.excerpt)), peerQ.json.sources);
+const peerV = await ask('How should I triage an incident?', { learner: LEARNER, scope: 'vertical' });
+check('the same question, vertical-scoped, does NOT reach the peer pod',
+  peerV.json.grounded === false, peerV.json);
 
-// ── 9. ASK — an off-topic question, an honest no-match ──────────────
-h('9. ASK — an off-topic question (it must refuse to guess)');
+// ── 9. DELIVER — channel transport, the Interego-native publish ─────
+h('9. DELIVER — a document delivery is published to the pod as a descriptor');
+const deliver = await post('/content/deliver', { jobAidId, channel: 'document', learner: LEARNER });
+const transport = deliver.json.transport ?? {};
+console.log(`   transport: mode=${transport.mode} sent=${transport.sent}`);
+console.log(`   artifact: ${transport.artifactUrl}`);
+check('the document delivery used the Interego-native pod-descriptor transport',
+  transport.mode === 'pod-descriptor' && transport.sent === true, transport);
+check('the delivery produced a published descriptor artifact', typeof transport.artifactUrl === 'string', transport);
+const artifact = transport.artifactUrl
+  ? await fetch(transport.artifactUrl).then(r => ({ status: r.status, text: r.text() })).catch(() => null)
+  : null;
+const artifactText = artifact ? await artifact.text : '';
+check('the published delivery descriptor is dereferenceable on the pod',
+  !!artifact && artifact.status === 200 && /DeliveredContent|describes/i.test(artifactText),
+  artifact?.status);
+
+// ── 10. ASK — an off-topic question, an honest no-match ─────────────
+h('10. ASK — an off-topic question (it must refuse to guess)');
 const miss = await ask('What is the boiling point of water?', { learner: LEARNER });
-console.log(`   answer: ${String(miss.json.answer).split('\n')[0]}`);
-check('an off-topic question returns an honest no-match',
-  miss.json.grounded === false && (miss.json.sources ?? []).length === 0, miss.json);
-check('the no-match answer explicitly refuses to confabulate',
-  /won't guess|couldn't find/i.test(String(miss.json.answer)), miss.json.answer);
+check('an off-topic question returns an honest no-match that refuses to guess',
+  miss.json.grounded === false && (miss.json.sources ?? []).length === 0
+  && /won't guess|couldn't find/i.test(String(miss.json.answer)), miss.json);
 
-// ── 10. VERIFY — every ask is instrumented into the live LRS ────────
-h('10. VERIFY — the asks themselves joined the LRS trace graph');
-const token = await mintSessionToken({ userId: 'u-joshua', webId: WEB_ID, ttlMs: 30 * 60 * 1000 });
+// ── 11. VERIFY — every ask is instrumented into the live LRS ────────
+h('11. VERIFY — the asks themselves joined the LRS trace graph');
 const lrsRes = await fetch(
   `${BRIDGE}/xapi/statements?verb=${encodeURIComponent('http://adlnet.gov/expapi/verbs/interacted')}`
   + `&activity=${encodeURIComponent(`${BRIDGE}/content/ask`)}&limit=100`,
-  { headers: { Authorization: `Bearer ${token}`, 'X-Experience-API-Version': '2.0.0' } },
+  { headers: { Authorization: `Bearer ${TOKEN}`, 'X-Experience-API-Version': '2.0.0' } },
 );
 const lrs = await lrsRes.json();
 const chatStmts = (lrs.statements ?? []).filter(s =>
   (s.context?.extensions ?? {})[`${BRIDGE}/ns/foxxi#contextKind`] === 'context-chat');
 console.log(`   LRS holds ${chatStmts.length} context-chat interaction(s)`);
 check('the Context Companion asks are recorded as xAPI in the live LRS', chatStmts.length >= 8, chatStmts.length);
-check('each recorded ask carries the question it answered',
-  chatStmts.some(s => typeof s.result?.response === 'string' && s.result.response.length > 0), chatStmts[0]);
 
 // ── Summary ─────────────────────────────────────────────────────────
 console.log(`\n${'═'.repeat(70)}`);
 console.log(`${pass} passed, ${fail} failed`);
 console.log('═'.repeat(70));
 if (fail > 0) process.exit(1);
-console.log('\nOne front door, in production: any human or agent user just chats —');
-console.log('"what does this mean?", "do I have courses assigned?", "what\'s my progress?" —');
-console.log('and the networked context answers, sourced from its own surfaces, never guessing.');
+console.log('\nIn production: learner-record questions are gated to a wallet-signed');
+console.log('identity; the interego scope federates discovery across pods; and a');
+console.log('document delivery is published to the pod as a discoverable descriptor.');

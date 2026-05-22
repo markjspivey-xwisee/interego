@@ -71,6 +71,11 @@ export type AskerKind = 'human' | 'agent';
  */
 export type ContextScope = 'interego' | 'vertical';
 
+/** The result of verifying a caller's session token. */
+export type CallerVerification =
+  | { ok: true; webId: string; role: string }
+  | { ok: false; reason: string };
+
 /** What the question is asking for — drives which surface answers it. */
 export type ContextIntent =
   | 'assignments'  // "do I have any courses assigned to me?"
@@ -142,6 +147,25 @@ export interface DiscoveredDescriptor {
    * deep content is one follow-the-link hop away.
    */
   course?: FoxxiAgenticCourse;
+  /** The pod this descriptor was discovered on — federation provenance. */
+  originPod?: string;
+}
+
+/**
+ * Merge per-pod discovery results into one federated set — deduped by
+ * descriptorUrl (the first pod to publish a descriptor wins; later
+ * federation peers don't shadow it). Each descriptor keeps the
+ * `originPod` it was tagged with. Pure — the unit of federation logic.
+ */
+export function mergeDiscovered(descriptors: readonly DiscoveredDescriptor[]): DiscoveredDescriptor[] {
+  const seen = new Set<string>();
+  const out: DiscoveredDescriptor[] = [];
+  for (const d of descriptors) {
+    if (seen.has(d.descriptorUrl)) continue;
+    seen.add(d.descriptorUrl);
+    out.push(d);
+  }
+  return out;
 }
 export interface NetworkedContext {
   learner: string;
@@ -156,6 +180,8 @@ export interface NetworkedContext {
   /** Descriptors passed through from the wider Interego substrate
    *  (always empty under scope 'vertical'). */
   interegoContext: FoxxiAgenticCourse[];
+  /** The pods the interego pass-through federated across. */
+  interegoPods: string[];
   enrollments: ContextEnrollment[];
   activity: ContextActivity[];
 }
@@ -603,6 +629,13 @@ export interface ContextChatConfig {
   llmModel?: string;
   /** Reuse the bridge's per-IP rate limiter for the LLM-synthesis path. */
   checkLlmRateLimit?: (clientIp: string) => { ok: boolean; retryAfterSeconds?: number };
+  /**
+   * Optional — verify a caller's session token. When wired, learner-
+   * specific questions (progress, assignments) require a valid token and
+   * are bound to the verified identity; content questions stay open.
+   * Absent → the route is open (the self-contained-demo posture).
+   */
+  verifyCaller?: (token: string | undefined) => Promise<CallerVerification>;
 }
 
 /** Assemble a learner's networked context from the substrate's surfaces. */
@@ -642,14 +675,16 @@ export async function assembleNetworkedContext(
   // composed into their networked context; 'vertical' narrows to the
   // Foxxi slice.
   let interegoContext: FoxxiAgenticCourse[] = [];
+  let interegoPods: string[] = [];
   if (scope === 'interego' && config.discoverInteregoContext) {
     const discovered = await config.discoverInteregoContext(learner, tenant).catch(() => []);
     // A deep-fetched descriptor (`.course`) is folded in with its full
     // content; the rest are surfaced at the metadata level.
     interegoContext = discovered.map(d => d.course ?? discoveredToAgenticCourse(d));
+    interegoPods = [...new Set(discovered.map(d => d.originPod).filter((p): p is string => !!p))];
   }
 
-  return { learner, scope, courses, jobAids, interegoContext, enrollments, activity };
+  return { learner, scope, courses, jobAids, interegoContext, interegoPods, enrollments, activity };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -677,7 +712,7 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
         return;
       }
       const askerIn = (b.asker ?? {}) as Record<string, unknown>;
-      const learner = (typeof b.learner === 'string' && b.learner)
+      let learner = (typeof b.learner === 'string' && b.learner)
         || (typeof askerIn.id === 'string' && askerIn.id)
         || 'anonymous';
       const asker: { id: string; kind: AskerKind } = {
@@ -688,6 +723,33 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
       const intent = classifyContextIntent(question);
       // Default: the whole Interego context. 'vertical' narrows to Foxxi.
       const scope: ContextScope = b.scope === 'vertical' ? 'vertical' : 'interego';
+
+      // Auth gate. A progress / assignment question is about a specific
+      // learner's record — PII. When a verifier is wired, those intents
+      // require a valid session token and are bound to the verified
+      // identity (an admin may ask about anyone). Content + catalog
+      // questions are over published content — no gate.
+      let callerRole: string | undefined;
+      if ((intent === 'progress' || intent === 'assignments') && config.verifyCaller) {
+        const authHeader = req.headers['authorization'] ?? req.headers['Authorization'];
+        const m = typeof authHeader === 'string' && /^Bearer\s+(.+)$/i.exec(authHeader);
+        const v = await config.verifyCaller(m ? m[1].trim() : undefined);
+        if (!v.ok) {
+          res.status(401).json({
+            error: `a "${intent}" question is about a specific learner's record — it needs a `
+              + `wallet-signed session token. ${v.reason}`,
+            authRequired: true, intent,
+          });
+          return;
+        }
+        callerRole = v.role;
+        // Bind to the verified identity — you may only ask about your own
+        // record, unless you are an admin (then an explicit learner stands).
+        if (v.role !== 'admin' || !(typeof b.learner === 'string' && b.learner)) {
+          learner = v.webId;
+        }
+        asker.id = v.webId;
+      }
 
       // LLM key precedence: per-request BYOK > the bridge's env key.
       const byok = typeof b.llm_api_key === 'string' ? b.llm_api_key.trim() : '';
@@ -746,11 +808,13 @@ export function attachContextChatRoutes(app: Express, config: ContextChatConfig)
         ...answer,
         learner,
         scope,
+        ...(callerRole ? { callerRole } : {}),
         instrumented,
         contextSummary: {
           courses: context.courses.length,
           jobAids: context.jobAids.length,
           interegoDescriptors: context.interegoContext.length,
+          interegoPods: context.interegoPods,
           enrollments: context.enrollments.length,
           activityStatements: context.activity.length,
         },

@@ -17,7 +17,7 @@ import type { AddressInfo } from 'node:net';
 import { authorFragment, authorLesson, authorModule, composeCourse } from '../src/emergent-content.js';
 import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
 import {
-  attachContextChatRoutes, classifyContextIntent, answerContextQuestion,
+  attachContextChatRoutes, classifyContextIntent, answerContextQuestion, mergeDiscovered,
   type NetworkedContext,
 } from '../src/context-chat.js';
 import { storeStatementInternal } from '../src/xapi-lrs.js';
@@ -60,6 +60,21 @@ const noMatch = await answerContextQuestion({
 });
 check('a question with no content → honest no-match (grounded:false)', noMatch.grounded === false && noMatch.sources.length === 0);
 check('the no-match answer refuses to guess', /won't guess|no published content/i.test(noMatch.answer), noMatch.answer);
+
+// ── Federation merge — dedup across pods (mergeDiscovered) ───────────
+
+console.log('\nFederation merge');
+const merged = mergeDiscovered([
+  { descriptorUrl: 'https://a/x', label: 'x', summary: 's', originPod: 'https://pod-a/' },
+  { descriptorUrl: 'https://a/y', label: 'y', summary: 's', originPod: 'https://pod-a/' },
+  { descriptorUrl: 'https://a/x', label: 'x-dup', summary: 's', originPod: 'https://pod-b/' },
+  { descriptorUrl: 'https://b/z', label: 'z', summary: 's', originPod: 'https://pod-b/' },
+]);
+check('mergeDiscovered dedups by descriptorUrl', merged.length === 3, merged.length);
+check('mergeDiscovered keeps the first pod to publish a descriptor (first wins)',
+  merged.find(d => d.descriptorUrl === 'https://a/x')?.label === 'x', merged.map(d => d.label));
+check('mergeDiscovered preserves each descriptor\'s originPod',
+  merged.find(d => d.descriptorUrl === 'https://b/z')?.originPod === 'https://pod-b/', merged);
 
 // ── Compose a course + the HTTP routes ──────────────────────────────
 
@@ -105,11 +120,13 @@ async function testRoutes(): Promise<void> {
         label: 'quarterly objectives',
         summary: 'Interego context descriptor "quarterly objectives" — the quarterly '
           + 'objective is to cut the refund escalation rate by 30 percent.',
+        originPod: 'https://pod.example/markj/',
       },
       {
-        descriptorUrl: 'https://pod.example/markj/courses/onboarding.ttl',
+        descriptorUrl: 'https://pod.example/peer/courses/onboarding.ttl',
         label: 'onboarding basics',
         summary: 'Interego context descriptor "onboarding basics".',
+        originPod: 'https://pod.example/peer/',
         course: {
           courseIri: 'urn:demo:course:onboarding', title: 'Onboarding Basics',
           courseLabel: 'Onboarding', courseId: 'demo-onboarding', authoritativeSource: 'did:web:test',
@@ -226,6 +243,10 @@ async function testRoutes(): Promise<void> {
       wide.json.scope === 'interego' && wide.json.grounded === true, wide.json);
     check('the interego-scoped answer cites an interego-context source',
       (wide.json.sources ?? []).some(s => s.kind === 'interego-context'), wide.json.sources);
+    const wideSummary = (wide.json.contextSummary ?? {}) as Record<string, unknown>;
+    check('the interego scope reports the federated pods it discovered across',
+      Array.isArray(wideSummary.interegoPods) && (wideSummary.interegoPods as unknown[]).length >= 2,
+      wideSummary.interegoPods);
     const dflt = await ask({ question: wideQ, learner: LEARNER });
     check('the default scope is interego (the whole networked context)',
       dflt.json.scope === 'interego' && dflt.json.grounded === true, dflt.json.scope);
@@ -245,7 +266,52 @@ async function testRoutes(): Promise<void> {
   }
 }
 
+/** Auth gate — progress / assignment questions need a session token. */
+async function testAuthGate(): Promise<void> {
+  console.log('\nAuth gate — progress / assignments require a session token');
+  const app = express();
+  app.use(express.json({ limit: '20mb' }));
+  attachContextChatRoutes(app, {
+    selfBaseUrl: 'http://localhost',
+    authoritativeSource: 'did:web:test',
+    verifyCaller: async (token) =>
+      token === 'good' ? { ok: true, webId: LEARNER, role: 'learner' }
+      : token === 'admin' ? { ok: true, webId: 'did:web:acme#admin', role: 'admin' }
+      : { ok: false, reason: 'unknown token' },
+  });
+  const server = app.listen(0);
+  await new Promise<void>(r => server.once('listening', () => r()));
+  const base = `http://localhost:${(server.address() as AddressInfo).port}`;
+  const ask = async (body: Record<string, unknown>, token?: string) => {
+    const r = await fetch(`${base}/content/ask`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, json: await r.json() as Record<string, unknown> };
+  };
+  try {
+    const noTok = await ask({ question: "What's my progress?" });
+    check('a progress question with no token is rejected (401)',
+      noTok.status === 401 && noTok.json.authRequired === true, noTok.json);
+    const badTok = await ask({ question: 'Do I have any courses assigned?' }, 'wrong');
+    check('an assignment question with a bad token is rejected (401)', badTok.status === 401, badTok.json);
+    const okTok = await ask({ question: "What's my progress?" }, 'good');
+    check('a progress question with a valid token is allowed (200)', okTok.status === 200, okTok.json);
+    check('the gated learner is bound to the verified identity, not the request body',
+      okTok.json.learner === LEARNER, okTok.json.learner);
+    const spoof = await ask({ question: "What's my progress?", learner: 'did:web:acme#someone-else' }, 'good');
+    check('a learner cannot ask about someone else\'s record (bound to the token)',
+      spoof.json.learner === LEARNER, spoof.json.learner);
+    const content = await ask({ question: 'What does the refund threshold mean?' });
+    check('a content question needs no token (not gated)', content.status === 200, content.status);
+  } finally {
+    server.close();
+  }
+}
+
 await testRoutes();
+await testAuthGate();
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

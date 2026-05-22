@@ -107,65 +107,67 @@ Built and deployed:
   composers (content questions delegating to `askAgenticRag` /
   `retrieveCourseContext`), and `attachContextChatRoutes` —
   `POST /content/ask`.
-- `src/content-delivery.ts` — the published-course registry now retains
-  the source emergent `Course` (so the companion can retrieve over it)
-  and exposes the job-aid registry.
+- `src/content-delivery.ts` — the published-course registry retains the
+  source emergent `Course`; the job-aid registry is exposed; and
+  `POST /content/deliver` now actually transports (§6).
+- `src/content-transport.ts` — the channel transports: a real webhook
+  POST, and the Interego-native pod-descriptor publish (§6).
 - Wired into the bridge: `attachContextChatRoutes` with `emitStatement`
-  bound to the LRS, a `resolveAssignments` resolver that reads the
-  tenant directory for policy-driven assignments, the same
-  `FOXXI_LLM_API_KEY` + per-IP rate limiter the agentic-ask MCP handler
-  uses, and a `discoverInteregoContext` resolver that composes
-  `@interego/core`'s `discover()` over the pod manifest — the substrate
-  pass-through for `scope: "interego"`.
+  bound to the LRS, `resolveAssignments` (policy-driven assignments),
+  the `FOXXI_LLM_API_KEY` + per-IP rate limiter, `discoverInteregoContext`
+  (federated `discover()` over the tenant pod + `FOXXI_FEDERATION_PODS`),
+  and `verifyCaller` (the session-token gate); `attachContentDeliveryRoutes`
+  with the channel-transport config.
 
-Verified before deploy by `tools/context-chat-smoke.ts` (42/42): intent
-classification, the grounded + sourced answers, the agentic-RAG trace,
-the honest no-match, the `scope` toggle (interego pass-through vs
-vertical narrowing), the deep-fetch of a discovered course, and the
-`POST /content/ask` route over a throwaway app.
+Verified before deploy by three local smokes: `context-chat-smoke.ts`
+(52/52 — intent classification, grounded + sourced answers, the
+agentic-RAG trace, the honest no-match, the `scope` toggle, the
+deep-fetch, `mergeDiscovered` federation dedup, and the auth gate),
+`content-transport-smoke.ts` (9/9 — the webhook transport against a
+live HTTP sink, and the honest `none` path), and `content-pipeline-smoke.ts`
+(16/16 — the generator + delivery round-trips).
 
 ## 4. Verification — in production
 
 `tools/ask-your-context-example.mjs` runs the whole thing against the
 live bridge, LMS and LRS, with a **real headless browser** completing a
 **real generated course** so the chat has genuine progress to read —
-29/29:
+24/24:
 
 1. **Publish** — a course + a job aid into the networked context.
-2. **Ask "what does the refund authority threshold mean?"** — answered
-   by the vertical's agentic RAG: an LLM-synthesised answer
-   (`claude-opus-4-7`, the bridge key) grounded in the cited course
-   content, carrying the modal-statused Interego trace, with the cited
-   source holding the verbatim fragment.
-3. **Ask "how do I handle a refund over $500?"** — the agentic RAG
-   answers, sourced from the job aid.
-4. **Ask "do I have any courses assigned to me?"** — the assignment
-   surface answers.
+2. **Ask a concept question** (open) — answered by the vertical's
+   agentic RAG: an LLM-synthesised answer grounded in the cited course
+   content, with the cited source holding the verbatim fragment and the
+   modal-statused Interego trace attached.
+3. **Ask a procedure question** — the agentic RAG answers, sourced from
+   the job aid.
+4. **Ask "do I have any courses assigned to me?"** — *gated*: rejected
+   `401` with no token; allowed with a wallet-signed token, the answer
+   bound to the verified identity (§6).
 5. **Complete** — a real Chromium browser launches and completes the
    course's AUs on the LMS; the xAPI lands in the live LRS.
-6. **Ask "what's my progress?"** — now grounded in the learner's live
-   LRS activity.
+6. **Ask "what's my progress?"** — gated; grounded in the learner's
+   live LRS activity.
 7. **Ask as an agent** — the identical question returns the identical
    grounded retrieval (same cited sources); only the asker kind differs.
-8. **Ask the same question at each scope** — `scope: "vertical"` finds
-   nothing about "golf" (it's not in the Foxxi vertical); `scope:
-   "interego"` passes through to the substrate (11 descriptors reached),
-   discovers the `course:golf-explained` package on the pod,
-   **deep-fetches it in full**, and answers from its actual content. The
-   pass-through reaches — and reads — what the vertical alone never saw.
-9. **Ask an off-topic question** — an honest no-match: it refuses to
-   guess.
-10. **Verify** — every ask is in the live LRS as an xAPI `interacted`
+8. **Ask at each scope, across the federation** — `vertical` reaches
+   only the Foxxi slice; `interego` federates across the tenant pod and
+   the federation peer pod, discovers and deep-fetches a peer-pod course
+   ("Incident Response Basics") the vertical never had, and answers from
+   it (§6).
+9. **Deliver to the `document` channel** — the rendering is published to
+   the pod as a discoverable `foxxi:DeliveredContent` Context Descriptor,
+   dereferenceable back (§6).
+10. **Ask an off-topic question** — an honest no-match: it refuses to
+    guess.
+11. **Verify** — every ask is in the live LRS as an xAPI `interacted`
     statement carrying the question it answered.
 
 So any human or agent user genuinely just chats — "what does this
 mean?", "do I have courses assigned?", "what's my progress?" — and the
-networked context answers, routed to the right surface, sourced from its
-own content, grounded in live LRS data, and never guessing. In the
-production run the progress answer read back, verbatim from the live
-LRS, "You've completed 1 course … your learning record holds 15
-statements (initialized, completed, passed, terminated, interacted,
-satisfied)" — the chat reflecting real, recorded activity.
+networked context answers, routed to the right surface, gated where the
+answer is the user's own record, federated across the substrate, sourced
+from real content, and never guessing.
 
 ## 5. Honest scope
 
@@ -189,19 +191,56 @@ both already in the vertical — so the companion answers from its *actual
 content*, not just its descriptor. Other descriptors (policies, audit
 streams, tenant config) are surfaced at the metadata level: you see,
 cite, and can follow each; deep Q&A inside one of those is a single
-follow-the-link hop. Today the pass-through discovers over the
-configured tenant pod; discovering across a user's own pod + federated
-pods is the same `discover()` call pointed at more pods — a bounded
-extension, best built against a real federated deployment to verify.
+follow-the-link hop.
 
-`POST /content/ask` is open in this deployment so the demo is
-self-contained, and the LLM-synthesis path on the bridge key reuses the
-same per-IP rate limiter the agentic-ask MCP handler already has. In
-production, progress and assignment questions about a specific learner
-should be gated behind the same wallet-signed session token
-`foxxi.discover_assigned_courses` already uses; content questions over
-published content need no gate. Wiring that gate is a bounded, separate
-step.
+## 6. Closing the honest-scope gaps
+
+The §5 above once named three things as genuine-but-deferred work.
+They are now built, deployed and verified.
+
+**The auth gate.** A progress or assignment question is about a
+learner's own record — PII. `POST /content/ask` now gates those two
+intents behind the same wallet-signed session token the rest of the
+bridge verifies (`verifySessionToken` against the tenant directory).
+The effective learner is **bound to the verified identity** — you may
+ask about your own record, never someone else's; an admin may ask about
+anyone. Content, procedure and catalog questions are over published
+content and stay open. Verified in production: the assignment question
+is rejected `401` without a token and answered with one, bound to the
+caller.
+
+**Federated discovery.** `scope: "interego"` no longer discovers only
+the tenant pod. It federates across the tenant pod **and** every pod in
+`FOXXI_FEDERATION_PODS`, merged + deduped by descriptor URL
+(`mergeDiscovered`, first-publisher-wins), each descriptor tagged with
+its origin pod. Verified in production against a real federation peer
+pod carrying a course — "Incident Response Basics" — the tenant pod
+does not have: the interego scope discovers it, deep-fetches it, and
+answers from it; the vertical scope does not reach it.
+
+**Channel transport.** `POST /content/deliver` no longer just produces a
+payload. `content-transport.ts` adds two real transports: a **webhook**
+— a real HTTP POST, a Slack incoming webhook or an email/SMS provider
+API, activating on `FOXXI_TRANSPORT_<CHANNEL>`; and the Interego-native
+**pod-descriptor** publish — a `document` delivery is published to the
+pod as a discoverable `foxxi:DeliveredContent` Context Descriptor. The
+delivery becomes substrate — itself discoverable, federatable, and
+answerable by the Context Companion — not a fire-and-forget send.
+Verified: the webhook against a live HTTP endpoint (smoke); the
+pod-descriptor publish in production (the delivery descriptor is
+dereferenceable on the pod).
+
+## 7. What now honestly remains
+
+Media generation stays out — a deliberate boundary the user set: the
+content is text. Channel transport's external sends (Slack / email /
+SMS) are real adapters that activate when their endpoint is configured;
+this deployment configures none, so those channels honestly report
+`mode: "none"` until an operator wires a real endpoint. Auto-resolving a
+user's *own* pod into the federation set (rather than a configured peer
+list) is a refinement of the same `discover()` call. None of these is a
+gap in the capability — each is either a deliberate boundary or an
+operator-configuration step.
 
 What honestly remains, named rather than hidden: **multi-pod / federated
 discovery** — pointing `discover()` at a user's own pod and federated

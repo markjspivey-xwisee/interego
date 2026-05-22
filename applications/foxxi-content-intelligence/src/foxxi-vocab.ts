@@ -74,6 +74,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'Course', kind: 'Type', label: 'Course', definition: 'A syntagm of modules. Not a stored artifact — a composition recipe that personalises (restriction + override) into a different resolved course per performer.' },
   { name: 'Curriculum', kind: 'Type', label: 'Curriculum', definition: 'A syntagm of courses toward a set of target competencies.' },
   { name: 'InFlowPerformanceSupport', kind: 'Type', label: 'In-Flow Performance Support', definition: 'A job-aid fragment delivered by an affordance attached to the work context — surfaced when a performer enters the triggering task, not on a training schedule.' },
+  { name: 'DeliveredContent', kind: 'Type', label: 'Delivered Content', definition: 'A descriptor wrapping a unit of generated content delivered through a channel and published to the pod — so the delivery is itself a discoverable, federatable Context Descriptor, not a fire-and-forget send.' },
 
   // ── Knowledge architecture ─────────────────────────────────────────
   { name: 'WorkRegime', kind: 'Type', label: 'Work Regime', definition: 'How knowable the relationship between act and outcome is for a piece of work — Evident, Knowable, Emergent, or Turbulent. The regime decides which consulting and knowledge method is valid.' },
@@ -97,6 +98,8 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'contextKind', kind: 'Extension', label: 'contextKind', definition: 'Whether a statement records `production` work, `training`, or `performance-support`.' },
   { name: 'deliveryChannel', kind: 'Extension', label: 'deliveryChannel', definition: 'The channel a generated text artifact was delivered through — document, email, chat, or sms.' },
   { name: 'recipient', kind: 'Extension', label: 'recipient', definition: 'The recipient address/handle a generated artifact was delivered to.' },
+  { name: 'deliveredBody', kind: 'Extension', label: 'deliveredBody', definition: 'Base64-encoded body text of a delivered-content artifact published to the pod.' },
+  { name: 'deliveredVia', kind: 'Extension', label: 'deliveredVia', definition: 'How a delivery left the bridge — a pod-descriptor publish, a channel webhook, or none (recorded only).' },
   { name: 'actorKind', kind: 'Extension', label: 'actorKind', definition: 'Whether the actor is a `human` or an `agent`.' },
   { name: 'projectedFromTrajectoryStep', kind: 'Extension', label: 'projectedFromTrajectoryStep', definition: 'IRI of the agentic-native trajectory step an xAPI statement was projected from.' },
   { name: 'bundleJson', kind: 'Extension', label: 'bundleJson', definition: 'Base64-encoded JSON payload (e.g. a signed VC) embedded in a descriptor graph.' },
