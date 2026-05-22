@@ -222,7 +222,46 @@ the performance-management view. Its headline number is
 content-vs-non-content: a system that is genuinely performance-driven
 routes a large share of situations to non-content interventions.
 
-## 9. How it composes the substrate
+## 9. The reflexive loop — calibrating the system's own judgment
+
+The architecture refuses to assume content is the answer. The reflexive
+loop refuses to assume the **contextualization itself** was right. A
+Knowable-regime situation labelled a Knowledge & Skill cause and routed
+to instruction might close the gap — or might not, because the cause was
+an incentive all along.
+
+So every evaluation verdict is also evidence about the *diagnosis*.
+`recordOutcome()` distils a completed evaluation into an **OutcomeRecord**
+— regime, cause, intervention, verdict, and (when it missed and was
+re-contextualized) the cause it turned out to be.
+`buildCalibrationProfile()` rolls many records into a **CalibrationProfile**:
+for each (regime × cause × intervention) cell, how often that
+recommendation has actually closed the gap.
+
+`calibrate()` then annotates every fresh plan with its own track record —
+*"instruction for a Knowledge & Skill cause has closed 44% of 241
+comparable situations; in 39% of the misses the cause was re-diagnosed
+as Incentives."* The system holds its own advice to the evidentiary
+standard it holds content to.
+
+It composes the substrate throughout:
+
+- **Modal status** — a cell is `Hypothetical` until it has the samples
+  to `Assert` a rate; the system never over-claims from thin evidence.
+- **`cg:supersedes`** — a new profile supersedes the prior one.
+- **Federation** — profiles union across organizations
+  (`composeCalibrationProfiles()`): one org's hard-won evidence
+  calibrates another's, and a cell `Hypothetical` for each org alone can
+  become `Asserted` once their evidence is pooled.
+- **Aggregate privacy** — a calibration cell is an aggregate count,
+  never a record; `federationView()` withholds cells below a
+  k-anonymity threshold before anything crosses an org boundary.
+
+This is calibration as a Knowable-regime act — it is the one regime that
+names a cause, so it is the one regime whose cause analysis can be right
+or wrong, measured, and improved.
+
+## 10. How it composes the substrate
 
 | System concept | Interego primitive it composes |
 |---|---|
@@ -235,19 +274,21 @@ routes a large share of situations to non-content interventions.
 | directionality | the Agent facet — author kind × audience kind |
 | knowledge as flow | the affordance / federation graph |
 | evaluation closing a gap | `cg:supersedes` — a new asserted state supersedes the old |
+| calibration | modal status + federated union + aggregate-privacy k-anonymity |
 
 Nothing here is a monolith. The "performance, content and knowledge
 system" is an **emergent property** of composing these primitives. No
 L1/L2/L3 ontology was extended; the domain terms are `foxxi:`-namespaced
 and dereferenceable at `/ns/foxxi`.
 
-## 10. Surface
+## 11. Surface
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /performance` | self-describing index of the system + its affordances |
-| `POST /performance/plan` | contextualize a situation → the full InterventionPlan + a content scaffold |
+| `POST /performance/plan` | contextualize a situation → the InterventionPlan, a content scaffold, and the plan's calibration track record |
 | `POST /performance/portfolio` | contextualize a set of situations → the performance-management read |
+| `POST /performance/calibration` | the reflexive loop — the recorded track record of the system's own recommendations, federated |
 | `POST /content/compose-course` | author an emergent course (the authoring tool) |
 | `POST /content/personalize` | resolve a course for one performer (restriction + override) |
 | `GET /knowledge` | self-describing index of the knowledge architecture |

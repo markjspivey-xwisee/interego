@@ -113,6 +113,15 @@ const METHOD_LABEL: Record<string, string> = {
   'dispositional-read': 'a dispositional read',
   'stabilise-first': 'stabilise first',
 };
+const CAUSE_LABEL: Record<string, string> = {
+  information: 'Information', instrumentation: 'Instrumentation', incentives: 'Incentives',
+  knowledgeSkill: 'Knowledge & Skill', capacity: 'Capacity', motives: 'Motives',
+  'not-applicable': 'no cause named',
+};
+const CAL_COLOR: Record<string, string> = {
+  'well-supported': '#1a7f37', mixed: '#b06f00', 'poorly-supported': 'var(--bad)',
+  tentative: 'var(--text-dim)', untested: 'var(--text-dim)',
+};
 
 // Within a gap-analysis regime the gap still has a CAUSE, and the cause —
 // not the regime — decides the intervention. Each option carries the
@@ -185,6 +194,7 @@ function PerformanceDemo() {
   }
   const diagnosis = out?.diagnosis as { domain?: string; method?: string; reasoning?: string[]; rootCauses?: string[]; caveat?: string } | undefined;
   const plan = out?.plan as { summary?: string; selected?: Array<{ type: string }> } | undefined;
+  const calibration = out?.calibration as { verdict?: string; message?: string } | undefined;
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -224,6 +234,14 @@ function PerformanceDemo() {
           {plan?.summary && <div style={{ marginTop: 8 }}><b>Plan:</b> {plan.summary}</div>}
           {plan?.selected && plan.selected.length > 0 && (
             <div style={{ marginTop: 4, fontSize: 13 }}>interventions: {plan.selected.map(o => o.type).join(', ')}</div>
+          )}
+          {calibration?.message && (
+            <div style={{
+              marginTop: 10, fontSize: 13, padding: '8px 10px', borderRadius: 4,
+              background: 'var(--panel)', borderLeft: `3px solid ${CAL_COLOR[calibration.verdict ?? ''] ?? 'var(--text-dim)'}`,
+            }}>
+              <b>Track record:</b> {calibration.message}
+            </div>
           )}
         </div>
       )}
@@ -385,7 +403,77 @@ function PortfolioDemo() {
   );
 }
 
-// ── 3. Closing the loop ─────────────────────────────────────────────
+// ── 3. The reflexive loop — calibration ─────────────────────────────
+
+interface CalCell {
+  causeFactor: string; intervention: string; closureRate: number;
+  samples: number; modalStatus: string;
+  commonReDiagnosis?: { cause: string; share: number };
+}
+
+function CalibrationDemo() {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [out, setOut] = useState<Record<string, unknown> | null>(null);
+  async function run() {
+    setBusy(true); setErr(null);
+    const r = await bridgeRest('/performance/calibration', {});
+    const e = errorOf(r);
+    if (e) { setErr(e); setOut(null); } else { setOut(r.json); }
+    setBusy(false);
+  }
+  const fed = out?.federated as {
+    profile?: { cells?: CalCell[]; totalSamples?: number; sources?: number };
+    readout?: { readout?: string };
+  } | undefined;
+  const cells = [...(fed?.profile?.cells ?? [])].sort((a, b) => a.closureRate - b.closureRate);
+  return (
+    <div>
+      <button style={btn} onClick={run} disabled={busy}>{busy ? <Busy /> : "Show the system's track record"}</button>
+      {err && <ErrBox msg={err} />}
+      {fed?.profile && (
+        <div style={resultBox}>
+          <div>{fed.readout?.readout}</div>
+          <div style={{ marginTop: 6, fontSize: 12, fontFamily: mono, color: 'var(--text-dim)' }}>
+            {fed.profile.totalSamples} recorded outcomes · federated across <b>{fed.profile.sources}</b> organization(s)
+          </div>
+          <div style={{ marginTop: 12 }}>
+            {cells.map((c, i) => {
+              const p = Math.round(c.closureRate * 100);
+              const color = c.closureRate >= 0.6 ? '#1a7f37' : c.closureRate >= 0.45 ? '#b06f00' : 'var(--bad)';
+              return (
+                <div key={i} style={{ padding: '7px 0', borderTop: i > 0 ? '1px solid var(--border)' : 'none' }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 13, flex: '1 1 200px' }}>
+                      {CAUSE_LABEL[c.causeFactor] ?? c.causeFactor} cause → <b>{c.intervention}</b>
+                    </span>
+                    <span style={{ fontFamily: mono, fontSize: 13, color, fontWeight: 700 }}>{p}%</span>
+                    <span style={{
+                      fontFamily: mono, fontSize: 10, padding: '1px 5px', borderRadius: 3,
+                      border: '1px solid var(--border)', color: 'var(--text-dim)',
+                    }}>{c.samples}× · {c.modalStatus}</span>
+                  </div>
+                  <div style={{ height: 5, background: 'var(--panel)', borderRadius: 3, marginTop: 4, overflow: 'hidden' }}>
+                    <div style={{ width: `${p}%`, height: '100%', background: color }} />
+                  </div>
+                  {c.commonReDiagnosis && (
+                    <div style={{ fontSize: 11.5, color: 'var(--text-dim)', marginTop: 3 }}>
+                      when it missed, the cause was re-contextualized as{' '}
+                      {CAUSE_LABEL[c.commonReDiagnosis.cause] ?? c.commonReDiagnosis.cause} in{' '}
+                      {Math.round(c.commonReDiagnosis.share * 100)}% of the misses
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 4. Closing the loop ─────────────────────────────────────────────
 
 function ClosingLoopDemo() {
   const [busy, setBusy] = useState(false);
@@ -458,7 +546,7 @@ function ClosingLoopDemo() {
   );
 }
 
-// ── 4. The Context Companion ────────────────────────────────────────
+// ── 5. The Context Companion ────────────────────────────────────────
 
 const COMPANION_CHIPS = [
   'How should I triage an incident?',
@@ -599,7 +687,7 @@ function CompanionDemo() {
   );
 }
 
-// ── 5. Content forms ────────────────────────────────────────────────
+// ── 6. Content forms ────────────────────────────────────────────────
 
 // The shared sample job aid, rendered section by section so the
 // interactive form has real collapsible sections, plus one self-check
@@ -698,12 +786,14 @@ function Closing({ onHome }: { onHome: () => void }) {
       </div>
       <p style={{ fontSize: 14.5, lineHeight: 1.62, margin: '0 0 12px' }}>
         These demos compose one substrate. Performance reasoning is routed by the work regime, and a
-        portfolio shows how rarely the answer is a course; where the regime does call for instruction,
-        a real course is generated, delivered, and completed on a conformant LMS/LRS; the Context
-        Companion chats over the whole networked context — gated to a wallet-signed identity, federated
-        across pods, every answer carrying its provenance trace — and content travels in whatever text
-        form the situation calls for. The same capabilities span humans and agents (H2H · H2A · A2H ·
-        A2A); the agent-collaboration tour lives in the operational dashboard.
+        portfolio shows how rarely the answer is a course; the reflexive loop holds the system's own
+        recommendations to their recorded track record, federated across organizations; where the
+        regime does call for instruction, a real course is generated, delivered, and completed on a
+        conformant LMS/LRS; the Context Companion chats over the whole networked context — gated to a
+        wallet-signed identity, federated across pods, every answer carrying its provenance trace — and
+        content travels in whatever text form the situation calls for. The same capabilities span
+        humans and agents (H2H · H2A · A2H · A2A); the agent-collaboration tour lives in the
+        operational dashboard.
       </p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12, fontFamily: mono }}>
         <a href={`${REPO}/CONFORMANCE.md`} target="_blank" rel="noreferrer">LRS / LMS conformance →</a>
@@ -753,7 +843,22 @@ export function Demos({ onHome }: { onHome: () => void }) {
         <PortfolioDemo />
       </Section>
 
-      <Section n={3} title="Closing the loop"
+      <Section n={3} title="The reflexive loop — does the system trust its own advice?"
+        subtitle="every recommendation carries its own recorded track record"
+        principle={<>The architecture refuses to assume content is the answer. The reflexive loop
+          refuses to assume the <b>diagnosis</b> was right. Every intervention's outcome is recorded;
+          rolled up, the evidence says — for each cause and each recommendation — how often it has{' '}
+          <b>actually closed the gap</b>, and, when it missed, what the cause turned out to be. A cell
+          stays <b>Hypothetical</b> until it has the samples to Assert a rate, and the evidence{' '}
+          <b>federates</b>: one organization's hard-won lesson calibrates the next, with only
+          aggregate cells above a k-anonymity threshold crossing the boundary. Run section 1 and every
+          plan now carries this track record.</>}
+        doc={{ label: 'PERFORMANCE-ARCHITECTURE.md', href: `${REPO}/PERFORMANCE-ARCHITECTURE.md` }}
+        cli="tools/performance-calibration-example.mjs">
+        <CalibrationDemo />
+      </Section>
+
+      <Section n={4} title="Closing the loop"
         subtitle="where the regime calls for instruction, a real course on the LMS"
         principle={<>When the analysis warrants instruction, an emergent course is composed and turned
           into deployable artifacts — a <b>cmi5 package</b> and a conformant <b>SCORM 2004 .zip</b> —
@@ -764,7 +869,7 @@ export function Demos({ onHome }: { onHome: () => void }) {
         <ClosingLoopDemo />
       </Section>
 
-      <Section n={4} title="The Context Companion"
+      <Section n={5} title="The Context Companion"
         subtitle="one chat front door over a user's whole networked context — with a provenance trace"
         principle={<>A human or agent just asks. The companion classifies intent, answers from the
           substrate's own surfaces, and <b>sources every claim</b>. Scope <code>interego</code>
@@ -779,7 +884,7 @@ export function Demos({ onHome }: { onHome: () => void }) {
         <CompanionDemo />
       </Section>
 
-      <Section n={5} title="Content in any form"
+      <Section n={6} title="Content in any form"
         subtitle="text — plain, markdown, hypertext, or interactive hypermedia"
         principle={<>The content is text, but text takes many forms, and the right one is a composition
           choice. The same job aid renders as plain text, markdown, static HTML hypertext, or a

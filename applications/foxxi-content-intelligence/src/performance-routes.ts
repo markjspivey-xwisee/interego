@@ -26,6 +26,11 @@ import {
   type PerformanceSituation, type Performer, type DiagnoseInput, type PortfolioEntry,
 } from './performance-architecture.js';
 import {
+  buildCalibrationProfile, expandOutcomeCorpus, composeCalibrationProfiles,
+  calibrate, calibrationReadout, federationView,
+} from './performance-calibration.js';
+import { SAMPLE_OUTCOMES, SAMPLE_PEER_OUTCOMES } from './sample-outcomes.js';
+import {
   authorFragment, authorLesson, authorModule, composeCourse,
   personalize, forAudience, courseToCmi5Outline, scaffoldFromPlan,
   type Course, type Module, type Lesson, type GroundingFragment,
@@ -91,6 +96,15 @@ function coerceDiagnoseInput(situation: PerformanceSituation, src: Record<string
 export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: string }): void {
   const base = config.selfBaseUrl.replace(/\/+$/, '');
 
+  // The calibration profile — the system's track record of its own
+  // Knowable-regime recommendations. Built from the tenant's recorded
+  // outcomes; the federated profile composes a peer organization's
+  // published evidence (federationView withholds sub-k cells before
+  // anything crosses an org boundary).
+  const tenantProfile = buildCalibrationProfile(expandOutcomeCorpus(SAMPLE_OUTCOMES));
+  const peerProfile = buildCalibrationProfile(expandOutcomeCorpus(SAMPLE_PEER_OUTCOMES));
+  const federatedProfile = composeCalibrationProfiles([tenantProfile, federationView(peerProfile)]);
+
   // ── Self-describing index — dereferenceable, HATEOAS. ─────────────
   app.get('/performance', (_req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -105,6 +119,7 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
       _affordances: {
         contextualizeAndPlan: { method: 'POST', href: `${base}/performance/plan`, note: 'Contextualize a performance situation — read its regime, apply that regime\'s method — and return the full intervention paradigm, selected and ruled-out with reasoning.' },
         portfolio: { method: 'POST', href: `${base}/performance/portfolio`, note: 'Contextualize a set of performance situations and roll them up — the performance-management read. The headline: how few situations route to a course.' },
+        calibration: { method: 'POST', href: `${base}/performance/calibration`, note: 'The reflexive loop — the system\'s recorded track record of its own recommendations: how often each cause → intervention recommendation has actually closed the gap, federated across organizations.' },
         composeCourse: { method: 'POST', href: `${base}/content/compose-course`, note: 'Author an emergent course — a syntagm of modules → lessons → grounding fragments. The same tool for human and agent authors.' },
         personalizeCourse: { method: 'POST', href: `${base}/content/personalize`, note: 'Resolve a course for one performer via the composition algebra (restriction + override).' },
         knowledgeIndex: { method: 'GET', href: `${base}/knowledge`, note: 'The knowledge architecture — how much of a competency can honestly become content.' },
@@ -124,7 +139,30 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
     const author = asPerformer(body.author, { id: 'urn:foxxi:agent:performance-consultant', kind: 'agent', role: 'performance consultant' })!;
     const plan = recommendInterventions({ diagnosis, situation, author });
     const scaffold = scaffoldFromPlan(plan, situation.competency);
-    res.json({ diagnosis, plan, scaffold });
+    // Every plan carries its own track record: how often this kind of
+    // recommendation has actually closed the gap, federated evidence.
+    const calibration = calibrate(diagnosis, plan, federatedProfile);
+    res.json({ diagnosis, plan, scaffold, calibration });
+  });
+
+  // ── POST /performance/calibration — the reflexive loop. ───────────
+  // The system's track record of its own Knowable-regime cause →
+  // intervention recommendations: for each cell, how often that
+  // recommendation actually closed the gap, and — when it did not — what
+  // the cause turned out to be. The federated profile composes a peer
+  // organization's published evidence; one org's lesson calibrates the
+  // next.
+  app.post('/performance/calibration', (_req: Request, res: Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.json({
+      tenant: { profile: tenantProfile, readout: calibrationReadout(tenantProfile) },
+      federated: { profile: federatedProfile, readout: calibrationReadout(federatedProfile) },
+      note: 'The Performance Architecture turned on itself: every intervention outcome is recorded, '
+        + 'and a fresh plan is annotated with how often that recommendation has actually worked. The '
+        + 'federated profile composes a peer organization\'s evidence — only aggregate cells above a '
+        + 'k-anonymity threshold cross the org boundary. A cell is Hypothetical until it has the '
+        + 'samples to Assert a rate.',
+    });
   });
 
   // ── POST /performance/portfolio — the performance-management read. ─
