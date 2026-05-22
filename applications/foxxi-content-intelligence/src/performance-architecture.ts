@@ -534,9 +534,10 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
   const headline = selected.length === 0
     ? 'no intervention selected'
     : selected.map(o => o.type).join(' + ');
+  const dirNote = describeDirection(direction);
   const summary = contentWarranted
-    ? `Content IS warranted for this gap: ${headline}. Authored ${describeDirection(direction)}`
-    : `Content is NOT the answer for this gap: ${headline}. ${diagnosis.method === 'dispositional-read'
+    ? `Content IS warranted for this gap — ${headline}. ${dirNote.charAt(0).toUpperCase()}${dirNote.slice(1)}`
+    : `Content is NOT the answer for this gap — ${headline}. ${diagnosis.method === 'dispositional-read'
         ? 'The Emergent regime calls for probes, not courses.'
         : 'The diagnosis isolated an environmental / motivational / capacity cause that no course can fix — the common finding that most gaps are environmental.'}`;
 

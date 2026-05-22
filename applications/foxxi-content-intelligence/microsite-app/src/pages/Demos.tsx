@@ -9,6 +9,7 @@
 
 import React, { useState } from 'react';
 import { bridgeRest, BRIDGE_URL, DEMO_IDENTITIES } from '../bridge-client.js';
+import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../../../src/sample-content.js';
 
 const REPO = 'https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence';
 const LEARNER = DEMO_IDENTITIES.joshua.webId;
@@ -88,12 +89,50 @@ const METHOD_LABEL: Record<string, string> = {
   'stabilise-first': 'stabilise first',
 };
 
+// Within a gap-analysis regime the gap still has a CAUSE, and the cause —
+// not the regime — decides the intervention. Each option carries the
+// evidence that isolates that one factor; only a genuine knowledge or
+// skill deficiency routes to a course.
+const CAUSES: Array<{
+  v: string; label: string;
+  factorEvidence: Record<string, { adequate: boolean; evidence: string }>;
+  couldPerform?: boolean;
+}> = [
+  {
+    v: 'knowledgeSkill', label: 'Knowledge & skill — the rep genuinely cannot do it',
+    factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'reps cannot recall the refund decision tree, even given time and intent' } },
+    couldPerform: false,
+  },
+  {
+    v: 'information', label: 'Information — guidance is not at hand when work happens',
+    factorEvidence: { information: { adequate: false, evidence: 'the refund policy is not surfaced at the moment a dispute opens' } },
+  },
+  {
+    v: 'instrumentation', label: 'Tools & process — the instrumentation is broken',
+    factorEvidence: { instrumentation: { adequate: false, evidence: 'the refund console does not show the rolling 90-day cap total' } },
+  },
+  {
+    v: 'incentives', label: 'Incentives — the consequences pull the wrong way',
+    factorEvidence: { incentives: { adequate: false, evidence: 'reps are measured on handle time, which rewards over-escalation' } },
+  },
+  {
+    v: 'motives', label: 'Motivation — the rep can perform but is not choosing to',
+    factorEvidence: { motives: { adequate: false, evidence: 'the rep resolves easy disputes but routes harder in-tier ones away' } },
+    couldPerform: true,
+  },
+];
+
 function PerformanceDemo() {
   const [regime, setRegime] = useState('Knowable');
+  const [cause, setCause] = useState('knowledgeSkill');
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState<Record<string, unknown> | null>(null);
+  // Gap analysis is the method for the Evident / Knowable regimes; the
+  // Emergent / Turbulent regimes have no fixable gap to cause-analyse.
+  const gapRegime = regime === 'Evident' || regime === 'Knowable';
   async function run() {
     setBusy(true);
+    const picked = CAUSES.find(c => c.v === cause);
     const r = await bridgeRest('/performance/plan', {
       gap: {
         id: `urn:foxxi:gap:demo-${Date.now()}`,
@@ -104,13 +143,15 @@ function PerformanceDemo() {
         observed: 'over-escalates disputes a rep is allowed to resolve',
         frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted', domain: regime,
       },
-      couldPerformUnderIdealConditions: false,
-      factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'reps cannot recall the refund decision tree' } },
+      ...(gapRegime && picked ? {
+        factorEvidence: picked.factorEvidence,
+        ...(picked.couldPerform !== undefined ? { couldPerformUnderIdealConditions: picked.couldPerform } : {}),
+      } : {}),
       author: { id: 'did:web:acme#sme-lee', kind: 'human', role: 'SME' },
     });
     setOut(r.json); setBusy(false);
   }
-  const diagnosis = out?.diagnosis as { domain?: string; method?: string; reasoning?: string[]; caveat?: string } | undefined;
+  const diagnosis = out?.diagnosis as { domain?: string; method?: string; reasoning?: string[]; rootCauses?: string[]; caveat?: string } | undefined;
   const plan = out?.plan as { summary?: string; selected?: Array<{ type: string }> } | undefined;
   return (
     <div>
@@ -122,14 +163,31 @@ function PerformanceDemo() {
             {REGIMES.map(r => <option key={r.v} value={r.v}>{r.label}</option>)}
           </select>
         </label>
+        {gapRegime && (
+          <label style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-dim)' }}>
+            likely cause:{' '}
+            <select value={cause} onChange={e => setCause(e.target.value)}
+              style={{ padding: '3px 6px', borderRadius: 4, border: '1px solid var(--border)' }}>
+              {CAUSES.map(c => <option key={c.v} value={c.v}>{c.label}</option>)}
+            </select>
+          </label>
+        )}
         <button style={btn} onClick={run} disabled={busy}>{busy ? <Busy /> : 'Analyze this work'}</button>
       </div>
+      {!gapRegime && (
+        <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 8 }}>
+          The {regime} regime has no fixable gap to cause-analyse — the method follows from the regime alone.
+        </div>
+      )}
       {diagnosis && (
         <div style={resultBox}>
           <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13 }}>
             work regime <b>{diagnosis.domain}</b> → method: <b>{METHOD_LABEL[diagnosis.method ?? ''] ?? diagnosis.method}</b>
           </div>
           {diagnosis.reasoning?.[0] && <div style={{ marginTop: 8 }}>{diagnosis.reasoning[0]}</div>}
+          {gapRegime && diagnosis.rootCauses?.[0] && (
+            <div style={{ marginTop: 8 }}>cause isolated: <b>{diagnosis.rootCauses[0]}</b></div>
+          )}
           {diagnosis.caveat && <div style={{ marginTop: 8, fontSize: 13, color: 'var(--warn)' }}>{diagnosis.caveat}</div>}
           {plan?.summary && <div style={{ marginTop: 8 }}><b>Plan:</b> {plan.summary}</div>}
           {plan?.selected && plan.selected.length > 0 && (
@@ -151,19 +209,11 @@ function ClosingLoopDemo() {
 
   async function run() {
     setBusy(true); setErr(null); setLaunchUrl(null); setOut(null);
+    // The shared sample course — three modules, six lessons, each fragment
+    // a real concept / worked example / assessment item.
     const composed = await bridgeRest('/content/compose-course', {
-      title: `Refund Dispute Resolution ${new Date().toISOString().slice(11, 19)}`,
-      competency: 'resolving refund disputes within policy', audience: 'human',
-      authoredBy: { id: 'did:web:acme#sme-lee', kind: 'human' },
-      modules: [{
-        title: 'Refund basics', competencyPoint: 'resolving refund disputes within policy',
-        lessons: [
-          { title: 'Authority thresholds', competencyPoint: 'refund thresholds', fragments: [
-            { modality: 'concept', body: 'A rep may authorise refunds up to $500; above that, route the dispute to a lead.', level: 'foundational' },
-            { modality: 'worked-example', body: 'A $420 dispute — the rep resolves it. A $1,300 dispute — route to a lead.', level: 'working' },
-          ] },
-        ],
-      }],
+      ...SAMPLE_COURSE,
+      title: `${SAMPLE_COURSE.title} ${new Date().toISOString().slice(11, 19)}`,
     });
     const course = composed.json.course;
     if (!course) { setErr('compose-course failed'); setBusy(false); return; }
@@ -291,12 +341,19 @@ function CompanionDemo() {
 
 // ── 4. Content forms ────────────────────────────────────────────────
 
+// The shared sample job aid, rendered section by section so the
+// interactive form has real collapsible sections, plus one self-check
+// drawn from the course's assessment items.
 const FORM_UNIT = {
-  title: 'Refund threshold job aid', kind: 'job-aid', competency: 'refund thresholds',
+  title: `Job aid — ${SAMPLE_JOB_AID.competencyPoint}`,
+  kind: 'job-aid',
+  competency: SAMPLE_JOB_AID.competencyPoint,
   blocks: [
-    { label: 'The rule', text: 'A rep may authorise refunds up to $500; above that, route the dispute to a lead.' },
-    { label: 'Worked example', text: 'A $420 dispute — the rep resolves it. A $1,300 dispute — route to a lead.' },
-    { text: 'Up to what amount may a rep authorise a refund alone? ::: $500' },
+    ...SAMPLE_JOB_AID.body.split('\n\n').map(section => ({
+      label: section.split('\n')[0].split(' — ')[0].split(' when')[0].trim(),
+      text: section,
+    })),
+    { label: 'self-check', text: SAMPLE_COURSE.modules[0].lessons[0].fragments[2].body },
   ],
 };
 const FORMS: Array<{ v: string; label: string }> = [
@@ -400,13 +457,17 @@ export function Demos({ onHome }: { onHome: () => void }) {
       <Hero />
 
       <Section n={1} title="Performance & Knowledge Architecture"
-        subtitle="the work regime is established first — the method follows from it"
+        subtitle="the regime decides the method; within gap analysis the cause decides the intervention"
         principle={<>The system reasons from performance. The first step is not to look for a gap — it
-          is to establish the work's <b>regime</b>: what kind of work this is. The method follows from
-          the regime. A Knowable-regime situation, where cause and effect are knowable with analysis,
+          is to establish the work's <b>regime</b>: what kind of work this is. The regime decides the{' '}
+          <b>method</b>. A Knowable-regime situation, where cause and effect are knowable with analysis,
           calls for cause-factor gap analysis. An Emergent one — a complex, adaptive system — calls for
           a dispositional read; the fixed-gap frame does not apply there. A Turbulent one calls for
-          stabilising first. Pick a regime for the same work situation and watch the method change.</>}
+          stabilising first. Within gap analysis the gap still has a <b>cause</b>, and the cause — not
+          the regime — decides the intervention: a gap can come from missing knowledge, absent
+          guidance, broken tools, misaligned incentives, or low motivation, and only one of those — a
+          genuine knowledge or skill deficiency — is answered by a course. Pick a regime, then (for a
+          Knowable one) a cause, and watch the intervention change.</>}
         doc={{ label: 'PERFORMANCE-ARCHITECTURE.md', href: `${REPO}/PERFORMANCE-ARCHITECTURE.md` }}
         cli="tools/performance-architecture-example.mjs">
         <PerformanceDemo />

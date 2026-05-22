@@ -24,6 +24,7 @@
 
 import { chromium } from 'playwright';
 import { mintSessionToken } from '../src/auth.ts';
+import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
   ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
@@ -64,31 +65,16 @@ const TOKEN = await mintSessionToken({ userId: 'u-joshua', webId: WEB_ID, ttlMs:
 
 // ── 1. PUBLISH — compose + publish a course and a job aid ───────────
 h('1. PUBLISH — a course + a job aid into the networked context');
-const author = { id: 'did:web:acme#sme-lee', kind: 'human' };
+// A substantial, realistic course + a real in-the-flow job aid — the
+// shared sample content every demo grounds against.
 const composeRes = await post('/content/compose-course', {
-  title: `Refund Dispute Resolution ${new Date().toISOString().slice(11, 19)}`,
-  competency: 'resolving refund disputes within policy',
-  audience: 'human', authoredBy: author,
-  modules: [{
-    title: 'Refund basics', competencyPoint: 'resolving refund disputes within policy',
-    lessons: [
-      { title: 'Authority thresholds', competencyPoint: 'refund thresholds', fragments: [
-        { modality: 'concept', body: 'A rep may authorise refunds up to $500; above that, route the dispute to a lead.', level: 'foundational' },
-        { modality: 'worked-example', body: 'A $420 dispute — the rep resolves it. A $1,300 dispute — route to a lead.', level: 'working' },
-      ] },
-      { title: 'Thresholds check', competencyPoint: 'refund thresholds', fragments: [
-        { modality: 'assessment-item', body: 'Up to what amount may a rep authorise a refund alone? ::: $500', level: 'applied' },
-      ] },
-    ],
-  }],
+  ...SAMPLE_COURSE,
+  title: `${SAMPLE_COURSE.title} ${new Date().toISOString().slice(11, 19)}`,
 });
 const course = composeRes.json.course;
 const pub = (await post('/content/publish-course', { course })).json;
 check('the course is published + registered on the LMS', pub.published === true, pub);
-const aidRes = await post('/content/job-aid', {
-  competencyPoint: 'refund thresholds', triggerContext: 'opening a refund over $500',
-  body: 'Over $500 → route the dispute to a lead. The rep handles refunds of $500 or less directly.',
-});
+const aidRes = await post('/content/job-aid', SAMPLE_JOB_AID);
 const jobAidId = aidRes.json.id;
 check('the job aid is published to the CMS', aidRes.status === 200 && !!jobAidId, aidRes.json);
 
@@ -99,7 +85,7 @@ console.log(`   intent: ${concept.json.intent} · grounded: ${concept.json.groun
 check('a content question needs no token and is grounded', concept.status === 200 && concept.json.grounded === true, concept.json);
 check('the answer cites a course-fragment source with verbatim content',
   (concept.json.sources ?? []).some(s => s.kind === 'course-fragment'
-    && typeof s.excerpt === 'string' && s.excerpt.includes('authorise refunds up to $500')), concept.json.sources);
+    && typeof s.excerpt === 'string' && s.excerpt.includes('authorise a refund up to $500')), concept.json.sources);
 check('the answer carries the agentic-RAG Interego trace',
   Array.isArray(concept.json.trace) && concept.json.trace.length >= 2, concept.json.trace);
 
@@ -135,8 +121,11 @@ try {
     if (launchRes.status !== 200 || !launch.launchUrl) { check(`AU "${au.title}" launched`, false, launch); break; }
     await page.goto(launch.launchUrl, { waitUntil: 'networkidle', timeout: 40_000 });
     await page.waitForSelector('#go:not([disabled])', { timeout: 20_000 });
-    const answerInput = await page.$('.answer');
-    if (answerInput) await answerInput.fill('$500');
+    // Assessment AUs carry the correct answer — complete each correctly.
+    for (const inp of await page.$$('.answer')) {
+      const answer = await inp.getAttribute('data-answer');
+      if (answer) await inp.fill(answer);
+    }
     await page.click('#go');
     await page.waitForSelector('text=/completed|sent to the LRS|submitted/i', { timeout: 25_000 });
     completed++;

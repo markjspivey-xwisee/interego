@@ -24,6 +24,7 @@
 import { chromium } from 'playwright';
 import { mintSessionToken } from '../src/auth.ts';
 import { evaluateIntervention } from '../src/performance-architecture.js';
+import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
   ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
@@ -65,26 +66,16 @@ console.log(`   diagnosis: ${planRes.json.diagnosis?.method} · ${planRes.json.p
 check('the diagnosis warrants instruction', !!plan?.selected?.some(o => o.type === 'instruction'), plan?.selected?.map(o => o.type));
 
 // ── 2. DESIGN — compose an emergent course (text content) ───────────
+// A substantial, realistic course — three modules, six lessons, each
+// fragment a real concept / worked example / assessment item.
 h('2. DESIGN — compose an emergent course');
-const author = { id: 'did:web:acme#sme-lee', kind: 'human' };
 const composeRes = await post('/content/compose-course', {
-  title: `Refund Dispute Resolution ${new Date().toISOString().slice(11, 19)}`,
-  competency: 'resolving refund disputes within policy',
-  audience: 'human', authoredBy: author,
-  modules: [{
-    title: 'Refund basics', competencyPoint: 'resolving refund disputes within policy',
-    lessons: [
-      { title: 'Authority thresholds', competencyPoint: 'refund thresholds', fragments: [
-        { modality: 'concept', body: 'A rep may authorise refunds up to $500; above that, route to a lead.', level: 'foundational' },
-        { modality: 'worked-example', body: 'A $420 dispute — the rep resolves it. A $1,300 dispute — route to a lead.', level: 'working' },
-      ] },
-      { title: 'Thresholds check', competencyPoint: 'refund thresholds', fragments: [
-        { modality: 'assessment-item', body: 'Up to what amount may a rep authorise a refund alone? ::: $500', level: 'applied' },
-      ] },
-    ],
-  }],
+  ...SAMPLE_COURSE,
+  title: `${SAMPLE_COURSE.title} ${new Date().toISOString().slice(11, 19)}`,
 });
 const course = composeRes.json.course;
+const lessonCount = SAMPLE_COURSE.modules.reduce((n, m) => n + m.lessons.length, 0);
+console.log(`   ${SAMPLE_COURSE.modules.length} modules, ${lessonCount} lessons composed`);
 check('an emergent course was composed', !!course && Array.isArray(course.syntagm), composeRes.status);
 
 // ── 3. DEVELOP — publish: generate packages + register on the LMS ───
@@ -114,6 +105,12 @@ page.on('pageerror', e => pageErrors.push(e.message));
 try {
   await page.goto(launch.launchUrl, { waitUntil: 'networkidle', timeout: 40_000 });
   await page.waitForSelector('#go:not([disabled])', { timeout: 20_000 });
+  // An assessment AU renders answer inputs — complete it correctly by
+  // filling each from the answer the AU itself carries.
+  for (const inp of await page.$$('.answer')) {
+    const answer = await inp.getAttribute('data-answer');
+    if (answer) await inp.fill(answer);
+  }
   await page.click('#go');
   await page.waitForSelector('text=/completed|sent to the LRS/i', { timeout: 25_000 });
   const status = await page.locator('#status').textContent();
@@ -144,10 +141,7 @@ check('the LMS auto-emitted a satisfied statement', verbs.includes('satisfied'),
 
 // ── 5b. Performance support — a job aid, channel-delivered ──────────
 h('5b. Performance support — a job aid, channel-delivered + instrumented');
-const aidRes = await post('/content/job-aid', {
-  competencyPoint: 'refund thresholds', triggerContext: 'opening a refund over $500',
-  body: 'Over $500 → route to a lead. The rep handles ≤ $500 directly. The decision tree is: returned? in-window? covered reason? then apply the threshold.',
-});
+const aidRes = await post('/content/job-aid', SAMPLE_JOB_AID);
 const aidId = aidRes.json.id;
 check('a job aid was published to the CMS', aidRes.status === 200 && !!aidId);
 let delivered = 0;
