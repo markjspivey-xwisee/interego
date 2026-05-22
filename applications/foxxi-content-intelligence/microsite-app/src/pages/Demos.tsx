@@ -76,7 +76,20 @@ function Section(props: {
 
 // ── 1. Performance & Knowledge Architecture ─────────────────────────
 
-function DiagnoseDemo() {
+const REGIMES: Array<{ v: string; label: string }> = [
+  { v: 'Evident', label: 'Evident — the right response is self-evident' },
+  { v: 'Knowable', label: 'Knowable — cause and effect are knowable with analysis' },
+  { v: 'Emergent', label: 'Emergent — a complex, adaptive system' },
+  { v: 'Turbulent', label: 'Turbulent — behaviour is not yet patterned' },
+];
+const METHOD_LABEL: Record<string, string> = {
+  'gap-analysis': 'cause-factor gap analysis',
+  'dispositional-read': 'a dispositional read',
+  'stabilise-first': 'stabilise first',
+};
+
+function PerformanceDemo() {
+  const [regime, setRegime] = useState('Knowable');
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState<Record<string, unknown> | null>(null);
   async function run() {
@@ -89,7 +102,7 @@ function DiagnoseDemo() {
         competency: 'resolving refund disputes within policy',
         desired: 'resolves in-policy disputes on first contact',
         observed: 'over-escalates disputes a rep is allowed to resolve',
-        frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
+        frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted', domain: regime,
       },
       couldPerformUnderIdealConditions: false,
       factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'reps cannot recall the refund decision tree' } },
@@ -97,23 +110,31 @@ function DiagnoseDemo() {
     });
     setOut(r.json); setBusy(false);
   }
-  const diagnosis = out?.diagnosis as { method?: string } | undefined;
+  const diagnosis = out?.diagnosis as { domain?: string; method?: string; reasoning?: string[]; caveat?: string } | undefined;
   const plan = out?.plan as { summary?: string; selected?: Array<{ type: string }> } | undefined;
   return (
     <div>
-      <button style={btn} onClick={run} disabled={busy}>{busy ? <Busy /> : out ? 'Re-run' : 'Diagnose a real gap'}</button>
-      {out && (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-dim)' }}>
+          work regime:{' '}
+          <select value={regime} onChange={e => setRegime(e.target.value)}
+            style={{ padding: '3px 6px', borderRadius: 4, border: '1px solid var(--border)' }}>
+            {REGIMES.map(r => <option key={r.v} value={r.v}>{r.label}</option>)}
+          </select>
+        </label>
+        <button style={btn} onClick={run} disabled={busy}>{busy ? <Busy /> : 'Analyze this work'}</button>
+      </div>
+      {diagnosis && (
         <div style={resultBox}>
-          {plan ? <>
-            <div><b>Diagnosis method:</b> {diagnosis?.method ?? '—'}</div>
-            <div style={{ marginTop: 6 }}><b>Plan:</b> {plan.summary ?? '—'}</div>
-            <div style={{ marginTop: 6 }}><b>Interventions selected:</b>{' '}
-              {(plan.selected ?? []).map(o => o.type).join(', ') || 'none'}</div>
-            <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-dim)' }}>
-              A performance gap was diagnosed and an intervention plan composed — content is one
-              option among nine, selected only when the diagnosis warrants it.
-            </div>
-          </> : <span style={{ color: 'var(--bad)' }}>{JSON.stringify(out).slice(0, 200)}</span>}
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13 }}>
+            work regime <b>{diagnosis.domain}</b> → method: <b>{METHOD_LABEL[diagnosis.method ?? ''] ?? diagnosis.method}</b>
+          </div>
+          {diagnosis.reasoning?.[0] && <div style={{ marginTop: 8 }}>{diagnosis.reasoning[0]}</div>}
+          {diagnosis.caveat && <div style={{ marginTop: 8, fontSize: 13, color: 'var(--warn)' }}>{diagnosis.caveat}</div>}
+          {plan?.summary && <div style={{ marginTop: 8 }}><b>Plan:</b> {plan.summary}</div>}
+          {plan?.selected && plan.selected.length > 0 && (
+            <div style={{ marginTop: 4, fontSize: 13 }}>interventions: {plan.selected.map(o => o.type).join(', ')}</div>
+          )}
         </div>
       )}
     </div>
@@ -354,11 +375,12 @@ function Closing({ onHome }: { onHome: () => void }) {
         The whole picture
       </div>
       <p style={{ fontSize: 14.5, lineHeight: 1.62, margin: '0 0 12px' }}>
-        These demos compose one substrate. A diagnosed gap becomes a real course; the course is
-        delivered and completed on a conformant LMS/LRS; the Context Companion chats over the whole
-        networked context — gated to a wallet-signed identity, federated across pods — and content
-        travels in whatever text form the situation calls for. The same capabilities span humans and
-        agents (H2H · H2A · A2H · A2A); the agent-collaboration tour lives in the operational dashboard.
+        These demos compose one substrate. Performance reasoning is routed by the work regime; where
+        the regime calls for instruction, a real course is generated, delivered, and completed on a
+        conformant LMS/LRS; the Context Companion chats over the whole networked context — gated to a
+        wallet-signed identity, federated across pods — and content travels in whatever text form the
+        situation calls for. The same capabilities span humans and agents (H2H · H2A · A2H · A2A); the
+        agent-collaboration tour lives in the operational dashboard.
       </p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12, fontFamily: "'JetBrains Mono', monospace" }}>
         <a href={`${REPO}/CONFORMANCE.md`} target="_blank" rel="noreferrer">LRS / LMS conformance →</a>
@@ -378,18 +400,21 @@ export function Demos({ onHome }: { onHome: () => void }) {
       <Hero />
 
       <Section n={1} title="Performance & Knowledge Architecture"
-        subtitle="diagnosis-driven — performance is the unit, not content"
-        principle={<>The system reasons from a <b>performance gap</b>, not a content request. A gap is
-          diagnosed — routed by the work regime — and an intervention plan is composed. Content is one
-          of nine interventions, chosen only when the diagnosis warrants it.</>}
+        subtitle="the work regime is established first — the method follows from it"
+        principle={<>The system reasons from performance. The first step is not to look for a gap — it
+          is to establish the work's <b>regime</b>: what kind of work this is. The method follows from
+          the regime. A Knowable-regime situation, where cause and effect are knowable with analysis,
+          calls for cause-factor gap analysis. An Emergent one — a complex, adaptive system — calls for
+          a dispositional read; the fixed-gap frame does not apply there. A Turbulent one calls for
+          stabilising first. Pick a regime for the same work situation and watch the method change.</>}
         doc={{ label: 'PERFORMANCE-ARCHITECTURE.md', href: `${REPO}/PERFORMANCE-ARCHITECTURE.md` }}
         cli="tools/performance-architecture-example.mjs">
-        <DiagnoseDemo />
+        <PerformanceDemo />
       </Section>
 
       <Section n={2} title="Closing the loop"
-        subtitle="a diagnosed gap becomes a real, conformant course on the LMS"
-        principle={<>When the diagnosis warrants instruction, an emergent course is composed and turned
+        subtitle="where the regime calls for instruction, a real course on the LMS"
+        principle={<>When the analysis warrants instruction, an emergent course is composed and turned
           into deployable artifacts — a <b>cmi5 package</b> and a conformant <b>SCORM 2004 .zip</b> —
           registered on the LMS. Open a runnable lesson: it does the cmi5 handshake and emits xAPI
           straight to the live LRS.</>}
