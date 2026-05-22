@@ -35,9 +35,14 @@ descriptors across all three:
 | **Knowledge** | `fxk:` | Extracted concepts, claims, prerequisite edges, Peircean Sign/Object/Interpretant decomposition | PGSL atoms + pullbacks; SAT semiotic facet |
 | **Activity** | `fxa:` | Consumption traces, extraction events, competency signals | xAPI projection via [`lrs-adapter/`](../lrs-adapter/); HELA presheaf |
 
-Ontology files live in [`ns/`](ns/) and are vertical-scoped (Layer
-non-normative per [`spec/LAYERS.md`](../../spec/LAYERS.md)) — they
-compose with L1/L2/L3 ontologies but do not extend them.
+The **live, canonical vocabulary** is [`src/foxxi-vocab.ts`](src/foxxi-vocab.ts) —
+one namespace base (`<bridge>/ns/foxxi#`), served as dereferenceable
+linked data by the bridge at `/ns/foxxi`. It is vertical-scoped (Layer
+non-normative per [`spec/LAYERS.md`](../../spec/LAYERS.md)) — it composes
+with L1/L2/L3 ontologies but does not extend them. The original
+three-stratum ontology TTLs (the pre-Interego `vocab.foxximediums.com`
+namespace) are retained under [`imported/`](imported/) as the historical
+record — superseded by `foxxi-vocab.ts`, not loaded at runtime.
 
 ## Composition with existing substrate primitives
 
@@ -59,7 +64,7 @@ glue references them but does NOT re-implement them.
 | File | What it is |
 |---|---|
 | `foxxi_storyline_parser_v0{1,2,3}.py` | Python parser, Articulate Storyline → RDF, three-stratum emission |
-| `foxxi-content-graph{,-v0.2}.ttl` | Vocabulary declarations (fxs/fxk/fxa) |
+| `foxxi-content-graph{,-v0.2}.ttl`, `rcd.ttl`, `wallet.ttl` | Original three-stratum ontology (fxs/fxk/fxa, the `vocab.foxximediums.com` namespace) — **superseded by [`src/foxxi-vocab.ts`](src/foxxi-vocab.ts)**; kept as the historical record |
 | `lesson{2,3}_v0{2,3}.ttl` | Parsed lesson graphs (sample data) |
 | `build_dashboard_data{,_v03}.py` | Dashboard JSON builder |
 | `dashboard_data{,_v03}.json` + `lesson{2,3}_dashboard_data_v03.json` | Per-course dashboard payloads |
