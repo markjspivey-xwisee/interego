@@ -174,10 +174,13 @@ function extractDistributionTarget(descTurtle: string): string | null {
  * string-escape grammar.
  */
 function extractBundleJson(trig: string): unknown {
-  // Match: <fxs:bundleJson> "<base64>"^^<xsd:base64Binary>
-  const m = trig.match(/<https:\/\/vocab\.foxximediums\.com\/scorm#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
+  // Match `<…#bundleJson> "<base64>"^^<xsd:base64Binary>` by LOCAL NAME —
+  // the predicate's namespace migrated (vocab.foxximediums.com/scorm# →
+  // the foxxi vocab IRI), so match `#bundleJson` regardless of namespace,
+  // the same migration-tolerance findEntry() uses for conformsTo.
+  const m = trig.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
   if (!m) {
-    throw new Error('Graph body has no fxs:bundleJson literal — not a tenant-publisher artifact?');
+    throw new Error('Graph body has no #bundleJson literal — not a tenant-publisher artifact?');
   }
   const b64 = m[1].replace(/\s+/g, '');
   let json: string;

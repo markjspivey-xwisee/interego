@@ -8,7 +8,7 @@
  */
 
 import React, { useState } from 'react';
-import { bridgeRest, DEMO_IDENTITIES } from '../bridge-client.js';
+import { bridgeRest, BRIDGE_URL, DEMO_IDENTITIES } from '../bridge-client.js';
 
 const REPO = 'https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence';
 const LEARNER = DEMO_IDENTITIES.joshua.webId;
@@ -126,8 +126,10 @@ function ClosingLoopDemo() {
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState<Record<string, unknown> | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [launchUrl, setLaunchUrl] = useState<string | null>(null);
+
   async function run() {
-    setBusy(true); setErr(null);
+    setBusy(true); setErr(null); setLaunchUrl(null); setOut(null);
     const composed = await bridgeRest('/content/compose-course', {
       title: `Refund Dispute Resolution ${new Date().toISOString().slice(11, 19)}`,
       competency: 'resolving refund disputes within policy', audience: 'human',
@@ -136,21 +138,38 @@ function ClosingLoopDemo() {
         title: 'Refund basics', competencyPoint: 'resolving refund disputes within policy',
         lessons: [
           { title: 'Authority thresholds', competencyPoint: 'refund thresholds', fragments: [
-            { modality: 'concept', body: 'A rep may authorise refunds up to $500; above that, route to a lead.', level: 'foundational' },
-          ] },
-          { title: 'Thresholds check', competencyPoint: 'refund thresholds', fragments: [
-            { modality: 'assessment-item', body: 'Up to what amount may a rep authorise a refund alone? ::: $500', level: 'applied' },
+            { modality: 'concept', body: 'A rep may authorise refunds up to $500; above that, route the dispute to a lead.', level: 'foundational' },
+            { modality: 'worked-example', body: 'A $420 dispute — the rep resolves it. A $1,300 dispute — route to a lead.', level: 'working' },
           ] },
         ],
       }],
     });
     const course = composed.json.course;
-    if (!course) { setErr('compose failed'); setBusy(false); return; }
+    if (!course) { setErr('compose-course failed'); setBusy(false); return; }
     const pub = await bridgeRest('/content/publish-course', { course });
+    if (pub.json.published !== true) { setErr('publish-course failed'); setBusy(false); return; }
     setOut(pub.json); setBusy(false);
   }
-  const aus = (out?.aus as Array<{ title: string; auUrl: string }> | undefined) ?? [];
+
+  // Launch the lesson properly — a cmi5 launch mints the one-time fetch
+  // token + endpoint params the AU needs; opening the bare AU URL would
+  // only get "preview only". A blank window is opened in the click
+  // gesture, then navigated once the launch URL is back.
+  async function launch(courseId: string, auId: string) {
+    const w = window.open('', '_blank');
+    try {
+      const r = await fetch(`${BRIDGE_URL}/cmi5/launch?course_id=${encodeURIComponent(courseId)}`
+        + `&au_id=${encodeURIComponent(auId)}&learner=${encodeURIComponent(LEARNER)}&learner_name=Joshua%20Liu`);
+      const lj = await r.json() as { launchUrl?: string };
+      if (lj.launchUrl && w) w.location.href = lj.launchUrl;
+      else if (lj.launchUrl) setLaunchUrl(lj.launchUrl);
+      else { if (w) w.close(); setErr('cmi5 launch failed'); }
+    } catch (e) { if (w) w.close(); setErr((e as Error).message); }
+  }
+
+  const aus = (out?.aus as Array<{ title: string; auId: string }> | undefined) ?? [];
   const artifacts = out?.artifacts as { cmi5Xml?: string; scormZip?: string } | undefined;
+  const courseId = out?.courseId as string | undefined;
   return (
     <div>
       <button style={btn} onClick={run} disabled={busy}>{busy ? <Busy /> : out ? 'Re-run' : 'Compose & publish a course'}</button>
@@ -163,10 +182,18 @@ function ClosingLoopDemo() {
             {artifacts?.cmi5Xml && <li><a href={artifacts.cmi5Xml} target="_blank" rel="noreferrer">cmi5.xml course structure</a></li>}
             {artifacts?.scormZip && <li><a href={artifacts.scormZip} target="_blank" rel="noreferrer">SCORM 2004 .zip package</a></li>}
           </ul>
-          <div style={{ marginTop: 6 }}><b>Runnable lessons</b> — open one; it does the cmi5 handshake and emits xAPI to the live LRS:</div>
-          <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
-            {aus.map((au, i) => <li key={i}><a href={au.auUrl} target="_blank" rel="noreferrer">{au.title}</a></li>)}
-          </ul>
+          <div style={{ marginTop: 8 }}><b>Launch the lesson</b> — a fresh cmi5 launch each click; the AU
+            exchanges its one-time fetch token, renders, and emits xAPI to the live LRS when you complete it:</div>
+          <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {courseId && aus.map((au, i) => (
+              <button key={i} style={chip} onClick={() => launch(courseId, au.auId)}>▶ Launch “{au.title}”</button>
+            ))}
+          </div>
+          {launchUrl && (
+            <div style={{ marginTop: 8, fontSize: 12 }}>
+              popup blocked — <a href={launchUrl} target="_blank" rel="noreferrer">open the launched lesson →</a>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -185,10 +185,12 @@ check('the pass-through surfaces a course the vertical alone never saw (golf, on
 // The federation peer pod carries a course the tenant pod does not.
 const peerQ = await ask('How should I triage an incident?', { learner: LEARNER, scope: 'interego' });
 console.log(`   peer-course question → grounded: ${peerQ.json.grounded}`);
-check('a federation-peer course is discovered, deep-fetched, and answered from',
+check('a federation-peer course is discovered, deep-fetched, and answered from its content',
   peerQ.json.grounded === true && (peerQ.json.sources ?? []).some(s =>
     s.kind === 'interego-context' && typeof s.excerpt === 'string'
-    && /triage|severity|incident/i.test(s.excerpt)), peerQ.json.sources);
+    // the real course content, not the metadata-descriptor stub
+    && !s.excerpt.startsWith('Interego context descriptor')
+    && /severity|escalat|triage/i.test(s.excerpt)), peerQ.json.sources);
 const peerV = await ask('How should I triage an incident?', { learner: LEARNER, scope: 'vertical' });
 check('the same question, vertical-scoped, does NOT reach the peer pod',
   peerV.json.grounded === false, peerV.json);
