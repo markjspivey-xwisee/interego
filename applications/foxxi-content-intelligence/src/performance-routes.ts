@@ -138,12 +138,20 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
             authoredBy: author,
             ...(typeof f.suitsDisposition === 'string' ? { suitsDisposition: f.suitsDisposition } : {}),
           }));
+          // A lesson is a SEQUENCE of fragments (concept → worked
+          // example → assessment), so each fragment is its own syntagm
+          // position. Putting them all in one position would make them
+          // interchangeable paradigm alternatives — and flattening the
+          // course for delivery would then keep only the first.
+          const lessonCp = String(l.competencyPoint ?? m.competencyPoint ?? body.competency);
           return authorLesson({
             title: String(l.title ?? 'Lesson'),
             competency: String(body.competency),
             audience,
             authoredBy: author,
-            positions: [{ competencyPoint: String(l.competencyPoint ?? body.competency), fragments }],
+            positions: fragments.length > 0
+              ? fragments.map(f => ({ competencyPoint: lessonCp, fragments: [f] }))
+              : [{ competencyPoint: lessonCp, fragments }],
           });
         });
         return {
