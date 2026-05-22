@@ -5,8 +5,9 @@ import { About } from './pages/About.js';
 import { Verify } from './pages/Verify.js';
 import { Dpia } from './pages/Dpia.js';
 import { Demos } from './pages/Demos.js';
+import { EmergentCollective } from './pages/EmergentCollective.js';
 
-export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos';
+export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent';
 
 export function App() {
   const [route, setRoute] = useState<Route>(initialRoute());
@@ -22,6 +23,7 @@ export function App() {
     else if (r === 'verify') { url.pathname = '/verify'; url.searchParams.delete('role'); }
     else if (r === 'dpia') { url.pathname = '/dpia'; url.searchParams.delete('role'); }
     else if (r === 'demos') { url.pathname = '/demos'; url.searchParams.delete('role'); }
+    else if (r === 'emergent') { url.pathname = '/emergent'; url.searchParams.delete('role'); }
     window.history.pushState({}, '', url.toString());
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -44,7 +46,8 @@ export function App() {
         {route === 'about' && <About onTry={role => navigate('try', role)} onHome={() => navigate('landing')} />}
         {route === 'verify' && <Verify onHome={() => navigate('landing')} />}
         {route === 'dpia' && <Dpia onHome={() => navigate('landing')} />}
-        {route === 'demos' && <Demos onHome={() => navigate('landing')} />}
+        {route === 'demos' && <Demos onHome={() => navigate('landing')} onEmergent={() => navigate('emergent')} />}
+        {route === 'emergent' && <EmergentCollective onHome={() => navigate('landing')} onDemos={() => navigate('demos')} />}
       </main>
       <SiteFooter />
     </div>
@@ -57,6 +60,7 @@ function initialRoute(): Route {
   if (p.startsWith('/about')) return 'about';
   if (p.startsWith('/verify')) return 'verify';
   if (p.startsWith('/dpia')) return 'dpia';
+  if (p.startsWith('/emergent')) return 'emergent';
   if (p.startsWith('/demos')) return 'demos';
   return 'landing';
 }

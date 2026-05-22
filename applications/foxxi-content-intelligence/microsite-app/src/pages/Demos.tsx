@@ -778,7 +778,7 @@ function Hero() {
   );
 }
 
-function Closing({ onHome }: { onHome: () => void }) {
+function Closing({ onHome, onEmergent }: { onHome: () => void; onEmergent: () => void }) {
   return (
     <div style={{ ...card, background: 'var(--panel-2)' }}>
       <div style={{ fontFamily: "'EB Garamond', serif", fontStyle: 'italic', fontSize: 21, marginBottom: 8 }}>
@@ -796,6 +796,9 @@ function Closing({ onHome }: { onHome: () => void }) {
         operational dashboard.
       </p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, fontSize: 12, fontFamily: mono }}>
+        <button onClick={onEmergent} style={{ background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: mono, fontSize: 12, padding: 0, fontWeight: 600 }}>
+          ▶ the Emergent Collective — a live multi-agent emergence →
+        </button>
         <a href={`${REPO}/CONFORMANCE.md`} target="_blank" rel="noreferrer">LRS / LMS conformance →</a>
         <a href={`${REPO}/PERFORMANCE-ARCHITECTURE.md`} target="_blank" rel="noreferrer">Performance Architecture →</a>
         <a href="https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io" target="_blank" rel="noreferrer">Operational dashboard →</a>
@@ -807,7 +810,7 @@ function Closing({ onHome }: { onHome: () => void }) {
 
 // ── the page ────────────────────────────────────────────────────────
 
-export function Demos({ onHome }: { onHome: () => void }) {
+export function Demos({ onHome, onEmergent }: { onHome: () => void; onEmergent: () => void }) {
   return (
     <div style={{ maxWidth: 860, margin: '0 auto', padding: '34px 24px 40px' }}>
       <Hero />
@@ -895,7 +898,7 @@ export function Demos({ onHome }: { onHome: () => void }) {
         <FormsDemo />
       </Section>
 
-      <Closing onHome={onHome} />
+      <Closing onHome={onHome} onEmergent={onEmergent} />
     </div>
   );
 }
