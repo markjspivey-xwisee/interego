@@ -1,22 +1,24 @@
 /**
- * Foxxi A2A teaching — agents teaching agents, demonstrated.
+ * Foxxi A2A teaching — the performance lens over ac:TeachingPackage.
  *
  *   npx tsx tools/agent-teaching-example.mjs
  *
- * Interego's principle: agents collaborate — they teach each other and
- * build capabilities for each other. This proves Foxxi's A2A teaching
- * loop: a teacher agent composes a capability, a learner agent acquires
- * it, and the transfer is verified by READING THE LEARNER'S REAL WORK —
- * not by quizzing it. The verdict then feeds the reflexive calibration
- * loop, so agent teaching is measured alongside human course completion.
+ * Foxxi does NOT invent agent-to-agent teaching. agent-collective (ac:)
+ * already establishes it: agents author tools and bundle them with
+ * adp: practice into an ac:TeachingPackage, whose trust accrues through
+ * amta:Attestation. This proves what Foxxi *adds* — the performance /
+ * L&D dimension: given a reference to an ac:TeachingPackage, Foxxi
+ * frames a learner agent's acquisition as an A2A instruction
+ * intervention, verifies the transfer by READING THE LEARNER'S OWN
+ * TRAJECTORIES, emits an amta:Attestation into ac:'s modal discipline,
+ * and feeds the reflexive calibration loop.
  *
  * Exits non-zero if any assertion fails.
  */
 
-import { authorFragment, authorLesson, authorModule, composeCourse } from '../src/emergent-content.js';
 import {
-  authorCapability, acquireCapability, verifyCapabilityTransfer,
-  teachingToOutcome, attestCapability,
+  frameTeachingIntervention, verifyCapabilityTransfer,
+  transferAttestation, teachingToOutcome,
 } from '../src/agent-teaching.js';
 import { buildCalibrationProfile, calibrationReadout } from '../src/performance-calibration.js';
 
@@ -27,13 +29,28 @@ const check = (label, cond, detail) => {
 };
 const h = (s) => console.log(`\n${'─'.repeat(72)}\n${s}\n${'─'.repeat(72)}`);
 
-const teacher = { id: 'did:web:acme#agent-atlas', kind: 'agent', role: 'senior incident-response agent' };
-const learner = { id: 'did:web:acme#agent-nova', kind: 'agent', role: 'incident-response agent' };
+const teacher = { id: 'did:web:acme#agent-atlas', kind: 'agent' };
+const learner = { id: 'did:web:acme#agent-nova', kind: 'agent' };
 
-// A minimal trajectory builder — plain steps the summariser reads.
+// A reference to an ac:TeachingPackage — authored by agent-collective's
+// ac:bundleTeachingPackage (an ac:AgentTool artifact + adp: practice).
+// Foxxi references it; it never redefines or re-authors it.
+const pkg = {
+  iri: 'urn:cg:teaching:sev2-triage-doctrine',
+  artifactIri: 'urn:cg:tool:documented-rollback',
+  competency: 'triaging sev-2 incidents to doctrine',
+  olkeStage: 'Articulate',
+  modalStatus: 'Hypothetical',
+};
+const targetBehaviour = {
+  description: 'bounds the blast radius and runs the documented rollback before any novel fix',
+  signalMarkers: ['rollback', 'blast radius', 'bound'],
+  antiSignalMarkers: ['improvise', 'novel fix'],
+};
+
 const t0 = Date.parse('2026-05-22T09:00:00.000Z');
-const traj = (agentDid, name, steps) => ({
-  agentDid, agentName: name, createdAt: new Date(t0).toISOString(),
+const traj = (steps) => ({
+  agentDid: learner.id, agentName: 'Nova', createdAt: new Date(t0).toISOString(),
   steps: steps.map((s, i) => ({
     modalStatus: 'Asserted', granularity: 'tool-call', verb: s.verb,
     objectId: `o${i}`, objectName: s.obj, result: { success: true },
@@ -42,63 +59,22 @@ const traj = (agentDid, name, steps) => ({
 });
 
 // ════════════════════════════════════════════════════════════════════
-h('1. AUTHOR — a teacher agent composes a capability for other agents');
+h('1. FRAME — read an ac:TeachingPackage acquisition in performance terms');
 // ════════════════════════════════════════════════════════════════════
-const doctrine = authorFragment({
-  modality: 'context-descriptor', competencyPoint: 'sev-2 incident triage', level: 'applied',
-  body: 'Doctrine: on a sev-2, first bound the blast radius, then attempt the documented rollback '
-    + 'before any novel fix. Never improvise a fix before rollback is ruled out.',
-  authoredBy: teacher,
-});
-const lesson = authorLesson({
-  title: 'Sev-2 triage doctrine', competency: 'triaging sev-2 incidents to doctrine',
-  audience: 'agent', authoredBy: teacher,
-  positions: [{ competencyPoint: 'sev-2 incident triage', fragments: [doctrine] }],
-});
-const mod = authorModule({
-  title: 'Incident-response playbook', competency: 'triaging sev-2 incidents to doctrine',
-  authoredBy: teacher,
-  positions: [{ competencyPoint: 'sev-2 incident triage', lessons: [lesson] }],
-});
-const playbook = composeCourse({
-  title: 'Sev-2 incident-response playbook', competency: 'triaging sev-2 incidents to doctrine',
-  audience: 'agent', authoredBy: teacher,
-  positions: [{ competencyPoint: 'triaging sev-2 incidents to doctrine', modules: [mod] }],
-});
-const capability = authorCapability({
-  competency: 'triaging sev-2 incidents to doctrine',
-  authoredBy: teacher,
-  playbook,
-  conferredAffordances: ['foxxi.run_documented_rollback', 'foxxi.bound_blast_radius'],
-  targetBehaviour: {
-    description: 'bounds the blast radius and attempts the documented rollback before any novel fix',
-    signalMarkers: ['rollback', 'blast radius', 'bound'],
-    antiSignalMarkers: ['improvise', 'novel fix'],
-  },
-});
-console.log(`\n   capability: ${capability.id}`);
-console.log(`   confers ${capability.conferredAffordances.length} tool(s); modal status ${capability.modalStatus}`);
-check('a teacher agent authored a capability', capability.competency.includes('sev-2'));
-check('a freshly authored capability is Hypothetical — not yet shown to transfer',
-  capability.modalStatus === 'Hypothetical');
-check('the capability confers tools (affordances) to the learner', capability.conferredAffordances.length === 2);
+const intervention = frameTeachingIntervention(pkg, teacher, learner);
+console.log(`\n   teaching package : ${intervention.teachingPackageIri}`);
+console.log(`   performance frame: ${intervention.regime} regime · ${intervention.method} · `
+  + `${intervention.intervention} · ${intervention.direction}`);
+check('Foxxi frames acquiring a documented capability as a Knowable instruction intervention',
+  intervention.regime === 'Knowable' && intervention.intervention === 'instruction');
+check('the directionality is A2A', intervention.direction === 'A2A');
+check('Foxxi references the ac:TeachingPackage — it does not re-author it',
+  intervention.teachingPackageIri === pkg.iri);
 
 // ════════════════════════════════════════════════════════════════════
-h('2. ACQUIRE — a learner agent ingests the capability as context');
+h('2. VERIFY — read the learner\'s real work, before vs after');
 // ════════════════════════════════════════════════════════════════════
-const acquisition = acquireCapability(capability, learner);
-console.log(`\n   ${learner.id} acquired ${acquisition.capabilityId}`);
-console.log(`   ${acquisition.contextDescriptors} context descriptor(s) ingested · direction ${acquisition.direction}`);
-console.log(`   granted affordances: ${acquisition.grantedAffordances.join(', ')}`);
-check('the learner ingested the playbook as context descriptors (not slides)',
-  acquisition.contextDescriptors > 0 && acquisition.direction === 'A2A');
-check('the learner agent was granted the conferred tools', acquisition.grantedAffordances.length === 2);
-
-// ════════════════════════════════════════════════════════════════════
-h('3. VERIFY — read the learner\'s real work, before vs after');
-// ════════════════════════════════════════════════════════════════════
-// Before: the learner improvises — it patches novel fixes, no rollback.
-const before = [traj(learner.id, 'Nova', [
+const before = [traj([
   { verb: 'investigate', obj: 'the failing service' },
   { verb: 'improvise', obj: 'a novel fix attempt' },
   { verb: 'patch', obj: 'a novel fix attempt' },
@@ -106,8 +82,7 @@ const before = [traj(learner.id, 'Nova', [
   { verb: 'improvise', obj: 'another novel fix' },
   { verb: 'escalate', obj: 'the incident' },
 ])];
-// After: the learner follows the doctrine it was taught.
-const after = [traj(learner.id, 'Nova', [
+const after = [traj([
   { verb: 'bound', obj: 'the blast radius' },
   { verb: 'notify', obj: 'the owning service' },
   { verb: 'run', obj: 'the documented rollback' },
@@ -117,38 +92,41 @@ const after = [traj(learner.id, 'Nova', [
   { verb: 'record', obj: 'the incident timeline' },
   { verb: 'verify', obj: 'recovery' },
 ])];
-const verdict = verifyCapabilityTransfer({ capability, acquisition, before, after });
+const verdict = verifyCapabilityTransfer({ package: pkg, targetBehaviour, learner, before, after });
 console.log(`\n   before: taught behaviour in ${Math.round(verdict.before.signalShare * 100)}% of steps`);
 console.log(`   after:  taught behaviour in ${Math.round(verdict.after.signalShare * 100)}% of steps`);
 console.log(`   ${verdict.evidence}`);
-check('the capability transfer is verified from the learner\'s own trajectories',
-  verdict.transferred === true, verdict);
+check('the transfer is verified from the learner\'s own trajectories', verdict.transferred === true, verdict);
 check('the transfer claim is Asserted — the learner\'s work carries the evidence',
   verdict.modalStatus === 'Asserted');
-check('the taught behaviour rose materially in the learner\'s real work',
-  verdict.after.signalShare > verdict.before.signalShare + 0.2);
+
+// ════════════════════════════════════════════════════════════════════
+h('3. ATTEST — emit an amta:Attestation into ac:\'s modal discipline');
+// ════════════════════════════════════════════════════════════════════
+const attestation = transferAttestation(verdict);
+console.log(`\n   amta:Attestation → attestsTo ${attestation.attestsTo}`);
+console.log(`   axis ${attestation.axis} · rating ${attestation.rating.toFixed(2)} · contributed ${attestation.contributed}`);
+check('a verified transfer emits an amta:Attestation on the teaching package',
+  attestation.attestsTo === pkg.iri && attestation.axis === 'correctness');
+check('Foxxi contributes the attestation rather than running its own modal flip',
+  attestation.contributed === true);
 
 // ════════════════════════════════════════════════════════════════════
 h('4. NEGATIVE — a learner whose work did not change');
 // ════════════════════════════════════════════════════════════════════
-const stillImprovising = [traj(learner.id, 'Nova', [
-  { verb: 'investigate', obj: 'the failing service' },
-  { verb: 'improvise', obj: 'a novel fix attempt' },
-  { verb: 'patch', obj: 'a novel fix attempt' },
-  { verb: 'verify', obj: 'the patch held' },
-  { verb: 'improvise', obj: 'another novel fix' },
-  { verb: 'escalate', obj: 'the incident' },
-])];
-const missVerdict = verifyCapabilityTransfer({ capability, acquisition, before, after: stillImprovising });
+const missVerdict = verifyCapabilityTransfer({ package: pkg, targetBehaviour, learner, before, after: before });
 console.log(`\n   ${missVerdict.evidence}`);
-check('a capability that was ingested but did not change the work is NOT verified',
+check('a package acquired but not exercised is NOT a verified transfer',
   missVerdict.transferred === false);
+check('no contributed attestation when the work did not change',
+  transferAttestation(missVerdict).contributed === false);
 
 // ════════════════════════════════════════════════════════════════════
 h('5. THIN EVIDENCE — too little post-acquisition work to assert');
 // ════════════════════════════════════════════════════════════════════
-const thin = [traj(learner.id, 'Nova', [{ verb: 'bound', obj: 'the blast radius' }])];
-const thinVerdict = verifyCapabilityTransfer({ capability, acquisition, before, after: thin });
+const thinVerdict = verifyCapabilityTransfer({
+  package: pkg, targetBehaviour, learner, before, after: [traj([{ verb: 'bound', obj: 'the blast radius' }])],
+});
 check('a transfer claim with too little evidence stays Hypothetical',
   thinVerdict.modalStatus === 'Hypothetical', thinVerdict.modalStatus);
 check('a Hypothetical transfer is not yet fed to calibration', teachingToOutcome(thinVerdict) === null);
@@ -163,27 +141,17 @@ check('a verified A2A transfer distils into a calibration outcome record',
   outcome !== null && outcome.verdict === 'closed' && outcome.intervention === 'instruction');
 check('A2A teaching is instruction for a Knowable knowledge/skill cause',
   outcome.regime === 'Knowable' && outcome.causeFactor === 'knowledgeSkill');
-const teachingProfile = buildCalibrationProfile([outcome, missOutcome], { assertThreshold: 2 });
-console.log(`   ${calibrationReadout(teachingProfile).readout}`);
+const profile = buildCalibrationProfile([outcome, missOutcome], { assertThreshold: 2 });
+console.log(`   ${calibrationReadout(profile).readout}`);
 check('agent-teaching outcomes calibrate alongside human course completions',
-  teachingProfile.cells.some(c => c.intervention === 'instruction' && c.causeFactor === 'knowledgeSkill'));
-
-// ════════════════════════════════════════════════════════════════════
-h('7. ATTEST — a capability proven to transfer is promoted to Asserted');
-// ════════════════════════════════════════════════════════════════════
-const attested = attestCapability(capability, verdict);
-console.log(`\n   ${attested.id}: ${capability.modalStatus} → ${attested.modalStatus}`);
-check('a capability with a verified transfer is promoted to Asserted',
-  attested.modalStatus === 'Asserted');
-check('a capability with no verified transfer stays Hypothetical',
-  attestCapability(capability, missVerdict).modalStatus === 'Hypothetical');
+  profile.cells.some(c => c.intervention === 'instruction' && c.causeFactor === 'knowledgeSkill'));
 
 // ════════════════════════════════════════════════════════════════════
 console.log(`\n${'═'.repeat(72)}`);
 console.log(`${pass} passed, ${fail} failed`);
 console.log('═'.repeat(72));
 if (fail > 0) process.exit(1);
-console.log('\nThe A2A loop is closed: a teacher agent built a capability, a learner');
-console.log('agent acquired it, and the transfer was verified by reading the learner\'s');
-console.log('real work — then fed the reflexive loop. Agents teach each other, and');
-console.log('Foxxi makes the teaching measurable.');
+console.log('\nFoxxi composes the agent-collective teaching foundation, not a parallel');
+console.log('one: the unit is an ac:TeachingPackage; Foxxi adds the performance lens —');
+console.log('frames it as an intervention, verifies transfer from the learner\'s');
+console.log('trajectories, emits an amta:Attestation, and feeds the reflexive loop.');

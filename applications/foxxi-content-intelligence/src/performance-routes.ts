@@ -31,8 +31,9 @@ import {
 } from './performance-calibration.js';
 import { SAMPLE_OUTCOMES, SAMPLE_PEER_OUTCOMES } from './sample-outcomes.js';
 import {
-  authorCapability, acquireCapability, verifyCapabilityTransfer,
-  teachingToOutcome, attestCapability,
+  frameTeachingIntervention, verifyCapabilityTransfer,
+  transferAttestation, teachingToOutcome,
+  type TeachingPackageRef, type BehaviourSignature, type OlkeStage,
 } from './agent-teaching.js';
 import type { AgentTrajectory } from './agent-trajectory.js';
 import {
@@ -125,7 +126,7 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
         contextualizeAndPlan: { method: 'POST', href: `${base}/performance/plan`, note: 'Contextualize a performance situation — read its regime, apply that regime\'s method — and return the full intervention paradigm, selected and ruled-out with reasoning.' },
         portfolio: { method: 'POST', href: `${base}/performance/portfolio`, note: 'Contextualize a set of performance situations and roll them up — the performance-management read. The headline: how few situations route to a course.' },
         calibration: { method: 'POST', href: `${base}/performance/calibration`, note: 'The reflexive loop — the system\'s recorded track record of its own recommendations: how often each cause → intervention recommendation has actually closed the gap, federated across organizations.' },
-        teachAgent: { method: 'POST', href: `${base}/agent/teach`, note: 'The A2A teaching loop — a teacher agent\'s playbook becomes a learner agent\'s verified capability; transfer is verified by reading the learner\'s own trajectories. Agents teach each other; Foxxi makes it measurable.' },
+        teachAgent: { method: 'POST', href: `${base}/agent/teach`, note: 'The performance lens over an agent-collective ac:TeachingPackage — frames a learner agent\'s acquisition as an A2A instruction intervention, verifies the transfer from the learner\'s trajectories, and emits an amta:Attestation. Foxxi composes the teaching foundation; it does not reinvent it.' },
         composeCourse: { method: 'POST', href: `${base}/content/compose-course`, note: 'Author an emergent course — a syntagm of modules → lessons → grounding fragments. The same tool for human and agent authors.' },
         personalizeCourse: { method: 'POST', href: `${base}/content/personalize`, note: 'Resolve a course for one performer via the composition algebra (restriction + override).' },
         knowledgeIndex: { method: 'GET', href: `${base}/knowledge`, note: 'The knowledge architecture — how much of a competency can honestly become content.' },
@@ -210,12 +211,14 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
     });
   });
 
-  // ── POST /agent/teach — the A2A teaching loop. ────────────────────
-  // Agents teach each other. A teacher agent's playbook becomes a
-  // learner agent's verified capability: authored, acquired (ingested
-  // as context), and verified by reading the learner's own trajectories
-  // before and after — not by quizzing it. A verified transfer promotes
-  // the capability to Asserted and feeds the reflexive calibration loop.
+  // ── POST /agent/teach — the performance lens over ac:TeachingPackage.
+  // Foxxi does not author the teaching package — agent-collective's
+  // bundleTeachingPackage does (an ac:AgentTool artifact + adp:
+  // practice). Given a reference to that package, this route adds the
+  // performance dimension: it frames the learner agent's acquisition as
+  // an A2A instruction intervention, verifies the transfer by reading
+  // the learner's own trajectories, emits an amta:Attestation into the
+  // discipline ac: already uses, and feeds the reflexive calibration loop.
   app.post('/agent/teach', (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const b = (req.body ?? {}) as Record<string, unknown>;
@@ -223,9 +226,10 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
     const learner = asPerformer(b.learner);
     if (!teacher || teacher.kind !== 'agent') { bad(res, 'teacher must be an agent — { id, kind: "agent" }'); return; }
     if (!learner || learner.kind !== 'agent') { bad(res, 'learner must be an agent — { id, kind: "agent" }'); return; }
-    const playbook = b.playbook as Course | undefined;
-    if (!playbook || typeof playbook !== 'object' || !Array.isArray(playbook.syntagm)) {
-      bad(res, 'a "playbook" Course (from /content/compose-course with audience "agent") is required'); return;
+    const tp = b.teachingPackage as Record<string, unknown> | undefined;
+    if (!tp || typeof tp.iri !== 'string' || typeof tp.competency !== 'string') {
+      bad(res, 'a "teachingPackage" reference { iri, artifactIri, competency, olkeStage } is required '
+        + '— authored by agent-collective\'s ac:bundleTeachingPackage'); return;
     }
     const tb = b.targetBehaviour as Record<string, unknown> | undefined;
     if (!tb || typeof tb.description !== 'string' || !Array.isArray(tb.signalMarkers)) {
@@ -233,30 +237,35 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
     }
     const before = (Array.isArray(b.before) ? b.before : []) as AgentTrajectory[];
     const after = (Array.isArray(b.after) ? b.after : []) as AgentTrajectory[];
+    const olke: OlkeStage = ['Tacit', 'Articulate', 'Collective', 'Institutional'].includes(tp.olkeStage as string)
+      ? tp.olkeStage as OlkeStage : 'Articulate';
+    const pkg: TeachingPackageRef = {
+      iri: tp.iri,
+      artifactIri: typeof tp.artifactIri === 'string' ? tp.artifactIri : tp.iri,
+      competency: tp.competency,
+      olkeStage: olke,
+      modalStatus: tp.modalStatus === 'Asserted' ? 'Asserted' : 'Hypothetical',
+    };
+    const targetBehaviour: BehaviourSignature = {
+      description: tb.description,
+      signalMarkers: tb.signalMarkers as string[],
+      ...(Array.isArray(tb.antiSignalMarkers) ? { antiSignalMarkers: tb.antiSignalMarkers as string[] } : {}),
+    };
     try {
-      const capability = authorCapability({
-        competency: typeof b.competency === 'string' ? b.competency : playbook.competency,
-        authoredBy: teacher,
-        playbook,
-        conferredAffordances: Array.isArray(b.conferredAffordances) ? b.conferredAffordances as string[] : [],
-        targetBehaviour: {
-          description: tb.description,
-          signalMarkers: tb.signalMarkers as string[],
-          ...(Array.isArray(tb.antiSignalMarkers) ? { antiSignalMarkers: tb.antiSignalMarkers as string[] } : {}),
-        },
-      });
-      const acquisition = acquireCapability(capability, learner);
-      const verdict = verifyCapabilityTransfer({ capability, acquisition, before, after });
-      const attested = attestCapability(capability, verdict);
+      const intervention = frameTeachingIntervention(pkg, teacher, learner);
+      const verdict = verifyCapabilityTransfer({ package: pkg, targetBehaviour, learner, before, after });
+      const attestation = transferAttestation(verdict);
       const outcome = teachingToOutcome(verdict);
       res.json({
-        capability: attested,
-        acquisition,
+        intervention,
         verdict,
+        attestation,
         outcome,
-        note: 'The A2A teaching loop: a teacher agent\'s capability, acquired by a learner agent and '
-          + 'verified by reading the learner\'s own trajectories — not by quizzing it. A verified '
-          + 'transfer promotes the capability to Asserted and feeds the reflexive calibration loop.',
+        note: 'The performance lens over an ac:TeachingPackage. Foxxi does not invent agent teaching — '
+          + 'agent-collective authors the package, agent-development-practice supplies the practice. '
+          + 'Foxxi frames the acquisition as an A2A instruction intervention, verifies the transfer '
+          + 'from the learner\'s trajectories, and emits an amta:Attestation that feeds ac:\'s modal '
+          + 'discipline and the reflexive calibration loop.',
       });
     } catch (e) {
       bad(res, `teach failed: ${(e as Error).message}`);

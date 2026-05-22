@@ -1,155 +1,131 @@
 /**
- * Foxxi A2A teaching — closing the loop for agents.
+ * Foxxi A2A teaching — the performance lens over an `ac:TeachingPackage`.
  *
- * One of Interego's first principles is that agents collaborate: they
- * share context, teach each other, and build capabilities and tools for
- * each other. Foxxi is the performance layer over that — and a
- * performance layer for agents cannot work the way it does for humans.
+ * Foxxi does NOT invent agent-to-agent teaching. The Interego substrate
+ * and two sibling verticals already establish it, and this module
+ * composes them rather than parallelling them:
  *
- * The human closed loop: contextualize a situation → compose a course →
- * a cmi5 package → a human completes it in a browser → xAPI in the LRS →
- * evaluate. An agent does not "complete a course". A capable agent
- * teaches a less capable one by composing a playbook the learner
- * ingests as context — and the only honest verification is to watch the
- * learner agent's real work change. You do not quiz an agent; you read
- * its trajectories.
+ *   · agent-collective (`ac:`) — agents author tools as first-class
+ *     signed descriptors (`code:Commit` + `cg:Affordance`), and teach
+ *     each other by bundling a tool with its practice context into an
+ *     `ac:TeachingPackage`. A package's trust accrues through
+ *     `amta:Attestation`s until `cg:modalStatus` flips to Asserted.
+ *   · agent-development-practice (`adp:`) — the complexity-informed
+ *     practice the package carries: narrative fragments, syntheses,
+ *     constraints, capability-evolution events; probe-sense-respond.
+ *   · the substrate — `cg:Affordance` (tools), `amta:Attestation`
+ *     (trust), `cg:modalStatus` / `cg:supersedes`, the capability
+ *     passport and the registry.
  *
- * This module closes the loop for the A2A directionality:
- *   · authorCapability — a teacher agent composes a Capability: a
- *     playbook (a Course with an agent audience) plus the affordances
- *     ("tools") it confers, and a behaviour signature describing what
- *     the learner's work should look like once it has the capability.
- *   · acquireCapability — a learner agent ingests it. The playbook
- *     fragments are delivered as context descriptors it merges into its
- *     working context (composes emergent-content `forAudience`); the
- *     conferred affordances become callable. The acquisition is recorded
- *     — the seed of a capability passport.
- *   · verifyCapabilityTransfer — the heart. The learner agent's
- *     trajectories before and after acquisition are read (composes
- *     agent-trajectory.ts); the capability is verified iff the taught
- *     behaviour now genuinely appears in the learner's real work.
- *   · teachingToOutcome — the verdict flows into the reflexive
- *     calibration loop (performance-calibration.ts): A2A teaching of a
- *     capability is instruction for a Knowable knowledge/skill cause, so
- *     its outcomes calibrate the system's recommendations alongside
- *     human course completions.
+ * What is taught, agent to agent, is an `ac:TeachingPackage`. This
+ * module adds exactly ONE thing on top — the performance / L&D
+ * dimension, which the foundation does not carry:
  *
- * A Capability is a typed artifact — discoverable and federated, so an
- * agent in one pod can acquire a capability an agent in another pod
- * built. Agents build capabilities, and tools, for each other; Foxxi
- * makes the building measurable.
+ *   · frame the acquisition of a teaching package as a performance
+ *     intervention — the A2A directionality, a Knowable knowledge/skill
+ *     cause met with instruction;
+ *   · verify the transfer by reading the LEARNER'S OWN TRAJECTORIES —
+ *     the foundation transfers practice but does not check it against
+ *     the learner's logged work. A verified transfer is emitted as an
+ *     `amta:Attestation` (axis: correctness) — a new *kind* of evidence,
+ *     observed behaviour rather than execution count, that flows into
+ *     the SAME modal discipline `ac:` already uses. Foxxi runs no
+ *     parallel modal flip;
+ *   · feed the reflexive calibration loop (`performance-calibration.ts`).
  *
- * Layer: L3 vertical. Composes the substrate; no L1/L2/L3 ontology
- * change. Domain terms are `foxxi:`-namespaced (see foxxi-vocab.ts).
+ * No competing vocabulary, no parallel teaching machinery. The unit is
+ * `ac:TeachingPackage`; Foxxi decorates it with measurement.
+ *
+ * Layer: L3 vertical. Composes the substrate + the `ac:` / `adp:`
+ * conventions; no L1/L2/L3 ontology change. Foxxi-added terms are
+ * `foxxi:`-namespaced (see foxxi-vocab.ts).
  */
 
-import { personalize, forAudience, type Course, type Performer } from './emergent-content.js';
+import type { Performer } from './emergent-content.js';
 import type { AgentTrajectory } from './agent-trajectory.js';
 import type { OutcomeRecord } from './performance-calibration.js';
 
-// ── The behaviour signature ─────────────────────────────────────────
+// ── The unit taught: a reference to an ac:TeachingPackage ────────────
+
+export type OlkeStage = 'Tacit' | 'Articulate' | 'Collective' | 'Institutional';
 
 /**
- * What a capability is meant to instil — the signature the learner
- * agent's trajectories should exhibit once it genuinely has the
- * capability. This is how transfer is verified without quizzing: the
- * learner's real work either shows the behaviour, or it does not.
+ * A reference to an agent-collective `ac:TeachingPackage` — the unit one
+ * agent teaches another. agent-collective's `bundleTeachingPackage`
+ * authors it (an `ac:AgentTool` artifact + `adp:` practice fragments);
+ * Foxxi references it by IRI and never redefines its content.
  */
-export interface BehaviourSignature {
-  description: string;
-  /** Verbs / object-name markers in a trajectory step that indicate the
-   *  capability is being exercised. Matched case-insensitively. */
-  signalMarkers: string[];
-  /** A trajectory step whose verb or object matches one of these is
-   *  evidence the OLD (uncorrected) behaviour is still happening. */
-  antiSignalMarkers?: string[];
-}
-
-// ── The capability ──────────────────────────────────────────────────
-
-export interface AgentCapability {
-  id: string;
+export interface TeachingPackageRef {
+  /** The `ac:TeachingPackage` IRI. */
+  iri: string;
+  /** The `ac:AgentTool` artifact at its core — a `cg:Affordance`-bearing tool. */
+  artifactIri: string;
+  /** The competency the package transfers. */
   competency: string;
-  /** The teacher agent that authored it. */
-  authoredBy: Performer;
-  /** The playbook — a Course with an agent audience. */
-  playbook: Course;
-  /** The tools the capability confers — affordance ids the learner
-   *  agent gains the right to invoke once it acquires the capability. */
-  conferredAffordances: string[];
-  /** What the learner's work should look like once it has this. */
-  targetBehaviour: BehaviourSignature;
-  /** A freshly authored capability is Hypothetical — it has not yet been
-   *  shown to transfer. It is promoted to Asserted once a verified
-   *  transfer is on record. */
+  /** OLKE maturity stage of the practice it carries. */
+  olkeStage: OlkeStage;
+  /** `cg:modalStatus` — Hypothetical until attested transfers promote it. */
   modalStatus: 'Hypothetical' | 'Asserted';
 }
 
-export interface AuthorCapabilityInput {
-  competency: string;
-  /** The teacher — must be an agent (A2A). */
-  authoredBy: Performer;
-  /** The playbook the teacher composed (a Course, agent audience). */
-  playbook: Course;
-  targetBehaviour: BehaviourSignature;
-  conferredAffordances?: string[];
+/**
+ * The trajectory signature the transfer is verified against. This IS the
+ * Foxxi addition: `ac:` / `adp:` transfer practice, but neither checks
+ * the transfer against the learner's logged work. The signature names
+ * what that work should look like once the capability is held.
+ */
+export interface BehaviourSignature {
+  description: string;
+  /** Verbs / object-name markers indicating the capability is exercised. */
+  signalMarkers: string[];
+  /** Markers indicating the OLD (uncorrected) behaviour persists. */
+  antiSignalMarkers?: string[];
 }
 
-/** A teacher agent authors a capability for other agents to acquire. */
-export function authorCapability(input: AuthorCapabilityInput): AgentCapability {
-  if (input.authoredBy.kind !== 'agent') {
-    throw new Error('a Capability is authored agent-to-agent — authoredBy must be an agent');
-  }
-  const slug = input.competency.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48);
-  return {
-    id: `urn:foxxi:capability:${slug || 'capability'}`,
-    competency: input.competency,
-    authoredBy: input.authoredBy,
-    playbook: input.playbook,
-    conferredAffordances: input.conferredAffordances ?? [],
-    targetBehaviour: input.targetBehaviour,
-    modalStatus: 'Hypothetical',
-  };
-}
+// ── Foxxi's framing: acquisition as a performance intervention ──────
 
-// ── Acquisition ─────────────────────────────────────────────────────
-
-export interface AcquisitionRecord {
-  capabilityId: string;
+export interface TeachingIntervention {
+  teachingPackageIri: string;
   competency: string;
-  /** The learner agent. */
+  teacher: Performer;
   learner: Performer;
-  acquiredAt: string;
-  /** The playbook fragments delivered as context descriptors the learner
-   *  merges into its working context (not slides — an agent ingests
-   *  context). */
-  contextDescriptors: number;
-  /** The affordances the learner agent may now invoke. */
-  grantedAffordances: string[];
-  /** The directionality — always A2A for a capability. */
-  direction: string;
+  /** The performance reading of an agent acquiring a documented
+   *  capability: a Knowable knowledge/skill cause met with instruction,
+   *  authored A2A. (A team's *emergent* behaviour is a different,
+   *  Emergent-regime matter — handled by the dispositional path, not
+   *  here. This frame fits only a codifiable capability.) */
+  regime: 'Knowable';
+  method: 'gap-analysis';
+  intervention: 'instruction';
+  direction: 'A2A';
+  note: string;
 }
 
 /**
- * A learner agent acquires a capability. The playbook is resolved for
- * the learner (the composition algebra) and rendered for an agent
- * audience — each fragment a context descriptor it ingests. The
- * conferred affordances become callable.
+ * Frame a learner agent's acquisition of a teaching package as a
+ * performance intervention. This is Foxxi's lens — it does not author or
+ * deliver the package (that is `ac:bundleTeachingPackage` and the
+ * substrate's context-merge); it reads the acquisition in performance
+ * terms so the outcome can be verified and calibrated.
  */
-export function acquireCapability(capability: AgentCapability, learner: Performer): AcquisitionRecord {
-  if (learner.kind !== 'agent') {
-    throw new Error('a Capability is acquired agent-to-agent — the learner must be an agent');
+export function frameTeachingIntervention(
+  pkg: TeachingPackageRef, teacher: Performer, learner: Performer,
+): TeachingIntervention {
+  if (teacher.kind !== 'agent' || learner.kind !== 'agent') {
+    throw new Error('A2A teaching — both teacher and learner must be agents');
   }
-  const resolved = personalize(capability.playbook, learner, {});
-  const rendering = forAudience(resolved, capability.authoredBy);
   return {
-    capabilityId: capability.id,
-    competency: capability.competency,
+    teachingPackageIri: pkg.iri,
+    competency: pkg.competency,
+    teacher,
     learner,
-    acquiredAt: new Date().toISOString(),
-    contextDescriptors: rendering.agentDelivery?.contextDescriptors ?? 0,
-    grantedAffordances: [...capability.conferredAffordances],
-    direction: rendering.direction,
+    regime: 'Knowable',
+    method: 'gap-analysis',
+    intervention: 'instruction',
+    direction: 'A2A',
+    note: 'An agent acquiring a documented ac:TeachingPackage is, in performance terms, instruction '
+      + 'for a Knowable knowledge/skill cause — the A2A directionality. Transfer is verified from the '
+      + 'learner\'s trajectories, not assumed from acquisition.',
   };
 }
 
@@ -158,18 +134,14 @@ export function acquireCapability(capability: AgentCapability, learner: Performe
 interface TrajectorySummary {
   trajectories: number;
   steps: number;
-  /** Steps exercising the taught behaviour, as a share of all steps. */
   signalShare: number;
-  /** Steps still showing the old behaviour, as a share of all steps. */
   antiSignalShare: number;
 }
 
 function summarise(trajectories: readonly AgentTrajectory[], sig: BehaviourSignature): TrajectorySummary {
   const markers = sig.signalMarkers.map(m => m.toLowerCase());
   const anti = (sig.antiSignalMarkers ?? []).map(m => m.toLowerCase());
-  let steps = 0;
-  let signal = 0;
-  let antiSignal = 0;
+  let steps = 0, signal = 0, antiSignal = 0;
   for (const t of trajectories) {
     for (const s of t.steps) {
       steps++;
@@ -187,41 +159,34 @@ function summarise(trajectories: readonly AgentTrajectory[], sig: BehaviourSigna
 }
 
 export interface TransferVerdict {
-  capabilityId: string;
+  teachingPackageIri: string;
   learner: string;
   /** Did the taught capability genuinely appear in the learner's work? */
   transferred: boolean;
   before: TrajectorySummary;
   after: TrajectorySummary;
-  /** A modal status for the transfer claim: Asserted when the learner's
-   *  own trajectories carry the evidence; Hypothetical when there is too
-   *  little post-acquisition work to read. */
+  /** `cg:modalStatus` for the transfer claim — Asserted when the
+   *  learner's trajectories carry enough evidence to read. */
   modalStatus: 'Hypothetical' | 'Asserted';
   evidence: string;
 }
 
 /**
- * Verify that a capability transferred — by reading the learner agent's
- * trajectories before and after it acquired the capability. The learner
- * is never quizzed: the capability is verified iff the taught behaviour
- * now genuinely shows up in its real work, and the old behaviour has
- * receded.
+ * Verify that a teaching package transferred — by reading the learner
+ * agent's trajectories before and after acquisition. The learner is
+ * never quizzed: transfer holds iff the taught behaviour now genuinely
+ * shows up in its real work, and the old behaviour has receded.
  */
 export function verifyCapabilityTransfer(input: {
-  capability: AgentCapability;
-  acquisition: AcquisitionRecord;
+  package: TeachingPackageRef;
+  targetBehaviour: BehaviourSignature;
+  learner: Performer;
   before: readonly AgentTrajectory[];
   after: readonly AgentTrajectory[];
 }): TransferVerdict {
-  const sig = input.capability.targetBehaviour;
-  const before = summarise(input.before, sig);
-  const after = summarise(input.after, sig);
-
-  // Too little post-acquisition work to read — the claim cannot be Asserted.
+  const before = summarise(input.before, input.targetBehaviour);
+  const after = summarise(input.after, input.targetBehaviour);
   const enoughEvidence = after.steps >= 4;
-
-  // The capability transferred iff the taught behaviour is now materially
-  // present AND it rose from where it was AND the old behaviour receded.
   const rose = after.signalShare >= 0.5 && after.signalShare > before.signalShare + 0.2;
   const oldReceded = after.antiSignalShare <= before.antiSignalShare;
   const transferred = enoughEvidence && rose && oldReceded;
@@ -234,12 +199,12 @@ export function verifyCapabilityTransfer(input: {
       ? `The taught behaviour rose from ${pct(before.signalShare)} to ${pct(after.signalShare)} of the `
         + `learner's trajectory steps, and the old behaviour receded — the capability transferred.`
       : `The taught behaviour is at ${pct(after.signalShare)} of the learner's steps (from `
-        + `${pct(before.signalShare)}) — not a clear transfer. The playbook was ingested but the work `
+        + `${pct(before.signalShare)}) — not a clear transfer. The package was acquired but the work `
         + `did not change; re-contextualize before re-teaching.`;
 
   return {
-    capabilityId: input.capability.id,
-    learner: input.acquisition.learner.id,
+    teachingPackageIri: input.package.iri,
+    learner: input.learner.id,
     transferred,
     before,
     after,
@@ -248,14 +213,53 @@ export function verifyCapabilityTransfer(input: {
   };
 }
 
+// ── Feeding the foundation: an amta:Attestation ─────────────────────
+
+/**
+ * An `amta:Attestation` emitted from a verified transfer. Foxxi does not
+ * run its own modal flip — a verified transfer contributes an
+ * attestation, of a *new kind* (observed behaviour in the learner's
+ * trajectories, not an execution count), that flows into the SAME
+ * attestation discipline `ac:` already uses to promote a teaching
+ * package's `cg:modalStatus` to Asserted.
+ */
+export interface TransferAttestation {
+  /** `amta:attestsTo` — the teaching package this attests to. */
+  attestsTo: string;
+  /** `amta:axis` — a verified transfer attests to the package's correctness. */
+  axis: 'correctness';
+  /** `amta:rating` — 0..1, the share of the learner's work now exercising it. */
+  rating: number;
+  /** The observed-behaviour evidence this attestation rests on. */
+  fromObservation: string;
+  /** `prov:wasAttributedTo` — the learner whose trajectories are the evidence. */
+  attributedTo: string;
+  recordedAt: string;
+  /** Only an Asserted transfer yields an attestation worth contributing. */
+  contributed: boolean;
+}
+
+/** Emit an `amta:Attestation` from a transfer verdict, for `ac:`'s modal discipline. */
+export function transferAttestation(verdict: TransferVerdict): TransferAttestation {
+  return {
+    attestsTo: verdict.teachingPackageIri,
+    axis: 'correctness',
+    rating: verdict.after.signalShare,
+    fromObservation: verdict.evidence,
+    attributedTo: verdict.learner,
+    recordedAt: new Date().toISOString(),
+    contributed: verdict.transferred && verdict.modalStatus === 'Asserted',
+  };
+}
+
 // ── Feeding the reflexive calibration loop ──────────────────────────
 
 /**
- * Distil an A2A teaching outcome into a calibration OutcomeRecord. An
- * agent lacking a documented capability is a genuine Knowable-regime
- * knowledge/skill cause; a playbook is instruction, authored A2A. So
- * teaching outcomes calibrate the system's recommendations alongside
- * human course completions — the reflexive loop spans humans and agents.
+ * Distil an A2A teaching outcome into a calibration `OutcomeRecord`. An
+ * agent lacking a documented capability is a Knowable knowledge/skill
+ * cause; an `ac:TeachingPackage` acquired A2A is instruction. So teaching
+ * outcomes calibrate the system's recommendations alongside human course
+ * completions — the reflexive loop spans humans and agents.
  */
 export function teachingToOutcome(verdict: TransferVerdict, source?: string): OutcomeRecord | null {
   if (verdict.modalStatus !== 'Asserted') return null; // not yet evidence
@@ -267,12 +271,4 @@ export function teachingToOutcome(verdict: TransferVerdict, source?: string): Ou
     verdict: verdict.transferred ? 'closed' : 'no-change',
     ...(source ? { source } : {}),
   };
-}
-
-/** Promote a capability to Asserted once a verified transfer is on record. */
-export function attestCapability(capability: AgentCapability, verdict: TransferVerdict): AgentCapability {
-  if (verdict.transferred && verdict.modalStatus === 'Asserted' && capability.modalStatus === 'Hypothetical') {
-    return { ...capability, modalStatus: 'Asserted' };
-  }
-  return capability;
 }

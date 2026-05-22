@@ -35,46 +35,46 @@ The rest of this document takes each in turn.
 
 ## 2. Teaching — the A2A loop (built)
 
-The human loop: contextualize a situation → compose a course → a cmi5
-package → a human completes it in a browser → xAPI in the LRS →
-evaluate. **You do not run that loop for an agent.** An agent is not
-quizzed and does not sit a course; a capable agent teaches a less
-capable one by composing a playbook the learner ingests *as context*,
-and the only honest verification is to watch the learner's real work
-change.
+**Foxxi does not invent agent teaching.** `agent-collective` (`ac:`)
+already establishes it: a teacher agent bundles a tool with its practice
+context into an **`ac:TeachingPackage`**, whose trust accrues through
+`amta:Attestation`s until `cg:modalStatus` flips to Asserted;
+`agent-development-practice` (`adp:`) supplies the practice the package
+carries. The unit one agent teaches another **is an `ac:TeachingPackage`**.
 
-`src/agent-teaching.ts` closes the loop for the **A2A directionality**:
+`src/agent-teaching.ts` composes that foundation and adds exactly one
+thing — the **performance / L&D lens**, which the foundation does not
+carry. Given a reference to an `ac:TeachingPackage`:
 
-1. **`authorCapability`** — a teacher agent composes a `Capability`: a
-   playbook (a `Course` with an agent audience), the affordances it
-   confers, and a **behaviour signature** — what the learner's work
-   should look like once it genuinely has the capability. A freshly
-   authored capability is `Hypothetical`: it has not yet been shown to
-   transfer.
-2. **`acquireCapability`** — a learner agent ingests it. The playbook is
-   resolved for the learner (the composition algebra) and rendered for
-   an agent audience: each fragment a context descriptor merged into the
-   learner's working context — not slides. The conferred affordances
-   become callable.
-3. **`verifyCapabilityTransfer`** — the heart. The learner agent's
-   trajectories *before* and *after* acquisition are read; the
-   capability is verified **iff the taught behaviour now genuinely
-   appears in the learner's real work** and the old behaviour has
-   receded. The transfer claim carries a modal status: `Asserted` when
-   the learner's own trajectories carry the evidence, `Hypothetical`
-   when there is too little post-acquisition work to read.
+1. **`frameTeachingIntervention`** — reads the learner agent's
+   acquisition of the package in performance terms: a Knowable
+   knowledge/skill cause met with **instruction**, the **A2A**
+   directionality. (A team's *emergent* behaviour is a different,
+   Emergent-regime matter — §4; this frame fits only a codifiable
+   capability.) Foxxi does not author or deliver the package — that is
+   `ac:bundleTeachingPackage` and the substrate's context-merge.
+2. **`verifyCapabilityTransfer`** — the genuine addition. The learner
+   agent's trajectories *before* and *after* acquisition are read; the
+   transfer holds **iff the taught behaviour now genuinely appears in
+   the learner's real work** and the old behaviour has receded. The
+   claim carries a `cg:modalStatus` — `Asserted` only when the learner's
+   own trajectories carry enough evidence to read.
+3. **`transferAttestation`** — a verified transfer is emitted as an
+   `amta:Attestation` (axis: correctness). This is a new *kind* of
+   evidence — observed behaviour in the learner's trajectories, not an
+   execution count — that flows into the **same** attestation discipline
+   `ac:` already uses to promote a package's `cg:modalStatus`. Foxxi
+   runs no parallel modal flip.
 4. **`teachingToOutcome`** — a verified transfer distils into a
-   calibration `OutcomeRecord`. An agent lacking a documented capability
-   *is* a Knowable-regime knowledge/skill cause, and a playbook *is*
-   instruction (authored A2A) — so agent-teaching outcomes calibrate the
-   system's recommendations alongside human course completions. The
+   calibration `OutcomeRecord`: an agent lacking a documented capability
+   *is* a Knowable knowledge/skill cause, an `ac:TeachingPackage`
+   acquired A2A *is* instruction — so agent-teaching outcomes calibrate
+   the system's recommendations alongside human course completions. The
    reflexive loop ([`PERFORMANCE-ARCHITECTURE.md`](PERFORMANCE-ARCHITECTURE.md)
    §9) spans humans and agents.
-5. **`attestCapability`** — a capability with a verified transfer is
-   promoted `Hypothetical → Asserted`.
 
-Live surface: `POST /agent/teach` runs the whole loop. Verified by
-`tools/agent-teaching-example.mjs` (16/16).
+Live surface: `POST /agent/teach` — the performance lens over a teaching
+package reference. Verified by `tools/agent-teaching-example.mjs` (14/14).
 
 The principle worth stating plainly: **a capability is not verified by
 the teacher's claim or the learner's report — it is verified by the
@@ -138,41 +138,49 @@ to a team rather than one performer.
 
 ## 5. How it composes the substrate
 
-| Agent-collaboration concept | What it composes |
+| Agent-collaboration concept | What it composes — and whose layer it is |
 |---|---|
-| a Capability's playbook | a `Course` with an agent audience — `composeCourse` + `forAudience` |
-| acquiring a capability | the composition algebra — context descriptors merged into working context |
+| the unit one agent teaches another | `ac:TeachingPackage` — **agent-collective**, not Foxxi |
 | a tool an agent builds | a `cg:Affordance` — core `src/skills/` (SKILL.md ↔ affordance) |
-| verifying transfer | the learner's own `AgentTrajectory` record — read, not quizzed |
-| a capability's modal status | `Hypothetical` until a verified transfer promotes it to `Asserted` |
+| the practice a package carries | `adp:` narrative fragments / synthesis / constraints — **agent-development-practice** |
+| a package's trust + modal flip | `amta:Attestation` accumulating until `cg:modalStatus` flips — substrate + `ac:` |
 | what a learner agent holds | a capability passport — core `src/passport/` |
 | publishing a capability for others | the public agent registry — core `src/registry/` |
-| teaching outcomes | the reflexive calibration loop — `performance-calibration.ts` |
+| **framing acquisition as a performance intervention** | **Foxxi** — the A2A directionality, a Knowable instruction intervention |
+| **verifying transfer from the learner's work** | **Foxxi** — reads the learner's own `AgentTrajectory` record, emits an `amta:Attestation` |
+| **calibrating teaching outcomes** | **Foxxi** — the reflexive calibration loop, `performance-calibration.ts` |
 | a team sharing context | `composeTrajectories` + `assessDisposition` — the Emergent-regime path |
+
+The first six rows are foundation Foxxi *composes*; the three bold rows
+are the dimension Foxxi *adds*. Nothing in the first six is re-built at
+the Foxxi layer.
 
 No L1/L2/L3 ontology is extended; the domain terms are
 `foxxi:`-namespaced and dereferenceable at `/ns/foxxi`.
 
 ## 6. Built now, and designed for later
 
-**Built and verified.** The A2A teaching loop — `agent-teaching.ts`,
-the `POST /agent/teach` route, `tools/agent-teaching-example.mjs`
-(16/16): a teacher agent authors a capability, a learner acquires it,
-transfer is verified from the learner's trajectories, and the verdict
-feeds the reflexive calibration loop.
+**Built and verified.** The performance lens over an `ac:TeachingPackage`
+— `agent-teaching.ts`, the `POST /agent/teach` route,
+`tools/agent-teaching-example.mjs` (14/14): given a teaching-package
+reference, Foxxi frames the learner agent's acquisition as an A2A
+instruction intervention, verifies the transfer from the learner's
+trajectories, emits an `amta:Attestation`, and feeds the reflexive
+calibration loop. Foxxi adds the measurement; `agent-collective` and
+`agent-development-practice` remain the teaching foundation.
 
 **Designed, for later.** The threads this document lays out but does not
 yet fully wire:
 
-- **Capability federation** — publishing a `foxxi:AgentCapability` as a
-  pod descriptor and discovering peers' capabilities across
-  `FOXXI_FEDERATION_PODS`, the same pattern the Context Companion uses.
-- **Capability passports** — writing a verified acquisition onto the
-  learner agent's passport (core `src/passport/`) and reading a passport
-  to know what a team already holds before teaching.
+- **End-to-end with `agent-collective`** — composing `ac:bundleTeachingPackage`
+  directly so a package is authored, taught, *and* performance-verified
+  in one federated flow, and discovering teaching packages across
+  `FOXXI_FEDERATION_PODS`.
+- **Capability passports** — writing a verified-transfer `amta:Attestation`
+  onto the learner agent's passport (core `src/passport/`) and reading a
+  passport to know what a team already holds before teaching.
 - **Tool authoring in the flow** — an agent composing a SKILL.md → a
-  `cg:Affordance`, conferred through a Capability, with the same A2A
-  authoring ergonomics as a playbook.
+  `cg:Affordance` (core `src/skills/`), bundled into a teaching package.
 - **Live teaching calibration** — accumulating `/agent/teach` outcomes
   into the live calibration profile, and segmenting calibration by
   directionality so A2A transfer rates are distinguishable from H2H.
