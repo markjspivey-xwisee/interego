@@ -4,8 +4,9 @@ import { TryNow } from './pages/TryNow.js';
 import { About } from './pages/About.js';
 import { Verify } from './pages/Verify.js';
 import { Dpia } from './pages/Dpia.js';
+import { Demos } from './pages/Demos.js';
 
-export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia';
+export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos';
 
 export function App() {
   const [route, setRoute] = useState<Route>(initialRoute());
@@ -20,6 +21,7 @@ export function App() {
     else if (r === 'about') { url.pathname = '/about'; url.searchParams.delete('role'); }
     else if (r === 'verify') { url.pathname = '/verify'; url.searchParams.delete('role'); }
     else if (r === 'dpia') { url.pathname = '/dpia'; url.searchParams.delete('role'); }
+    else if (r === 'demos') { url.pathname = '/demos'; url.searchParams.delete('role'); }
     window.history.pushState({}, '', url.toString());
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -42,6 +44,7 @@ export function App() {
         {route === 'about' && <About onTry={role => navigate('try', role)} onHome={() => navigate('landing')} />}
         {route === 'verify' && <Verify onHome={() => navigate('landing')} />}
         {route === 'dpia' && <Dpia onHome={() => navigate('landing')} />}
+        {route === 'demos' && <Demos onHome={() => navigate('landing')} />}
       </main>
       <SiteFooter />
     </div>
@@ -54,6 +57,7 @@ function initialRoute(): Route {
   if (p.startsWith('/about')) return 'about';
   if (p.startsWith('/verify')) return 'verify';
   if (p.startsWith('/dpia')) return 'dpia';
+  if (p.startsWith('/demos')) return 'demos';
   return 'landing';
 }
 
@@ -86,6 +90,7 @@ function TopNav({ active, onNavigate }: { active: Route; onNavigate: (r: Route, 
       <nav style={{ marginLeft: 'auto', display: 'flex', gap: 18, alignItems: 'center' }}>
         <NavLink active={active === 'landing'} onClick={() => onNavigate('landing')}>What</NavLink>
         <NavLink active={active === 'about'} onClick={() => onNavigate('about')}>How</NavLink>
+        <NavLink active={active === 'demos'} onClick={() => onNavigate('demos')}>Demos</NavLink>
         <NavLink active={active === 'verify'} onClick={() => onNavigate('verify')}>Verify</NavLink>
         <NavLink active={active === 'dpia'} onClick={() => onNavigate('dpia')}>DPIA</NavLink>
         <button onClick={() => onNavigate('try', 'learner')} style={{

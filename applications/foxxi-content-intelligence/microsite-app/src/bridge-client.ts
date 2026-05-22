@@ -73,6 +73,27 @@ export interface BridgeCall {
 
 const tokenCache = new Map<Identity, string>();
 
+/**
+ * Call a REST route on the bridge — the content / performance surfaces
+ * (`/content/ask`, `/content/deliver`, `/performance/plan`, …), as
+ * opposed to the JSON-RPC `/mcp` tool surface `callBridge` uses.
+ * Optionally carries a demo identity's wallet-signed bearer token.
+ */
+export async function bridgeRest(
+  path: string, body: unknown, identity?: Identity,
+): Promise<{ status: number; json: Record<string, unknown> }> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (identity) headers['Authorization'] = `Bearer ${await getToken(identity)}`;
+  try {
+    const r = await fetch(`${BRIDGE_URL}${path}`, {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+    return { status: r.status, json: await r.json().catch(() => ({})) as Record<string, unknown> };
+  } catch (err) {
+    return { status: 0, json: { error: (err as Error).message } };
+  }
+}
+
 async function getToken(identity: Identity): Promise<string> {
   const cached = tokenCache.get(identity);
   if (cached) return cached;
