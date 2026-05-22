@@ -193,12 +193,16 @@ const peerV = await ask('How should I triage an incident?', { learner: LEARNER, 
 check('the same question, vertical-scoped, does NOT reach the peer pod',
   peerV.json.grounded === false, peerV.json);
 
-// ── 9. DELIVER — channel transport, the Interego-native publish ─────
-h('9. DELIVER — a document delivery is published to the pod as a descriptor');
-const deliver = await post('/content/deliver', { jobAidId, channel: 'document', learner: LEARNER });
+// ── 9. DELIVER — channel transport + content form ───────────────────
+h('9. DELIVER — a job aid as interactive hypermedia, published to the pod');
+const deliver = await post('/content/deliver', { jobAidId, channel: 'document', form: 'interactive', learner: LEARNER });
 const transport = deliver.json.transport ?? {};
-console.log(`   transport: mode=${transport.mode} sent=${transport.sent}`);
+const rendering = deliver.json.rendering ?? {};
+console.log(`   form: ${rendering.form} (${rendering.mediaType}) · transport: ${transport.mode} sent=${transport.sent}`);
 console.log(`   artifact: ${transport.artifactUrl}`);
+check('the delivery rendered the content as interactive hypermedia (dynamic HTML)',
+  rendering.form === 'interactive' && rendering.mediaType === 'text/html'
+  && typeof rendering.body === 'string' && rendering.body.includes('<details'), rendering.form);
 check('the document delivery used the Interego-native pod-descriptor transport',
   transport.mode === 'pod-descriptor' && transport.sent === true, transport);
 check('the delivery produced a published descriptor artifact', typeof transport.artifactUrl === 'string', transport);

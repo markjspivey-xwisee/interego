@@ -100,6 +100,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'recipient', kind: 'Extension', label: 'recipient', definition: 'The recipient address/handle a generated artifact was delivered to.' },
   { name: 'deliveredBody', kind: 'Extension', label: 'deliveredBody', definition: 'Base64-encoded body text of a delivered-content artifact published to the pod.' },
   { name: 'deliveredVia', kind: 'Extension', label: 'deliveredVia', definition: 'How a delivery left the bridge — a pod-descriptor publish, a channel webhook, or none (recorded only).' },
+  { name: 'contentForm', kind: 'Extension', label: 'contentForm', definition: 'The text form a unit of content was rendered in — plain, markdown, html, or interactive (dynamic hypermedia).' },
   { name: 'actorKind', kind: 'Extension', label: 'actorKind', definition: 'Whether the actor is a `human` or an `agent`.' },
   { name: 'projectedFromTrajectoryStep', kind: 'Extension', label: 'projectedFromTrajectoryStep', definition: 'IRI of the agentic-native trajectory step an xAPI statement was projected from.' },
   { name: 'bundleJson', kind: 'Extension', label: 'bundleJson', definition: 'Base64-encoded JSON payload (e.g. a signed VC) embedded in a descriptor graph.' },

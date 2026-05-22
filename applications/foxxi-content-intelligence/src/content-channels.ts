@@ -6,14 +6,24 @@
  * onto an LMS. But generated content is text, and most performance
  * support and micro-instruction does not belong in an LMS at all — it
  * belongs in the flow of work: a chat message, an email, an SMS, or a
- * document. This module renders a unit of content for each channel.
+ * document.
+ *
+ * A channel does not fix the *form* of the text. The same content unit
+ * can travel as plain text, markdown, static HTML hypertext, or a
+ * self-contained interactive hypermedia artifact — whatever the
+ * situation calls for. `content-forms.ts` renders the form; this module
+ * picks the form that fits the channel (its ceiling, the content kind,
+ * the audience) and applies the channel's envelope (an SMS length
+ * bound, an email subject line). A caller may also name a form.
  *
  * Every channel delivery is still instrumentable: content-delivery.ts
- * emits an xAPI statement for each delivery, so a job aid sent to a chat
- * channel is logged in the LRS exactly as a launched lesson would be.
+ * emits an xAPI statement for each delivery, and — for the document
+ * channel — content-transport.ts publishes it to the pod.
  *
  * Layer: L3 vertical. Pure rendering; no L1/L2/L3 ontology change.
  */
+
+import { renderInForm, chooseForm, type ContentForm } from './content-forms.js';
 
 export type DeliveryChannel = 'document' | 'email' | 'chat' | 'sms';
 
@@ -32,6 +42,10 @@ export interface ContentUnit {
 
 export interface ChannelRendering {
   channel: DeliveryChannel;
+  /** The text form the body was rendered in. */
+  form: ContentForm;
+  /** IANA media type of the body. */
+  mediaType: string;
   /** Email only — the subject line. */
   subject?: string;
   /** The channel-formatted body text. */
@@ -43,77 +57,60 @@ export interface ChannelRendering {
   note: string;
 }
 
+/** Options for rendering a unit to a channel. */
+export interface RenderForChannelOptions {
+  /** Force a text form (otherwise the form is chosen for the situation). */
+  form?: ContentForm;
+  /** The audience — an agent gets structured markdown, not hypermedia. */
+  audience?: 'human' | 'agent';
+}
+
 const SMS_LIMIT = 320; // two concatenated SMS segments — a practical bound
 
-/** Render a content unit for a delivery channel. */
-export function renderForChannel(unit: ContentUnit, channel: DeliveryChannel): ChannelRendering {
-  switch (channel) {
-    case 'document': return renderDocument(unit);
-    case 'email': return renderEmail(unit);
-    case 'chat': return renderChat(unit);
-    case 'sms': return renderSms(unit);
+const FORM_NOTE: Record<ContentForm, string> = {
+  plain: 'plain text — no formatting; fits length-bounded channels.',
+  markdown: 'markdown — portable structured text; renders in chat, docs, wikis.',
+  html: 'static HTML hypertext — a styled page with working links.',
+  interactive: 'an interactive HTML artifact — collapsible sections + an inline '
+    + 'self-check for assessment items; self-contained, opens in any browser.',
+};
+
+/**
+ * Render a content unit for a delivery channel. The form is chosen for
+ * the situation — or taken from `opts.form` — and the channel's envelope
+ * (SMS truncation, email subject) is applied.
+ */
+export function renderForChannel(
+  unit: ContentUnit, channel: DeliveryChannel, opts: RenderForChannelOptions = {},
+): ChannelRendering {
+  // The SMS channel is a hard plain-text, length-bounded ceiling.
+  const form: ContentForm = channel === 'sms'
+    ? 'plain'
+    : opts.form ?? chooseForm({ channel, kind: unit.kind, audience: opts.audience });
+  const rendered = renderInForm(unit, form);
+
+  let body = rendered.body;
+  let truncated = false;
+  if (channel === 'sms' && body.length > SMS_LIMIT) {
+    const tail = unit.link ? ` ${unit.link}` : '';
+    body = body.slice(0, SMS_LIMIT - tail.length - 1).trimEnd() + '…' + tail;
+    truncated = true;
   }
+
+  return {
+    channel,
+    form: rendered.form,
+    mediaType: rendered.mediaType,
+    ...(channel === 'email' ? { subject: unit.title } : {}),
+    body,
+    length: body.length,
+    truncated,
+    note: `${channel} channel · ${FORM_NOTE[rendered.form]}`
+      + (truncated ? ' (truncated to fit; the link carries the full content)' : ''),
+  };
 }
 
 /** Render the unit for every channel at once. */
-export function renderAllChannels(unit: ContentUnit): ChannelRendering[] {
-  return DELIVERY_CHANNELS.map(c => renderForChannel(unit, c));
-}
-
-function renderDocument(u: ContentUnit): ChannelRendering {
-  const lines: string[] = [`# ${u.title}`, ''];
-  if (u.competency) lines.push(`*Competency: ${u.competency}*`, '');
-  for (const b of u.blocks) {
-    if (b.label) lines.push(`## ${b.label}`, '');
-    lines.push(b.text, '');
-  }
-  if (u.link) lines.push(`---`, `Full version: ${u.link}`);
-  const body = lines.join('\n').trim() + '\n';
-  return { channel: 'document', body, length: body.length, truncated: false,
-    note: 'Markdown document — exportable to a doc, a wiki page, or a knowledge base.' };
-}
-
-function renderEmail(u: ContentUnit): ChannelRendering {
-  const lines: string[] = [
-    `Here is the ${u.kind.replace('-', ' ')} you need${u.competency ? ` for "${u.competency}"` : ''}:`,
-    '',
-  ];
-  for (const b of u.blocks) {
-    if (b.label) lines.push(`${b.label}:`);
-    lines.push(b.text, '');
-  }
-  if (u.link) lines.push(`Open the full version: ${u.link}`, '');
-  lines.push('— Foxxi');
-  const body = lines.join('\n');
-  return { channel: 'email', subject: u.title, body, length: body.length, truncated: false,
-    note: 'Plain-text email — a subject line plus the body; send via any mail transport.' };
-}
-
-function renderChat(u: ContentUnit): ChannelRendering {
-  const lines: string[] = [`*${u.title}*`];
-  if (u.competency) lines.push(`_${u.competency}_`);
-  lines.push('');
-  for (const b of u.blocks) {
-    lines.push(b.label ? `• *${b.label}* — ${b.text}` : `• ${b.text}`);
-  }
-  if (u.link) lines.push('', `→ ${u.link}`);
-  const body = lines.join('\n');
-  return { channel: 'chat', body, length: body.length, truncated: false,
-    note: 'A chat message (lightweight markdown) — post to a Slack / Teams / chat channel.' };
-}
-
-function renderSms(u: ContentUnit): ChannelRendering {
-  const first = u.blocks[0]?.text ?? '';
-  let body = `${u.title}: ${first}`;
-  const tail = u.link ? ` ${u.link}` : '';
-  let truncated = false;
-  if (body.length + tail.length > SMS_LIMIT) {
-    body = body.slice(0, SMS_LIMIT - tail.length - 1).trimEnd() + '…';
-    truncated = true;
-  }
-  body += tail;
-  return { channel: 'sms', body, length: body.length, truncated,
-    note: truncated
-      ? 'An SMS — truncated to fit; the link carries the full content.'
-      : 'An SMS — short enough to send as one or two segments.' };
+export function renderAllChannels(unit: ContentUnit, opts: RenderForChannelOptions = {}): ChannelRendering[] {
+  return DELIVERY_CHANNELS.map(c => renderForChannel(unit, c, opts));
 }

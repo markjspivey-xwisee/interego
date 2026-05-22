@@ -37,6 +37,7 @@ import {
 import {
   renderForChannel, DELIVERY_CHANNELS, type ContentUnit, type DeliveryChannel,
 } from './content-channels.js';
+import { CONTENT_FORMS, type ContentForm } from './content-forms.js';
 import {
   deliverThroughChannel, type ChannelWebhook, type TransportResult,
 } from './content-transport.js';
@@ -289,7 +290,15 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
       return;
     }
 
-    const rendering = renderForChannel(unit, channel);
+    // The text form — plain / markdown / html / interactive — is chosen
+    // for the situation, or named explicitly by the caller.
+    const form: ContentForm | undefined = CONTENT_FORMS.includes(b.form as ContentForm)
+      ? (b.form as ContentForm) : undefined;
+    const audience = b.audience === 'agent' ? 'agent' as const
+      : b.audience === 'human' ? 'human' as const : undefined;
+    const rendering = renderForChannel(unit, channel, {
+      ...(form ? { form } : {}), ...(audience ? { audience } : {}),
+    });
     const learner = b.learner as string | undefined;
     const recipient = typeof b.recipient === 'string' ? b.recipient : undefined;
 
@@ -323,6 +332,7 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
         context: {
           extensions: {
             [`${base}/ns/foxxi#deliveryChannel`]: channel,
+            [`${base}/ns/foxxi#contentForm`]: rendering.form,
             [`${base}/ns/foxxi#deliveredVia`]: transport.mode,
             ...(recipient ? { [`${base}/ns/foxxi#recipient`]: recipient } : {}),
             ...(transport.artifactUrl ? { [`${base}/ns/foxxi#substrateDescriptorIri`]: transport.artifactUrl } : {}),

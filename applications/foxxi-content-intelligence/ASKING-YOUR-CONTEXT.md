@@ -119,12 +119,14 @@ Built and deployed:
   and `verifyCaller` (the session-token gate); `attachContentDeliveryRoutes`
   with the channel-transport config.
 
-Verified before deploy by three local smokes: `context-chat-smoke.ts`
+Verified before deploy by four local smokes: `context-chat-smoke.ts`
 (52/52 — intent classification, grounded + sourced answers, the
 agentic-RAG trace, the honest no-match, the `scope` toggle, the
 deep-fetch, `mergeDiscovered` federation dedup, and the auth gate),
 `content-transport-smoke.ts` (9/9 — the webhook transport against a
-live HTTP sink, and the honest `none` path), and `content-pipeline-smoke.ts`
+live HTTP sink, and the honest `none` path), `content-forms-smoke.ts`
+(18/18 — plain / markdown / HTML / interactive rendering, `chooseForm`,
+and the delivery route honouring a form), and `content-pipeline-smoke.ts`
 (16/16 — the generator + delivery round-trips).
 
 ## 4. Verification — in production
@@ -155,8 +157,9 @@ live bridge, LMS and LRS, with a **real headless browser** completing a
    the federation peer pod, discovers and deep-fetches a peer-pod course
    ("Incident Response Basics") the vertical never had, and answers from
    it (§6).
-9. **Deliver to the `document` channel** — the rendering is published to
-   the pod as a discoverable `foxxi:DeliveredContent` Context Descriptor,
+9. **Deliver a job aid as interactive hypermedia** — rendered as a
+   self-contained interactive HTML artifact and published to the pod as
+   a discoverable `foxxi:DeliveredContent` Context Descriptor,
    dereferenceable back (§6).
 10. **Ask an off-topic question** — an honest no-match: it refuses to
     guess.
@@ -230,25 +233,31 @@ Verified: the webhook against a live HTTP endpoint (smoke); the
 pod-descriptor publish in production (the delivery descriptor is
 dereferenceable on the pod).
 
+**Content forms.** The content is text — but text takes many forms, and
+the right one is a composition choice, like the channel. `content-forms.ts`
+renders any `ContentUnit` as **plain** text, **markdown**, static **HTML
+hypertext** (a styled page with working links), or dynamic **interactive
+hypermedia** — a self-contained HTML artifact with collapsible sections
+and an inline self-check for assessment items; no server, no
+dependencies, it just runs. `chooseForm()` picks the form the situation
+calls for — the channel's ceiling (an SMS is plain, chat is markdown),
+the content kind (a job aid is interactive), the audience (an agent gets
+structured markdown, not rendered hypermedia) — and a caller may name a
+form on `POST /content/deliver`. No media is generated; every form is
+text. Verified: `content-forms-smoke.ts` (18/18) renders + routes each
+form; the production demo delivers a job aid as interactive hypermedia,
+published to the pod as `text/html`.
+
 ## 7. What now honestly remains
 
-Media generation stays out — a deliberate boundary the user set: the
-content is text. Channel transport's external sends (Slack / email /
-SMS) are real adapters that activate when their endpoint is configured;
+Generated **media** — images, video, audio — stays out: a deliberate
+boundary. Generated **text** spans its full range of forms — plain,
+markdown, HTML hypertext, interactive/dynamic hypermedia — and that is
+built (§6). Channel transport's external sends (Slack / email / SMS) are
+real adapters that activate when `FOXXI_TRANSPORT_<CHANNEL>` is set;
 this deployment configures none, so those channels honestly report
 `mode: "none"` until an operator wires a real endpoint. Auto-resolving a
-user's *own* pod into the federation set (rather than a configured peer
-list) is a refinement of the same `discover()` call. None of these is a
-gap in the capability — each is either a deliberate boundary or an
-operator-configuration step.
-
-What honestly remains, named rather than hidden: **multi-pod / federated
-discovery** — pointing `discover()` at a user's own pod and federated
-peers, not only the configured tenant pod (the same call, more pods;
-best built against a real federated deployment so it can be verified);
-and the **session-token gate** above for a non-demo deployment. Live
-channel transport and media generation are *not* further work on this
-companion — they are deliberate boundaries: an operator-integration
-concern, and a text-content-by-design choice. The deep-fetch of
-discovered course packages, previously noted here as a next hop, is now
-done.
+user's *own* pod into the federation set — rather than a configured
+`FOXXI_FEDERATION_PODS` peer list — is a refinement of the same
+`discover()` call. Neither is a gap in the capability: one is a
+deliberate boundary, the other an operator-configuration step.

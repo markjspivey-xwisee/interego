@@ -166,8 +166,10 @@ async function publishDeliveredContent(
   const graph = `<${graphIri}> a <${typeIri}> ;
     <http://purl.org/dc/terms/title> "${xmlStr(title)}" ;
     <http://purl.org/dc/terms/created> "${now}"^^<http://www.w3.org/2001/XMLSchema#dateTime> ;
+    <http://purl.org/dc/terms/format> "${rendering.mediaType}" ;
     <http://www.w3.org/ns/prov#wasAttributedTo> <${config.authoritativeSource}> ;
     <${ns}deliveryChannel> "${channel}" ;
+    <${ns}contentForm> "${rendering.form}" ;
 ${recipient ? `    <${ns}recipient> "${xmlStr(recipient)}" ;\n` : ''}    <${ns}deliveredBody> "${b64}"^^<http://www.w3.org/2001/XMLSchema#base64Binary> .
 `;
   const descriptor: ContextDescriptorData = {
