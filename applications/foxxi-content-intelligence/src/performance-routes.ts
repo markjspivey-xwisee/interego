@@ -28,6 +28,7 @@ import {
 import {
   buildCalibrationProfile, expandOutcomeCorpus, composeCalibrationProfiles,
   calibrate, calibrationReadout, federationView,
+  type OutcomeRecord, type CauseKey,
 } from './performance-calibration.js';
 import { SAMPLE_OUTCOMES, SAMPLE_PEER_OUTCOMES } from './sample-outcomes.js';
 import {
@@ -103,13 +104,43 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
   const base = config.selfBaseUrl.replace(/\/+$/, '');
 
   // The calibration profile — the system's track record of its own
-  // Knowable-regime recommendations. Built from the tenant's recorded
-  // outcomes; the federated profile composes a peer organization's
-  // published evidence (federationView withholds sub-k cells before
-  // anything crosses an org boundary).
-  const tenantProfile = buildCalibrationProfile(expandOutcomeCorpus(SAMPLE_OUTCOMES));
+  // Knowable-regime recommendations, and a live upward↔downward causal
+  // loop. The UPWARD arm: completed loops record outcomes into
+  // `liveOutcomes`, and the profile is recomposed from the seeded
+  // historical baseline + those live outcomes on every read — parts
+  // (outcomes) causing the whole (the profile). The DOWNWARD arm:
+  // `calibrate()` lets the profile press back on the next plan. The
+  // federated profile composes a peer organization's evidence
+  // (federationView withholds sub-k cells before they cross a boundary).
+  const seedRecords = expandOutcomeCorpus(SAMPLE_OUTCOMES);
   const peerProfile = buildCalibrationProfile(expandOutcomeCorpus(SAMPLE_PEER_OUTCOMES));
-  const federatedProfile = composeCalibrationProfiles([tenantProfile, federationView(peerProfile)]);
+  const liveOutcomes: OutcomeRecord[] = [];
+  const calibrationProfiles = () => {
+    const tenant = buildCalibrationProfile([...seedRecords, ...liveOutcomes]);
+    const federated = composeCalibrationProfiles([tenant, federationView(peerProfile)]);
+    return { tenant, federated };
+  };
+
+  // Validate + record a live outcome — the reflexive loop's upward arm.
+  const CAUSE_KEYS: CauseKey[] = ['information', 'instrumentation', 'incentives', 'knowledgeSkill', 'capacity', 'motives', 'not-applicable'];
+  function recordLiveOutcome(v: unknown): OutcomeRecord | string {
+    if (!v || typeof v !== 'object') return 'an outcome object is required';
+    const o = v as Record<string, unknown>;
+    if (!['Evident', 'Knowable', 'Emergent', 'Turbulent'].includes(o.regime as string)) return 'outcome.regime is invalid';
+    if (!CAUSE_KEYS.includes(o.causeFactor as CauseKey)) return 'outcome.causeFactor is invalid';
+    if (typeof o.intervention !== 'string') return 'outcome.intervention (string) is required';
+    if (!['closed', 'improved', 'no-change', 'worsened'].includes(o.verdict as string)) return 'outcome.verdict is invalid';
+    return {
+      regime: o.regime as OutcomeRecord['regime'],
+      method: ['apply-practice', 'gap-analysis', 'dispositional-read', 'stabilise-first'].includes(o.method as string)
+        ? o.method as OutcomeRecord['method'] : 'gap-analysis',
+      causeFactor: o.causeFactor as CauseKey,
+      intervention: o.intervention as OutcomeRecord['intervention'],
+      verdict: o.verdict as OutcomeRecord['verdict'],
+      ...(CAUSE_KEYS.includes(o.reDiagnosedCause as CauseKey) ? { reDiagnosedCause: o.reDiagnosedCause as CauseKey } : {}),
+      source: typeof o.source === 'string' ? o.source : 'live',
+    };
+  }
 
   // ── Self-describing index — dereferenceable, HATEOAS. ─────────────
   app.get('/performance', (_req: Request, res: Response) => {
@@ -125,7 +156,8 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
       _affordances: {
         contextualizeAndPlan: { method: 'POST', href: `${base}/performance/plan`, note: 'Contextualize a performance situation — read its regime, apply that regime\'s method — and return the full intervention paradigm, selected and ruled-out with reasoning.' },
         portfolio: { method: 'POST', href: `${base}/performance/portfolio`, note: 'Contextualize a set of performance situations and roll them up — the performance-management read. The headline: how few situations route to a course.' },
-        calibration: { method: 'POST', href: `${base}/performance/calibration`, note: 'The reflexive loop — the system\'s recorded track record of its own recommendations: how often each cause → intervention recommendation has actually closed the gap, federated across organizations.' },
+        calibration: { method: 'POST', href: `${base}/performance/calibration`, note: 'The reflexive loop — the system\'s recorded track record of its own recommendations, recomposed live from seeded + recorded outcomes, federated across organizations.' },
+        recordOutcome: { method: 'POST', href: `${base}/performance/outcome`, note: 'The reflexive loop\'s upward arm — a completed performance loop records its outcome; the calibration profile recomposes to include it, and so shapes the next recommendation.' },
         teachAgent: { method: 'POST', href: `${base}/agent/teach`, note: 'The performance lens over an agent-collective ac:TeachingPackage — frames a learner agent\'s acquisition as an A2A instruction intervention, verifies the transfer from the learner\'s trajectories, and emits an amta:Attestation. Foxxi composes the teaching foundation; it does not reinvent it.' },
         composeCourse: { method: 'POST', href: `${base}/content/compose-course`, note: 'Author an emergent course — a syntagm of modules → lessons → grounding fragments. The same tool for human and agent authors.' },
         personalizeCourse: { method: 'POST', href: `${base}/content/personalize`, note: 'Resolve a course for one performer via the composition algebra (restriction + override).' },
@@ -146,9 +178,10 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
     const author = asPerformer(body.author, { id: 'urn:foxxi:agent:performance-consultant', kind: 'agent', role: 'performance consultant' })!;
     const plan = recommendInterventions({ diagnosis, situation, author });
     const scaffold = scaffoldFromPlan(plan, situation.competency);
-    // Every plan carries its own track record: how often this kind of
-    // recommendation has actually closed the gap, federated evidence.
-    const calibration = calibrate(diagnosis, plan, federatedProfile);
+    // Every plan carries its own track record (downward causation): how
+    // often this kind of recommendation has actually closed the gap, and
+    // whether a sibling intervention out-performs it. Federated, live.
+    const calibration = calibrate(diagnosis, plan, calibrationProfiles().federated);
     res.json({ diagnosis, plan, scaffold, calibration });
   });
 
@@ -161,14 +194,41 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
   // next.
   app.post('/performance/calibration', (_req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    const { tenant, federated } = calibrationProfiles();
     res.json({
-      tenant: { profile: tenantProfile, readout: calibrationReadout(tenantProfile) },
-      federated: { profile: federatedProfile, readout: calibrationReadout(federatedProfile) },
-      note: 'The Performance Architecture turned on itself: every intervention outcome is recorded, '
-        + 'and a fresh plan is annotated with how often that recommendation has actually worked. The '
-        + 'federated profile composes a peer organization\'s evidence — only aggregate cells above a '
-        + 'k-anonymity threshold cross the org boundary. A cell is Hypothetical until it has the '
-        + 'samples to Assert a rate.',
+      tenant: { profile: tenant, readout: calibrationReadout(tenant) },
+      federated: { profile: federated, readout: calibrationReadout(federated) },
+      provenance: {
+        seededOutcomes: seedRecords.length,
+        liveOutcomes: liveOutcomes.length,
+        note: 'The profile is recomposed on every read from the seeded historical baseline plus the '
+          + 'outcomes this deployment\'s own completed loops have recorded — the upward arm of the loop.',
+      },
+      note: 'The Performance Architecture turned on itself, as a live upward↔downward causal loop. '
+        + 'Upward: completed loops record outcomes (POST /performance/outcome) and the profile '
+        + 'recomposes to include them. Downward: a fresh plan is annotated with that track record, and '
+        + 'with any sibling intervention the evidence favours. The federated profile composes a peer '
+        + 'organization\'s evidence — only cells above a k-anonymity threshold cross the boundary. A '
+        + 'cell is Hypothetical until it has the samples to Assert a rate.',
+    });
+  });
+
+  // ── POST /performance/outcome — the reflexive loop's upward arm. ───
+  // A completed performance loop records its outcome here; the next
+  // calibration read recomposes the profile to include it. The parts
+  // (individual outcomes) cause the whole (the calibration profile),
+  // which then exerts downward causation on the next plan.
+  app.post('/performance/outcome', (req: Request, res: Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const outcome = recordLiveOutcome((req.body ?? {}) as Record<string, unknown>);
+    if (typeof outcome === 'string') { bad(res, outcome); return; }
+    liveOutcomes.push(outcome);
+    res.json({
+      recorded: true,
+      liveOutcomes: liveOutcomes.length,
+      totalSamples: calibrationProfiles().tenant.totalSamples,
+      note: 'Outcome recorded. The calibration profile recomposes to include it on the next read — '
+        + 'a completed loop now shapes the next recommendation.',
     });
   });
 
@@ -256,6 +316,10 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
       const verdict = verifyCapabilityTransfer({ package: pkg, targetBehaviour, learner, before, after });
       const attestation = transferAttestation(verdict);
       const outcome = teachingToOutcome(verdict);
+      // Cross-vertical upward causation: an A2A teaching outcome (which
+      // itself composes agent-collective's ac:TeachingPackage) flows up
+      // into the same calibration profile as human course completions.
+      if (outcome) liveOutcomes.push(outcome);
       res.json({
         intervention,
         verdict,

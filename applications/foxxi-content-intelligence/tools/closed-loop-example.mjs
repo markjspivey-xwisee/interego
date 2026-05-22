@@ -17,6 +17,7 @@
  *                the live LRS log; a job aid is channel-delivered and
  *                instrumented
  *   6. EVALUATE  the four-level evaluation closes the gap (cg:supersedes)
+ *   7. CALIBRATE the outcome feeds the reflexive loop's upward arm
  *
  * Exits non-zero on any failure.
  */
@@ -24,6 +25,7 @@
 import { chromium } from 'playwright';
 import { mintSessionToken } from '../src/auth.ts';
 import { evaluateIntervention } from '../src/performance-architecture.js';
+import { recordOutcome } from '../src/performance-calibration.js';
 import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
@@ -166,6 +168,21 @@ const evaluation = evaluateIntervention({
 console.log(`   verdict: ${evaluation.verdict} — supersedes "${evaluation.supersedes}"`);
 console.log(`   next: ${evaluation.nextAction}`);
 check('the intervention evaluation closes the gap', evaluation.verdict === 'closed', evaluation.verdict);
+
+// ── 7. CLOSE THE LOOP UPWARD — the outcome shapes the next plan ──────
+h('7. CLOSE THE LOOP UPWARD — the outcome feeds the calibration loop');
+const outcome = recordOutcome(planRes.json.diagnosis, planRes.json.plan, evaluation);
+const calBefore = (await post('/performance/calibration', {})).json;
+const rec = await post('/performance/outcome', outcome);
+const calAfter = (await post('/performance/calibration', {})).json;
+console.log(`   recorded outcome: ${outcome?.intervention}/${outcome?.causeFactor}/${outcome?.verdict}`);
+console.log(`   live outcomes on the bridge: ${rec.json.liveOutcomes}`);
+console.log(`   calibration totalSamples: ${calBefore.tenant?.profile?.totalSamples} → ${calAfter.tenant?.profile?.totalSamples}`);
+check('a completed loop records its outcome — the reflexive loop\'s upward arm',
+  rec.status === 200 && rec.json.recorded === true, rec.json);
+check('the calibration profile recomposed to absorb the new outcome (upward causation)',
+  (calAfter.tenant?.profile?.totalSamples ?? 0) > (calBefore.tenant?.profile?.totalSamples ?? 0),
+  { before: calBefore.tenant?.profile?.totalSamples, after: calAfter.tenant?.profile?.totalSamples });
 
 // ── Summary ─────────────────────────────────────────────────────────
 console.log(`\n${'═'.repeat(70)}`);

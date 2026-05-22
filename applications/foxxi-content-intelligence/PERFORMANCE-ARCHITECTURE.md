@@ -244,6 +244,31 @@ comparable situations; in 39% of the misses the cause was re-diagnosed
 as Incentives."* The system holds its own advice to the evidentiary
 standard it holds content to.
 
+### A live upward↔downward causal loop
+
+The reflexive loop is a concrete instance of **upward and downward
+causation**, and it is live, not static:
+
+- **Upward** — the parts cause the whole. A completed loop records its
+  outcome (`POST /performance/outcome`); `/agent/teach` records its A2A
+  transfer outcomes; the `CalibrationProfile` is **recomposed on every
+  read** from the seeded historical baseline plus those live outcomes.
+  Individual outcomes (parts) constitute the profile (whole).
+- **Downward** — the whole presses back on the parts. `calibrate()` does
+  not merely annotate: when the accumulated profile shows a *sibling*
+  intervention out-performing the one the plan selected for the same
+  cause, it surfaces it — *"for the same cause, a job aid has closed 75%
+  where instruction closed 44% — the evidence favours it."* The profile
+  (whole) reshapes the next recommendation (part). It stays advisory:
+  the diagnosis is case-specific, the profile aggregate; the
+  contextualized decision still rules.
+
+The self-calibrating behaviour is **emergent** — it belongs to neither
+an outcome nor the profile alone, but to the loop that runs between
+them. And it is **cross-vertical**: the outcomes that feed it come from
+Foxxi's own closed loop, from `/agent/teach` (which composes
+agent-collective's `ac:TeachingPackage`), and from federated peer pods.
+
 It composes the substrate throughout:
 
 - **Modal status** — a cell is `Hypothetical` until it has the samples
@@ -288,7 +313,8 @@ and dereferenceable at `/ns/foxxi`.
 | `GET /performance` | self-describing index of the system + its affordances |
 | `POST /performance/plan` | contextualize a situation → the InterventionPlan, a content scaffold, and the plan's calibration track record |
 | `POST /performance/portfolio` | contextualize a set of situations → the performance-management read |
-| `POST /performance/calibration` | the reflexive loop — the recorded track record of the system's own recommendations, federated |
+| `POST /performance/calibration` | the reflexive loop — the recorded track record of the system's own recommendations, recomposed live, federated |
+| `POST /performance/outcome` | the reflexive loop's upward arm — a completed loop records its outcome into the live calibration profile |
 | `POST /content/compose-course` | author an emergent course (the authoring tool) |
 | `POST /content/personalize` | resolve a course for one performer (restriction + override) |
 | `GET /knowledge` | self-describing index of the knowledge architecture |

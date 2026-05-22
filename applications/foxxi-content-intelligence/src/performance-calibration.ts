@@ -295,6 +295,14 @@ export interface CalibrationNote {
   /** The cell this plan's primary recommendation maps to, if any. */
   cell?: CalibrationCell;
   verdict: CalibrationVerdict;
+  /**
+   * Downward causation. When the accumulated profile (the whole) shows a
+   * sibling intervention out-performing the one the plan selected for
+   * the SAME cause, the better-supported alternative — the whole
+   * pressing back on the part. Advisory: the diagnosis is case-specific,
+   * the profile is aggregate; the contextualized decision still rules.
+   */
+  alternative?: { intervention: InterventionType; closureRate: number; samples: number };
   /** Plain-language account a human or agent can act on. */
   message: string;
 }
@@ -329,12 +337,28 @@ export function calibrate(
   const cell = profile.cells.find(c =>
     c.regime === diagnosis.domain && c.causeFactor === cause && c.intervention === intervention);
 
+  // Downward causation: does a sibling intervention for the SAME cause
+  // out-perform the one the plan selected? The accumulated profile (the
+  // whole) pressing back on the recommendation (the part).
+  const siblings = profile.cells.filter(c =>
+    c.regime === diagnosis.domain && c.causeFactor === cause
+    && c.intervention !== intervention && c.modalStatus === 'Asserted' && c.samples > 0);
+  const best = siblings.sort((a, b) => b.closureRate - a.closureRate)[0];
+  const alternative = (best && best.closureRate > (cell?.closureRate ?? 0) + 0.15)
+    ? { intervention: best.intervention, closureRate: best.closureRate, samples: best.samples }
+    : undefined;
+  const altNote = alternative
+    ? ` For the same cause, ${alternative.intervention} has closed ${pct(alternative.closureRate)} of `
+      + `${alternative.samples} comparable situation(s) — the evidence favours it over ${intervention}.`
+    : '';
+  const alt = alternative ? { alternative } : {};
+
   if (!cell) {
     return {
-      verdict: 'untested',
+      verdict: 'untested', ...alt,
       message: `No comparable outcomes on record yet: ${intervention} for a ${CAUSE_LABEL[cause]} `
-        + `cause in the ${diagnosis.domain} regime is untested. Treat this plan as a hypothesis and `
-        + `record its outcome so the next one is calibrated.`,
+        + `cause in the ${diagnosis.domain} regime is untested.${altNote} Record its outcome so the `
+        + `next plan is calibrated.`,
     };
   }
 
@@ -347,31 +371,27 @@ export function calibrate(
 
   if (cell.modalStatus === 'Hypothetical') {
     return {
-      cell,
-      verdict: 'tentative',
+      cell, ...alt, verdict: 'tentative',
       message: `${base} — but with only ${cell.samples} on record this rate is Hypothetical, not yet `
-        + `enough to Assert.${reDiag} Proceed, and record the outcome.`,
+        + `enough to Assert.${reDiag}${altNote} Proceed, and record the outcome.`,
     };
   }
   if (cell.closureRate >= STRONG_CLOSURE) {
     return {
-      cell,
-      verdict: 'well-supported',
-      message: `${base}. This recommendation is well-supported by the evidence.${reDiag}`,
+      cell, ...alt, verdict: 'well-supported',
+      message: `${base}. This recommendation is well-supported by the evidence.${reDiag}${altNote}`,
     };
   }
   if (cell.closureRate < WEAK_CLOSURE) {
     return {
-      cell,
-      verdict: 'poorly-supported',
-      message: `${base} — a weak track record.${reDiag} Before committing, re-check the cause: the `
-        + `evidence says this recommendation often misses.`,
+      cell, ...alt, verdict: 'poorly-supported',
+      message: `${base} — a weak track record.${reDiag}${altNote} Before committing, re-check the `
+        + `cause: the evidence says this recommendation often misses.`,
     };
   }
   return {
-    cell,
-    verdict: 'mixed',
-    message: `${base} — a mixed track record.${reDiag} Verify the cause analysis before committing.`,
+    cell, ...alt, verdict: 'mixed',
+    message: `${base} — a mixed track record.${reDiag}${altNote} Verify the cause analysis before committing.`,
   };
 }
 
