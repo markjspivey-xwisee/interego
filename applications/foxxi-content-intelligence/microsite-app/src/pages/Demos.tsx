@@ -108,6 +108,7 @@ const REGIMES: Array<{ v: string; label: string }> = [
   { v: 'Turbulent', label: 'Turbulent — behaviour is not yet patterned' },
 ];
 const METHOD_LABEL: Record<string, string> = {
+  'apply-practice': 'apply the established practice',
   'gap-analysis': 'cause-factor gap analysis',
   'dispositional-read': 'a dispositional read',
   'stabilise-first': 'stabilise first',
@@ -152,23 +153,27 @@ function PerformanceDemo() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [out, setOut] = useState<Record<string, unknown> | null>(null);
-  // Gap analysis is the method for the Evident / Knowable regimes; the
-  // Emergent / Turbulent regimes have no fixable gap to cause-analyse.
-  const gapRegime = regime === 'Evident' || regime === 'Knowable';
+  // Only the Knowable regime frames the work as a gap — establishing an
+  // exemplary state and analysing the cause of the difference. The other
+  // regimes never name a gap, so the cause selector is shown for Knowable
+  // alone.
+  const knowable = regime === 'Knowable';
   async function run() {
     setBusy(true); setErr(null);
     const picked = CAUSES.find(c => c.v === cause);
     const r = await bridgeRest('/performance/plan', {
-      gap: {
-        id: `urn:foxxi:gap:demo-${Date.now()}`,
+      situation: {
+        id: `urn:foxxi:situation:demo-${Date.now()}`,
         performer: { id: LEARNER, kind: 'human', role: 'support rep' },
         workContext: 'resolving customer refund disputes',
         competency: 'resolving refund disputes within policy',
-        desired: 'resolves in-policy disputes on first contact',
         observed: 'over-escalates disputes a rep is allowed to resolve',
         frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted', domain: regime,
       },
-      ...(gapRegime && picked ? {
+      // The exemplary state and the cause evidence exist only because the
+      // work contextualizes into the Knowable regime.
+      ...(knowable && picked ? {
+        exemplary: 'resolves in-policy disputes on first contact',
         factorEvidence: picked.factorEvidence,
         ...(picked.couldPerform !== undefined ? { couldPerformUnderIdealConditions: picked.couldPerform } : {}),
       } : {}),
@@ -189,7 +194,7 @@ function PerformanceDemo() {
             {REGIMES.map(r => <option key={r.v} value={r.v}>{r.label}</option>)}
           </select>
         </label>
-        {gapRegime && (
+        {knowable && (
           <label style={labelStyle}>
             likely cause:{' '}
             <select value={cause} onChange={e => setCause(e.target.value)} style={selectStyle}>
@@ -197,11 +202,12 @@ function PerformanceDemo() {
             </select>
           </label>
         )}
-        <button style={btn} onClick={run} disabled={busy}>{busy ? <Busy /> : 'Analyze this work'}</button>
+        <button style={btn} onClick={run} disabled={busy}>{busy ? <Busy /> : 'Contextualize this work'}</button>
       </div>
-      {!gapRegime && (
+      {!knowable && (
         <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 8 }}>
-          The {regime} regime has no fixable gap to cause-analyse — the method follows from the regime alone.
+          Only the Knowable regime frames the work as a gap and analyses a cause. The {regime} regime’s
+          method follows from the regime itself — there is no gap to close.
         </div>
       )}
       {err && <ErrBox msg={err} />}
@@ -211,7 +217,7 @@ function PerformanceDemo() {
             work regime <b>{diagnosis.domain}</b> → method: <b>{METHOD_LABEL[diagnosis.method ?? ''] ?? diagnosis.method}</b>
           </div>
           {diagnosis.reasoning?.[0] && <div style={{ marginTop: 8 }}>{diagnosis.reasoning[0]}</div>}
-          {gapRegime && diagnosis.rootCauses?.[0] && (
+          {knowable && diagnosis.rootCauses?.[0] && (
             <div style={{ marginTop: 8 }}>cause isolated: <b>{diagnosis.rootCauses[0]}</b></div>
           )}
           {diagnosis.caveat && <div style={{ marginTop: 8, fontSize: 13, color: 'var(--warn)' }}>{diagnosis.caveat}</div>}
@@ -227,75 +233,76 @@ function PerformanceDemo() {
 
 // ── 2. The performance portfolio ────────────────────────────────────
 
-// A realistic spread of support-org performance gaps — five different
-// causes across the Knowable and Emergent regimes. The point an
-// enterprise should take away: most of them are not training gaps.
+// A realistic spread of support-org performance situations — five
+// different causes across the Knowable regime, plus one Emergent. An
+// exemplary state is set only on the Knowable situations; the Emergent
+// one has none — there is no ideal to close toward. The point an
+// enterprise should take away: most of these are not training gaps.
 const PORTFOLIO_AUTHOR = { id: 'did:web:acme#sme-lee', kind: 'human', role: 'SME' };
-const PORTFOLIO_GAPS = [
+const PORTFOLIO_SITUATIONS = [
   {
-    gap: {
+    situation: {
       performer: { id: LEARNER, kind: 'human', role: 'support rep' },
       workContext: 'resolving customer refund disputes',
       competency: 'resolving refund disputes within policy',
-      desired: 'resolves in-policy disputes on first contact',
       observed: 'over-escalates disputes a rep is allowed to resolve',
       frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
     },
+    exemplary: 'resolves in-policy disputes on first contact',
     factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'reps cannot recall the refund decision tree, even given time' } },
     couldPerformUnderIdealConditions: false,
   },
   {
-    gap: {
+    situation: {
       performer: { id: LEARNER, kind: 'human', role: 'support rep' },
       workContext: 'applying the rolling 90-day refund cap',
       competency: 'catching customers past the rolling cap',
-      desired: 'catches every customer over the cap',
       observed: 'misses cap breaches on small refunds',
       frequency: 'frequent', criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
     },
+    exemplary: 'catches every customer over the cap',
     factorEvidence: { instrumentation: { adequate: false, evidence: 'the refund console does not surface the rolling-cap total' } },
   },
   {
-    gap: {
+    situation: {
       performer: { id: LEARNER, kind: 'human', role: 'support rep' },
       workContext: 'choosing whether to resolve or escalate a dispute',
       competency: 'resolving in-tier disputes directly',
-      desired: 'resolves disputes within their authority',
       observed: 'escalates resolvable disputes to protect handle time',
       frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
     },
+    exemplary: 'resolves disputes within their authority',
     factorEvidence: { incentives: { adequate: false, evidence: 'reps are measured on handle time, which rewards over-escalation' } },
   },
   {
-    gap: {
+    situation: {
       performer: { id: LEARNER, kind: 'human', role: 'support rep' },
       workContext: 'escalating a dispute under the revised policy',
       competency: 'escalating with a complete case packet',
-      desired: 'escalates with facts, severity, and a recommendation',
       observed: 'sends bare hand-offs the lead must re-investigate',
       frequency: 'occasional', criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
     },
+    exemplary: 'escalates with facts, severity, and a recommendation',
     factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'the escalation policy changed last month; the habit is not built' } },
     couldPerformUnderIdealConditions: false,
   },
   {
-    gap: {
+    situation: {
       performer: { id: LEARNER, kind: 'human', role: 'support rep' },
       workContext: 'handling difficult, high-emotion refund disputes',
       competency: 'resolving difficult disputes rather than routing them away',
-      desired: 'takes difficult disputes within their authority',
       observed: 'routes difficult disputes away despite being able to resolve them',
       frequency: 'frequent', criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
     },
+    exemplary: 'takes difficult disputes within their authority',
     factorEvidence: { motives: { adequate: false, evidence: 'the rep can resolve difficult disputes but avoids the discomfort' } },
     couldPerformUnderIdealConditions: true,
   },
   {
-    gap: {
+    situation: {
       performer: { id: 'did:web:acme#support-agent-pool', kind: 'agent', role: 'support agent team' },
       workContext: 'a team of support agents coordinating during a live incident',
       competency: 'coordinating multi-agent incident response',
-      desired: 'the agent team converges on a coherent response',
       observed: 'agents duplicate work and miss handoffs under load',
       frequency: 'occasional', criticality: 'high', modalStatus: 'Asserted', domain: 'Emergent',
     },
@@ -313,7 +320,7 @@ function PortfolioDemo() {
   const [out, setOut] = useState<Record<string, unknown> | null>(null);
   async function run() {
     setBusy(true); setErr(null);
-    const r = await bridgeRest('/performance/portfolio', { gaps: PORTFOLIO_GAPS, author: PORTFOLIO_AUTHOR });
+    const r = await bridgeRest('/performance/portfolio', { situations: PORTFOLIO_SITUATIONS, author: PORTFOLIO_AUTHOR });
     const e = errorOf(r);
     if (e) { setErr(e); setOut(null); } else { setOut(r.json); }
     setBusy(false);
@@ -716,29 +723,31 @@ export function Demos({ onHome }: { onHome: () => void }) {
       <Hero />
 
       <Section n={1} title="Performance & Knowledge Architecture"
-        subtitle="the regime decides the method; within gap analysis the cause decides the intervention"
-        principle={<>The system reasons from performance. The first step is not to look for a gap — it
-          is to establish the work's <b>regime</b>: what kind of work this is. The regime decides the{' '}
-          <b>method</b>. A Knowable-regime situation, where cause and effect are knowable with analysis,
-          calls for cause-factor gap analysis. An Emergent one — a complex, adaptive system — calls for
-          a dispositional read; the fixed-gap frame does not apply there. A Turbulent one calls for
-          stabilising first. Within gap analysis the gap still has a <b>cause</b>, and the cause — not
-          the regime — decides the intervention: a gap can come from missing knowledge, absent
-          guidance, broken tools, misaligned incentives, or low motivation, and only one of those — a
-          genuine knowledge or skill deficiency — is answered by a course. Pick a regime, then (for a
-          Knowable one) a cause, and watch the intervention change.</>}
+        subtitle="contextualize the work first — only the Knowable regime frames it as a gap"
+        principle={<>The system reasons from performance, not content. The universal first step is to{' '}
+          <b>contextualize</b> a performance situation — read its <b>regime</b>, the kind of work it
+          is — and route to that regime's method. Idealising an exemplary future state, naming the gap
+          to observed performance, and closing it is the method of <b>one</b> regime, the Knowable
+          regime — not a universal frame. Evident work applies the established practice. Emergent work —
+          a complex, adaptive system — gets a dispositional read: no exemplary state exists, so there
+          is no gap. Turbulent work is stabilised first. Within the Knowable regime the gap has a{' '}
+          <b>cause</b>, and the cause — not the regime — decides the intervention: missing knowledge,
+          absent guidance, broken tools, misaligned incentives, or low motivation, and only one of
+          those, a genuine knowledge or skill deficiency, is answered by a course. Pick a regime, and
+          (for a Knowable one) a cause, and watch the method and the intervention change.</>}
         doc={{ label: 'PERFORMANCE-ARCHITECTURE.md', href: `${REPO}/PERFORMANCE-ARCHITECTURE.md` }}
         cli="tools/performance-architecture-example.mjs">
         <PerformanceDemo />
       </Section>
 
       <Section n={2} title="The performance portfolio"
-        subtitle="diagnose a set of gaps at once — most are not training gaps"
-        principle={<>One diagnosis is an anecdote; a portfolio is the business case. Diagnose a
-          realistic spread of performance gaps and roll them up. A performance-driven practice routes
-          most gaps to <b>non-content interventions</b> — a broken tool, a misaligned incentive, an
-          Emergent-regime team — because no course fixes those. The headline number is how few gaps
-          actually need a course. This is the read a head of L&amp;D uses to defend a budget.</>}
+        subtitle="contextualize a set of situations at once — most are not training gaps"
+        principle={<>One situation is an anecdote; a portfolio is the business case. Contextualize a
+          realistic spread of performance situations and roll them up. A performance-driven practice
+          routes most of them to <b>non-content interventions</b> — a broken tool, a misaligned
+          incentive, an Emergent-regime team — because no course fixes those. The headline number is
+          how few situations actually need a course. This is the read a head of L&amp;D uses to defend
+          a budget.</>}
         doc={{ label: 'PERFORMANCE-ARCHITECTURE.md', href: `${REPO}/PERFORMANCE-ARCHITECTURE.md` }}
         cli="tools/performance-architecture-example.mjs">
         <PortfolioDemo />

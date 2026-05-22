@@ -27,48 +27,54 @@ on any one external framework. See `SOURCES-AND-ATTRIBUTION.md`.
 
 A traditional LMS / LXP / CMS starts with content: here is a course;
 assign it, deliver it, track it. Foxxi starts one step earlier, with a
-**PerformanceGap** — a typed context descriptor of what a performer
-(human or agent) is trying to accomplish, the desired vs. observed
-performance, the work context, how often the task occurs, and how
-critical it is. The gap carries a **modal status**: a reported gap is
-`Hypothetical` until measured; an assessment promotes it to `Asserted`.
+**PerformanceSituation** — a typed context descriptor of a performer
+(human or agent), the work they are doing, what is observed, how often
+the task occurs, and how critical it is. Note what it does *not* carry:
+an idealised future state. A situation is not a gap. It carries a
+**modal status**: a reported situation is `Hypothetical` until measured;
+an assessment promotes it to `Asserted`.
 
 Content is never assumed. It is one possible *intervention*, selected —
-or ruled out — by a diagnosis.
+or ruled out — by the regime-appropriate method.
 
 > The question — *"does an agent decide instruction needs to be
 > developed, or assessments, or contextual in-the-flow performance
-> support?"* — is exactly the cause-analysis → intervention-selection
+> support?"* — is exactly the contextualize → intervention-selection
 > decision. The system's answer is an **InterventionPlan**, and it is
-> genuinely varied: across the seven demo scenarios, half the gaps route
-> to *non-content* interventions.
+> genuinely varied: across the seven demo scenarios, half the situations
+> route to *non-content* interventions.
 
-## 2. The novel first principle — the work regime chooses the method
+## 2. The first move — contextualize: the regime chooses the method
 
-A cause analysis that closes a knowable gap only works where the gap IS
-knowable. Where work is a complex, adaptive system — a team of agents
-adapting to open-ended work — there is no fixable gap and no exemplary
-state to close toward; there are only dispositions, propensities and a
-direction of drift.
+The system does **not** begin by idealising a future state and naming a
+gap to it. Idealising an exemplary state, identifying the gap to
+observed performance, and closing that gap is the method of **one**
+causality regime — the Knowable regime — not a universal frame. Where
+work is a complex, adaptive system — a team of agents adapting to
+open-ended work — there is no exemplary state to close toward; there are
+only dispositions, propensities and a direction of drift.
 
-So the system reads the **work regime** first — how knowable the
-relationship between act and outcome is — then picks the method:
+So the universal first step is to **contextualize**: read the **work
+regime** — how knowable the relationship between act and outcome is —
+and only then route to that regime's method:
 
 | Work regime | Method | What it produces |
 |---|---|---|
-| **Evident** — act→outcome is self-evident | gap analysis | the established practice; watch for drift |
-| **Knowable** — act→outcome is discoverable by expertise | gap analysis (cause-factor + the discriminating question) | a root cause + a selected intervention |
+| **Evident** — act→outcome is self-evident | apply the established practice | recognise the situation, apply the known response |
+| **Knowable** — act→outcome is discoverable by expertise | gap analysis (cause-factor + the discriminating question) | an exemplary state, a root cause, a selected intervention |
 | **Emergent** — act→outcome coheres only in retrospect | a dispositional read (composes `agent-disposition.ts`) | a disposition, a vector, safe-to-fail probes |
-| **Turbulent** — no stable act→outcome yet | stabilise first, then re-diagnose | a decisive act, not a plan |
+| **Turbulent** — no stable act→outcome yet | stabilise first, then re-contextualize | a decisive act, not a plan |
 
-Both are performance consulting; the regime decides which kind is
-honest. `agent-disposition.ts` already refuses the gap frame for complex
-agent teams — the Performance Architecture **routes to it** rather than
-contradicting it.
+Only the Knowable row names a gap. `agent-disposition.ts` already
+refuses the gap frame for complex agent teams — the Performance
+Architecture **routes to it** rather than contradicting it.
 
-## 3. Diagnosis
+## 3. Contextualizing — and, for Knowable work, the cause analysis
 
-For Evident/Knowable work, `diagnose()` builds a **six-factor cause
+`diagnose()` is the contextualizing function: it reads the regime first,
+then applies that regime's method.
+
+For **Knowable** work — and only there — it builds a **six-factor cause
 analysis** — three environmental factors (Information, Instrumentation,
 Incentives) and three individual factors (Knowledge & Skill, Capacity,
 Motives) — and applies the **discriminating question**: could the
@@ -76,11 +82,15 @@ performer perform correctly under ideal conditions (full motivation, no
 obstacles)? If yes, it is *not* a skill deficiency, and instruction is
 the wrong intervention. The environmental factors are examined first
 because, in practice, they account for the majority of performance gaps
-and are cheaper to fix than re-skilling people.
+and are cheaper to fix than re-skilling people. The exemplary state is
+established here, as an input to this analysis — nowhere else.
 
-For Emergent work, `diagnose()` composes `agent-disposition.assessDisposition()`
-and returns a disposition + vector + stance, with an explicit caveat
-that classic gap analysis does not apply.
+For **Evident** work, the response is self-evident; `diagnose()` returns
+the established practice with no cause analysis. For **Emergent** work,
+it composes `agent-disposition.assessDisposition()` and returns a
+disposition + vector + stance, with an explicit caveat that there is no
+exemplary state and no gap. For **Turbulent** work, it calls for
+stabilising first.
 
 ## 4. The intervention paradigm
 
@@ -193,28 +203,31 @@ scaffold **warns** that a course will under-deliver and routes the
 residue to apprenticeship and coaching — honest content, honest about
 its limits.
 
-## 8. Assessment and evaluation — closing the loop
+## 8. Evaluation — the Knowable regime's closing move
 
-A four-level evaluation, expressed as a **modal-status progression**:
+Closing a gap is, again, a Knowable-regime act: it presumes an exemplary
+state was established and an intervention applied. The evaluation is a
+four-level **modal-status progression**:
 
 - **response** — a recorded reaction (Hypothetical evidence of value).
 - **capability** — an assessment result (an `Asserted` competency, or not).
 - **transfer** — evidence the behaviour transferred to *real work* — an
   xAPI statement from the LRS, or a trajectory step in the work context.
-- **outcome** — the gap's observed-state, re-measured. If it closed, the
-  new performance state **supersedes** the old (`cg:supersedes`).
+- **outcome** — the situation's observed-state, re-measured against the
+  exemplary one. If the gap closed, the new performance state
+  **supersedes** the old (`cg:supersedes`).
 
-The **PerformancePortfolio** rolls many diagnosed gaps into the
-performance-management view. Its headline number is content-vs-non-content:
-a system that is genuinely performance-driven routes a large share of
-gaps to non-content interventions.
+The **PerformancePortfolio** rolls many contextualized situations into
+the performance-management view. Its headline number is
+content-vs-non-content: a system that is genuinely performance-driven
+routes a large share of situations to non-content interventions.
 
 ## 9. How it composes the substrate
 
 | System concept | Interego primitive it composes |
 |---|---|
-| PerformanceGap | a typed Context Descriptor with a modal status + Provenance + Trust facet |
-| diagnosis | a composition over the performer's disposition / record / work environment |
+| PerformanceSituation | a typed Context Descriptor with a modal status + Provenance + Trust facet |
+| contextualization | a composition over the performer's disposition / record / work environment |
 | intervention selection | a paradigmatic operation — constraints applied to a paradigm set |
 | grounding fragment | a PGSL atom — content-addressed |
 | course / module / lesson | a syntagm; positions are paradigm sets |
@@ -233,7 +246,8 @@ and dereferenceable at `/ns/foxxi`.
 | Endpoint | Purpose |
 |---|---|
 | `GET /performance` | self-describing index of the system + its affordances |
-| `POST /performance/plan` | diagnose a gap → the full InterventionPlan + a content scaffold |
+| `POST /performance/plan` | contextualize a situation → the full InterventionPlan + a content scaffold |
+| `POST /performance/portfolio` | contextualize a set of situations → the performance-management read |
 | `POST /content/compose-course` | author an emergent course (the authoring tool) |
 | `POST /content/personalize` | resolve a course for one performer (restriction + override) |
 | `GET /knowledge` | self-describing index of the knowledge architecture |

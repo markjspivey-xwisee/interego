@@ -1,43 +1,48 @@
 /**
- * Foxxi Performance Architecture — the diagnosis → intervention spine.
+ * Foxxi Performance Architecture — the contextualize → method spine.
  *
  * Traditional learning systems start with content ("here is a course").
- * This module starts with PERFORMANCE: a typed description of what a
- * performer (human OR agent) is trying to accomplish, the gap between
- * desired and observed, and the work context it sits in. Content is
- * never assumed — it is one possible intervention, selected (or ruled
- * out) by a diagnosis.
+ * This module starts with PERFORMANCE: a typed description of a
+ * performer (human OR agent), the work they are doing, and what is
+ * observed. Content is never assumed — it is one possible intervention,
+ * selected (or ruled out) by the regime-appropriate method.
  *
- * The novel first principle is that the consulting method is chosen by
- * the WORK REGIME — how knowable the relationship between act and
- * outcome is. A cause analysis that closes a knowable gap only works
- * where the gap IS knowable. Where work is Emergent — a complex,
- * adaptive system such as a team of agents — there is no fixable gap
- * and no exemplary state to close toward. So this module reads the
- * regime FIRST, then picks the method:
+ * The first principle is that the system does NOT begin by idealising a
+ * future state and naming a gap to it. Idealising an exemplary state,
+ * identifying the gap to observed performance, and closing that gap is
+ * the method of ONE causality regime — the Knowable regime — not a
+ * universal frame. So the universal first step is to CONTEXTUALIZE: read
+ * the work's regime — how knowable the relationship between act and
+ * outcome is — and only then route to that regime's method:
  *
- *   · Evident / Knowable → gap analysis. A cause analysis across
- *     environmental and individual factors isolates a root cause; an
- *     intervention can be selected.
+ *   · Evident → apply the established practice. The right response is
+ *     self-evident; there is nothing to analyse and no gap to close —
+ *     recognise the situation and apply the known answer.
+ *   · Knowable → gap analysis. Here, and only here, the situation is
+ *     framed as a gap: an exemplary performance is established, observed
+ *     performance is compared to it, a cause-factor analysis isolates
+ *     why they differ, and an intervention closes the gap.
  *   · Emergent → a dispositional read (composes `agent-disposition.ts`):
- *     no gap, no ideal state — probes, vectors, constraints. You cannot
- *     instruct your way through Emergent work.
- *   · Turbulent → stabilise first, then re-read.
+ *     a complex, adaptive system has no exemplary state to close toward —
+ *     only dispositions, propensities, and probes. You cannot instruct,
+ *     or gap-analyse, your way through Emergent work.
+ *   · Turbulent → stabilise first, then re-contextualize.
  *
  * The output is an InterventionPlan — the full *paradigm* of possible
- * interventions (instruction, performance-support, assessment,
- * coaching, probe, environmental-fix, …), each marked selected or
- * ruled-out with its reasoning. Crucially the plan can conclude that no
- * content should be built at all: most performance gaps turn out to be
- * environmental, and no course fixes a broken tool or a bad incentive.
+ * interventions (instruction, performance-support, reference, coaching,
+ * probe, environmental-fix, …), each marked selected or ruled-out with
+ * its reasoning. The plan can conclude that no content should be built
+ * at all: most performance situations turn out to be environmental, and
+ * no course fixes a broken tool or a bad incentive.
  *
- * Emergent from Interego: a PerformanceGap is a typed context
- * descriptor with a modal status; diagnosis is a composition over the
- * performer's disposition / record / work environment; the intervention
- * decision is a paradigmatic operation (the intervention space is a
- * paradigm set, the diagnosis supplies the constraints, the selected
- * intervention is the surviving cell). The evaluation loop closes with
- * `cg:supersedes` — a measured new performance state supersedes the old.
+ * Emergent from Interego: a PerformanceSituation is a typed context
+ * descriptor with a modal status; contextualizing is a composition over
+ * the performer's disposition / record / work environment; the
+ * intervention decision is a paradigmatic operation (the intervention
+ * space is a paradigm set, the regime read supplies the constraints, the
+ * selected intervention is the surviving cell). In the Knowable regime
+ * the evaluation loop closes with `cg:supersedes` — a measured new
+ * performance state supersedes the old.
  *
  * This is the project's own synthesis. It is informed by established
  * practice in performance improvement, instructional design, and
@@ -82,38 +87,43 @@ export function describeDirection(d: PerformanceDirection): string {
   }
 }
 
-// ── The performance gap ─────────────────────────────────────────────
+// ── The performance situation ───────────────────────────────────────
 
-export type GapModalStatus = 'Hypothetical' | 'Asserted';
+export type SituationModalStatus = 'Hypothetical' | 'Asserted';
 
-export interface PerformanceGap {
+/**
+ * A performance situation — the unit the system reasons from. It is a
+ * performer, the work, and what is observed. Note what it does NOT
+ * carry: an idealised "desired" state. A situation is not a gap. An
+ * exemplary state is established later, and only if the work is
+ * contextualized into the Knowable regime.
+ */
+export interface PerformanceSituation {
   id: string;
   performer: Performer;
-  /** What the performer is trying to accomplish — the work context. */
+  /** What the performer is doing — the work context. */
   workContext: string;
   /** The competency / behaviour in question. */
   competency: string;
-  /** Desired performance, stated plainly. */
-  desired: string;
-  /** Observed performance. */
+  /** Observed performance, stated plainly — what is actually happening. */
   observed: string;
-  /** How often the task occurs — drives instruction-vs-job-aid. */
+  /** How often the task occurs — informs instruction-vs-job-aid. */
   frequency: 'continuous' | 'frequent' | 'occasional' | 'rare';
   /** Consequence of poor performance. */
   criticality: 'low' | 'moderate' | 'high' | 'safety-critical';
   /**
-   * Modal status of the gap CLAIM itself. A reported gap is Hypothetical
-   * until measured; an assessment promotes it to Asserted.
+   * Modal status of the situation CLAIM itself. A reported situation is
+   * Hypothetical until measured; an assessment promotes it to Asserted.
    */
-  modalStatus: GapModalStatus;
-  /** Where the gap signal came from (an LRS statement, a trajectory, a
+  modalStatus: SituationModalStatus;
+  /** Where the signal came from (an LRS statement, a trajectory, a
    *  manager observation, a self-report). */
   provenance: string;
   /** The work regime, if the caller already knows it. */
   domain?: WorkRegime;
 }
 
-// ── The cause-analysis factor model ─────────────────────────────────
+// ── The cause-analysis factor model (the Knowable regime) ───────────
 
 /** One factor in the cause analysis. */
 export interface FactorReading {
@@ -131,7 +141,8 @@ export interface FactorReading {
  * Six factors of performance — three environmental (the workplace's
  * responsibility) and three individual (the performer's repertory).
  * Environmental factors usually dominate and are cheaper to fix than
- * re-skilling people, so the diagnosis examines them first.
+ * re-skilling people, so the analysis examines them first. This factor
+ * model belongs to the Knowable regime's gap analysis.
  */
 export interface PerformanceFactors {
   /** Environmental. */
@@ -159,8 +170,8 @@ const FACTOR_TEMPLATE: Record<FactorKey, { category: FactorReading['category']; 
 
 /**
  * The paradigm set of interventions. Instruction is one cell among
- * many; a healthy diagnosis frequently selects something other than
- * "build a course".
+ * many; a healthy contextualization frequently selects something other
+ * than "build a course".
  */
 export type InterventionType =
   | 'instruction'          // curriculum/course/module/lesson — a real skill gap, needed from memory
@@ -171,7 +182,7 @@ export type InterventionType =
   | 'coaching'             // a feedback loop — transfer, motivation, the Emergent regime
   | 'probe'                // a safe-to-fail constraint probe — the Emergent regime
   | 'environmental-fix'    // tools / information / incentives — not a content deliverable
-  | 'no-intervention';     // the gap is acceptable or self-resolving
+  | 'no-intervention';     // the situation is acceptable or self-resolving
 
 export interface InterventionOption {
   type: InterventionType;
@@ -184,22 +195,27 @@ export interface InterventionOption {
   authoring?: { affordance: string; direction: PerformanceDirection };
 }
 
-// ── Diagnosis ───────────────────────────────────────────────────────
+// ── Contextualization — read the regime, then apply its method ──────
 
-export type PerformanceMethod = 'gap-analysis' | 'dispositional-read' | 'stabilise-first';
+export type PerformanceMethod = 'apply-practice' | 'gap-analysis' | 'dispositional-read' | 'stabilise-first';
 
 export interface Diagnosis {
-  gapId: string;
+  situationId: string;
   domain: WorkRegime;
   method: PerformanceMethod;
-  /** For the gap-analysis method — the six-factor reading. Absent for Emergent. */
+  /** For the gap-analysis method (Knowable) — the six-factor reading. */
   factors?: PerformanceFactors;
-  /** The dominant deficiency factor(s) by name. */
+  /** For the gap-analysis method (Knowable) — the exemplary performance
+   *  the observed state is compared against. Only the Knowable regime
+   *  establishes an exemplary state; it is absent for every other. */
+  exemplary?: string;
+  /** The dominant deficiency factor(s) by name (Knowable). */
   rootCauses: string[];
   /**
-   * The discriminating question: could the performer perform correctly
-   * under ideal conditions (full motivation, no obstacles)? If yes, it
-   * is NOT a skill deficiency — and instruction is the wrong intervention.
+   * The discriminating question (Knowable): could the performer perform
+   * correctly under ideal conditions (full motivation, no obstacles)? If
+   * yes, it is NOT a skill deficiency — and instruction is the wrong
+   * intervention.
    */
   skillDeficiency: boolean;
   /** Whether the performer has performed this competency well before —
@@ -208,16 +224,20 @@ export interface Diagnosis {
   /** For the dispositional method — the disposition read instead of a gap. */
   disposition?: { domain: WorkRegime; vector: string; stance: string; method: string };
   reasoning: string[];
-  /** An honest note when gap analysis is the wrong frame for this gap. */
+  /** An honest note when the gap frame is the wrong one for this work. */
   caveat?: string;
 }
 
 export interface DiagnoseInput {
-  gap: PerformanceGap;
-  /** Evidence about the six performance factors — for Evident/Knowable
-   *  gaps. Any factor not supplied is assumed adequate. */
+  situation: PerformanceSituation;
+  /** The exemplary performance — what good looks like. It is only
+   *  meaningful, and only used, when the work contextualizes into the
+   *  Knowable regime; supplying it does not force that regime. */
+  exemplary?: string;
+  /** Evidence about the six performance factors — for the Knowable
+   *  regime's gap analysis. Any factor not supplied is assumed adequate. */
   factorEvidence?: Partial<Record<FactorKey, { adequate: boolean; evidence: string }>>;
-  /** Agent trajectories — for Emergent gaps, the dispositional read
+  /** Agent trajectories — for Emergent work, the dispositional read
    *  composes `agent-disposition.ts` off these. */
   trajectories?: readonly AgentTrajectory[];
   /** The discriminating question — could the performer perform correctly
@@ -227,11 +247,12 @@ export interface DiagnoseInput {
   performedWellBefore?: boolean;
 }
 
-/** Decide which consulting method the work regime calls for. */
+/** Decide which method the work regime calls for. */
 function methodForRegime(domain: WorkRegime): PerformanceMethod {
   if (domain === 'Emergent') return 'dispositional-read';
   if (domain === 'Turbulent') return 'stabilise-first';
-  return 'gap-analysis';
+  if (domain === 'Evident') return 'apply-practice';
+  return 'gap-analysis'; // Knowable — the one regime the gap frame fits
 }
 
 /** Build the six-factor reading from supplied evidence (unsupplied = adequate). */
@@ -258,20 +279,20 @@ function buildFactors(evidence: DiagnoseInput['factorEvidence']): PerformanceFac
 }
 
 /**
- * Diagnose a performance gap. Routes on the work regime: gap analysis
- * for Evident/Knowable work, a dispositional read for Emergent work,
- * stabilisation for Turbulent work.
+ * Contextualize a performance situation. The universal first move is to
+ * read the work regime; the method follows from it. Only the Knowable
+ * regime frames the situation as a gap and runs a cause analysis.
  */
 export function diagnose(input: DiagnoseInput): Diagnosis {
-  const { gap } = input;
+  const { situation } = input;
 
   // Determine the regime. Honour an explicit one; else, for an agent
   // with trajectories, read it off the disposition; else default to
   // Knowable (most structured workplace tasks live there).
   let domain: WorkRegime;
-  if (gap.domain) {
-    domain = gap.domain;
-  } else if (gap.performer.kind === 'agent' && input.trajectories && input.trajectories.length > 0) {
+  if (situation.domain) {
+    domain = situation.domain;
+  } else if (situation.performer.kind === 'agent' && input.trajectories && input.trajectories.length > 0) {
     domain = assessDisposition(input.trajectories).regime.name;
   } else {
     domain = 'Knowable';
@@ -283,10 +304,10 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
   if (method === 'dispositional-read') {
     const traj = input.trajectories ?? [];
     const disp = traj.length > 0 ? assessDisposition(traj) : null;
-    reasoning.push('The work sits in the Emergent regime — a complex, adaptive system has dispositions and propensities, not a fixable gap. A classic actual-vs-exemplary gap analysis does not apply.');
+    reasoning.push('The work sits in the Emergent regime — a complex, adaptive system has dispositions and propensities, not a fixable gap. There is no exemplary state to idealise and close toward, so a gap analysis does not apply.');
     reasoning.push('Composing agent-disposition.ts: read the disposition and the vector of change, not a score against an ideal.');
     return {
-      gapId: gap.id,
+      situationId: situation.id,
       domain,
       method,
       rootCauses: ['not applicable — the Emergent regime has no single fixable root cause'],
@@ -300,27 +321,40 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
         },
       } : {}),
       reasoning,
-      caveat: 'This gap was framed as actual-vs-desired, but the work is Emergent. Do NOT build instruction toward an ideal state. Run safe-to-fail probes (agent-disposition.buildProbe), sense which cohere, and steer by vector.',
+      caveat: 'The work is Emergent. Do NOT idealise a future state or build instruction toward one. Run safe-to-fail probes (agent-disposition.buildProbe), sense which cohere, and steer by vector.',
     };
   }
 
   // ── Turbulent regime — stabilise first. ──
   if (method === 'stabilise-first') {
-    reasoning.push('The work sits in the Turbulent regime — behaviour is not yet patterned. No intervention can be analysed until the situation is stabilised.');
+    reasoning.push('The work sits in the Turbulent regime — behaviour is not yet patterned. No method can be applied until the situation is stabilised.');
     return {
-      gapId: gap.id,
+      situationId: situation.id,
       domain,
       method,
-      rootCauses: ['instability — there is no patterned behaviour to diagnose'],
+      rootCauses: ['instability — there is no patterned behaviour to read'],
       skillDeficiency: false,
       reasoning,
-      caveat: 'Act first to stabilise (act, then read), THEN re-diagnose. Authoring instruction now would be instruction toward a target that does not yet exist.',
+      caveat: 'Act first to stabilise (act, then sense), THEN re-contextualize. Idealising a target state now would aim at one that does not yet exist.',
     };
   }
 
-  // ── Evident / Knowable — gap analysis (cause-factor + discriminator). ──
+  // ── Evident regime — apply the established practice. ──
+  if (method === 'apply-practice') {
+    reasoning.push('The work sits in the Evident regime — the relationship between act and outcome is self-evident. There is no cause to analyse and no gap to close: recognise the situation and apply the established practice.');
+    return {
+      situationId: situation.id,
+      domain,
+      method,
+      rootCauses: ['not applicable — the Evident regime applies a known, established response'],
+      skillDeficiency: false,
+      reasoning,
+    };
+  }
+
+  // ── Knowable regime — gap analysis (the one regime the gap frame fits). ──
   const factors = buildFactors(input.factorEvidence);
-  reasoning.push(`The work sits in the ${domain} regime — a knowable gap; cause-factor gap analysis applies.`);
+  reasoning.push('The work sits in the Knowable regime — cause and effect are knowable through analysis. Here, and only here, the situation is framed as a gap: an exemplary performance is established, the observed performance is compared to it, and a cause-factor analysis isolates why they differ.');
 
   // Examine the environmental factors first — they account for most
   // performance gaps and are cheaper to fix than re-skilling people.
@@ -354,18 +388,19 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
   if (indDeficient.some(c => c.factor.startsWith('Motives'))) rootCauses.push(factors.motives.factor);
   if (indDeficient.some(c => c.factor.startsWith('Capacity'))) rootCauses.push(factors.capacity.factor);
   if (rootCauses.length === 0) {
-    rootCauses.push('no deficiency isolated — the gap may be acceptable variance, or the desired state may be mis-stated.');
+    rootCauses.push('no deficiency isolated — the gap may be acceptable variance, or the exemplary state may be mis-stated.');
   }
 
   const caveat = (!skillDeficiency && envDeficient.length === 0 && indDeficient.length === 0)
-    ? 'No deficiency was isolated. Before building anything, re-check that the gap is real (assessment) and that the desired performance is correctly stated.'
+    ? 'No deficiency was isolated. Before building anything, re-check that the gap is real (assessment) and that the exemplary performance is correctly stated.'
     : undefined;
 
   return {
-    gapId: gap.id,
+    situationId: situation.id,
     domain,
     method,
     factors,
+    ...(input.exemplary !== undefined ? { exemplary: input.exemplary } : {}),
     rootCauses,
     skillDeficiency,
     ...(input.performedWellBefore !== undefined ? { performedWellBefore: input.performedWellBefore } : {}),
@@ -394,13 +429,13 @@ function authoringFor(type: InterventionType, direction: PerformanceDirection): 
 }
 
 export interface InterventionPlan {
-  gapId: string;
+  situationId: string;
   diagnosis: Diagnosis;
   /** The full paradigm — every option, selected or not, with reasoning. */
   paradigm: InterventionOption[];
   /** The selected intervention(s), in priority order. */
   selected: InterventionOption[];
-  /** The headline answer to "does this gap need content built?" */
+  /** The headline answer to "does this situation need content built?" */
   contentWarranted: boolean;
   /** The directionality any authored content would be produced in. */
   direction: PerformanceDirection;
@@ -409,22 +444,22 @@ export interface InterventionPlan {
 
 export interface RecommendInput {
   diagnosis: Diagnosis;
-  gap: PerformanceGap;
+  situation: PerformanceSituation;
   /** Who would author the intervention — defaults to an agent (the
-   *  diagnosing agent itself authoring for the performer). */
+   *  contextualizing agent itself authoring for the performer). */
   author?: Performer;
 }
 
 /**
- * Turn a diagnosis into an InterventionPlan. The full intervention
+ * Turn a regime read into an InterventionPlan. The full intervention
  * paradigm is returned — every option marked selected or ruled-out with
  * its reasoning — so the caller (and a demo, and an auditor) can see WHY
  * a course was, or was not, the answer.
  */
 export function recommendInterventions(input: RecommendInput): InterventionPlan {
-  const { diagnosis, gap } = input;
+  const { diagnosis, situation } = input;
   const author: Performer = input.author ?? { id: 'urn:foxxi:agent:performance-consultant', kind: 'agent', role: 'performance consultant' };
-  const direction = directionOf(author.kind, gap.performer.kind);
+  const direction = directionOf(author.kind, situation.performer.kind);
 
   const select = new Set<InterventionType>();
   const rationale = new Map<InterventionType, string>();
@@ -436,7 +471,7 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     rationale.set('probe', 'The Emergent regime calls for safe-to-fail constraint probes — change a constraint, observe, steer. Compose agent-disposition.buildProbe; amplify what coheres.');
     select.add('coaching');
     rationale.set('coaching', 'A feedback loop steers an Emergent system by vector. Coaching reads the disposition with the performer rather than prescribing a target.');
-    ruledOut.set('instruction', 'You cannot instruct your way through the Emergent regime — instruction presumes a knowable ideal state, which a complex, adaptive system does not have.');
+    ruledOut.set('instruction', 'You cannot instruct your way through the Emergent regime — instruction presumes a knowable exemplary state, which a complex, adaptive system does not have.');
     ruledOut.set('assessment', 'A score-vs-exemplary assessment imports the gap frame the Emergent regime rejects.');
     for (const t of ALL_INTERVENTIONS) {
       if (!select.has(t) && !ruledOut.has(t) && t !== 'no-intervention') {
@@ -445,21 +480,30 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     }
   } else if (diagnosis.method === 'stabilise-first') {
     select.add('environmental-fix');
-    rationale.set('environmental-fix', 'Turbulent work must be stabilised by a decisive act before any content intervention can be designed.');
+    rationale.set('environmental-fix', 'Turbulent work must be stabilised by a decisive act before any intervention can be designed.');
     for (const t of ALL_INTERVENTIONS) {
       if (!select.has(t) && t !== 'no-intervention') {
         ruledOut.set(t, 'premature — the situation is not yet patterned enough to design this intervention against.');
       }
     }
+  } else if (diagnosis.method === 'apply-practice') {
+    // ── Evident regime — apply the established practice. ──
+    select.add('reference');
+    rationale.set('reference', 'The Evident regime applies a known, established response. Make that response available where the work happens — a reference / SOP, looked up, not taught. No cause analysis, no course.');
+    for (const t of ALL_INTERVENTIONS) {
+      if (!select.has(t) && t !== 'no-intervention') {
+        ruledOut.set(t, 'not indicated — the Evident regime applies an established practice; it does not analyse a cause or close a gap.');
+      }
+    }
   } else {
-    // ── Evident / Knowable — gap-analysis selection. ──
+    // ── Knowable regime — gap-analysis selection. ──
     const factors = diagnosis.factors!;
     const envDeficient = [factors.information, factors.instrumentation, factors.incentives].filter(c => !c.adequate);
 
-    // 0. An unverified gap is verified before anything is built.
-    if (gap.modalStatus === 'Hypothetical') {
+    // 0. An unverified situation is verified before anything is built.
+    if (situation.modalStatus === 'Hypothetical') {
       select.add('assessment');
-      rationale.set('assessment', 'The gap is still Hypothetical — measure it before investing in any intervention. An assessment promotes the gap claim to Asserted (or dismisses it).');
+      rationale.set('assessment', 'The situation is still Hypothetical — measure it before investing in any intervention. An assessment promotes the claim to Asserted (or dismisses it).');
     }
 
     // 1. Environmental deficiencies dominate — fix the workplace.
@@ -475,13 +519,13 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     // 2. Genuine skill deficiency — but instruction vs. job aid vs.
     //    practice depends on frequency and on whether the skill exists.
     if (diagnosis.skillDeficiency) {
-      if (input.gap.frequency === 'rare' || input.gap.frequency === 'occasional') {
+      if (situation.frequency === 'rare' || situation.frequency === 'occasional') {
         select.add('performance-support');
-        rationale.set('performance-support', `The task occurs ${input.gap.frequency}ly — there is no need to carry the procedure in memory. A job aid delivered at the point of work is cheaper and more reliable than a course.`);
-        ruledOut.set('instruction', `The skill is genuinely absent, but for ${input.gap.frequency} work a job aid out-performs a course — instruction is reserved for skills needed fluently and from memory.`);
+        rationale.set('performance-support', `The task occurs ${situation.frequency}ly — there is no need to carry the procedure in memory. A job aid delivered at the point of work is cheaper and more reliable than a course.`);
+        ruledOut.set('instruction', `The skill is genuinely absent, but for ${situation.frequency} work a job aid out-performs a course — instruction is reserved for skills needed fluently and from memory.`);
       } else {
         select.add('instruction');
-        rationale.set('instruction', `A genuine knowledge/skill deficiency in a ${input.gap.frequency} task — the competency must be held fluently and from memory. Instruction (an emergent curriculum → course → module → lesson) is warranted.`);
+        rationale.set('instruction', `A genuine knowledge/skill deficiency in a ${situation.frequency} task — the competency must be held fluently and from memory. Instruction (an emergent curriculum → course → module → lesson) is warranted.`);
         if (diagnosis.performedWellBefore) {
           select.add('practice');
           rationale.set('practice', 'The performer has done this well before — fluency has decayed rather than the skill being absent. Pair instruction with deliberate practice to restore it.');
@@ -489,7 +533,7 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
       }
     } else if (!envDeficient.length && diagnosis.rootCauses[0]?.startsWith('no deficiency')) {
       select.add('no-intervention');
-      rationale.set('no-intervention', 'No deficiency was isolated. The gap may be acceptable variance or the desired state mis-stated. Building content here would be waste.');
+      rationale.set('no-intervention', 'No deficiency was isolated. The gap may be acceptable variance or the exemplary state mis-stated. Building content here would be waste.');
     }
 
     // 3. Motivation — coaching, not content.
@@ -509,9 +553,9 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     for (const t of ALL_INTERVENTIONS) {
       if (select.has(t) || ruledOut.has(t) || t === 'no-intervention') continue;
       if (t === 'instruction') ruledOut.set(t, 'No genuine skill deficiency in a frequent task was found — instruction is not warranted.');
-      else if (t === 'reference') ruledOut.set(t, 'The diagnosis did not isolate a look-it-up knowledge need.');
-      else if (t === 'probe') ruledOut.set(t, 'Probes are an Emergent-regime tool; this work is Evident/Knowable, where a gap can be analysed directly.');
-      else ruledOut.set(t, 'Not indicated by the diagnosis.');
+      else if (t === 'reference') ruledOut.set(t, 'The analysis did not isolate a look-it-up knowledge need.');
+      else if (t === 'probe') ruledOut.set(t, 'Probes are an Emergent-regime tool; this work is Knowable, where a cause can be analysed directly.');
+      else ruledOut.set(t, 'Not indicated by the analysis.');
     }
   }
 
@@ -521,7 +565,7 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     const opt: InterventionOption = {
       type,
       selected,
-      rationale: selected ? (rationale.get(type) ?? 'selected by the diagnosis.') : (ruledOut.get(type) ?? 'not selected.'),
+      rationale: selected ? (rationale.get(type) ?? 'selected by the analysis.') : (ruledOut.get(type) ?? 'not selected.'),
       ...(!selected && ruledOut.has(type) ? { ruledOutBecause: ruledOut.get(type)! } : {}),
     };
     const authoring = selected ? authoringFor(type, direction) : undefined;
@@ -536,13 +580,15 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
     : selected.map(o => o.type).join(' + ');
   const dirNote = describeDirection(direction);
   const summary = contentWarranted
-    ? `Content IS warranted for this gap — ${headline}. ${dirNote.charAt(0).toUpperCase()}${dirNote.slice(1)}`
-    : `Content is NOT the answer for this gap — ${headline}. ${diagnosis.method === 'dispositional-read'
+    ? `Content IS warranted for this situation — ${headline}. ${dirNote.charAt(0).toUpperCase()}${dirNote.slice(1)}`
+    : `Content is NOT the answer for this situation — ${headline}. ${diagnosis.method === 'dispositional-read'
         ? 'The Emergent regime calls for probes, not courses.'
-        : 'The diagnosis isolated an environmental / motivational / capacity cause that no course can fix — the common finding that most gaps are environmental.'}`;
+        : diagnosis.method === 'stabilise-first'
+          ? 'Turbulent work must be stabilised before anything can be designed.'
+          : 'The analysis isolated an environmental / motivational / capacity cause that no course can fix — the common finding that most performance situations are environmental.'}`;
 
   return {
-    gapId: gap.id,
+    situationId: situation.id,
     diagnosis,
     paradigm,
     selected,
@@ -552,22 +598,25 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
   };
 }
 
-// ── Evaluation — closing the loop (four-level evaluation → cg:supersedes) ─
+// ── Evaluation — closing a Knowable gap (four-level → cg:supersedes) ─
 
 /**
- * A four-level evaluation, expressed as a modal-status progression:
+ * A four-level evaluation of an intervention. This is the Knowable
+ * regime's closing move: an exemplary state was established, an
+ * intervention was applied, and the loop closes when the observed state
+ * is re-measured against the exemplary one. It is expressed as a
+ * modal-status progression:
  *   response   — a recorded reaction (Hypothetical evidence of value).
  *   capability — an assessment result (Asserted competency, or not).
  *   transfer   — evidence the behaviour transferred to real work (an LRS
- *                statement / a trajectory step in the work context —
- *                this is where the loop touches the gap).
- *   outcome    — the gap's observed-state, re-measured. If it closed,
- *                the intervention worked; the new state supersedes the
- *                old (`cg:supersedes`).
+ *                statement / a trajectory step in the work context).
+ *   outcome    — the situation's observed-state, re-measured against the
+ *                exemplary one. If the gap closed, the intervention
+ *                worked; the new state supersedes the old (`cg:supersedes`).
  */
 export interface EvaluateInput {
   plan: InterventionPlan;
-  gap: PerformanceGap;
+  situation: PerformanceSituation;
   response?: { favourable: boolean; note: string };
   capability?: { assessed: boolean; passed: boolean; note: string };
   transfer?: { transferred: boolean; evidence: string };
@@ -576,7 +625,7 @@ export interface EvaluateInput {
 }
 
 export interface InterventionEvaluation {
-  gapId: string;
+  situationId: string;
   interventions: InterventionType[];
   levels: {
     response?: { favourable: boolean; note: string };
@@ -585,47 +634,49 @@ export interface InterventionEvaluation {
     outcome?: { gapClosed: boolean; before: string; after: string };
   };
   verdict: 'closed' | 'improved' | 'no-change' | 'worsened' | 'too-early';
-  /** The descriptor state this evaluation supersedes — the old gap.observed. */
+  /** The descriptor state this evaluation supersedes — the old observed-state. */
   supersedes: string;
   /** What performance management should do next with this result. */
   nextAction: string;
 }
 
 export function evaluateIntervention(input: EvaluateInput): InterventionEvaluation {
-  const { plan, gap } = input;
+  const { plan, situation } = input;
+  const exemplary = plan.diagnosis.exemplary;
   const levels: InterventionEvaluation['levels'] = {};
   if (input.response) levels.response = input.response;
   if (input.capability) levels.capability = input.capability;
   if (input.transfer) levels.transfer = input.transfer;
 
   let verdict: InterventionEvaluation['verdict'] = 'too-early';
-  let nextAction = 'Continue tracking — transfer (to real work) and outcome (gap re-measured) evidence is not yet in.';
+  let nextAction = 'Continue tracking — transfer (to real work) and outcome (situation re-measured) evidence is not yet in.';
 
   if (input.newObserved !== undefined) {
-    const gapClosed = input.newObserved.trim().toLowerCase() === gap.desired.trim().toLowerCase()
+    const gapClosed = (exemplary !== undefined
+        && input.newObserved.trim().toLowerCase() === exemplary.trim().toLowerCase())
       || (input.transfer?.transferred === true && input.capability?.passed === true);
-    levels.outcome = { gapClosed, before: gap.observed, after: input.newObserved };
+    levels.outcome = { gapClosed, before: situation.observed, after: input.newObserved };
     if (gapClosed) {
       verdict = 'closed';
-      nextAction = `The gap is closed. Emit a cg:supersedes-linked PerformanceGap descriptor whose observed-state is "${input.newObserved}" and modalStatus Asserted; retire the intervention.`;
-    } else if (input.newObserved !== gap.observed) {
+      nextAction = `The gap is closed. Emit a cg:supersedes-linked PerformanceSituation descriptor whose observed-state is "${input.newObserved}" and modalStatus Asserted; retire the intervention.`;
+    } else if (input.newObserved !== situation.observed) {
       verdict = 'improved';
-      nextAction = 'Performance improved but the gap is not fully closed. Re-diagnose against the new observed-state — the remaining gap may now have a different root cause.';
+      nextAction = 'Performance improved but the gap is not fully closed. Re-contextualize against the new observed-state — the remaining gap may now have a different root cause.';
     } else {
       verdict = 'no-change';
-      nextAction = 'No change in observed performance despite the intervention. This is a transfer failure — re-diagnose; the original cause analysis likely mis-identified the root cause (often: the real cause was environmental).';
+      nextAction = 'No change in observed performance despite the intervention. This is a transfer failure — re-contextualize; the original cause analysis likely mis-identified the root cause (often: the real cause was environmental).';
     }
   } else if (input.transfer?.transferred === false) {
     verdict = 'no-change';
-    nextAction = 'Capability may have been demonstrated but the behaviour did not transfer to real work — a classic transfer failure. Add performance-support / coaching at the point of work, or re-diagnose.';
+    nextAction = 'Capability may have been demonstrated but the behaviour did not transfer to real work — a classic transfer failure. Add performance-support / coaching at the point of work, or re-contextualize.';
   }
 
   return {
-    gapId: gap.id,
+    situationId: situation.id,
     interventions: plan.selected.map(o => o.type),
     levels,
     verdict,
-    supersedes: gap.observed,
+    supersedes: situation.observed,
     nextAction,
   };
 }
@@ -633,7 +684,7 @@ export function evaluateIntervention(input: EvaluateInput): InterventionEvaluati
 // ── Performance portfolio (the performance-management read) ─────────
 
 export interface PortfolioEntry {
-  gap: PerformanceGap;
+  situation: PerformanceSituation;
   plan: InterventionPlan;
   evaluation?: InterventionEvaluation;
 }
@@ -646,16 +697,16 @@ export interface PerformancePortfolio {
   contentVsNonContent: { content: number; nonContent: number };
   closed: number;
   improved: number;
-  openGaps: number;
+  openSituations: number;
   /** The single most useful management read. */
   readout: string;
 }
 
 /**
- * Roll a set of diagnosed gaps into a portfolio read — the performance-
- * management view. The key number is contentVsNonContent: a system that
- * is genuinely performance-driven will route a large share of gaps to
- * NON-content interventions.
+ * Roll a set of contextualized situations into a portfolio read — the
+ * performance-management view. The key number is contentVsNonContent: a
+ * system that is genuinely performance-driven will route a large share
+ * of situations to NON-content interventions.
  */
 export function rollUpPortfolio(entries: readonly PortfolioEntry[]): PerformancePortfolio {
   const interventionMix: Record<string, number> = {};
@@ -669,7 +720,7 @@ export function rollUpPortfolio(entries: readonly PortfolioEntry[]): Performance
     if (e.evaluation?.verdict === 'closed') closed++;
     if (e.evaluation?.verdict === 'improved') improved++;
   }
-  const openGaps = entries.length - closed;
+  const openSituations = entries.length - closed;
   const total = entries.length || 1;
   const nonContentPct = Math.round((nonContent / total) * 100);
   return {
@@ -678,7 +729,7 @@ export function rollUpPortfolio(entries: readonly PortfolioEntry[]): Performance
     contentVsNonContent: { content, nonContent },
     closed,
     improved,
-    openGaps,
-    readout: `${entries.length} diagnosed gap(s): ${nonContentPct}% routed to non-content interventions (environmental fixes, coaching, probes) — evidence the system is performance-driven, not content-driven. ${closed} closed, ${improved} improved, ${openGaps} still open.`,
+    openSituations,
+    readout: `${entries.length} contextualized situation(s): ${nonContentPct}% routed to non-content interventions (environmental fixes, coaching, probes) — evidence the system is performance-driven, not content-driven.`,
   };
 }

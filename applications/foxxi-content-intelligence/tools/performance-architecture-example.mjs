@@ -3,20 +3,24 @@
  *
  *   npx tsx tools/performance-architecture-example.mjs
  *
- * Proves the whole system: a performance gap is diagnosed, the diagnosis
- * (NOT a content assumption) decides the intervention, content is
- * composed only when it is the answer, across all four directionalities,
- * and the loop closes back to performance.
+ * Proves the whole system: a performance SITUATION is contextualized —
+ * its work regime is read — and the regime's method (NOT a content
+ * assumption) decides the intervention. Content is composed only when
+ * it is the answer, across all four directionalities, and (for the
+ * Knowable regime) the loop closes back to performance.
+ *
+ * Idealising an exemplary state and closing a gap to it is the method
+ * of one regime only — Knowable. The other regimes never name a gap.
  *
  * Seven scenarios:
- *   A  the gap is environmental — the system refuses to build a course
- *   B  a rare task — an in-the-flow job aid beats a course
- *   C  a real, frequent skill gap — emergent course composition + the
- *      same course personalised two different ways (H2H)
+ *   A  a Knowable situation, environmental cause — the system refuses a course
+ *   B  a Knowable situation, rare task — an in-the-flow job aid beats a course
+ *   C  a Knowable situation, real frequent skill gap — emergent course
+ *      composition + the same course personalised two ways (H2H)
  *   D  an agent authors a playbook for another agent (A2A)
  *   E  the scaffold from a plan — honestly empty when no content is due
- *   F  the Emergent regime — instruction is ruled out; probes instead
- *   G  the evaluation loop + the performance-management portfolio read
+ *   F  the Emergent regime — no gap; instruction is ruled out, probes instead
+ *   G  the Knowable evaluation loop + the performance-management portfolio
  *
  * Exits non-zero if any assertion fails.
  */
@@ -36,31 +40,34 @@ const check = (label, cond, detail) => {
 };
 const h = (s) => console.log(`\n${'─'.repeat(72)}\n${s}\n${'─'.repeat(72)}`);
 
-// The diagnosing/authoring agent — a performance consultant.
+// The contextualizing/authoring agent — a performance consultant.
 const consultant = { id: 'did:web:acme#agent-consultant', kind: 'agent', role: 'performance consultant' };
 
 // ════════════════════════════════════════════════════════════════════
-h('SCENARIO A — the gap is environmental. The system refuses a course.');
+h('SCENARIO A — a Knowable situation, environmental cause. No course.');
 // ════════════════════════════════════════════════════════════════════
-const gapA = {
-  id: 'urn:foxxi:gap:escalation',
+const situationA = {
+  id: 'urn:foxxi:situation:escalation',
   performer: { id: 'did:web:acme#rep-jordan', kind: 'human', role: 'support rep' },
   workContext: 'handling customer support tickets',
   competency: 'escalating out-of-scope tickets to specialists',
-  desired: 'escalates within SLA whenever a ticket needs a specialist',
   observed: 'closes out-of-scope tickets unresolved instead of escalating',
   frequency: 'frequent', criticality: 'high', modalStatus: 'Asserted',
   provenance: 'manager observation + LRS statements', domain: 'Knowable',
 };
+// Exemplary performance is established only because this contextualized
+// into the Knowable regime — there, and only there, a gap is named.
+const exemplaryA = 'escalates within SLA whenever a ticket needs a specialist';
 const diagA = diagnose({
-  gap: gapA,
+  situation: situationA,
+  exemplary: exemplaryA,
   couldPerformUnderIdealConditions: true, // the discriminating question: they COULD — so not a skill gap
   factorEvidence: {
-    incentives: { adequate: false, evidence: 'reps are measured on tickets-closed-per-hour; an escalation counts against that number — the incentive punishes the desired behaviour.' },
+    incentives: { adequate: false, evidence: 'reps are measured on tickets-closed-per-hour; an escalation counts against that number — the incentive punishes the wanted behaviour.' },
   },
 });
-const planA = recommendInterventions({ diagnosis: diagA, gap: gapA, author: consultant });
-console.log(`\n   diagnosis: ${diagA.method}, skill deficiency = ${diagA.skillDeficiency}`);
+const planA = recommendInterventions({ diagnosis: diagA, situation: situationA, author: consultant });
+console.log(`\n   regime: ${diagA.domain}, method: ${diagA.method}, skill deficiency = ${diagA.skillDeficiency}`);
 console.log(`   root cause: ${diagA.rootCauses.join('; ')}`);
 console.log(`   ${planA.summary}`);
 for (const o of planA.selected) console.log(`     • selected: ${o.type}`);
@@ -72,25 +79,26 @@ check('A: environmental-fix is selected', planA.selected.some(o => o.type === 'e
 check('A: instruction is ruled out', !planA.selected.some(o => o.type === 'instruction'));
 
 // ════════════════════════════════════════════════════════════════════
-h('SCENARIO B — a rare task. An in-the-flow job aid beats a course.');
+h('SCENARIO B — a Knowable situation, rare task. A job aid beats a course.');
 // ════════════════════════════════════════════════════════════════════
-const gapB = {
-  id: 'urn:foxxi:gap:annual-filing',
+const situationB = {
+  id: 'urn:foxxi:situation:annual-filing',
   performer: { id: 'did:web:acme#analyst-pat', kind: 'human', role: 'finance analyst' },
   workContext: 'the annual regulatory compliance filing',
   competency: 'completing the Form X annual filing correctly',
-  desired: 'files Form X with every schedule complete and correct',
   observed: 'omitted schedule 3 and mis-tagged two line items',
   frequency: 'rare', criticality: 'safety-critical', modalStatus: 'Asserted',
   provenance: 'external audit finding', domain: 'Knowable',
 };
+const exemplaryB = 'files Form X with every schedule complete and correct';
 const diagB = diagnose({
-  gap: gapB,
+  situation: situationB,
+  exemplary: exemplaryB,
   couldPerformUnderIdealConditions: false, // a genuine skill/knowledge gap
   factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'the analyst has never been shown the schedule-3 procedure.' } },
 });
-const planB = recommendInterventions({ diagnosis: diagB, gap: gapB, author: consultant });
-console.log(`\n   diagnosis: skill deficiency = ${diagB.skillDeficiency}, frequency = ${gapB.frequency}`);
+const planB = recommendInterventions({ diagnosis: diagB, situation: situationB, author: consultant });
+console.log(`\n   diagnosis: skill deficiency = ${diagB.skillDeficiency}, frequency = ${situationB.frequency}`);
 console.log(`   ${planB.summary}`);
 for (const o of planB.selected) console.log(`     • selected: ${o.type} — ${o.rationale}`);
 const ruledB = planB.paradigm.find(o => o.type === 'instruction');
@@ -109,28 +117,29 @@ check('B: instruction is ruled out for a rare task', !planB.selected.some(o => o
 check('B: the job aid is affordance-triggered, not scheduled', supportB.delivery === 'affordance-triggered');
 
 // ════════════════════════════════════════════════════════════════════
-h('SCENARIO C — a real, frequent skill gap. Emergent course composition,');
-console.log('             then the SAME course personalised two ways (H2H).');
+h('SCENARIO C — a Knowable situation, real frequent skill gap. Emergent');
+console.log('             course composition, then personalised two ways (H2H).');
 // ════════════════════════════════════════════════════════════════════
-const gapC = {
-  id: 'urn:foxxi:gap:refund-disputes',
+const situationC = {
+  id: 'urn:foxxi:situation:refund-disputes',
   performer: { id: 'did:web:acme#rep-sam', kind: 'human', role: 'support rep' },
   workContext: 'resolving customer refund disputes',
   competency: 'resolving refund disputes within policy on first contact',
-  desired: 'resolves in-policy disputes on first contact without escalating',
   observed: 'escalates 60% of disputes that policy permits a rep to resolve',
   frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted',
   provenance: 'LRS statements + QA review', domain: 'Knowable',
 };
+const exemplaryC = 'resolves in-policy disputes on first contact without escalating';
 // A human SME will author the content, so the plan is recommended with
 // the SME as the author — the directionality the content is authored in.
 const sme = { id: 'did:web:acme#sme-lee', kind: 'human', role: 'refund-policy SME' };
 const diagC = diagnose({
-  gap: gapC,
+  situation: situationC,
+  exemplary: exemplaryC,
   couldPerformUnderIdealConditions: false,
   factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'reps cannot recall the refund-policy decision tree and resolution authority limits.' } },
 });
-const planC = recommendInterventions({ diagnosis: diagC, gap: gapC, author: sme });
+const planC = recommendInterventions({ diagnosis: diagC, situation: situationC, author: sme });
 console.log(`\n   ${planC.summary}`);
 check('C: instruction is selected', planC.selected.some(o => o.type === 'instruction'));
 check('C: content IS warranted', planC.contentWarranted === true);
@@ -157,28 +166,28 @@ const exampleTree = authorFragment({
   authoredBy: sme, suitsDisposition: 'prefers-worked-examples',
 });
 const lessonThresholds = authorLesson({
-  title: 'Refund authority thresholds', competency: gapC.competency, audience: 'human', authoredBy: sme,
+  title: 'Refund authority thresholds', competency: situationC.competency, audience: 'human', authoredBy: sme,
   positions: [{ competencyPoint: 'refund authority thresholds', fragments: [conceptThresholds, exampleThresholds] }],
 });
 const lessonTree = authorLesson({
-  title: 'Walking the refund decision tree', competency: gapC.competency, audience: 'human', authoredBy: sme,
+  title: 'Walking the refund decision tree', competency: situationC.competency, audience: 'human', authoredBy: sme,
   positions: [{ competencyPoint: 'refund decision tree', fragments: [decisionTree, exampleTree] }],
 });
 const moduleCore = authorModule({
-  title: 'Resolving refund disputes', competency: gapC.competency, authoredBy: sme,
+  title: 'Resolving refund disputes', competency: situationC.competency, authoredBy: sme,
   positions: [
     { competencyPoint: 'refund authority thresholds', lessons: [lessonThresholds] },
     { competencyPoint: 'refund decision tree', lessons: [lessonTree] },
   ],
 });
 const courseC = composeCourse({
-  title: 'Refund dispute resolution', competency: gapC.competency, audience: 'human', authoredBy: sme,
+  title: 'Refund dispute resolution', competency: situationC.competency, audience: 'human', authoredBy: sme,
   positions: [{ competencyPoint: 'resolving refund disputes', modules: [moduleCore] }],
 });
 console.log(`\n   composed course: "${courseC.title}" — a syntagm of ${courseC.syntagm.length} module position(s)`);
 
 // Personalise for two performers from the IDENTICAL course.
-const resolvedSam = personalize(courseC, gapC.performer, {});
+const resolvedSam = personalize(courseC, situationC.performer, {});
 const resolvedRobin = personalize(courseC,
   { id: 'did:web:acme#rep-robin', kind: 'human', role: 'support rep' },
   { masteredCompetencyPoints: ['refund authority thresholds'], dispositionPreference: 'prefers-worked-examples' });
@@ -234,9 +243,9 @@ check('D: an agent audience gets context descriptors, not slides', !!renderD.age
 // ════════════════════════════════════════════════════════════════════
 h('SCENARIO E — scaffolding content from a plan (honestly empty when due).');
 // ════════════════════════════════════════════════════════════════════
-const scaffoldA = scaffoldFromPlan(planA, gapA.competency);
-const scaffoldB = scaffoldFromPlan(planB, gapB.competency);
-const scaffoldC = scaffoldFromPlan(planC, gapC.competency);
+const scaffoldA = scaffoldFromPlan(planA, situationA.competency);
+const scaffoldB = scaffoldFromPlan(planB, situationB.competency);
+const scaffoldC = scaffoldFromPlan(planC, situationC.competency);
 console.log(`\n   plan A (environmental): ${scaffoldA.note}`);
 console.log(`   plan B (job aid):      ${scaffoldB.toAuthor.map(t => t.affordance).join(', ')} — direction ${scaffoldB.direction}`);
 console.log(`   plan C (instruction):  ${scaffoldC.toAuthor.map(t => t.affordance).join(', ')} — direction ${scaffoldC.direction}`);
@@ -245,7 +254,7 @@ check('E: scaffold for the instruction plan calls compose_course',
   scaffoldC.toAuthor.some(t => t.affordance === 'foxxi.compose_course'));
 
 // ════════════════════════════════════════════════════════════════════
-h('SCENARIO F — the Emergent regime. Instruction is ruled out; probe instead.');
+h('SCENARIO F — the Emergent regime. No gap; instruction ruled out, probe.');
 // ════════════════════════════════════════════════════════════════════
 // A minimal agent trajectory — assessDisposition reads the steps directly.
 const t0 = '2026-05-21T10:00:00.000Z';
@@ -263,18 +272,19 @@ const teamTrajectory = [{
     { modalStatus: 'Asserted', granularity: 'tool-call', verb: 'verify', objectId: 'o8', objectName: 'verify the integration', result: { success: true }, recordedAt: ts(8) },
   ],
 }];
-const gapF = {
-  id: 'urn:foxxi:gap:novel-integration-failures',
+const situationF = {
+  id: 'urn:foxxi:situation:novel-integration-failures',
   performer: { id: 'did:web:acme#agent-scout', kind: 'agent', role: 'integration agent' },
   workContext: 'resolving novel third-party integration failures',
   competency: 'resolving novel integration failures',
-  desired: 'resolves novel failures without escalation',
   observed: 'resolution is inconsistent across novel failures',
   frequency: 'occasional', criticality: 'high', modalStatus: 'Hypothetical',
   provenance: 'agent trajectory analysis',
 };
-const diagF = diagnose({ gap: gapF, trajectories: teamTrajectory });
-const planF = recommendInterventions({ diagnosis: diagF, gap: gapF, author: consultant });
+// No exemplary is supplied — the work is Emergent, so no exemplary state
+// exists to idealise and no gap is named.
+const diagF = diagnose({ situation: situationF, trajectories: teamTrajectory });
+const planF = recommendInterventions({ diagnosis: diagF, situation: situationF, author: consultant });
 console.log(`\n   diagnosis: domain = ${diagF.domain}, method = ${diagF.method}`);
 console.log(`   disposition: ${diagF.disposition?.vector ?? 'n/a'}`);
 console.log(`   caveat: ${diagF.caveat}`);
@@ -287,14 +297,14 @@ check('F: a probe is selected instead', planF.selected.some(o => o.type === 'pro
 check('F: content is not warranted', planF.contentWarranted === false);
 
 // ════════════════════════════════════════════════════════════════════
-h('SCENARIO G — the evaluation loop + the performance-management portfolio.');
+h('SCENARIO G — the Knowable evaluation loop + the portfolio read.');
 // ════════════════════════════════════════════════════════════════════
 const evalC = evaluateIntervention({
-  plan: planC, gap: gapC,
+  plan: planC, situation: situationC,
   response: { favourable: true, note: 'reps rated the course relevant to live disputes' },
   capability: { assessed: true, passed: true, note: 'all reps passed the decision-tree assessment' },
   transfer: { transferred: true, evidence: 'LRS shows first-contact resolution on 14 of the next 16 in-policy disputes' },
-  newObserved: gapC.desired,
+  newObserved: exemplaryC,
 });
 console.log(`\n   intervention evaluation (four-level evaluation → cg:supersedes):`);
 console.log(`     capability : ${evalC.levels.capability.passed ? 'passed' : 'failed'}`);
@@ -303,19 +313,19 @@ console.log(`     outcome    : gap ${evalC.levels.outcome.gapClosed ? 'CLOSED' :
 console.log(`     verdict      : ${evalC.verdict} — supersedes observed-state "${evalC.supersedes}"`);
 console.log(`     next action  : ${evalC.nextAction}`);
 check('G: the evaluation verdict is "closed"', evalC.verdict === 'closed');
-check('G: the evaluation supersedes the old observed-state', evalC.supersedes === gapC.observed);
+check('G: the evaluation supersedes the old observed-state', evalC.supersedes === situationC.observed);
 
 const portfolio = rollUpPortfolio([
-  { gap: gapA, plan: planA },
-  { gap: gapB, plan: planB },
-  { gap: gapC, plan: planC, evaluation: evalC },
-  { gap: gapF, plan: planF },
+  { situation: situationA, plan: planA },
+  { situation: situationB, plan: planB },
+  { situation: situationC, plan: planC, evaluation: evalC },
+  { situation: situationF, plan: planF },
 ]);
 console.log(`\n   performance portfolio (the management read):`);
 console.log(`     intervention mix : ${JSON.stringify(portfolio.interventionMix)}`);
 console.log(`     content vs not   : ${portfolio.contentVsNonContent.content} content, ${portfolio.contentVsNonContent.nonContent} non-content`);
 console.log(`     ${portfolio.readout}`);
-check('G: the portfolio routed gaps to BOTH content and non-content',
+check('G: the portfolio routed situations to BOTH content and non-content',
   portfolio.contentVsNonContent.content > 0 && portfolio.contentVsNonContent.nonContent > 0);
 
 // ════════════════════════════════════════════════════════════════════
@@ -323,6 +333,7 @@ console.log(`\n${'═'.repeat(72)}`);
 console.log(`${pass} passed, ${fail} failed`);
 console.log('═'.repeat(72));
 if (fail > 0) process.exit(1);
-console.log('\nThe system is performance-driven: a diagnosis decided each intervention,');
-console.log('content was composed only when it was the answer, and the loop closed');
-console.log('back to performance. Authoring used the same tools for humans and agents.');
+console.log('\nThe system is performance-driven: each situation was contextualized,');
+console.log('its regime decided the method, content was composed only when it was');
+console.log('the answer, and (in the Knowable regime) the loop closed back to');
+console.log('performance. Authoring used the same tools for humans and agents.');

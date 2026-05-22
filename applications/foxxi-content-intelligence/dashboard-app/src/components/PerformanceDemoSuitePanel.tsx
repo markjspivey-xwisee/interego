@@ -3,13 +3,13 @@
  *
  * A 4x4 routing matrix: the four directionalities (H2H, H2A, A2H, A2A)
  * across the four work regimes (Evident, Knowable, Emergent, Turbulent).
- * Each of the sixteen cells is a real performance gap; clicking it runs
- * the live diagnosis -> intervention-plan -> knowledge-map flow against
- * the bridge, so the whole routing — every directionality, every regime,
- * every disposition — can be walked end to end.
+ * Each of the sixteen cells is a real performance situation; clicking it
+ * runs the live contextualize -> intervention-plan -> knowledge-map flow
+ * against the bridge, so the whole routing — every directionality, every
+ * regime, every disposition — can be walked end to end.
  *
  * The panel calls the bridge's open routes directly:
- *   POST /performance/plan        diagnose a gap -> the InterventionPlan
+ *   POST /performance/plan        contextualize a situation -> the plan
  *   POST /knowledge/map           decompose the competency's knowledge
  *   POST /content/compose-course  author an emergent course
  *   POST /content/personalize     resolve it for the performer
@@ -75,17 +75,25 @@ const ACTORS: Record<Direction, { author: { id: string; kind: string; role: stri
   A2A: { author: agent('did:web:acme#agent-senior', 'senior agent'), performerKind: 'agent' },
 };
 
-/** Build a scenario. `gap` omits performer; it is filled from the directionality. */
-function scn(direction: Direction, regime: Regime, title: string, gap: Record<string, unknown>, extra: Record<string, unknown> = {}): Scenario {
+/**
+ * Build a scenario. The situation fields omit performer; it is filled
+ * from the directionality. `desired` is lifted out and sent as
+ * `exemplary` only for the Knowable regime — the one regime that frames
+ * work as a gap to an exemplary state. The other regimes carry no
+ * exemplary; the situation itself never does.
+ */
+function scn(direction: Direction, regime: Regime, title: string, situationFields: Record<string, unknown>, extra: Record<string, unknown> = {}): Scenario {
   const a = ACTORS[direction];
   const perf = a.performerKind === 'human'
     ? human('did:web:acme#performer-h', 'practitioner')
     : agent('did:web:acme#performer-a', 'operating agent');
+  const { desired, ...rest } = situationFields;
   return {
     key: `${regime}-${direction}`,
     direction, regime, title,
     body: {
-      gap: { performer: perf, modalStatus: 'Asserted', domain: regime, ...gap },
+      situation: { performer: perf, modalStatus: 'Asserted', domain: regime, ...rest },
+      ...(regime === 'Knowable' && desired ? { exemplary: desired } : {}),
       author: a.author,
       ...extra,
     },
@@ -211,7 +219,7 @@ export function PerformanceDemoSuitePanel() {
 
   async function runKnowledge(s: Scenario): Promise<void> {
     try {
-      const g = s.body.gap as Record<string, unknown>;
+      const g = s.body.situation as Record<string, unknown>;
       const r = await fetch(`${BRIDGE}/knowledge/map`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -255,11 +263,12 @@ export function PerformanceDemoSuitePanel() {
       right={<Pill tone="accent">{done.length}/16 flows routed</Pill>}
     >
       <div style={{ marginBottom: 14, color: 'var(--text-dim)', fontSize: 12, lineHeight: 1.55 }}>
-        Sixteen real performance gaps — the four <strong>directionalities</strong> (who authors × who
-        performs) across the four <strong>work regimes</strong> (how knowable the work is). Click any
-        cell to route it live: a diagnosis decides the intervention, content is composed only when it
-        is the answer, and the knowledge map says how much of the competency can honestly become
-        content. Each cell calls the deployed bridge — nothing here is mocked.
+        Sixteen real performance situations — the four <strong>directionalities</strong> (who authors ×
+        who performs) across the four <strong>work regimes</strong> (how knowable the work is). Click
+        any cell to route it live: the situation is contextualized, its regime decides the method, the
+        method decides the intervention, content is composed only when it is the answer, and the
+        knowledge map says how much of the competency can honestly become content. Each cell calls the
+        deployed bridge — nothing here is mocked.
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -345,16 +354,18 @@ export function PerformanceDemoSuitePanel() {
 function FlowDetail({ scenario, result, knowledge }: {
   scenario: Scenario; result: PlanResult; knowledge?: KnowledgeResult | { error: string };
 }) {
-  const g = scenario.body.gap as Record<string, string>;
+  const g = scenario.body.situation as Record<string, string>;
+  const exemplary = scenario.body.exemplary as string | undefined;
   const { diagnosis, plan, scaffold } = result;
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      {/* 1. The gap */}
-      <Step n={1} title="The performance gap">
+      {/* 1. The situation */}
+      <Step n={1} title="The performance situation">
         <div style={{ fontSize: 12.5 }}>
-          <strong>{g.competency}</strong> — desired: <em>{g.desired}</em>; observed: <em>{g.observed}</em>.
+          <strong>{g.competency}</strong> — observed: <em>{g.observed}</em>.
+          {exemplary && <> Exemplary performance (established because this is Knowable work): <em>{exemplary}</em>.</>}
           <div style={{ color: 'var(--text-dim)', marginTop: 3 }}>
-            {g.frequency} · {g.criticality} criticality · gap claim is {g.modalStatus}
+            {g.frequency} · {g.criticality} criticality · situation claim is {g.modalStatus}
           </div>
         </div>
       </Step>

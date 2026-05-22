@@ -7,7 +7,7 @@
  * cycle against the deployed bridge, LMS and LRS, with a real browser
  * completing a real generated course:
  *
- *   1. ANALYSE   diagnose a performance gap → an InterventionPlan
+ *   1. CONTEXTUALIZE  read the regime of a performance situation → a plan
  *   2. DESIGN    compose an emergent course (text content)
  *   3. DEVELOP   publish it — generate a cmi5 package + SCORM .zip,
  *                register it on the cmi5 LMS
@@ -44,26 +44,29 @@ const post = async (path, body) => {
 
 console.log('=== Foxxi closed-loop — analysis → design → development → delivery → evaluation ===');
 
-// ── 1. ANALYSE — diagnose a performance gap ─────────────────────────
-h('1. ANALYSE — diagnose a performance gap');
-const gap = {
-  id: `urn:foxxi:gap:closed-loop-${Date.now()}`,
+// ── 1. CONTEXTUALIZE — read the regime, apply its method ────────────
+// This situation contextualizes into the Knowable regime, so the method
+// is gap analysis — and only here is an exemplary state established.
+h('1. CONTEXTUALIZE — read the regime of a performance situation');
+const situation = {
+  id: `urn:foxxi:situation:closed-loop-${Date.now()}`,
   performer: { id: LEARNER, kind: 'human', role: 'support rep' },
   workContext: 'resolving customer refund disputes',
   competency: 'resolving refund disputes within policy',
-  desired: 'resolves in-policy disputes on first contact',
   observed: 'over-escalates disputes a rep is allowed to resolve',
   frequency: 'continuous', criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
 };
+const exemplary = 'resolves in-policy disputes on first contact';
 const planRes = await post('/performance/plan', {
-  gap,
+  situation,
+  exemplary,
   couldPerformUnderIdealConditions: false,
   factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'reps cannot recall the refund decision tree' } },
   author: { id: 'did:web:acme#sme-lee', kind: 'human', role: 'SME' },
 });
 const plan = planRes.json.plan;
-console.log(`   diagnosis: ${planRes.json.diagnosis?.method} · ${planRes.json.plan?.summary}`);
-check('the diagnosis warrants instruction', !!plan?.selected?.some(o => o.type === 'instruction'), plan?.selected?.map(o => o.type));
+console.log(`   regime: ${planRes.json.diagnosis?.domain} · method: ${planRes.json.diagnosis?.method} · ${planRes.json.plan?.summary}`);
+check('the Knowable-regime analysis warrants instruction', !!plan?.selected?.some(o => o.type === 'instruction'), plan?.selected?.map(o => o.type));
 
 // ── 2. DESIGN — compose an emergent course (text content) ───────────
 // A substantial, realistic course — three modules, six lessons, each
@@ -154,11 +157,11 @@ check('the job aid was delivered + instrumented on all 4 channels', delivered ==
 // ── 6. EVALUATE — close the gap ─────────────────────────────────────
 h('6. EVALUATE — the four-level evaluation closes the gap');
 const evaluation = evaluateIntervention({
-  plan, gap,
+  plan, situation,
   response: { favourable: true, note: 'the rep rated the lesson relevant' },
   capability: { assessed: true, passed: verbs.includes('passed'), note: 'the AU emitted a passed statement' },
   transfer: { transferred: verbs.includes('satisfied'), evidence: `LRS registration ${registration} satisfied` },
-  newObserved: gap.desired,
+  newObserved: exemplary,
 });
 console.log(`   verdict: ${evaluation.verdict} — supersedes "${evaluation.supersedes}"`);
 console.log(`   next: ${evaluation.nextAction}`);

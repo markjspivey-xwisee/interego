@@ -300,32 +300,34 @@ async function testHttpRoutes(): Promise<void> {
     const perfIndex = await fetch(`${base}/performance`).then(r => r.json()) as { _affordances?: Record<string, unknown> };
     check('GET /performance is a self-describing index', !!perfIndex._affordances, perfIndex);
 
-    // A gap whose cause is environmental — the plan must NOT warrant content.
+    // A Knowable situation whose cause is environmental — the plan must NOT warrant content.
     const envPlan = await fetch(`${base}/performance/plan`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        gap: {
+        situation: {
           performer: { id: 'u-1', kind: 'human' }, workContext: 'support', competency: 'escalation',
-          desired: 'escalates in SLA', observed: 'does not escalate', frequency: 'frequent',
+          observed: 'does not escalate', frequency: 'frequent',
           criticality: 'high', modalStatus: 'Asserted', domain: 'Knowable',
         },
+        exemplary: 'escalates in SLA',
         couldPerformUnderIdealConditions: true,
         factorEvidence: { incentives: { adequate: false, evidence: 'metric punishes escalation' } },
       }),
     }).then(r => r.json()) as { plan?: { contentWarranted?: boolean; selected?: Array<{ type: string }> } };
-    check('POST /performance/plan routes an environmental gap away from content',
+    check('POST /performance/plan routes an environmental cause away from content',
       envPlan.plan?.contentWarranted === false && !!envPlan.plan?.selected?.some(o => o.type === 'environmental-fix'),
       envPlan.plan);
 
-    // A genuine frequent skill gap — the plan must warrant instruction.
+    // A genuine frequent skill gap (Knowable) — the plan must warrant instruction.
     const instrPlan = await fetch(`${base}/performance/plan`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        gap: {
+        situation: {
           performer: { id: 'u-2', kind: 'human' }, workContext: 'disputes', competency: 'resolving disputes',
-          desired: 'resolves in policy', observed: 'over-escalates', frequency: 'continuous',
+          observed: 'over-escalates', frequency: 'continuous',
           criticality: 'moderate', modalStatus: 'Asserted', domain: 'Knowable',
         },
+        exemplary: 'resolves in policy',
         couldPerformUnderIdealConditions: false,
         factorEvidence: { knowledgeSkill: { adequate: false, evidence: 'does not know the policy' } },
       }),
