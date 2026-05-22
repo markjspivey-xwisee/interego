@@ -360,11 +360,16 @@ function honestNoMatch(question: string, content: FoxxiAgenticCourse[], scope: C
   const hint = covered.length > 0
     ? ` What your context does cover: ${covered.slice(0, 6).join('; ')}.`
     : ` There is no published content in your context yet.`;
+  // Scope-accurate: a vertical-scoped miss means nothing IN THE FOXXI
+  // SLICE covers it — the content may still exist in the wider networked
+  // context, which is exactly what the scope hint points to. Saying
+  // "nothing covers it" outright would be wrong for a vertical miss.
+  const where = scope === 'vertical' ? 'your Foxxi vertical' : 'your networked context';
   const scopeHint = scope === 'vertical'
     ? ` (This was a vertical-scoped ask — ask again with scope "interego" to reach your wider networked context.)`
     : '';
-  return `I couldn't find anything in your context about "${topic}". `
-    + `Nothing covers it — so I won't guess.${hint}${scopeHint}`;
+  return `I couldn't find anything in ${where} about "${topic}". `
+    + `Nothing there covers it — so I won't guess.${hint}${scopeHint}`;
 }
 
 interface LlmConfig { apiKey?: string; model?: string; keySource: LlmKeySource }

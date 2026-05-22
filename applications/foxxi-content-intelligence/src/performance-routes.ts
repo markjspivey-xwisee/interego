@@ -22,8 +22,8 @@
 import type { Express, Request, Response } from 'express';
 import type { WorkRegime } from './agent-disposition.js';
 import {
-  diagnose, recommendInterventions,
-  type PerformanceGap, type Performer, type DiagnoseInput,
+  diagnose, recommendInterventions, rollUpPortfolio,
+  type PerformanceGap, type Performer, type DiagnoseInput, type PortfolioEntry,
 } from './performance-architecture.js';
 import {
   authorFragment, authorLesson, authorModule, composeCourse,
@@ -49,6 +49,40 @@ function asPerformer(v: unknown, fallback?: Performer): Performer | undefined {
   return fallback;
 }
 
+/** Coerce a request `gap` object into a PerformanceGap, or an error string. */
+function coerceGap(v: unknown): PerformanceGap | string {
+  if (!v || typeof v !== 'object') return 'a "gap" object is required';
+  const g = v as Record<string, unknown>;
+  const performer = asPerformer(g.performer);
+  if (!performer) return 'gap.performer must be { id, kind: "human"|"agent" }';
+  for (const f of ['workContext', 'competency', 'desired', 'observed']) {
+    if (typeof g[f] !== 'string' || !g[f]) return `gap.${f} (string) is required`;
+  }
+  return {
+    id: typeof g.id === 'string' ? g.id : `urn:foxxi:gap:${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    performer,
+    workContext: g.workContext as string,
+    competency: g.competency as string,
+    desired: g.desired as string,
+    observed: g.observed as string,
+    frequency: (['continuous', 'frequent', 'occasional', 'rare'].includes(g.frequency as string) ? g.frequency : 'frequent') as PerformanceGap['frequency'],
+    criticality: (['low', 'moderate', 'high', 'safety-critical'].includes(g.criticality as string) ? g.criticality : 'moderate') as PerformanceGap['criticality'],
+    modalStatus: g.modalStatus === 'Asserted' ? 'Asserted' : 'Hypothetical',
+    provenance: typeof g.provenance === 'string' ? g.provenance : 'caller-supplied',
+    ...(['Evident', 'Knowable', 'Emergent', 'Turbulent'].includes(g.domain as string) ? { domain: g.domain as PerformanceGap['domain'] } : {}),
+  };
+}
+
+/** Build a DiagnoseInput from a gap + the request fields carrying diagnostic evidence. */
+function coerceDiagnoseInput(gap: PerformanceGap, src: Record<string, unknown>): DiagnoseInput {
+  return {
+    gap,
+    ...(typeof src.couldPerformUnderIdealConditions === 'boolean' ? { couldPerformUnderIdealConditions: src.couldPerformUnderIdealConditions } : {}),
+    ...(typeof src.performedWellBefore === 'boolean' ? { performedWellBefore: src.performedWellBefore } : {}),
+    ...(src.factorEvidence && typeof src.factorEvidence === 'object' ? { factorEvidence: src.factorEvidence as DiagnoseInput['factorEvidence'] } : {}),
+  };
+}
+
 /** Attach the performance-architecture + emergent-content routes. */
 export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: string }): void {
   const base = config.selfBaseUrl.replace(/\/+$/, '');
@@ -66,6 +100,7 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
       ],
       _affordances: {
         diagnoseAndPlan: { method: 'POST', href: `${base}/performance/plan`, note: 'Diagnose a performance gap and return the full intervention paradigm — selected and ruled-out, with reasoning.' },
+        portfolio: { method: 'POST', href: `${base}/performance/portfolio`, note: 'Diagnose a set of gaps and roll them up — the performance-management read. The headline: how few gaps route to a course.' },
         composeCourse: { method: 'POST', href: `${base}/content/compose-course`, note: 'Author an emergent course — a syntagm of modules → lessons → grounding fragments. The same tool for human and agent authors.' },
         personalizeCourse: { method: 'POST', href: `${base}/content/personalize`, note: 'Resolve a course for one performer via the composition algebra (restriction + override).' },
         knowledgeIndex: { method: 'GET', href: `${base}/knowledge`, note: 'The knowledge architecture — how much of a competency can honestly become content.' },
@@ -79,37 +114,51 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
   app.post('/performance/plan', (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const g = body.gap as Record<string, unknown> | undefined;
-    if (!g || typeof g !== 'object') { bad(res, 'a "gap" object is required'); return; }
-    const performer = asPerformer(g.performer);
-    if (!performer) { bad(res, 'gap.performer must be { id, kind: "human"|"agent" }'); return; }
-    for (const f of ['workContext', 'competency', 'desired', 'observed']) {
-      if (typeof g[f] !== 'string' || !g[f]) { bad(res, `gap.${f} (string) is required`); return; }
-    }
-    const gap: PerformanceGap = {
-      id: typeof g.id === 'string' ? g.id : `urn:foxxi:gap:${Date.now()}`,
-      performer,
-      workContext: g.workContext as string,
-      competency: g.competency as string,
-      desired: g.desired as string,
-      observed: g.observed as string,
-      frequency: (['continuous', 'frequent', 'occasional', 'rare'].includes(g.frequency as string) ? g.frequency : 'frequent') as PerformanceGap['frequency'],
-      criticality: (['low', 'moderate', 'high', 'safety-critical'].includes(g.criticality as string) ? g.criticality : 'moderate') as PerformanceGap['criticality'],
-      modalStatus: g.modalStatus === 'Asserted' ? 'Asserted' : 'Hypothetical',
-      provenance: typeof g.provenance === 'string' ? g.provenance : 'caller-supplied',
-      ...(['Evident', 'Knowable', 'Emergent', 'Turbulent'].includes(g.domain as string) ? { domain: g.domain as PerformanceGap['domain'] } : {}),
-    };
-    const diagnoseInput: DiagnoseInput = {
-      gap,
-      ...(typeof body.couldPerformUnderIdealConditions === 'boolean' ? { couldPerformUnderIdealConditions: body.couldPerformUnderIdealConditions } : {}),
-      ...(typeof body.performedWellBefore === 'boolean' ? { performedWellBefore: body.performedWellBefore } : {}),
-      ...(body.factorEvidence && typeof body.factorEvidence === 'object' ? { factorEvidence: body.factorEvidence as DiagnoseInput['factorEvidence'] } : {}),
-    };
-    const diagnosis = diagnose(diagnoseInput);
+    const gap = coerceGap(body.gap);
+    if (typeof gap === 'string') { bad(res, gap); return; }
+    const diagnosis = diagnose(coerceDiagnoseInput(gap, body));
     const author = asPerformer(body.author, { id: 'urn:foxxi:agent:performance-consultant', kind: 'agent', role: 'performance consultant' })!;
     const plan = recommendInterventions({ diagnosis, gap, author });
     const scaffold = scaffoldFromPlan(plan, gap.competency);
     res.json({ diagnosis, plan, scaffold });
+  });
+
+  // ── POST /performance/portfolio — the performance-management read. ─
+  // Diagnose a set of gaps and roll them up. The headline number is how
+  // few gaps route to a course: a performance-driven system sends most
+  // gaps to non-content interventions (environmental fixes, coaching).
+  app.post('/performance/portfolio', (req: Request, res: Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const items = Array.isArray(body.gaps) ? body.gaps as Array<Record<string, unknown>> : [];
+    if (items.length === 0) {
+      bad(res, 'gaps[] is required — each { gap, factorEvidence?, couldPerformUnderIdealConditions?, performedWellBefore? }');
+      return;
+    }
+    const author = asPerformer(body.author, { id: 'urn:foxxi:agent:performance-consultant', kind: 'agent', role: 'performance consultant' })!;
+    const entries: PortfolioEntry[] = [];
+    for (const item of items) {
+      const gap = coerceGap(item.gap);
+      if (typeof gap === 'string') { bad(res, gap); return; }
+      const diagnosis = diagnose(coerceDiagnoseInput(gap, item));
+      const plan = recommendInterventions({ diagnosis, gap, author });
+      entries.push({ gap, plan });
+    }
+    const portfolio = rollUpPortfolio(entries);
+    res.json({
+      portfolio,
+      entries: entries.map(e => ({
+        gapId: e.gap.id,
+        workContext: e.gap.workContext,
+        regime: e.plan.diagnosis.domain,
+        method: e.plan.diagnosis.method,
+        rootCause: e.plan.diagnosis.rootCauses[0] ?? null,
+        interventions: e.plan.selected.map(o => o.type),
+        contentWarranted: e.plan.contentWarranted,
+        summary: e.plan.summary,
+      })),
+      note: 'A diagnosed performance portfolio. contentVsNonContent is the headline: a performance-driven practice routes most gaps to non-content interventions — no course fixes a broken tool or a misaligned incentive.',
+    });
   });
 
   // ── POST /content/compose-course — the authoring tool. ────────────
