@@ -506,7 +506,7 @@ async function fetchVcFromEntry(descriptorUrl: string, fetchFn: typeof globalThi
     if (!m) return null;
     const { content } = await fetchGraphContent(m[1]!, { fetch: fetchFn as never });
     if (!content) return null;
-    const bm = content.match(/<https:\/\/vocab\.foxximediums\.com\/scorm#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
+    const bm = content.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
     if (!bm) return null;
     return JSON.parse(Buffer.from(bm[1]!.replace(/\s+/g, ''), 'base64').toString('utf8')) as Record<string, unknown>;
   } catch { return null; }

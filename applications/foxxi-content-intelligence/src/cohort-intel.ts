@@ -119,7 +119,7 @@ export async function gatherCohortQA(args: {
           if (!tm) continue;
           const graph = await fetchGraphContent(tm[1]!, { fetch: fetchFn as never });
           if (!graph.content) continue;
-          const bm = graph.content.match(/<https:\/\/vocab\.foxximediums\.com\/scorm#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
+          const bm = graph.content.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
           if (!bm) continue;
           const payload = JSON.parse(Buffer.from(bm[1]!.replace(/\s+/g, ''), 'base64').toString('utf8')) as {
             learnerDid?: string;

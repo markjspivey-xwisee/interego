@@ -28,7 +28,7 @@ import { generateKeyPair, deriveEncryptionKeyPair, type EncryptionKeyPair } from
 import { attachDeterministicAddresses } from './auth.js';
 import { createHash } from 'node:crypto';
 
-// ── Foxxi namespace IRIs (declared in ns/foxxi-content-graph-v0.2.ttl) ──
+// ── Foxxi namespace IRIs (the canonical base — see foxxi-vocab.ts) ──
 
 const FXS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 const FXA = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';

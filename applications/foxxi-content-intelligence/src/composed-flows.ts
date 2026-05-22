@@ -388,7 +388,7 @@ async function fetchCredentialJson(descriptorUrl: string, fetchFn: typeof global
   if (!targetMatch) throw new Error('no hydra:target');
   const { content } = await fetchGraphContent(targetMatch[1]!, { fetch: fetchFn as never });
   if (!content) throw new Error('graph empty / encrypted');
-  const m = content.match(/<https:\/\/vocab\.foxximediums\.com\/scorm#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
+  const m = content.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
   if (!m) throw new Error('no bundleJson literal');
   return JSON.parse(Buffer.from(m[1]!.replace(/\s+/g, ''), 'base64').toString('utf8')) as VerifiableCredentialJson;
 }

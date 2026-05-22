@@ -205,8 +205,8 @@ export interface SequencingRule {
  * Emit SCORM 2004 sequencing rules as Turtle. We do NOT evaluate the
  * rules — that's a downstream LMS-runtime concern. We preserve the raw
  * rule XML so an auditor can confirm what the package SAID happens, and
- * an LMS can execute it. The vocab term is fxs:SequencingRule (already
- * declared in foxxi-content-graph-v0.2.ttl).
+ * an LMS can execute it. The vocab term is foxxi:SequencingRule (on the
+ * canonical foxxi namespace base — see foxxi-vocab.ts).
  */
 export function sequencingRulesToTurtle(packageSubject: string, rules: readonly SequencingRule[]): string {
   if (rules.length === 0) return '';
