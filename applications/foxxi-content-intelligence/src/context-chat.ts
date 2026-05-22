@@ -376,10 +376,18 @@ interface LlmConfig { apiKey?: string; model?: string; keySource: LlmKeySource }
  */
 async function answerContent(
   question: string, askerId: string, ctx: NetworkedContext, llm: LlmConfig,
+  intent: ContextIntent,
 ): Promise<Pick<ContextAnswer, 'answer' | 'grounded' | 'sources' | 'llm' | 'trace'>> {
   // Foxxi content + (under interego scope) everything else composed into
-  // the user's networked context — retrieved over uniformly.
-  const all = [...ctx.courses, ...ctx.jobAids, ...ctx.interegoContext];
+  // the user's networked context — retrieved over uniformly. A "how do
+  // I…" procedure question is the in-the-flow moment a job aid exists
+  // for, so job aids lead the retrieval order for that intent; a
+  // "what is…" concept question leads with the course. Ordering breaks
+  // ties between equally-scored concepts, so the in-the-flow surface is
+  // not crowded out of the top concepts by a content-rich course.
+  const all = intent === 'procedure'
+    ? [...ctx.jobAids, ...ctx.courses, ...ctx.interegoContext]
+    : [...ctx.courses, ...ctx.jobAids, ...ctx.interegoContext];
   if (all.length === 0) {
     return { answer: honestNoMatch(question, all, ctx.scope), grounded: false, sources: [] };
   }
@@ -550,7 +558,7 @@ export async function answerContextQuestion(input: {
   if (intent === 'assignments') part = answerAssignments(context);
   else if (intent === 'progress') part = answerProgress(context);
   else if (intent === 'catalog') part = answerCatalog(context);
-  else part = await answerContent(question, asker.id, context, llm);
+  else part = await answerContent(question, asker.id, context, llm, intent);
 
   return {
     intent, question, asker,
