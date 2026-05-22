@@ -31,6 +31,11 @@ import {
 } from './performance-calibration.js';
 import { SAMPLE_OUTCOMES, SAMPLE_PEER_OUTCOMES } from './sample-outcomes.js';
 import {
+  authorCapability, acquireCapability, verifyCapabilityTransfer,
+  teachingToOutcome, attestCapability,
+} from './agent-teaching.js';
+import type { AgentTrajectory } from './agent-trajectory.js';
+import {
   authorFragment, authorLesson, authorModule, composeCourse,
   personalize, forAudience, courseToCmi5Outline, scaffoldFromPlan,
   type Course, type Module, type Lesson, type GroundingFragment,
@@ -120,6 +125,7 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
         contextualizeAndPlan: { method: 'POST', href: `${base}/performance/plan`, note: 'Contextualize a performance situation — read its regime, apply that regime\'s method — and return the full intervention paradigm, selected and ruled-out with reasoning.' },
         portfolio: { method: 'POST', href: `${base}/performance/portfolio`, note: 'Contextualize a set of performance situations and roll them up — the performance-management read. The headline: how few situations route to a course.' },
         calibration: { method: 'POST', href: `${base}/performance/calibration`, note: 'The reflexive loop — the system\'s recorded track record of its own recommendations: how often each cause → intervention recommendation has actually closed the gap, federated across organizations.' },
+        teachAgent: { method: 'POST', href: `${base}/agent/teach`, note: 'The A2A teaching loop — a teacher agent\'s playbook becomes a learner agent\'s verified capability; transfer is verified by reading the learner\'s own trajectories. Agents teach each other; Foxxi makes it measurable.' },
         composeCourse: { method: 'POST', href: `${base}/content/compose-course`, note: 'Author an emergent course — a syntagm of modules → lessons → grounding fragments. The same tool for human and agent authors.' },
         personalizeCourse: { method: 'POST', href: `${base}/content/personalize`, note: 'Resolve a course for one performer via the composition algebra (restriction + override).' },
         knowledgeIndex: { method: 'GET', href: `${base}/knowledge`, note: 'The knowledge architecture — how much of a competency can honestly become content.' },
@@ -202,6 +208,59 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
       })),
       note: 'A contextualized performance portfolio. contentVsNonContent is the headline: a performance-driven practice routes most situations to non-content interventions — no course fixes a broken tool or a misaligned incentive.',
     });
+  });
+
+  // ── POST /agent/teach — the A2A teaching loop. ────────────────────
+  // Agents teach each other. A teacher agent's playbook becomes a
+  // learner agent's verified capability: authored, acquired (ingested
+  // as context), and verified by reading the learner's own trajectories
+  // before and after — not by quizzing it. A verified transfer promotes
+  // the capability to Asserted and feeds the reflexive calibration loop.
+  app.post('/agent/teach', (req: Request, res: Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const teacher = asPerformer(b.teacher);
+    const learner = asPerformer(b.learner);
+    if (!teacher || teacher.kind !== 'agent') { bad(res, 'teacher must be an agent — { id, kind: "agent" }'); return; }
+    if (!learner || learner.kind !== 'agent') { bad(res, 'learner must be an agent — { id, kind: "agent" }'); return; }
+    const playbook = b.playbook as Course | undefined;
+    if (!playbook || typeof playbook !== 'object' || !Array.isArray(playbook.syntagm)) {
+      bad(res, 'a "playbook" Course (from /content/compose-course with audience "agent") is required'); return;
+    }
+    const tb = b.targetBehaviour as Record<string, unknown> | undefined;
+    if (!tb || typeof tb.description !== 'string' || !Array.isArray(tb.signalMarkers)) {
+      bad(res, 'targetBehaviour { description, signalMarkers[], antiSignalMarkers? } is required'); return;
+    }
+    const before = (Array.isArray(b.before) ? b.before : []) as AgentTrajectory[];
+    const after = (Array.isArray(b.after) ? b.after : []) as AgentTrajectory[];
+    try {
+      const capability = authorCapability({
+        competency: typeof b.competency === 'string' ? b.competency : playbook.competency,
+        authoredBy: teacher,
+        playbook,
+        conferredAffordances: Array.isArray(b.conferredAffordances) ? b.conferredAffordances as string[] : [],
+        targetBehaviour: {
+          description: tb.description,
+          signalMarkers: tb.signalMarkers as string[],
+          ...(Array.isArray(tb.antiSignalMarkers) ? { antiSignalMarkers: tb.antiSignalMarkers as string[] } : {}),
+        },
+      });
+      const acquisition = acquireCapability(capability, learner);
+      const verdict = verifyCapabilityTransfer({ capability, acquisition, before, after });
+      const attested = attestCapability(capability, verdict);
+      const outcome = teachingToOutcome(verdict);
+      res.json({
+        capability: attested,
+        acquisition,
+        verdict,
+        outcome,
+        note: 'The A2A teaching loop: a teacher agent\'s capability, acquired by a learner agent and '
+          + 'verified by reading the learner\'s own trajectories — not by quizzing it. A verified '
+          + 'transfer promotes the capability to Asserted and feeds the reflexive calibration loop.',
+      });
+    } catch (e) {
+      bad(res, `teach failed: ${(e as Error).message}`);
+    }
   });
 
   // ── POST /content/compose-course — the authoring tool. ────────────
