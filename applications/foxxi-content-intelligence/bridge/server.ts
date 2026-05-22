@@ -169,6 +169,7 @@ import { attachOneRosterRoutes } from '../src/oneroster.js';
 import { attachScormSequencingRoutes } from '../src/scorm-sequencing.js';
 import { attachPerformanceRoutes } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
+import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
 import type { DeliveryChannel } from '../src/content-channels.js';
 import type { ChannelWebhook } from '../src/content-transport.js';
 import {
@@ -2147,9 +2148,32 @@ const app = createVerticalBridge({
   },
 });
 
+/**
+ * Seed the demo course + job aid into the content store at startup, so
+ * every demo works on a cold deploy with no setup ritual — the Context
+ * Companion always has real content to answer from. Composes the same
+ * affordances a real client would call; failure is non-fatal.
+ */
+async function seedDemoContent(): Promise<void> {
+  const base = `http://localhost:${PORT}`;
+  const postJson = (path: string, body: unknown) => fetch(`${base}${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  try {
+    const composed = await postJson('/content/compose-course', SAMPLE_COURSE)
+      .then(r => r.json()) as { course?: unknown };
+    if (composed.course) await postJson('/content/publish-course', { course: composed.course });
+    await postJson('/content/job-aid', SAMPLE_JOB_AID);
+    console.log('[foxxi-bridge] seeded the demo course + job aid into the content store');
+  } catch (e) {
+    console.warn(`[foxxi-bridge] demo-content seed skipped: ${(e as Error).message}`);
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`foxxi-content-intelligence bridge on http://localhost:${PORT}`);
   console.log(`  MCP endpoint:        http://localhost:${PORT}/mcp`);
   console.log(`  Affordance manifest: http://localhost:${PORT}/affordances`);
   console.log(`  Audience: ${audience} (${activeAffordances.length} affordances active; FOXXI_AUDIENCE=learner|admin|both)`);
+  void seedDemoContent();
 });

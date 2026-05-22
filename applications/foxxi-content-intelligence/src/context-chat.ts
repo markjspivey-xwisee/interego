@@ -357,14 +357,14 @@ function scaffold(retrieval: RetrievalContext): string {
 function honestNoMatch(question: string, content: FoxxiAgenticCourse[], scope: ContextScope): string {
   const topic = question.trim().replace(/[?.!]+$/, '');
   const covered = [...new Set(content.flatMap(c => c.concepts.map(x => x.label)))];
-  const hint = covered.length > 0
-    ? ` What your context does cover: ${covered.slice(0, 6).join('; ')}.`
-    : ` There is no published content in your context yet.`;
   // Scope-accurate: a vertical-scoped miss means nothing IN THE FOXXI
   // SLICE covers it — the content may still exist in the wider networked
   // context, which is exactly what the scope hint points to. Saying
   // "nothing covers it" outright would be wrong for a vertical miss.
   const where = scope === 'vertical' ? 'your Foxxi vertical' : 'your networked context';
+  const hint = covered.length > 0
+    ? ` What ${where} does cover: ${covered.slice(0, 6).join('; ')}.`
+    : ` There is no published content in ${where} yet.`;
   const scopeHint = scope === 'vertical'
     ? ` (This was a vertical-scoped ask — ask again with scope "interego" to reach your wider networked context.)`
     : '';
