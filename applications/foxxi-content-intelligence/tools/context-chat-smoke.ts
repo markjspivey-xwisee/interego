@@ -94,14 +94,30 @@ async function testRoutes(): Promise<void> {
     selfBaseUrl: 'http://localhost',
     authoritativeSource: 'did:web:test',
     emitStatement: (stmt, tenant) => { storeStatementInternal(stmt, tenant); },
-    // A stub for the substrate pass-through — one descriptor that exists
-    // in the wider Interego context but NOT in the Foxxi vertical.
+    // A stub for the substrate pass-through — descriptors that exist in
+    // the wider Interego context but NOT in the Foxxi vertical. The first
+    // is surfaced at the metadata level; the second is deep-fetched —
+    // its full content folded in, so the pass-through answers from the
+    // content itself, not the descriptor's metadata.
     discoverInteregoContext: async () => ([
       {
         descriptorUrl: 'https://pod.example/markj/notes/quarterly-objectives.ttl',
         label: 'quarterly objectives',
         summary: 'Interego context descriptor "quarterly objectives" — the quarterly '
           + 'objective is to cut the refund escalation rate by 30 percent.',
+      },
+      {
+        descriptorUrl: 'https://pod.example/markj/courses/onboarding.ttl',
+        label: 'onboarding basics',
+        summary: 'Interego context descriptor "onboarding basics".',
+        course: {
+          courseIri: 'urn:demo:course:onboarding', title: 'Onboarding Basics',
+          courseLabel: 'Onboarding', courseId: 'demo-onboarding', authoritativeSource: 'did:web:test',
+          concepts: [{ id: 'c-badge', label: 'badge activation', confidence: 1, tier: 1, is_free_standing: true, taught_in_slides: ['s-badge'] }],
+          slides: [{ id: 's-badge', title: 'Badge activation', sequence_index: 0, concept_ids: ['c-badge'],
+            transcript_combined: 'Activate your badge at the front desk on your first day before 9am.' }],
+          modifier_pairs: [], prereq_edges: [],
+        },
       },
     ]),
   });
@@ -213,6 +229,13 @@ async function testRoutes(): Promise<void> {
     const dflt = await ask({ question: wideQ, learner: LEARNER });
     check('the default scope is interego (the whole networked context)',
       dflt.json.scope === 'interego' && dflt.json.grounded === true, dflt.json.scope);
+
+    // ── Deep pass-through — answer from a descriptor's actual content ─
+    const deep = await ask({ question: 'How do I activate my badge?', learner: LEARNER, scope: 'interego' });
+    check('the pass-through answers from a deep-fetched descriptor\'s own content',
+      deep.json.grounded === true && (deep.json.sources ?? []).some(s =>
+        s.kind === 'interego-context' && typeof s.excerpt === 'string' && s.excerpt.includes('front desk')),
+      deep.json.sources);
 
     // ── A missing question is rejected ──────────────────────────────
     const bad = await ask({ learner: LEARNER });

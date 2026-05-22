@@ -118,18 +118,18 @@ Built and deployed:
   `@interego/core`'s `discover()` over the pod manifest — the substrate
   pass-through for `scope: "interego"`.
 
-Verified before deploy by `tools/context-chat-smoke.ts` (41/41): intent
+Verified before deploy by `tools/context-chat-smoke.ts` (42/42): intent
 classification, the grounded + sourced answers, the agentic-RAG trace,
 the honest no-match, the `scope` toggle (interego pass-through vs
-vertical narrowing), and the `POST /content/ask` route over a throwaway
-app.
+vertical narrowing), the deep-fetch of a discovered course, and the
+`POST /content/ask` route over a throwaway app.
 
 ## 4. Verification — in production
 
 `tools/ask-your-context-example.mjs` runs the whole thing against the
 live bridge, LMS and LRS, with a **real headless browser** completing a
 **real generated course** so the chat has genuine progress to read —
-28/28:
+29/29:
 
 1. **Publish** — a course + a job aid into the networked context.
 2. **Ask "what does the refund authority threshold mean?"** — answered
@@ -149,9 +149,10 @@ live bridge, LMS and LRS, with a **real headless browser** completing a
    grounded retrieval (same cited sources); only the asker kind differs.
 8. **Ask the same question at each scope** — `scope: "vertical"` finds
    nothing about "golf" (it's not in the Foxxi vertical); `scope:
-   "interego"` passes through to the substrate, discovers the
-   `course:golf-explained` Context Descriptor on the pod, and surfaces
-   it. The pass-through reaches what the vertical alone never saw.
+   "interego"` passes through to the substrate (11 descriptors reached),
+   discovers the `course:golf-explained` package on the pod,
+   **deep-fetches it in full**, and answers from its actual content. The
+   pass-through reaches — and reads — what the vertical alone never saw.
 9. **Ask an off-topic question** — an honest no-match: it refuses to
    guess.
 10. **Verify** — every ask is in the live LRS as an xAPI `interacted`
@@ -182,14 +183,16 @@ let the agentic RAG run over emergent courses and job aids, not just
 parsed SCORM payloads.
 
 The `scope: "interego"` pass-through discovers the Context Descriptors
-on the pod's published manifest — it *surfaces* them (you see, cite, and
-can follow each one). Deep Q&A *inside* a discovered descriptor's graph
-is the next hop: follow the link, fetch the graph. The pass-through is
-honest about that — it answers at the descriptor level ("your wider
-context holds X, at this IRI") and hands you the link. Today it
-discovers over the configured tenant pod; discovering across a user's
-own pod + federated pods is the same `discover()` call pointed at more
-pods — a bounded extension.
+on the pod's published manifest. A discovered **course package** is
+fetched in full — composing `fetchCoursePackage` + `payloadToAgenticCourse`,
+both already in the vertical — so the companion answers from its *actual
+content*, not just its descriptor. Other descriptors (policies, audit
+streams, tenant config) are surfaced at the metadata level: you see,
+cite, and can follow each; deep Q&A inside one of those is a single
+follow-the-link hop. Today the pass-through discovers over the
+configured tenant pod; discovering across a user's own pod + federated
+pods is the same `discover()` call pointed at more pods — a bounded
+extension, best built against a real federated deployment to verify.
 
 `POST /content/ask` is open in this deployment so the demo is
 self-contained, and the LLM-synthesis path on the bridge key reuses the
@@ -199,3 +202,14 @@ should be gated behind the same wallet-signed session token
 `foxxi.discover_assigned_courses` already uses; content questions over
 published content need no gate. Wiring that gate is a bounded, separate
 step.
+
+What honestly remains, named rather than hidden: **multi-pod / federated
+discovery** — pointing `discover()` at a user's own pod and federated
+peers, not only the configured tenant pod (the same call, more pods;
+best built against a real federated deployment so it can be verified);
+and the **session-token gate** above for a non-demo deployment. Live
+channel transport and media generation are *not* further work on this
+companion — they are deliberate boundaries: an operator-integration
+concern, and a text-content-by-design choice. The deep-fetch of
+discovered course packages, previously noted here as a next hop, is now
+done.

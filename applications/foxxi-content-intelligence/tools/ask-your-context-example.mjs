@@ -181,13 +181,16 @@ console.log(`   scope:vertical → grounded: ${golfVertical.json.grounded}`);
 check('scope:vertical narrows the ask to the Foxxi vertical',
   golfVertical.json.scope === 'vertical' && golfVertical.json.grounded === false, golfVertical.json);
 const golfInterego = await ask(golfQ, { learner: LEARNER, scope: 'interego' });
-console.log(`   scope:interego → grounded: ${golfInterego.json.grounded} · descriptors reached: ${golfInterego.json.contextSummary?.interegoDescriptors}`);
+const golfSrc = (golfInterego.json.sources ?? []).filter(s => s.kind === 'interego-context');
+console.log(`   scope:interego → grounded: ${golfInterego.json.grounded} · descriptors reached: ${golfInterego.json.contextSummary?.interegoDescriptors} · interego sources: ${golfSrc.length}`);
 check('scope:interego passes through to the wider substrate (discover())',
   golfInterego.json.scope === 'interego' && (golfInterego.json.contextSummary?.interegoDescriptors ?? 0) > 0,
   golfInterego.json.contextSummary);
-check('the pass-through surfaces a descriptor the vertical alone never saw',
-  golfInterego.json.grounded === true
-  && (golfInterego.json.sources ?? []).some(s => s.kind === 'interego-context'), golfInterego.json.sources);
+check('the pass-through surfaces a course the Foxxi vertical alone never saw',
+  golfInterego.json.grounded === true && golfSrc.length > 0, golfInterego.json.sources);
+check('the discovered course is deep-fetched — answered from its content, not its metadata',
+  golfSrc.some(s => typeof s.excerpt === 'string' && !s.excerpt.startsWith('Interego context descriptor')),
+  golfSrc.map(s => String(s.excerpt).slice(0, 90)));
 const dfltScope = await ask('What courses are available?', { learner: LEARNER });
 check('the default scope is interego — a Foxxi user is an Interego user',
   dfltScope.json.scope === 'interego', dfltScope.json.scope);

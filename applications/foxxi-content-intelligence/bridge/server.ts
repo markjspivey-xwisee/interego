@@ -280,9 +280,13 @@ async function autoFetchCourse(args: Record<string, unknown>, courseId: string):
 // into the user's networked context, not just the Foxxi vertical. It
 // discovers Context Descriptors from the pod's published manifest via
 // @interego/core's discover() — Interego passing through to what
-// composes it. Cached briefly (the manifest is stable between publishes).
+// composes it. A discovered COURSE descriptor is additionally fetched in
+// full (composing fetchCoursePackage + payloadToAgenticCourse) so the
+// companion answers from its actual content, not just its metadata.
+// Cached briefly (the manifest is stable between publishes).
 let interegoDiscoverCache: { at: number; entries: DiscoveredDescriptor[] } | null = null;
 const INTEREGO_DISCOVER_TTL_MS = 60_000;
+const INTEREGO_DEEP_FETCH_CAP = 8;
 
 async function fetchInteregoDescriptors(): Promise<DiscoveredDescriptor[]> {
   if (!tenantPodUrl) return [];
@@ -291,7 +295,8 @@ async function fetchInteregoDescriptors(): Promise<DiscoveredDescriptor[]> {
   }
   try {
     const entries = await discover(tenantPodUrl);
-    const mapped = entries.map((e): DiscoveredDescriptor => {
+    let deepFetched = 0;
+    const mapped = await Promise.all(entries.map(async (e): Promise<DiscoveredDescriptor> => {
       const described = e.describes[0] ?? e.descriptorUrl;
       const tail = described.split(/[:/#]/).filter(Boolean).pop() ?? described;
       const label = tail.replace(/[-_]+/g, ' ').trim() || described;
@@ -300,8 +305,23 @@ async function fetchInteregoDescriptors(): Promise<DiscoveredDescriptor[]> {
         + (e.facetTypes.length ? `; facets ${e.facetTypes.join('/')}` : '')
         + (e.conformsTo && e.conformsTo.length ? `; conforms to ${e.conformsTo.join(', ')}` : '')
         + (e.modalStatus ? `; modal status ${e.modalStatus}` : '') + '.';
-      return { descriptorUrl: e.descriptorUrl, label, summary };
-    });
+      const descriptor: DiscoveredDescriptor = { descriptorUrl: e.descriptorUrl, label, summary };
+
+      // Deep pass-through: a discovered course package is fetched in full
+      // so the companion answers from its content, not its descriptor.
+      const isCoursePackage = (e.conformsTo ?? []).some(c => c.split(/[#/]/).pop() === 'CoursePackageBundle');
+      const courseIdMatch = e.describes.map(g => /:course:(.+)$/.exec(g)).find((m): m is RegExpExecArray => !!m);
+      if (isCoursePackage && courseIdMatch && deepFetched < INTEREGO_DEEP_FETCH_CAP) {
+        deepFetched++;
+        try {
+          const pkg = await fetchCoursePackage(courseIdMatch[1], fetcherConfig()) as FoxxiAgenticPayload;
+          descriptor.course = payloadToAgenticCourse(pkg, authoritativeSource);
+        } catch (err) {
+          console.error(`[foxxi-bridge] deep-fetch of course "${courseIdMatch[1]}" failed:`, (err as Error).message);
+        }
+      }
+      return descriptor;
+    }));
     interegoDiscoverCache = { at: Date.now(), entries: mapped };
     return mapped;
   } catch (err) {

@@ -134,6 +134,14 @@ export interface DiscoveredDescriptor {
   label: string;
   /** A one-line summary — what it describes, facets, conformance. */
   summary: string;
+  /**
+   * When the descriptor is a deep-fetchable artifact — a course package —
+   * its fully-resolved content. The pass-through then answers from the
+   * actual content, not just the descriptor's metadata. Absent → the
+   * companion surfaces the descriptor at the metadata level and the
+   * deep content is one follow-the-link hop away.
+   */
+  course?: FoxxiAgenticCourse;
 }
 export interface NetworkedContext {
   learner: string;
@@ -290,17 +298,24 @@ function jobAidToAgenticCourse(aid: { id: string; competencyPoint: string; trigg
 /** "1 course" / "3 courses" / "1 is" / "2 are" — count + pluralised noun. */
 const plural = (n: number, s: string, p = `${s}s`): string => `${n} ${n === 1 ? s : p}`;
 
-/** Map the agentic-RAG cited slides into the companion's source shape. */
-function citedSlidesToSources(retrieval: RetrievalContext): GroundedSource[] {
+/**
+ * Map the agentic-RAG cited slides into the companion's source shape.
+ * `interegoCourseIds` is the set of courseIds that came through the
+ * substrate pass-through — membership, not an id prefix, decides the
+ * `interego-context` kind (a deep-fetched course keeps its own id).
+ */
+function citedSlidesToSources(retrieval: RetrievalContext, interegoCourseIds: ReadonlySet<string>): GroundedSource[] {
   return retrieval.citedSlides.map(cs => {
     const cid = cs.course.courseId;
-    const kind: GroundedSource['kind'] = cid.startsWith('aid-') ? 'job-aid'
-      : cid.startsWith('cg-') ? 'interego-context'
+    const kind: GroundedSource['kind'] = interegoCourseIds.has(cid) ? 'interego-context'
+      : cid.startsWith('aid-') ? 'job-aid'
       : 'course-fragment';
     return {
       kind,
       id: cs.slideId,
-      locator: kind === 'interego-context' ? `Interego substrate › ${cs.slideTitle}` : `${cs.course.title} › ${cs.slideTitle}`,
+      locator: kind === 'interego-context'
+        ? `Interego substrate › ${cs.course.title}${cs.slideTitle && cs.slideTitle !== cs.course.title ? ` › ${cs.slideTitle}` : ''}`
+        : `${cs.course.title} › ${cs.slideTitle}`,
       excerpt: cs.transcriptCombined,
     };
   });
@@ -362,10 +377,11 @@ async function answerContent(
   const synthesised = result.synthesizedAnswer && !result.synthesizedAnswer.startsWith('(LLM call failed')
     ? result.synthesizedAnswer
     : null;
+  const interegoCourseIds = new Set(ctx.interegoContext.map(c => c.courseId));
   return {
     answer: synthesised ?? scaffold(result.retrieval),
     grounded: true,
-    sources: citedSlidesToSources(result.retrieval),
+    sources: citedSlidesToSources(result.retrieval, interegoCourseIds),
     llm: { model: result.llmModel, keySource: result.llmKeySource },
     trace: result.trace,
   };
@@ -628,7 +644,9 @@ export async function assembleNetworkedContext(
   let interegoContext: FoxxiAgenticCourse[] = [];
   if (scope === 'interego' && config.discoverInteregoContext) {
     const discovered = await config.discoverInteregoContext(learner, tenant).catch(() => []);
-    interegoContext = discovered.map(discoveredToAgenticCourse);
+    // A deep-fetched descriptor (`.course`) is folded in with its full
+    // content; the rest are surfaced at the metadata level.
+    interegoContext = discovered.map(d => d.course ?? discoveredToAgenticCourse(d));
   }
 
   return { learner, scope, courses, jobAids, interegoContext, enrollments, activity };
