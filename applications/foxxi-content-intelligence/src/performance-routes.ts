@@ -52,6 +52,7 @@ import {
   publishParticipationClaimDescriptor, FOXXI_TYPES,
   type DescriptorPublishConfig, type PublishedDescriptor,
 } from './outcome-descriptor-publisher.js';
+import { FederationOutcomeLoader, parseFederationPods } from './federation-outcome-loader.js';
 import type { IRI } from '@interego/core';
 
 // ── JSON-LD context bound at the top of every linked-data response. ───
@@ -242,13 +243,47 @@ export function attachPerformanceRoutes(app: Express, config: {
       lastSeenCellStatus.set(cellKey(String(c.causeFactor), String(c.intervention)), String(c.modalStatus));
     }
   }
-  const peerProfile = buildCalibrationProfile(expandOutcomeCorpus(SAMPLE_PEER_OUTCOMES));
+  // Federation: load peer outcomes from real pods via discover(),
+  // not from the in-memory SAMPLE_PEER_OUTCOMES corpus. The loader
+  // caches per pod with a TTL so the calibration recompute path
+  // stays synchronous. SAMPLE_PEER_OUTCOMES is the fallback seed for
+  // dev / first-run when no federation pods are configured or
+  // available — once peers come online, the loader takes over.
+  const federationPods = parseFederationPods(process.env.FOXXI_FEDERATION_PODS);
+  const federationLoader = new FederationOutcomeLoader({ ttlMs: 60_000 });
+  let cachedPeerProfile = buildCalibrationProfile(expandOutcomeCorpus(SAMPLE_PEER_OUTCOMES));
+  let lastFederationRefreshAt = 0;
+  let federationOutcomeCount = 0;
+  async function refreshFederationPeerProfile(): Promise<void> {
+    if (federationPods.length === 0) return; // keep seed fallback
+    try {
+      const outcomes = await federationLoader.loadAll(federationPods);
+      if (outcomes.length > 0) {
+        cachedPeerProfile = buildCalibrationProfile(outcomes);
+        lastFederationRefreshAt = Date.now();
+        federationOutcomeCount = outcomes.length;
+      }
+    } catch (err) {
+      console.error('[foxxi-bridge] federation refresh failed:', (err as Error).message);
+    }
+  }
+  // Kick the initial load (best-effort) + schedule a periodic refresh.
+  void refreshFederationPeerProfile();
+  setInterval(() => { void refreshFederationPeerProfile(); }, 60_000).unref?.();
+
   const liveOutcomes: OutcomeRecord[] = [];
   const calibrationProfiles = () => {
     const tenant = buildCalibrationProfile([...seedRecords, ...liveOutcomes]);
-    const federated = composeCalibrationProfiles([tenant, federationView(peerProfile)]);
+    const federated = composeCalibrationProfiles([tenant, federationView(cachedPeerProfile)]);
     return { tenant, federated };
   };
+  // Expose federation status for the calibration endpoint to surface.
+  const federationStatus = () => ({
+    pods: federationPods,
+    lastRefreshAt: lastFederationRefreshAt === 0 ? null : new Date(lastFederationRefreshAt).toISOString(),
+    peerOutcomeCount: federationOutcomeCount,
+    usingSeedFallback: federationPods.length === 0 || lastFederationRefreshAt === 0,
+  });
 
   // Validate + record a live outcome — the reflexive loop's upward arm.
   const CAUSE_KEYS: CauseKey[] = ['information', 'instrumentation', 'incentives', 'knowledgeSkill', 'capacity', 'motives', 'not-applicable'];
@@ -375,6 +410,7 @@ export function attachPerformanceRoutes(app: Express, config: {
       provenance: {
         seededOutcomes: seedRecords.length,
         liveOutcomes: liveOutcomes.length,
+        federation: federationStatus(),
         note: 'The profile is recomposed on every read from the seeded historical baseline plus the '
           + 'outcomes this deployment\'s own completed loops have recorded — the upward arm of the loop.',
       },
