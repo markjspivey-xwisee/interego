@@ -419,10 +419,47 @@ Begin.`;
   }
 
   // Emit participation-claim artifacts so the browser can inspect each one.
+  // Also POST each to the bridge's /agent/attest endpoint so the
+  // participation claim becomes a real foxxi:ParticipationClaim descriptor
+  // on the pod — agent identity now survives across runs (instead of
+  // being ephemeral to one dashboard session).
   for (const c of claims) {
     log('artifact', { id: artifactId(), type: 'participation-claim', producer: c.name,
       title: `${c.name} · ${c.address.slice(0, 10)}…`,
       payload: { did: c.did, address: c.address, claim: c.claim, signature: c.signature } });
+    try {
+      const attestRes = await post('/agent/attest', {
+        name: c.name, did: c.did, address: c.address, claim: c.claim, signature: c.signature,
+        agentRoleHint: 'field-guidance-agent',
+      });
+      // Surface the real published ParticipationClaim descriptor as its
+      // own artifact so the browser can inspect the L1 shape.
+      for (const p of (attestRes.json?.published ?? [])) {
+        const url = p?.['hydra:resourceUrl'];
+        const turtle = url ? await getTurtle(url) : null;
+        const graphTurtle = p?.['foxxi:graphUrl'] ? await getTurtle(p['foxxi:graphUrl']) : null;
+        const typeTags = Array.isArray(p?.['@type']) ? p['@type'] : (p?.['@type'] ? [p['@type']] : []);
+        const foxxiType = typeTags.find(t => /foxxi|ac:|amta:/.test(String(t))) ?? typeTags[1] ?? 'unknown';
+        log('artifact', {
+          id: artifactId(), type: 'descriptor', producer: c.name,
+          title: `${foxxiType.split(/[#/:]/).pop()} · ${p?.['@id'] ?? '(no iri)'}`,
+          payload: {
+            'descriptor-iri': p?.['@id'],
+            'foxxi-type': foxxiType,
+            'cg:types': typeTags,
+            'pgsl:atom': p?.['pgsl:hasAtom'],
+            'cg:describes': p?.['cg:describes'],
+            'pod:descriptorUrl': url,
+            'pod:graphUrl': p?.['foxxi:graphUrl'],
+            'turtle': turtle ?? '(could not fetch descriptor; pod may have ACL)',
+            'graph-turtle': graphTurtle,
+            '_affordances': attestRes.json?._affordances ?? null,
+          },
+        });
+      }
+    } catch (err) {
+      log('error', { where: `attest:${c.name}`, message: err.message });
+    }
   }
 
   // PARALLEL: all five agents race. Whichever reaches the substrate first

@@ -313,6 +313,41 @@ function lineItemsFor(t: TenantId): Map<string, AgsLineItem> {
   if (!m) { m = new Map(); lineItemStore.set(t, m); }
   return m;
 }
+
+// ── Pod projection (foxxi:LtiTenantSnapshot) ─────────────────────────
+// Every mutation to lineItemStore triggers a debounced snapshot publish
+// to the tenant pod. On bridge startup we hydrate from the latest
+// snapshot — the pod is the durable source of truth across container
+// restarts, the in-memory Map is a hot cache.
+import {
+  registerSnapshot, dirty as markDirty, loadLatestSnapshot, FOXXI_SNAPSHOT_TYPES,
+} from './pod-snapshot-publisher.js';
+
+interface LtiSnapshot {
+  byTenant: Record<string, Array<[string, AgsLineItem]>>;
+}
+function collectLtiSnapshot(): LtiSnapshot {
+  const byTenant: Record<string, Array<[string, AgsLineItem]>> = {};
+  for (const [tenant, m] of lineItemStore) byTenant[String(tenant)] = [...m.entries()];
+  return { byTenant };
+}
+async function hydrateLtiFromPod(): Promise<void> {
+  const snap = await loadLatestSnapshot<LtiSnapshot>('lti');
+  if (!snap?.byTenant) return;
+  for (const [tenant, entries] of Object.entries(snap.byTenant)) {
+    const map = new Map<string, AgsLineItem>(entries);
+    lineItemStore.set(tenant as TenantId, map);
+  }
+}
+registerSnapshot({
+  surface: 'lti',
+  typeIri: FOXXI_SNAPSHOT_TYPES.LtiLineItems,
+  collect: collectLtiSnapshot,
+});
+// Best-effort hydrate on module load (don't block; bridge may
+// not have FOXXI_TENANT_POD_URL set in dev).
+void hydrateLtiFromPod();
+const ltiPodDirty = (): void => markDirty('lti');
 /** A line item as exposed on the wire — `id` is the full resource URL. */
 function publicLineItem(li: AgsLineItem, selfBaseUrl: string): Record<string, unknown> {
   return {
@@ -712,6 +747,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
       }
     }
     lineItemsFor(tenant).set(li.id, li);
+    ltiPodDirty();
     res.status(201).type('application/vnd.ims.lis.v2.lineitem+json')
       .send(JSON.stringify({ ...publicLineItem(li, config.selfBaseUrl), ...(platformSync ? { platformSync } : {}) }));
   })().catch(err => { res.status(500).json({ error: (err as Error).message }); }); });
@@ -735,6 +771,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
     if (typeof b.resourceLinkId === 'string') li.resourceLinkId = b.resourceLinkId;
     if (typeof b.startDateTime === 'string') li.startDateTime = b.startDateTime;
     if (typeof b.endDateTime === 'string') li.endDateTime = b.endDateTime;
+    ltiPodDirty();
     res.type('application/vnd.ims.lis.v2.lineitem+json').send(JSON.stringify(publicLineItem(li, config.selfBaseUrl)));
   });
 
@@ -742,6 +779,7 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
     const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
     const existed = lineItemsFor(tenant).delete(String(req.params.id ?? ''));
     if (!existed) { res.status(404).json({ error: 'line item not found' }); return; }
+    ltiPodDirty();
     res.status(204).end();
   });
 

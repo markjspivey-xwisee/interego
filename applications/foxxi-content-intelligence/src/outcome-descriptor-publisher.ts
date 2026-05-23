@@ -474,6 +474,28 @@ export async function publishTeachingAttestationDescriptor(
   });
 }
 
+export async function publishParticipationClaimDescriptor(
+  payload: { name: string; did: string; address: string; claim: string; signature: string; agentRoleHint?: string },
+  config: DescriptorPublishConfig,
+): Promise<PublishedDescriptor & { trust: ResolvedTrust }> {
+  return publishFoxxiEntity({
+    config,
+    slugPrefix: `participation-${payload.name.toLowerCase()}-${payload.address.slice(2, 12).toLowerCase()}`,
+    foxxiType: `${FOXXI}ParticipationClaim` as IRI,
+    payload: {
+      name: payload.name,
+      did: payload.did,
+      address: payload.address,
+      claim: payload.claim,
+      signature: payload.signature,
+      ...(payload.agentRoleHint ? { agentRoleHint: payload.agentRoleHint } : {}),
+    },
+    authoredBy: { id: payload.did, kind: 'agent', role: payload.agentRoleHint ?? 'collective-participant' },
+    agentSignature: payload.signature,
+    modalStatus: 'Asserted',
+  });
+}
+
 export async function publishCalibrationSnapshotDescriptor(
   payload: Record<string, unknown>,
   config: DescriptorPublishConfig,

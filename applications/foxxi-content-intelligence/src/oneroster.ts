@@ -269,6 +269,54 @@ interface ImportedRoster {
 
 const importedRosters = new Map<TenantId, ImportedRoster>();
 
+// ── Pod projection (foxxi:OneRosterSnapshot) ─────────────────────────
+// Every applyCsvBundle() publishes a snapshot to the tenant pod; the
+// overlay survives container restart via hydrate-on-startup.
+import {
+  registerSnapshot, dirty as markOneRosterDirty, loadLatestSnapshot, FOXXI_SNAPSHOT_TYPES,
+} from './pod-snapshot-publisher.js';
+interface OneRosterSnapshot {
+  byTenant: Record<string, {
+    users: Array<[string, unknown]>;
+    orgs: Array<[string, unknown]>;
+    courses: Array<[string, unknown]>;
+    classes: Array<[string, unknown]>;
+    enrollments: Array<[string, unknown]>;
+    importedAt: string;
+  }>;
+}
+function collectOneRosterSnapshot(): OneRosterSnapshot {
+  const byTenant: OneRosterSnapshot['byTenant'] = {};
+  for (const [tenant, r] of importedRosters) {
+    byTenant[String(tenant)] = {
+      users: [...r.users.entries()],
+      orgs: [...r.orgs.entries()],
+      courses: [...r.courses.entries()],
+      classes: [...r.classes.entries()],
+      enrollments: [...r.enrollments.entries()],
+      importedAt: r.importedAt,
+    };
+  }
+  return { byTenant };
+}
+async function hydrateOneRosterFromPod(): Promise<void> {
+  const snap = await loadLatestSnapshot<OneRosterSnapshot>('oneroster');
+  if (!snap?.byTenant) return;
+  for (const [tenant, r] of Object.entries(snap.byTenant)) {
+    importedRosters.set(tenant as TenantId, {
+      users: new Map(r.users as Array<[string, OrUser]>),
+      orgs: new Map(r.orgs as Array<[string, OrOrg]>),
+      courses: new Map(r.courses as Array<[string, OrCourse]>),
+      classes: new Map(r.classes as Array<[string, OrClass]>),
+      enrollments: new Map(r.enrollments as Array<[string, OrEnrollment]>),
+      importedAt: r.importedAt,
+    });
+  }
+}
+registerSnapshot({ surface: 'oneroster', typeIri: FOXXI_SNAPSHOT_TYPES.OneRoster, collect: collectOneRosterSnapshot });
+void hydrateOneRosterFromPod();
+const oneRosterPodDirty = (): void => markOneRosterDirty('oneroster');
+
 function importedFor(tenant: TenantId): ImportedRoster {
   let r = importedRosters.get(tenant);
   if (!r) {
@@ -498,6 +546,7 @@ export function applyCsvBundle(tenant: TenantId, bundle: Record<string, string>)
     skipped[resource] = (skipped[resource] ?? 0) + bad;
   }
   overlay.importedAt = new Date().toISOString();
+  oneRosterPodDirty();
   return { applied, skipped, ignored };
 }
 

@@ -139,12 +139,50 @@ const launches = new Map<string, LaunchRecord>();
  *  (drives prerequisite gating). */
 const satisfiedAus = new Map<TenantId, Map<string, Set<string>>>();
 
+// ── Pod projection (foxxi:Cmi5TenantSnapshot) ────────────────────────
+// Snapshot publisher: every launch + satisfaction state change is
+// debounced and published as a versioned snapshot to the tenant pod.
+// Hydration on startup restores both maps so cmi5 launches survive
+// container restarts.
+import {
+  registerSnapshot, dirty as markCmi5Dirty, loadLatestSnapshot, FOXXI_SNAPSHOT_TYPES,
+} from './pod-snapshot-publisher.js';
+interface Cmi5Snapshot {
+  launches: Array<[string, LaunchRecord]>;
+  satisfied: Array<[string, Array<[string, string[]]>]>; // [tenant, [[learner, [auIds]]]]
+}
+function collectCmi5Snapshot(): Cmi5Snapshot {
+  const sat: Array<[string, Array<[string, string[]]>]> = [];
+  for (const [tenant, byLearner] of satisfiedAus) {
+    const learners: Array<[string, string[]]> = [];
+    for (const [learnerId, set] of byLearner) learners.push([learnerId, [...set]]);
+    sat.push([String(tenant), learners]);
+  }
+  return { launches: [...launches.entries()], satisfied: sat };
+}
+async function hydrateCmi5FromPod(): Promise<void> {
+  const snap = await loadLatestSnapshot<Cmi5Snapshot>('cmi5');
+  if (!snap) return;
+  if (snap.launches) for (const [reg, rec] of snap.launches) launches.set(reg, rec);
+  if (snap.satisfied) {
+    for (const [tenant, learners] of snap.satisfied) {
+      const byLearner = new Map<string, Set<string>>();
+      for (const [learnerId, ids] of learners) byLearner.set(learnerId, new Set(ids));
+      satisfiedAus.set(tenant as TenantId, byLearner);
+    }
+  }
+}
+registerSnapshot({ surface: 'cmi5', typeIri: FOXXI_SNAPSHOT_TYPES.Cmi5Launches, collect: collectCmi5Snapshot });
+void hydrateCmi5FromPod();
+const cmi5PodDirty = (): void => markCmi5Dirty('cmi5');
+
 function markAuSatisfied(tenant: TenantId, learnerId: string, auId: string): void {
   let byLearner = satisfiedAus.get(tenant);
   if (!byLearner) { byLearner = new Map(); satisfiedAus.set(tenant, byLearner); }
   let set = byLearner.get(learnerId);
   if (!set) { set = new Set(); byLearner.set(learnerId, set); }
   set.add(auId);
+  cmi5PodDirty();
 }
 
 /** The AU ids a learner has satisfied within a tenant. */
@@ -277,6 +315,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
     satisfied: false,
     reason: 'launched — awaiting the AU\'s cmi5 statements',
   });
+  cmi5PodDirty();
 
   const fetchUrl = `${req.fetchBaseUrl.replace(/\/+$/, '')}/${fetchToken}`;
   const params = new URLSearchParams({
@@ -406,6 +445,7 @@ export async function observeCmi5Statement(
     ...(scoreScaled !== undefined ? { scoreScaled } : {}),
   });
   launch.reason = decision.reason;
+  cmi5PodDirty();
   if (!decision.satisfied) {
     return { registration, satisfied: false, reason: decision.reason, emittedSatisfied: false };
   }
@@ -414,6 +454,7 @@ export async function observeCmi5Statement(
   launch.satisfied = true;
   launch.satisfiedAt = new Date().toISOString();
   markAuSatisfied(tenant, launch.learner.id, launch.auId);
+  cmi5PodDirty();
   const satisfied = buildCmi5Statement({
     verb: 'satisfied',
     actor: {

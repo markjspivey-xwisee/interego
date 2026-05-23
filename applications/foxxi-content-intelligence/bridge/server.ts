@@ -88,6 +88,67 @@ const teamKey = (dids: readonly string[]): string => [...dids].sort().join('|');
 /** Agent-evaluation cohort registry — one per tenant. */
 const evaluationRegistryByTenant = new TenantPartition<EvaluationRegistry>(() => new EvaluationRegistry());
 
+// ── Pod projection of the bridge-local agent/probe/eval state ────────
+// Three coarse-grained snapshots — one per surface — published to the
+// tenant pod on a debounced timer. The pod is the durable record across
+// container restarts; the TenantPartition Maps remain the hot cache.
+import {
+  registerSnapshot as registerBridgeSnap,
+  dirty as markBridgeDirty,
+  loadLatestSnapshot as loadBridgeSnap,
+  FOXXI_SNAPSHOT_TYPES as BRIDGE_SNAP_TYPES,
+} from '../src/pod-snapshot-publisher.js';
+interface TrajectorySnap { byTenant: Record<string, Array<[string, AgentTrajectory]>>; }
+function collectTrajectorySnap(): TrajectorySnap {
+  const out: Record<string, Array<[string, AgentTrajectory]>> = {};
+  for (const t of agentTrajectoriesByTenant.tenants()) out[String(t)] = [...agentTrajectoriesByTenant.for(t).entries()];
+  return { byTenant: out };
+}
+interface ProbeSnap { byTenant: Record<string, Array<[string, PerformanceProbe[]]>>; }
+function collectProbeSnap(): ProbeSnap {
+  const out: Record<string, Array<[string, PerformanceProbe[]]>> = {};
+  for (const t of performanceProbesByTenant.tenants()) out[String(t)] = [...performanceProbesByTenant.for(t).entries()];
+  return { byTenant: out };
+}
+// EvaluationRegistry exposes its state through registered probes/results;
+// we serialize via JSON.stringify with a fallback that captures whatever
+// the registry surfaces. (Full structural projection is a follow-up.)
+interface EvalSnap { byTenant: Record<string, unknown>; }
+function collectEvalSnap(): EvalSnap {
+  const out: Record<string, unknown> = {};
+  for (const t of evaluationRegistryByTenant.tenants()) {
+    try { out[String(t)] = JSON.parse(JSON.stringify(evaluationRegistryByTenant.for(t))); }
+    catch { /* skip */ }
+  }
+  return { byTenant: out };
+}
+registerBridgeSnap({ surface: 'foxxi-trajectories', typeIri: BRIDGE_SNAP_TYPES.AgentTrajectories, collect: collectTrajectorySnap });
+registerBridgeSnap({ surface: 'foxxi-probes', typeIri: BRIDGE_SNAP_TYPES.PerformanceProbes, collect: collectProbeSnap });
+registerBridgeSnap({ surface: 'foxxi-evals', typeIri: BRIDGE_SNAP_TYPES.Evaluations, collect: collectEvalSnap });
+
+async function hydrateBridgeStateFromPod(): Promise<void> {
+  const t = await loadBridgeSnap<TrajectorySnap>('foxxi-trajectories');
+  if (t?.byTenant) for (const [tenant, entries] of Object.entries(t.byTenant)) {
+    const m = agentTrajectoriesByTenant.for(tenant as TenantId);
+    for (const [did, traj] of entries) m.set(did, traj);
+  }
+  const p = await loadBridgeSnap<ProbeSnap>('foxxi-probes');
+  if (p?.byTenant) for (const [tenant, entries] of Object.entries(p.byTenant)) {
+    const m = performanceProbesByTenant.for(tenant as TenantId);
+    for (const [team, probes] of entries) m.set(team, probes);
+  }
+}
+void hydrateBridgeStateFromPod();
+// Periodic snapshot — every 30s the publisher checks each surface and
+// publishes a fresh snapshot if its in-memory state has changed since
+// the last publish. The snapshot publisher itself debounces and skips
+// no-op publishes, so this is cheap.
+setInterval(() => {
+  markBridgeDirty('foxxi-trajectories');
+  markBridgeDirty('foxxi-probes');
+  markBridgeDirty('foxxi-evals');
+}, 30_000).unref?.();
+
 /** Resolve the tenant of an affordance call from its `tenant_pod_url`
  *  argument (falling back to the bridge's configured default tenant). */
 function callTenant(args: Record<string, unknown>): TenantId {

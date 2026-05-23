@@ -48,7 +48,8 @@ import {
 } from './knowledge-architecture.js';
 import {
   publishOutcomeDescriptor, publishSituationDescriptor, publishTeachingPackageDescriptor,
-  publishTeachingAttestationDescriptor, FOXXI_TYPES,
+  publishTeachingAttestationDescriptor, publishCalibrationSnapshotDescriptor,
+  publishParticipationClaimDescriptor, FOXXI_TYPES,
   type DescriptorPublishConfig, type PublishedDescriptor,
 } from './outcome-descriptor-publisher.js';
 import type { IRI } from '@interego/core';
@@ -185,6 +186,43 @@ export function attachPerformanceRoutes(app: Express, config: {
   const podConfigured = !!config.publishConfig?.podUrl;
   const publishConfig = config.publishConfig;
 
+  // Track per-cell modal status so we can publish a foxxi:CalibrationProfile
+  // descriptor each time a cell crosses Hypothetical → Asserted. The flip
+  // is the precise marker of emergence; capturing it as a versioned
+  // descriptor gives the substrate a permanent record of when the
+  // collective's evidence became claimable knowledge.
+  const lastSeenCellStatus = new Map<string, string>();
+  const cellKey = (cause: string, intervention: string): string => `${cause}::${intervention}`;
+  let lastCalibrationDescriptorIri: string | null = null;
+  async function maybePublishCalibrationFlipDescriptor(): Promise<void> {
+    if (!podConfigured || !publishConfig) return;
+    const profile = calibrationProfiles().tenant;
+    const flips: Array<{ cause: string; intervention: string; samples: number; closureRate: number }> = [];
+    for (const cell of profile.cells) {
+      const key = cellKey(String(cell.causeFactor), String(cell.intervention));
+      const prev = lastSeenCellStatus.get(key);
+      const curr = String(cell.modalStatus);
+      lastSeenCellStatus.set(key, curr);
+      if (prev && prev !== 'Asserted' && curr === 'Asserted') {
+        flips.push({ cause: String(cell.causeFactor), intervention: String(cell.intervention),
+          samples: Number(cell.samples), closureRate: Number(cell.closureRate) });
+      }
+    }
+    if (flips.length === 0) return;
+    const snapshot = {
+      flips, totalSamples: profile.totalSamples,
+      profile: { cells: profile.cells.map(c => ({ causeFactor: c.causeFactor, intervention: c.intervention,
+        samples: c.samples, closureRate: c.closureRate, modalStatus: c.modalStatus })) },
+      supersedes: lastCalibrationDescriptorIri,
+      flippedAt: new Date().toISOString(),
+    };
+    const result = await publishCalibrationSnapshotDescriptor(snapshot, publishConfig).catch(err => {
+      console.error('[foxxi-bridge] calibration descriptor publish failed:', (err as Error).message);
+      return null;
+    });
+    if (result) lastCalibrationDescriptorIri = result.descriptorIri;
+  }
+
   // The calibration profile — the system's track record of its own
   // Knowable-regime recommendations, and a live upward↔downward causal
   // loop. The UPWARD arm: completed loops record outcomes into
@@ -195,6 +233,15 @@ export function attachPerformanceRoutes(app: Express, config: {
   // federated profile composes a peer organization's evidence
   // (federationView withholds sub-k cells before they cross a boundary).
   const seedRecords = expandOutcomeCorpus(SAMPLE_OUTCOMES);
+  // Prime lastSeenCellStatus with the seeded-corpus baseline so we don't
+  // emit a "flip" descriptor for cells that arrived already Asserted from
+  // the historical seed. Only genuine post-startup transitions publish.
+  {
+    const baselineProfile = buildCalibrationProfile(seedRecords);
+    for (const c of baselineProfile.cells) {
+      lastSeenCellStatus.set(cellKey(String(c.causeFactor), String(c.intervention)), String(c.modalStatus));
+    }
+  }
   const peerProfile = buildCalibrationProfile(expandOutcomeCorpus(SAMPLE_PEER_OUTCOMES));
   const liveOutcomes: OutcomeRecord[] = [];
   const calibrationProfiles = () => {
@@ -367,6 +414,13 @@ export function attachPerformanceRoutes(app: Express, config: {
           publishConfig,
         ));
       if (outcomeDesc) published.push(outcomeDesc);
+      // Each outcome may push the cell across the modal-status threshold;
+      // when it does, publish a foxxi:CalibrationProfile descriptor that
+      // captures the moment of the Hypothetical → Asserted flip + chains
+      // via cg:supersedes to the previous calibration snapshot. This is
+      // the upward arm of the reflexive loop made permanent in the
+      // substrate, not just an in-process recomposition.
+      await maybePublishCalibrationFlipDescriptor();
     }
 
     const responseBody = jsonLdEnvelope({
@@ -451,6 +505,52 @@ export function attachPerformanceRoutes(app: Express, config: {
   // an A2A instruction intervention, verifies the transfer by reading
   // the learner's own trajectories, emits an amta:Attestation into the
   // discipline ac: already uses, and feeds the reflexive calibration loop.
+  // ── POST /agent/attest — publish a registry-style ParticipationClaim ─
+  // Each agent in the autonomous demo (and future production callers)
+  // POSTs its signed participation claim here at the start of a run.
+  // The bridge verifies the ECDSA signature and publishes a real
+  // foxxi:ParticipationClaim descriptor on the pod — agent identities
+  // accrue durable history across runs instead of being ephemeral.
+  app.post('/agent/attest', async (req: Request, res: Response) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const name = typeof b.name === 'string' ? b.name : null;
+    const did = typeof b.did === 'string' ? b.did : null;
+    const address = typeof b.address === 'string' ? b.address : null;
+    const claim = typeof b.claim === 'string' ? b.claim : null;
+    const signature = typeof b.signature === 'string' ? b.signature : null;
+    if (!name || !did || !address || !claim || !signature) {
+      bad(res, 'name, did, address, claim, signature are all required'); return;
+    }
+    const published: PublishedDescriptor[] = [];
+    if (podConfigured && publishConfig) {
+      const result = await tryPublish('participation-claim', () =>
+        publishParticipationClaimDescriptor(
+          { name, did, address, claim, signature,
+            agentRoleHint: typeof b.agentRoleHint === 'string' ? b.agentRoleHint : undefined },
+          publishConfig,
+        ));
+      if (result) {
+        published.push(result);
+        res.setHeader('Content-Type', 'application/ld+json');
+        res.json(jsonLdEnvelope({
+          baseUrl: base,
+          id: `urn:foxxi:attestation-response:${Date.now().toString(36)}`,
+          types: ['foxxi:ParticipationAttestationResponse'],
+          body: { name, did, address, trust: result.trust },
+          published,
+          affordances: {
+            fetchAttestation: { method: 'GET', href: result.descriptorUrl,
+              note: 'Dereference the foxxi:ParticipationClaim descriptor (Turtle).',
+              returns: 'foxxi:ParticipationClaim' },
+          },
+        }));
+        return;
+      }
+    }
+    res.status(503).json({ error: 'pod publishing is not configured on this bridge — set FOXXI_TENANT_POD_URL' });
+  });
+
   app.post('/agent/teach', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const b = (req.body ?? {}) as Record<string, unknown>;

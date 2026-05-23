@@ -120,6 +120,52 @@ const agentProfileStores = new TenantPartition<Map<string, StoredDoc>>(() => new
 // multipart/mixed Statement requests — tenant-partitioned.
 const attachmentStores = new TenantPartition<Map<string, { data: Buffer; contentType: string }>>(() => new Map());
 
+// ── Pod projection (foxxi:XapiTenantSnapshot) ────────────────────────
+// xAPI Activity State, Activity Profile, and Agent Profile documents
+// are snapshotted as one composite descriptor per tenant. Statements
+// themselves are projected per-record via PodStatementStore — these
+// docs use the coarser snapshot because they're read/written together
+// and the snapshot shape matches operator inspection patterns.
+import {
+  registerSnapshot as registerXapiDocsSnapshot,
+  dirty as markXapiDocsDirty,
+  loadLatestSnapshot as loadXapiDocsSnapshot,
+  FOXXI_SNAPSHOT_TYPES as XAPI_SNAP_TYPES,
+} from './pod-snapshot-publisher.js';
+interface XapiDocsSnapshot {
+  state: Record<string, Array<[string, StoredDoc]>>;
+  activityProfile: Record<string, Array<[string, StoredDoc]>>;
+  agentProfile: Record<string, Array<[string, StoredDoc]>>;
+}
+function collectXapiDocsSnapshot(): XapiDocsSnapshot {
+  const dumpByTenant = (p: TenantPartition<Map<string, StoredDoc>>) => {
+    const out: Record<string, Array<[string, StoredDoc]>> = {};
+    for (const t of p.tenants()) out[String(t)] = [...p.for(t).entries()];
+    return out;
+  };
+  return {
+    state: dumpByTenant(stateStores),
+    activityProfile: dumpByTenant(activityProfileStores),
+    agentProfile: dumpByTenant(agentProfileStores),
+  };
+}
+async function hydrateXapiDocsFromPod(): Promise<void> {
+  const snap = await loadXapiDocsSnapshot<XapiDocsSnapshot>('xapi-docs');
+  if (!snap) return;
+  const restore = (p: TenantPartition<Map<string, StoredDoc>>, dump: Record<string, Array<[string, StoredDoc]>>) => {
+    for (const [tenant, entries] of Object.entries(dump)) {
+      const m = p.for(tenant as TenantId);
+      for (const [k, v] of entries) m.set(k, v);
+    }
+  };
+  if (snap.state) restore(stateStores, snap.state);
+  if (snap.activityProfile) restore(activityProfileStores, snap.activityProfile);
+  if (snap.agentProfile) restore(agentProfileStores, snap.agentProfile);
+}
+registerXapiDocsSnapshot({ surface: 'xapi-docs', typeIri: XAPI_SNAP_TYPES.XapiDocs, collect: collectXapiDocsSnapshot });
+void hydrateXapiDocsFromPod();
+const xapiDocsPodDirty = (): void => markXapiDocsDirty('xapi-docs');
+
 // ── Constants ───────────────────────────────────────────────────────
 
 const VOIDED_VERB = 'http://adlnet.gov/expapi/verbs/voided';
@@ -1117,6 +1163,7 @@ function handleDocResource(
 
     const etag = `"${randomUUID()}"`;
     resourceStore.set(key, { content: stored, etag, updated: nowIso(), contentType: storedCt });
+    xapiDocsPodDirty();
     res.setHeader('ETag', etag);
     res.status(204).end();
     return;
@@ -1137,6 +1184,7 @@ function handleDocResource(
         if (k.startsWith(`${scopePrefix}::`)) resourceStore.delete(k);
       }
     }
+    xapiDocsPodDirty();
     res.status(204).end();
     return;
   }
