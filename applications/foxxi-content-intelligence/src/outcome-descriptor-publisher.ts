@@ -24,7 +24,8 @@
  * invalidated on every write.
  */
 
-import { publish, createPGSL, mintAtom } from '@interego/core';
+import { publish, createPGSL, mintAtom, assertValid } from '@interego/core';
+import { verifyMessage } from 'ethers';
 import type {
   ContextDescriptorData,
   ContextFacetData,
@@ -111,6 +112,37 @@ function contentHash(input: string): string {
   return createHash('sha256').update(input, 'utf-8').digest('hex');
 }
 
+/**
+ * Verify an ECDSA signature over the canonical content hash of the
+ * payload. Returns true ONLY if the signer's recovered address matches
+ * the agent's `did:key:<addr>` DID. Used by the publisher to decide
+ * whether the descriptor's TrustFacet can carry `CryptographicallyVerified`
+ * (verified signature) or downgrades to `SelfAsserted` (claimed DID,
+ * no proof). The agent in the live demo signs `sha256:<hex>` of the
+ * canonical JSON payload using its wallet — exactly what
+ * verifyMessage() expects.
+ */
+function verifySignature(args: {
+  signature: string;
+  agentDid: string;
+  payloadJson: string;
+}): { verified: boolean; recoveredAddress: string | null; signedMessage: string } {
+  const message = `sha256:${contentHash(args.payloadJson)}`;
+  try {
+    const recovered = verifyMessage(message, args.signature);
+    const did = args.agentDid.toLowerCase();
+    const addrMatch = did.match(/0x[0-9a-f]{40}/);
+    if (!addrMatch) return { verified: false, recoveredAddress: recovered, signedMessage: message };
+    return {
+      verified: recovered.toLowerCase() === addrMatch[0],
+      recoveredAddress: recovered,
+      signedMessage: message,
+    };
+  } catch {
+    return { verified: false, recoveredAddress: null, signedMessage: message };
+  }
+}
+
 function slugify(s: string): string {
   return s.replace(/[^a-zA-Z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 64) || 'descriptor';
 }
@@ -164,6 +196,7 @@ function buildDescriptor(args: {
   authoredBy?: { id: string; kind: 'human' | 'agent'; role?: string };
   modalStatus?: 'Asserted' | 'Hypothetical' | 'Counterfactual';
   source?: string;
+  trust?: ResolvedTrust;
 }): ContextDescriptorData {
   const now = new Date().toISOString();
   const temporal: TemporalFacetData = { type: 'Temporal', validFrom: now };
@@ -208,7 +241,11 @@ function buildDescriptor(args: {
 
   const trust: TrustFacetData = {
     type: 'Trust',
-    trustLevel: args.authoredBy ? 'CryptographicallyVerified' : 'SelfAsserted',
+    // Honest trust level: CryptographicallyVerified only if the caller
+    // supplied a signature AND it actually verifies against the agent's
+    // DID. SelfAsserted otherwise. Never just "claim verified by saying
+    // so" — the publisher does the verification before stamping.
+    trustLevel: args.trust?.trustLevel ?? (args.authoredBy ? 'SelfAsserted' : 'SelfAsserted'),
     ...(args.authoredBy ? { issuer: args.authoredBy.id as IRI } : { issuer: args.authoritativeSource }),
   };
   facets.push(trust);
@@ -249,6 +286,37 @@ interface PublishEntityArgs {
 }
 
 /**
+ * Trust-level decision: the publisher only stamps
+ * `CryptographicallyVerified` when the caller supplies a signature AND
+ * the signature really verifies against the agent's DID. Otherwise the
+ * descriptor's TrustFacet carries `SelfAsserted` (claimed DID, no
+ * proof). Honest by construction.
+ */
+export type ResolvedTrust = {
+  trustLevel: 'CryptographicallyVerified' | 'SelfAsserted' | 'ThirdPartyAttested';
+  signatureVerified: boolean;
+  recoveredAddress: string | null;
+};
+
+function resolveTrust(args: {
+  authoredBy?: { id: string };
+  payload: Record<string, unknown>;
+  signature?: string;
+}): ResolvedTrust {
+  if (!args.authoredBy) return { trustLevel: 'SelfAsserted', signatureVerified: false, recoveredAddress: null };
+  if (!args.signature) return { trustLevel: 'SelfAsserted', signatureVerified: false, recoveredAddress: null };
+  const result = verifySignature({
+    signature: args.signature,
+    agentDid: args.authoredBy.id,
+    payloadJson: JSON.stringify(args.payload),
+  });
+  if (result.verified) {
+    return { trustLevel: 'CryptographicallyVerified', signatureVerified: true, recoveredAddress: result.recoveredAddress };
+  }
+  return { trustLevel: 'SelfAsserted', signatureVerified: false, recoveredAddress: result.recoveredAddress };
+}
+
+/**
  * Publish a typed Foxxi entity to the tenant pod:
  *   1. mint a content-addressed PGSL atom holding the payload
  *   2. build the entity graph that links the atom to the typed entity
@@ -259,10 +327,20 @@ interface PublishEntityArgs {
  * Returns the new descriptor + graph URLs + the atom URI so the caller
  * (or downstream agents via discover()) can follow the affordances.
  */
-export async function publishFoxxiEntity(args: PublishEntityArgs): Promise<PublishedDescriptor> {
+export async function publishFoxxiEntity(args: PublishEntityArgs): Promise<PublishedDescriptor & { trust: ResolvedTrust }> {
   const pgsl = args.config.pgsl ?? processPgsl();
   const payloadJson = JSON.stringify(args.payload);
   const payloadAtom = mintAtom(pgsl, payloadJson);
+
+  // Honest trust evaluation: if caller supplied a signature, verify it
+  // really; downgrade the trust level if it fails. The descriptor only
+  // ever stamps CryptographicallyVerified when there's a real signature
+  // that really verifies against the agent's DID.
+  const trust = resolveTrust({
+    authoredBy: args.authoredBy,
+    payload: args.payload,
+    signature: args.agentSignature,
+  });
 
   const uid = randomUUID().slice(0, 8);
   const slug = `${args.slugPrefix}-${uid}`;
@@ -287,7 +365,17 @@ export async function publishFoxxiEntity(args: PublishEntityArgs): Promise<Publi
     authoredBy: args.authoredBy,
     modalStatus: args.modalStatus,
     source: args.source,
+    trust,
   });
+
+  // SHACL-equivalent validation: assertValid() walks the seven-facet
+  // shape and throws if any required field is missing or any value
+  // violates the L1 spec. Catches drift before it lands in the pod.
+  try {
+    assertValid(descriptor);
+  } catch (err) {
+    throw new Error(`outcome-descriptor-publisher: descriptor failed L1 validation — ${(err as Error).message}`);
+  }
 
   const publishResult = await publish(descriptor, graphContent, args.config.podUrl, {
     fetch: args.config.fetch ?? globalThis.fetch.bind(globalThis),
@@ -302,6 +390,7 @@ export async function publishFoxxiEntity(args: PublishEntityArgs): Promise<Publi
     graphIri: entityIri,
     payloadAtom,
     foxxiType: args.foxxiType,
+    trust,
   };
 }
 

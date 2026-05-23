@@ -28,6 +28,7 @@
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { PodStatementStore } from './pod-statement-store.js';
 
 export interface StoredStatement {
   id: string;
@@ -96,7 +97,7 @@ export function matchesFilter(rec: StoredStatement, f: QueryFilter): boolean {
   return true;
 }
 
-function paginate(arr: StoredStatement[], filter: QueryFilter): QueryResult {
+export function paginate(arr: StoredStatement[], filter: QueryFilter): QueryResult {
   const ascending = !!filter.ascending;
   arr.sort((a, b) => ascending ? a.stored.localeCompare(b.stored) : b.stored.localeCompare(a.stored));
   const limit = Math.min(filter.limit ?? 100, 500);
@@ -297,7 +298,20 @@ export function createStatementStore(spec: string = 'memory'): StatementStore {
     }
     return new PrimaryForwardStatementStore(endpoint, { user, pass }, version || '2.0.0');
   }
-  throw new Error(`unknown FOXXI_LRS_BACKEND=${spec}; accepted: memory | file:<dir> | forward:<endpoint>||<user>||<password>[||<version>]`);
+  // pod-backed projection: from the outside this is an xAPI 2.0 LRS;
+  // from the inside every statement is a real cg:ContextDescriptor in
+  // the tenant pod. Reads from FOXXI_TENANT_POD_URL +
+  // FOXXI_AUTHORITATIVE_SOURCE env vars.
+  if (spec === 'pod' || spec.startsWith('pod:')) {
+    const podUrl = process.env.FOXXI_TENANT_POD_URL;
+    const authoritativeSource = process.env.FOXXI_AUTHORITATIVE_SOURCE;
+    if (!podUrl) throw new Error('FOXXI_LRS_BACKEND=pod requires FOXXI_TENANT_POD_URL to be set');
+    if (!authoritativeSource) throw new Error('FOXXI_LRS_BACKEND=pod requires FOXXI_AUTHORITATIVE_SOURCE to be set');
+    // Per-spec container override: pod:foxxi/learning-record/ -> foxxi/learning-record/
+    const containerPath = spec.startsWith('pod:') ? spec.slice('pod:'.length) : 'foxxi/lrs/';
+    return new PodStatementStore({ podUrl, authoritativeSource: authoritativeSource as unknown as never, containerPath });
+  }
+  throw new Error(`unknown FOXXI_LRS_BACKEND=${spec}; accepted: memory | file:<dir> | forward:<endpoint>||<user>||<password>[||<version>] | pod[:container-path]`);
 }
 
 export { randomUUID };
