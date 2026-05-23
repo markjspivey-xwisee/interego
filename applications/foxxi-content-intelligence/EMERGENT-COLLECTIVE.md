@@ -10,8 +10,21 @@ share.
 Run it:
 
 ```
+# scripted edition — five cryptographic identities, scripted per-agent contributions
 npx tsx applications/foxxi-content-intelligence/tools/emergent-collective-demo.mjs
+
+# autonomous edition — five real Claude subagents via the Claude Agent SDK,
+# each one independently deciding how to work its cases through the substrate.
+# Requires ANTHROPIC_API_KEY or an active Claude Code OAuth login.
+npx tsx applications/foxxi-content-intelligence/tools/emergent-collective-agents.mjs
 ```
+
+The two editions exercise the **same architecture** and the **same emergence** —
+they differ only in where the per-agent decisions come from: the scripted
+edition iterates a deterministic case list (useful for fast, free,
+deterministic verification); the autonomous edition spawns real Claude
+subagents that decide for themselves which tools to call and in what
+order, with the substrate as their only channel to each other.
 
 ## Nothing is faked
 
@@ -38,6 +51,21 @@ simulated, or synthetic at all. It is not:
 What is *scenario data* — the agents' names, the field-guidance
 situations — is domain data, as in any demonstration. Every
 **computation** is real and runs on the real architecture.
+
+In the **autonomous edition**, additionally:
+
+- **Real Claude subagents.** Each of the five agents is a separate
+  `query()` call to the Claude Agent SDK (claude-sonnet-4-6 by default),
+  spawned as an isolated subprocess. Each agent decides for itself which
+  tools to call and in what order. The orchestrator never tells an agent
+  "now contextualize" or "now record" — the agent reads the substrate,
+  works its cases, and reports back when done.
+- **Real tool affordances.** The agents reach the substrate through
+  three MCP tools whose handlers make real HTTP calls to the deployed
+  bridge: `read_calibration_profile`, `contextualize_situation`,
+  `record_outcome`. There is no in-process mock — the network round-trip
+  is genuine. The teaching agent (Atlas) gets a fourth tool, `teach`,
+  that issues a real `/agent/teach` call.
 
 ## The cast
 

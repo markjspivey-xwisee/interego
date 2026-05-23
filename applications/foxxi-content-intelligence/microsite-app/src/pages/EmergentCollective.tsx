@@ -407,14 +407,24 @@ function Header({ phase, onRun, onReset, speed, setSpeed }: {
       <h1 style={{
         fontFamily: serif, fontWeight: 500, fontSize: 40, lineHeight: 1.1, margin: '4px 0 12px',
       }}>The Emergent Collective</h1>
-      <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--text)', maxWidth: 760, margin: '0 0 18px' }}>
-        Five autonomous agents — each a real wallet-rooted identity created in your browser — act
-        independently against the live deployed bridge, coordinating only through the substrate.
-        A piece of knowledge no single agent holds <b>emerges</b> from their aggregate, flipped to
-        claimable by the bridge's own modal status, becomes a transmissible capability, and comes to
-        live in a federated profile two organizations share. Nothing on this page is faked: real
-        wallets, real signatures, real HTTP, real computation, paced for the eye.
+      <p style={{ fontSize: 16, lineHeight: 1.6, color: 'var(--text)', maxWidth: 760, margin: '0 0 14px' }}>
+        Five agents — each a real wallet-rooted identity created in your browser — act independently
+        against the live deployed bridge, coordinating only through the substrate. A piece of
+        knowledge no single agent holds <b>emerges</b> from their aggregate, flipped to claimable by
+        the bridge's own modal status, becomes a transmissible capability, and comes to live in a
+        federated profile two organizations share.
       </p>
+      <div style={{
+        maxWidth: 760, marginBottom: 18, padding: '8px 12px', borderRadius: 4,
+        borderLeft: '3px solid var(--accent)', background: 'rgba(0,0,0,0.025)',
+        fontSize: 13, lineHeight: 1.55,
+      }}>
+        <b>Scripted edition.</b> This page runs the scripted edition — real wallets, real
+        signatures, real HTTP to the live bridge, real calibration math, real modal flip — but the
+        per-agent contributions are iterated deterministically by this page, not decided by an LLM.
+        The <b>autonomous edition</b> spawns five real Claude subagents (via the Claude Agent SDK)
+        that each decide for themselves; runs from the CLI — see the closing card below.
+      </div>
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <button style={btn} onClick={onRun} disabled={phase === 'running'}>
           {phase === 'running' ? 'running…' : phase === 'done' ? 'Run again ▶' : '▶ Run it live'}
@@ -700,6 +710,27 @@ function Closing({ onHome, onDemos, error }: { onHome: () => void; onDemos: () =
         comes to live in a profile two organizations share. The whole acquired a property that
         none of its parts possessed.
       </p>
+      <div style={{
+        marginTop: 4, padding: '10px 12px', borderRadius: 4,
+        borderLeft: '3px solid var(--accent)', background: 'rgba(0,0,0,0.025)',
+        fontSize: 13, lineHeight: 1.6,
+      }}>
+        <div style={{ fontFamily: mono, fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--text-dim)', marginBottom: 4 }}>
+          edition you just watched
+        </div>
+        What ran in your browser is the <b>scripted edition</b>: the wallets, signatures, HTTP calls,
+        calibration math, and modal flip are all real — but the per-agent contributions are iterated
+        deterministically by this page, not decided by an LLM. The <b>autonomous edition</b> spawns
+        five real Claude subagents through the Claude Agent SDK; each one independently decides which
+        tools to call and in what order, with the substrate as their only channel to each other.
+        Same architecture, same emergence — runs from the CLI (it needs your API key or an active
+        Claude Code login):
+        <pre style={{
+          fontFamily: mono, fontSize: 12, margin: '8px 0 0', padding: '8px 10px',
+          background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 4,
+          overflowX: 'auto',
+        }}>npx tsx applications/foxxi-content-intelligence/tools/emergent-collective-agents.mjs</pre>
+      </div>
       {error && (
         <div style={{
           marginTop: 8, padding: '8px 10px', borderRadius: 4, fontSize: 13,
@@ -714,7 +745,11 @@ function Closing({ onHome, onDemos, error }: { onHome: () => void; onDemos: () =
         <a
           href="https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/tools/emergent-collective-demo.mjs"
           target="_blank" rel="noreferrer"
-        >the CLI version →</a>
+        >scripted-edition CLI →</a>
+        <a
+          href="https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/tools/emergent-collective-agents.mjs"
+          target="_blank" rel="noreferrer"
+        >autonomous-edition CLI (real Claude subagents) →</a>
         <button onClick={onDemos} style={{ background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: mono, fontSize: 12, padding: 0 }}>
           ← back to demos
         </button>
