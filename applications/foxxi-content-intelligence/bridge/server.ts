@@ -1950,6 +1950,19 @@ const app = createVerticalBridge({
     // POST /performance/plan, /content/compose-course, /content/personalize.
     attachPerformanceRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
+      // Pod-publishing config. When set, the performance routes mint a
+      // real cg:ContextDescriptor for every outcome / situation / teaching
+      // package and write it (plus a TriG named-graph) to the tenant pod.
+      // The bridge keeps its in-memory mirror for fast calibration reads;
+      // the pod is the source of truth, and descriptors are dereferenceable
+      // from the URLs the response's _affordances block carries.
+      ...(tenantPodUrl ? {
+        publishConfig: {
+          podUrl: tenantPodUrl,
+          authoritativeSource: authoritativeSource as IRI,
+          containerPath: 'foxxi/work-products/',
+        },
+      } : {}),
     });
 
     // Content delivery — closes the loop. A composed course is generated

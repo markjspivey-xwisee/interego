@@ -46,6 +46,82 @@ import {
 import {
   mapKnowledge, type KnowledgeComponent, type ComponentInput,
 } from './knowledge-architecture.js';
+import {
+  publishOutcomeDescriptor, publishSituationDescriptor, publishTeachingPackageDescriptor,
+  publishTeachingAttestationDescriptor, FOXXI_TYPES,
+  type DescriptorPublishConfig, type PublishedDescriptor,
+} from './outcome-descriptor-publisher.js';
+import type { IRI } from '@interego/core';
+
+// ── JSON-LD context bound at the top of every linked-data response. ───
+// Resolves the prefixes used in @type / facets / affordances so a
+// consumer doesn't have to memorise our IRIs. The Foxxi vertical's vocab
+// is dereferenceable at /ns/foxxi.
+const JSONLD_CONTEXT = {
+  cg: 'https://markjspivey-xwisee.github.io/interego/ns/cg/v1#',
+  pgsl: 'https://markjspivey-xwisee.github.io/interego/ns/pgsl/v1#',
+  ac: 'https://markjspivey-xwisee.github.io/interego/ns/ac/v1#',
+  amta: 'https://markjspivey-xwisee.github.io/interego/ns/amta/v1#',
+  prov: 'http://www.w3.org/ns/prov#',
+  dct: 'http://purl.org/dc/terms/',
+  hydra: 'http://www.w3.org/ns/hydra/core#',
+  foxxi: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#',
+};
+
+/**
+ * Wrap a domain payload in the canonical JSON-LD envelope. Every endpoint
+ * that produces (or operates on) a real cg:ContextDescriptor returns this
+ * shape so the response itself is consumable as linked data — not just
+ * the descriptors it points at. The `_affordances` block is HATEOAS
+ * (typed hydra:Operation links) so a caller can navigate the substrate
+ * by following links instead of memorising paths.
+ */
+function jsonLdEnvelope(args: {
+  baseUrl: string;
+  id: string;
+  types: string[];
+  body: Record<string, unknown>;
+  published?: PublishedDescriptor[];
+  affordances?: Record<string, { method: string; href: string; note?: string; expects?: string; returns?: string }>;
+}) {
+  return {
+    '@context': JSONLD_CONTEXT,
+    '@id': args.id,
+    '@type': args.types,
+    ...args.body,
+    ...(args.published && args.published.length > 0 ? {
+      published: args.published.map(p => ({
+        '@id': p.descriptorIri,
+        '@type': ['cg:ContextDescriptor', p.foxxiType],
+        'cg:describes': p.graphIri,
+        'pgsl:hasAtom': p.payloadAtom,
+        'hydra:resourceUrl': p.descriptorUrl,
+        'foxxi:graphUrl': p.graphUrl,
+      })),
+    } : {}),
+    ...(args.affordances ? {
+      _affordances: Object.fromEntries(
+        Object.entries(args.affordances).map(([k, v]) => [k, {
+          '@type': 'hydra:Operation',
+          'hydra:method': v.method,
+          'hydra:target': v.href,
+          ...(v.note ? { 'foxxi:note': v.note } : {}),
+          ...(v.expects ? { 'hydra:expects': v.expects } : {}),
+          ...(v.returns ? { 'hydra:returns': v.returns } : {}),
+        }])
+      ),
+    } : {}),
+  };
+}
+
+/** Publish silently — if the pod write fails, log it but keep the response. */
+async function tryPublish<T>(label: string, fn: () => Promise<T>): Promise<T | null> {
+  try { return await fn(); }
+  catch (err) {
+    console.error(`[foxxi-bridge] descriptor publish failed (${label}):`, (err as Error).message);
+    return null;
+  }
+}
 
 function bad(res: Response, msg: string): void {
   res.status(400).json({ error: msg });
@@ -100,8 +176,14 @@ function coerceDiagnoseInput(situation: PerformanceSituation, src: Record<string
 }
 
 /** Attach the performance-architecture + emergent-content routes. */
-export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: string }): void {
+export function attachPerformanceRoutes(app: Express, config: {
+  selfBaseUrl: string;
+  /** Where to mint cg:ContextDescriptor records for outcomes / situations / teaching packages. */
+  publishConfig?: DescriptorPublishConfig;
+}): void {
   const base = config.selfBaseUrl.replace(/\/+$/, '');
+  const podConfigured = !!config.publishConfig?.podUrl;
+  const publishConfig = config.publishConfig;
 
   // The calibration profile — the system's track record of its own
   // Knowable-regime recommendations, and a live upward↔downward causal
@@ -169,7 +251,12 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
   });
 
   // ── POST /performance/plan — contextualize → intervention spine. ──
-  app.post('/performance/plan', (req: Request, res: Response) => {
+  // Real linked-data shape: the situation becomes a published
+  // cg:ContextDescriptor on the tenant pod (conformsTo foxxi:Situation),
+  // the response is JSON-LD with the descriptor IRIs and HATEOAS
+  // affordances pointing at the next operations (record outcome, fetch
+  // descriptor, read the calibration profile).
+  app.post('/performance/plan', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const body = (req.body ?? {}) as Record<string, unknown>;
     const situation = coerceSituation(body.situation);
@@ -182,7 +269,47 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
     // often this kind of recommendation has actually closed the gap, and
     // whether a sibling intervention out-performs it. Federated, live.
     const calibration = calibrate(diagnosis, plan, calibrationProfiles().federated);
-    res.json({ diagnosis, plan, scaffold, calibration });
+
+    // Publish the situation as a real cg:ContextDescriptor on the pod.
+    // The descriptor lives at a dereferenceable URL; the graph it
+    // describes carries the situation payload + a pgsl:hasAtom link to
+    // the content-addressed atom holding the raw JSON.
+    const published: PublishedDescriptor[] = [];
+    if (podConfigured && publishConfig) {
+      const situationDesc = await tryPublish('situation', () =>
+        publishSituationDescriptor(
+          { situation, diagnosis, plan: { paradigm: plan.paradigm, selected: plan.selected.map(o => o.type), summary: plan.summary } },
+          author,
+          publishConfig,
+        ));
+      if (situationDesc) published.push(situationDesc);
+    }
+
+    const responseBody = jsonLdEnvelope({
+      baseUrl: base,
+      id: `urn:foxxi:plan-response:${situation.id}`,
+      types: ['foxxi:PerformancePlanResponse'],
+      body: { diagnosis, plan, scaffold, calibration },
+      published,
+      affordances: {
+        recordOutcome: { method: 'POST', href: `${base}/performance/outcome`,
+          note: 'Record the outcome of applying this plan in the field — closes the upward arm of the reflexive loop.',
+          expects: 'foxxi:OutcomeInput', returns: 'foxxi:Outcome' },
+        readCalibration: { method: 'POST', href: `${base}/performance/calibration`,
+          note: 'Read the live calibration profile (tenant + federated) — see how often recommendations of this kind actually close the gap.',
+          returns: 'foxxi:CalibrationProfile' },
+        ...(published[0] ? {
+          fetchSituationDescriptor: { method: 'GET', href: published[0].descriptorUrl,
+            note: 'Dereference the cg:ContextDescriptor for the filed situation (Turtle).',
+            returns: 'cg:ContextDescriptor' },
+          fetchSituationGraph: { method: 'GET', href: published[0].graphUrl,
+            note: 'Dereference the situation graph (TriG).',
+            returns: 'cg:NamedGraph' },
+        } : {}),
+      },
+    });
+    res.setHeader('Content-Type', 'application/ld+json');
+    res.json(responseBody);
   });
 
   // ── POST /performance/calibration — the reflexive loop. ───────────
@@ -214,22 +341,67 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
   });
 
   // ── POST /performance/outcome — the reflexive loop's upward arm. ───
-  // A completed performance loop records its outcome here; the next
-  // calibration read recomposes the profile to include it. The parts
-  // (individual outcomes) cause the whole (the calibration profile),
-  // which then exerts downward causation on the next plan.
-  app.post('/performance/outcome', (req: Request, res: Response) => {
+  // A completed performance loop records its outcome here. The outcome
+  // is published as a real cg:ContextDescriptor (conformsTo foxxi:Outcome)
+  // on the tenant pod: signed by the calling agent, content-addressed by
+  // its PGSL atom, dereferenceable by anyone who follows the descriptor
+  // URL with Accept: text/turtle. The bridge keeps an in-memory MIRROR of
+  // outcomes for fast calibration reads — but the pod is the source of
+  // truth; the mirror rehydrates from the pod on startup.
+  app.post('/performance/outcome', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    const outcome = recordLiveOutcome((req.body ?? {}) as Record<string, unknown>);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const outcome = recordLiveOutcome(body);
     if (typeof outcome === 'string') { bad(res, outcome); return; }
     liveOutcomes.push(outcome);
-    res.json({
-      recorded: true,
-      liveOutcomes: liveOutcomes.length,
-      totalSamples: calibrationProfiles().tenant.totalSamples,
-      note: 'Outcome recorded. The calibration profile recomposes to include it on the next read — '
-        + 'a completed loop now shapes the next recommendation.',
+
+    const author = asPerformer(body.author);
+    const signature = typeof body.signature === 'string' ? body.signature : undefined;
+    const published: PublishedDescriptor[] = [];
+    if (podConfigured && publishConfig) {
+      const outcomeDesc = await tryPublish('outcome', () =>
+        publishOutcomeDescriptor(
+          { ...outcome, evidence: typeof body.evidence === 'string' ? body.evidence : undefined },
+          author,
+          signature,
+          publishConfig,
+        ));
+      if (outcomeDesc) published.push(outcomeDesc);
+    }
+
+    const responseBody = jsonLdEnvelope({
+      baseUrl: base,
+      id: `urn:foxxi:outcome-response:${Date.now().toString(36)}`,
+      types: ['foxxi:OutcomeResponse'],
+      body: {
+        recorded: true,
+        outcome,
+        liveOutcomes: liveOutcomes.length,
+        totalSamples: calibrationProfiles().tenant.totalSamples,
+      },
+      published,
+      affordances: {
+        readCalibration: { method: 'POST', href: `${base}/performance/calibration`,
+          note: 'Read the calibration profile — the part you just contributed is now in the whole.',
+          returns: 'foxxi:CalibrationProfile' },
+        supersedeOutcome: { method: 'POST', href: `${base}/performance/outcome`,
+          note: 'If field evidence revises the verdict, record a follow-up outcome that supersedes this one (cg:supersedes link in the next descriptor).',
+          expects: 'foxxi:OutcomeInput' },
+        ...(published[0] ? {
+          fetchOutcomeDescriptor: { method: 'GET', href: published[0].descriptorUrl,
+            note: 'Dereference the cg:ContextDescriptor for this outcome (Turtle).',
+            returns: 'cg:ContextDescriptor' },
+          fetchOutcomeGraph: { method: 'GET', href: published[0].graphUrl,
+            note: 'Dereference the outcome graph (TriG) — contains the foxxi:bundleJson + pgsl:hasAtom link.',
+            returns: 'cg:NamedGraph' },
+          fetchPayloadAtom: { method: 'GET', href: `${base}/pgsl/atom/${encodeURIComponent(published[0].payloadAtom)}`,
+            note: 'Resolve the content-addressed PGSL atom for the outcome payload (same content → same URI globally).',
+            returns: 'pgsl:Atom' },
+        } : {}),
+      },
     });
+    res.setHeader('Content-Type', 'application/ld+json');
+    res.json(responseBody);
   });
 
   // ── POST /performance/portfolio — the performance-management read. ─
@@ -279,7 +451,7 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
   // an A2A instruction intervention, verifies the transfer by reading
   // the learner's own trajectories, emits an amta:Attestation into the
   // discipline ac: already uses, and feeds the reflexive calibration loop.
-  app.post('/agent/teach', (req: Request, res: Response) => {
+  app.post('/agent/teach', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const b = (req.body ?? {}) as Record<string, unknown>;
     const teacher = asPerformer(b.teacher);
@@ -320,17 +492,55 @@ export function attachPerformanceRoutes(app: Express, config: { selfBaseUrl: str
       // itself composes agent-collective's ac:TeachingPackage) flows up
       // into the same calibration profile as human course completions.
       if (outcome) liveOutcomes.push(outcome);
-      res.json({
-        intervention,
-        verdict,
-        attestation,
-        outcome,
-        note: 'The performance lens over an ac:TeachingPackage. Foxxi does not invent agent teaching — '
-          + 'agent-collective authors the package, agent-development-practice supplies the practice. '
-          + 'Foxxi frames the acquisition as an A2A instruction intervention, verifies the transfer '
-          + 'from the learner\'s trajectories, and emits an amta:Attestation that feeds ac:\'s modal '
-          + 'discipline and the reflexive calibration loop.',
+
+      // Publish two real linked-data descriptors: the ac:TeachingPackage
+      // (the transmissible capability itself) and the amta:Attestation
+      // (the cryptographic transfer-verified attestation). The teaching
+      // package is Hypothetical until the attestation flips it; we keep
+      // the attestation's modal status whatever amta: assigned (this
+      // version: Asserted on a verified transfer).
+      const published: PublishedDescriptor[] = [];
+      if (podConfigured && publishConfig) {
+        const pkgDesc = await tryPublish('teaching-package', () =>
+          publishTeachingPackageDescriptor(
+            { package: pkg, targetBehaviour, teacher: teacher.id, learner: learner.id, intervention },
+            { id: teacher.id, kind: 'agent' },
+            publishConfig,
+          ));
+        if (pkgDesc) published.push(pkgDesc);
+        const attDesc = await tryPublish('teaching-attestation', () =>
+          publishTeachingAttestationDescriptor(
+            { attestation, verdict, learner: learner.id, teacher: teacher.id, teachingPackageIri: tp.iri },
+            { id: teacher.id, kind: 'agent' },
+            publishConfig,
+          ));
+        if (attDesc) published.push(attDesc);
+      }
+
+      const responseBody = jsonLdEnvelope({
+        baseUrl: base,
+        id: `urn:foxxi:teach-response:${Date.now().toString(36)}`,
+        types: ['foxxi:TeachingResponse'],
+        body: { intervention, verdict, attestation, outcome },
+        published,
+        affordances: {
+          readCalibration: { method: 'POST', href: `${base}/performance/calibration`,
+            note: 'The teaching transfer (if verified) flows up into the same calibration profile as field outcomes.',
+            returns: 'foxxi:CalibrationProfile' },
+          ...(published[0] ? {
+            fetchTeachingPackage: { method: 'GET', href: published[0].descriptorUrl,
+              note: 'Dereference the ac:TeachingPackage descriptor (Turtle).',
+              returns: 'ac:TeachingPackage' },
+          } : {}),
+          ...(published[1] ? {
+            fetchAttestation: { method: 'GET', href: published[1].descriptorUrl,
+              note: 'Dereference the amta:Attestation descriptor (Turtle) — the cryptographic record of the transfer verification.',
+              returns: 'amta:Attestation' },
+          } : {}),
+        },
       });
+      res.setHeader('Content-Type', 'application/ld+json');
+      res.json(responseBody);
     } catch (e) {
       bad(res, `teach failed: ${(e as Error).message}`);
     }
