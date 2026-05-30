@@ -1431,7 +1431,7 @@ just demo a publish + discover round-trip on their own pod.`,
 // One Server instance per /mcp request (stateless mode). Wires ListTools
 // and CallTool to the same handler registry used by the REST routes.
 
-function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string } | null): Server {
+function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string; podUrl?: string } | null): Server {
   const server = new Server(
     { name: '@interego/mcp-relay', version: '0.3.0' },
     {
@@ -1523,7 +1523,15 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       if (!args.agent_id) args.agent_id = authContext.agentId;
       if (!args.owner_webid && authContext.ownerWebId) args.owner_webid = authContext.ownerWebId;
       if (!args.pod_name && authContext.userId) args.pod_name = authContext.userId;
-      if (!args.pod_url && authContext.userId) args.pod_url = `${CSS_URL}${authContext.userId}/`;
+      // Prefer the identity-server-authoritative podUrl over reconstructing
+      // from userId. They're equivalent today (identity derives podUrl from
+      // userId) but become different once preferred-pod overlays exist —
+      // e.g. one user with two credentials canonically sharing one pod.
+      // The relay must not silently second-guess the identity layer.
+      if (!args.pod_url) {
+        args.pod_url = authContext.podUrl
+          ?? (authContext.userId ? `${CSS_URL}${authContext.userId}/` : undefined);
+      }
     }
     try {
       const text = await tool.handler(args);
@@ -2358,14 +2366,20 @@ app.post('/messages', async (req, res) => {
 //   1. req.auth populated by requireBearerAuth (OAuth token verified by provider)
 //   2. Authorization: Bearer <RELAY_MCP_API_KEY> (legacy API key, for curl/scripts)
 //   3. Unauthenticated (if RELAY_MCP_API_KEY unset AND no OAuth token) — open mode
-function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId: string; userId: string } | null {
+function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId: string; userId: string; podUrl?: string } | null {
   // OAuth-verified request: bearerAuth middleware already set req.auth
-  const reqAuth = (req as express.Request & { auth?: { extra?: { agentId?: string; ownerWebId?: string; userId?: string } } }).auth;
+  const reqAuth = (req as express.Request & { auth?: { extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string } } }).auth;
   if (reqAuth?.extra?.agentId && reqAuth.extra.ownerWebId && reqAuth.extra.userId) {
     return {
       agentId: reqAuth.extra.agentId,
       ownerWebId: reqAuth.extra.ownerWebId,
       userId: reqAuth.extra.userId,
+      // Thread the identity-server-provided podUrl through. Today identity
+      // derives it from userId so this is equivalent to ${CSS_URL}${userId}/,
+      // but when identity layer adds preferred-pod overlays (e.g. one user
+      // with two credentials sharing one canonical pod), the relay must
+      // honor the authoritative podUrl — not silently reconstruct from userId.
+      ...(reqAuth.extra.podUrl ? { podUrl: reqAuth.extra.podUrl } : {}),
     };
   }
   // Legacy API-key path: Authorization: Bearer <RELAY_MCP_API_KEY>

@@ -47,6 +47,11 @@ export interface InteregoAuthInfo extends AuthInfo {
     agentId: string;
     ownerWebId: string;
     userId: string;
+    /** The user's canonical home pod (declared by the identity server). The relay
+     *  threads this through `req.auth.extra` so MCP tool calls without an
+     *  explicit `pod_url` default to the correct pod — never silently
+     *  reconstructed from `userId` by the relay. */
+    podUrl: string;
     identityToken: string;
   };
 }
@@ -439,6 +444,11 @@ async function didSubmit() {
         agentId: c.identity.agentId,
         ownerWebId: c.identity.ownerWebId,
         userId: c.identity.userId,
+        // The user's canonical home pod, as declared by the identity server.
+        // Threading this through lets the relay default `pod_url`-less tool
+        // calls to the right place without reconstructing from userId — the
+        // identity layer is the only authority on which pod a user owns.
+        podUrl: c.identity.podUrl,
         identityToken: c.identity.identityToken,
       },
     });
@@ -494,6 +504,8 @@ async function didSubmit() {
         agentId: rec.identity.agentId,
         ownerWebId: rec.identity.ownerWebId,
         userId: rec.identity.userId,
+        // Carry podUrl across refresh too — see the access-token path above.
+        podUrl: rec.identity.podUrl,
         identityToken: rec.identity.identityToken,
       },
     });
