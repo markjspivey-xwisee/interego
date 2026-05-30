@@ -20,6 +20,39 @@
  */
 
 import { randomUUID } from 'node:crypto';
+
+// ── Pod-write auth: attach Authorization: Bearer on writes that target
+// the configured tenant pod URL. The CSS deployment sits behind a
+// write-gating reverse proxy (interego-css-gate) that rejects anonymous
+// POST / PUT / PATCH / DELETE. Reads still go anonymously. Only writes
+// to the tenant pod host get the bearer — outbound calls to other
+// services (model APIs, federation peer reads, etc) are untouched so we
+// don't leak the secret. Patch runs once at module load, before any
+// publish() call captures globalThis.fetch. ───────────────────────
+{
+  const writeSecret = process.env.FOXXI_POD_WRITE_SECRET;
+  const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
+  if (writeSecret && tenantPodUrl) {
+    const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
+    const writeMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (writeMethods.has(method) && tenantOrigin) {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+        if (url && url.startsWith(tenantOrigin)) {
+          const headers = new Headers(init?.headers ?? {});
+          if (!headers.has('Authorization')) {
+            headers.set('Authorization', `Bearer ${writeSecret}`);
+            return originalFetch(input, { ...init, headers });
+          }
+        }
+      }
+      return originalFetch(input, init);
+    }) as typeof globalThis.fetch;
+    console.log(`[foxxi-bridge] pod-write auth installed (writes to ${tenantOrigin} carry Authorization: Bearer ${writeSecret.slice(0, 6)}…)`);
+  }
+}
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 import {

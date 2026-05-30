@@ -1,0 +1,17 @@
+# ────────────────────────────────────────────────────────────
+#  CSS write-gate — tiny Node reverse proxy.
+#  Anonymous reads (GET/HEAD/OPTIONS) pass through unchanged.
+#  Anonymous writes (POST/PUT/PATCH/DELETE) are rejected with 401;
+#  only callers carrying Authorization: Bearer <WRITE_SECRET> can write.
+# ────────────────────────────────────────────────────────────
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY deploy/css-gate/server.mjs /app/server.mjs
+
+EXPOSE 8080
+ENV PORT=8080
+
+CMD ["node", "/app/server.mjs"]
