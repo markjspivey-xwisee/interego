@@ -5,7 +5,7 @@
  * them at runtime (no inline bundle required).
  *
  * Usage:
- *   FOXXI_TENANT_POD_URL=https://interego-css.../markj/ \
+ *   FOXXI_TENANT_POD_URL=https://interego-css.../foxxi/ \
  *   FOXXI_AUTHORITATIVE_SOURCE=did:web:acme-training.example \
  *   npx tsx applications/foxxi-content-intelligence/tools/publish-tenant.ts
  *

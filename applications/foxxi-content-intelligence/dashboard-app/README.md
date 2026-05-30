@@ -45,7 +45,7 @@ The transport status is shown as a pill in the top-right header
 # 1. Start the Foxxi bridge (in another terminal):
 cd ../bridge
 PORT=6080 \
-  FOXXI_TENANT_POD_URL=https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/ \
+  FOXXI_TENANT_POD_URL=https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/ \
   FOXXI_AUTHORITATIVE_SOURCE=did:web:acme-training.example \
   FOXXI_AUDIENCE=both \
   FOXXI_DASHBOARD_ORIGIN=http://localhost:5173 \

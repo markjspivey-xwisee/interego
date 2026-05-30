@@ -34,7 +34,7 @@ const WEB_ID = `${CSS.replace('interego-css', 'interego-acme-id')}/users/jliu/pr
 // user — so progress / assignment questions can be token-bound to them.
 const LEARNER = WEB_ID;
 const AGENT = 'did:web:acme#support-agent-7';
-const PEER_POD = `${CSS}/markj/federation-peer/`;
+const PEER_POD = `${CSS}/foxxi/federation-peer/`;
 
 let pass = 0, fail = 0;
 const check = (label, cond, detail) => {

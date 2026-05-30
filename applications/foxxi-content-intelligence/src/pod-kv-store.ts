@@ -76,7 +76,7 @@ export function keyToSlug(key: string): string {
 }
 
 export interface PodKvConfig {
-  /** Tenant pod root (e.g. https://interego-css..../markj/). Must end with /. */
+  /** Tenant pod root (e.g. https://interego-css..../foxxi/). Must end with /. */
   readonly podUrl: string;
   /** did:web of the authoritative source for the tenant. */
   readonly authoritativeSource: IRI;

@@ -72,7 +72,7 @@ export const AMTA_TYPES = {
 // ── Shared publisher config ─────────────────────────────────
 
 export interface DescriptorPublishConfig {
-  /** Tenant pod root (e.g. https://interego-css..../markj/). Must end with /. */
+  /** Tenant pod root (e.g. https://interego-css..../foxxi/). Must end with /. */
   podUrl: string;
   /** did:web of the authoritative source for this tenant (prov:wasAttributedTo). */
   authoritativeSource: IRI;

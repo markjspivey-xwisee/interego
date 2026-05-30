@@ -59,7 +59,7 @@ const BUNDLE_JSON_PRED = `${FXS}bundleJson` as IRI;
 // ── Config + helpers ──────────────────────────────────────────
 
 export interface TenantPublishConfig {
-  /** The tenant's pod root URL (e.g. https://interego-css.../markj/). */
+  /** The tenant's pod root URL (e.g. https://interego-css.../foxxi/). */
   podUrl: string;
   /** Authoritative source DID (e.g. did:web:acme-training.example) — recorded as prov:wasAttributedTo. */
   authoritativeSource: IRI;

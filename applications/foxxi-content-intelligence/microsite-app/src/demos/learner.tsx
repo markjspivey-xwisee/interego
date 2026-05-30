@@ -132,7 +132,7 @@ export const learnerSteps: DemoStep[] = [
     actionLabel: 'Export my CLR',
     run: () => callBridge({
       tool: 'foxxi.export_clr',
-      args: { learner_did: JOSHUA.webId, learner_pod_url: 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/' },
+      args: { learner_did: JOSHUA.webId, learner_pod_url: 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/' },
       identity: 'joshua',
     }),
     summarize: (r) => {

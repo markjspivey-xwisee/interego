@@ -44,7 +44,7 @@ import type { IRI } from '@interego/core';
 // ─────────────────────────────────────────────────────────────────────
 
 export interface FoxxiConfig {
-  /** Tenant pod URL (e.g., https://interego-css.../markj/). */
+  /** Tenant pod URL (e.g., https://interego-css.../foxxi/). */
   readonly tenantPodUrl: string;
   /** Authoritative source DID for ingested content. */
   readonly authoritativeSource: IRI;

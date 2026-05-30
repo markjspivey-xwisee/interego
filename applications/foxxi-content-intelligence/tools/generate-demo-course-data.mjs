@@ -517,7 +517,7 @@ const connections = [
 const adminPayload = {
   meta: {
     tenant: 'Acme Training Co (demo)',
-    tenant_pod: 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/',
+    tenant_pod: 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/',
     tenant_did: TENANT_DID,
     tenant_did_document_url: `${ID_BASE}/.well-known/did.json`,
     admin_user_web_id: users[0].web_id,

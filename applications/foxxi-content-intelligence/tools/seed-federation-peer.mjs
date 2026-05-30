@@ -17,7 +17,7 @@
 import { publishFoxxiEntity, FOXXI_TYPES } from '../src/outcome-descriptor-publisher.js';
 
 const PEER_POD = process.env.PEER_POD_URL
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/federation-peer/';
+  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/federation-peer/';
 const PEER_AUTHORITATIVE_SOURCE = process.env.PEER_AUTHORITATIVE_SOURCE
   ?? 'did:web:peer-academy.example';
 

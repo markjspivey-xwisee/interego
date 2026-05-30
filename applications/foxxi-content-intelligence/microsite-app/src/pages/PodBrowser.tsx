@@ -34,8 +34,8 @@ const label: React.CSSProperties = {
 // Default pod URLs. Two sources: the tenant pod and the federation
 // peer pod. The dropdown lets the user swap between them; any pod URL
 // can be typed in to browse arbitrary Interego pods.
-const TENANT_POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
-const PEER_POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/federation-peer/';
+const TENANT_POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/';
+const PEER_POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/federation-peer/';
 
 interface ManifestEntry {
   descriptorUrl: string;

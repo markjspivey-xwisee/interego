@@ -39,7 +39,7 @@ function verdictOf(exemplary: string, observed: string, newObserved: string, tra
 }
 
 const CSS_POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const PEER_POD = `${CSS_POD}/markj/federation-peer/`;
+const PEER_POD = `${CSS_POD}/foxxi/federation-peer/`;
 const ASSERT_THRESHOLD = 12;
 const AGENT_NAMES = ['Scout', 'Probe', 'Ranger', 'Atlas', 'Nova'] as const;
 

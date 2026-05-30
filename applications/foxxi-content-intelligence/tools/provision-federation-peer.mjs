@@ -19,7 +19,7 @@
 import { publishCoursePackage } from '../src/tenant-publisher.ts';
 
 const PEER_POD = process.env.FOXXI_FEDERATION_PEER_POD
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/federation-peer/';
+  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/federation-peer/';
 
 // A substantial course on a topic the Foxxi tenant pod does not carry —
 // so a federated discovery visibly reaches something the vertical alone

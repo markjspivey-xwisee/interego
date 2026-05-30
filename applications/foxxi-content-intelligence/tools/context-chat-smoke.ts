@@ -116,11 +116,11 @@ async function testRoutes(): Promise<void> {
     // content itself, not the descriptor's metadata.
     discoverInteregoContext: async () => ([
       {
-        descriptorUrl: 'https://pod.example/markj/notes/quarterly-objectives.ttl',
+        descriptorUrl: 'https://pod.example/foxxi/notes/quarterly-objectives.ttl',
         label: 'quarterly objectives',
         summary: 'Interego context descriptor "quarterly objectives" — the quarterly '
           + 'objective is to cut the refund escalation rate by 30 percent.',
-        originPod: 'https://pod.example/markj/',
+        originPod: 'https://pod.example/foxxi/',
       },
       {
         descriptorUrl: 'https://pod.example/peer/courses/onboarding.ttl',

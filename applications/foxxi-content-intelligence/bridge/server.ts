@@ -9,7 +9,7 @@
  *
  * Run:
  *   PORT=6080 BRIDGE_DEPLOYMENT_URL=http://localhost:6080 \
- *     FOXXI_TENANT_POD_URL=https://your-pod.example/markj/ \
+ *     FOXXI_TENANT_POD_URL=https://your-pod.example/foxxi/ \
  *     FOXXI_AUTHORITATIVE_SOURCE=did:web:your-tenant.example \
  *     npx tsx server.ts
  *

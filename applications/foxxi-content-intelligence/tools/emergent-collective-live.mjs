@@ -33,7 +33,7 @@ const HOST = '127.0.0.1';
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
   ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const CSS = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const PEER_POD = `${CSS}/markj/federation-peer/`;
+const PEER_POD = `${CSS}/foxxi/federation-peer/`;
 const MODEL = process.env.FOXXI_AGENT_MODEL ?? 'claude-sonnet-4-6';
 const ASSERT_THRESHOLD = 12;
 const AGENT_NAMES = ['Scout', 'Probe', 'Ranger', 'Atlas', 'Nova'];
