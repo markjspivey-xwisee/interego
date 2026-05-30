@@ -30,6 +30,13 @@ import { Readable } from 'stream';
 const PORT = Number(process.env.PORT ?? 8080);
 const CSS_INTERNAL_URL = process.env.CSS_INTERNAL_URL
   ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+// CSS validates that incoming requests' Host header matches its
+// configured CSS_BASE_URL ("outside the configured identifier space"
+// errors otherwise). When the gate connects to CSS at an internal
+// hostname (after CSS is moved behind the gate), the Host header must
+// stay the public hostname so CSS accepts. Defaults to the host of
+// CSS_INTERNAL_URL when not set.
+const CSS_HOST_HEADER = process.env.CSS_HOST_HEADER ?? null;
 const WRITE_SECRET = process.env.WRITE_SECRET;
 
 if (!WRITE_SECRET) {
@@ -80,11 +87,16 @@ const server = createServer(async (req, res) => {
 
   // Proxy through.
   const upstreamUrl = `${CSS_INTERNAL_URL.replace(/\/+$/, '')}${req.url}`;
-  // Forward headers, but rewrite the Host header to the upstream's host.
+  // Forward headers. Host header gets explicitly rewritten — to
+  // CSS_HOST_HEADER if set (the public hostname CSS thinks it lives at,
+  // per CSS_BASE_URL), else the host of the internal URL. The former
+  // is required when CSS is behind the gate at an internal hostname
+  // but still has CSS_BASE_URL set to its original public URL — CSS
+  // rejects requests whose Host doesn't match its baseUrl space.
   const headers = { ...req.headers };
   try {
     const u = new URL(CSS_INTERNAL_URL);
-    headers['host'] = u.host;
+    headers['host'] = CSS_HOST_HEADER ?? u.host;
   } catch { /* ignore */ }
 
   // Build the upstream request body: only methods that can have one.
