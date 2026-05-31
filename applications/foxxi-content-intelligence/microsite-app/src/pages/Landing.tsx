@@ -5,20 +5,44 @@ export function Landing({ onTry, onAbout }: { onTry: (role: 'learner' | 'admin' 
     <>
       {/* Hero */}
       <section style={{ maxWidth: 980, margin: '60px auto 30px', padding: '0 24px' }}>
-        <div className="label" style={{ marginBottom: 14 }}>L&amp;D · open · pod-native · standards-conformant</div>
+        <div className="label" style={{ marginBottom: 14 }}>performance architecture · four regimes · four directionalities · interego vertical</div>
         <h1 style={{
           fontFamily: "'EB Garamond', serif", fontStyle: 'italic',
-          fontSize: 64, lineHeight: 1.05, margin: 0, letterSpacing: '-0.02em',
+          fontSize: 56, lineHeight: 1.06, margin: 0, letterSpacing: '-0.02em',
         }}>
-          Learning records<br />you actually own.
+          Foxxi is the performance-architecture<br />vertical of Interego.
         </h1>
         <p style={{
-          fontSize: 21, lineHeight: 1.5, maxWidth: 720, marginTop: 22, color: 'var(--text-dim)',
+          fontSize: 20, lineHeight: 1.55, maxWidth: 760, marginTop: 22, color: 'var(--text-dim)',
         }}>
-          Foxxi turns every course completion, assessment, and competency assertion into a
-          cryptographically-verifiable credential that lives in <em>your</em> data pod — not your
-          employer's HRIS, not an LMS vendor's database. Show only what you want, prove what you
-          must, take it with you forever.
+          The unit of work is a <em>performance situation</em>, not a course or a credential. Each
+          situation is routed to one of four work regimes — Evident, Knowable, Emergent, Turbulent —
+          and each regime brings its own method. Gap analysis is the Knowable regime's method; it is
+          not the universal frame.
+        </p>
+        <p style={{
+          fontSize: 17, lineHeight: 1.6, maxWidth: 760, marginTop: 16, color: 'var(--text-dim)',
+        }}>
+          The same affordances serve all four directionalities of work: human-to-human, human-to-agent,
+          agent-to-human, and agent-to-agent. A nurse coaching a nurse, an agent teaching another
+          agent, and an agent supporting a human use the same substrate, signed and attributed end
+          to end.
+        </p>
+        <p style={{
+          fontSize: 17, lineHeight: 1.6, maxWidth: 760, marginTop: 16, color: 'var(--text-dim)',
+        }}>
+          Outcomes are reflexive. What actually happened recomposes the calibration profile (upward
+          causation); the updated profile shapes the next plan (downward causation). Federation lets
+          peer evidence from other orgs compose into the local profile without giving up custody of
+          the underlying records.
+        </p>
+        <p style={{
+          fontSize: 15, lineHeight: 1.6, maxWidth: 760, marginTop: 16, color: 'var(--text-dim)',
+        }}>
+          The LRS, LMS, SCORM, cmi5, LTI 1.3 and OneRoster surfaces are emergent projections over
+          the Interego substrate — one signed graph rendered through each standard's lens, not
+          parallel implementations. The xAPI projection passes the ADL 2.0 conformance suite
+          1435/1435.
         </p>
         <div style={{ display: 'flex', gap: 12, marginTop: 30, flexWrap: 'wrap' }}>
           <PrimaryCta onClick={() => onTry('learner')}>Try it as a learner →</PrimaryCta>

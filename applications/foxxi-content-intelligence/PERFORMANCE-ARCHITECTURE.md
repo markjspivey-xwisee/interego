@@ -282,6 +282,27 @@ It composes the substrate throughout:
   never a record; `federationView()` withholds cells below a
   k-anonymity threshold before anything crosses an org boundary.
 
+### Signature-gated trust at the reader
+
+The federated profile is only as trustworthy as the outcomes that feed
+it. The `federation-outcome-loader` filters peer descriptors by
+signature verification: every peer outcome's `foxxi:agentSignature` is
+checked against the `prov:wasGeneratedBy` DID, and only descriptors
+that recover the claimed signer — `cg:CryptographicallyVerified` —
+contribute to the rolled-up profile. Unsigned or mis-signed peer
+descriptors are silently dropped. Without that gate the calibration
+cell would be poisonable: any pod could publish junk outcomes
+attributed to anyone and skew a sibling-intervention comparison.
+
+This is the Option D substrate position. Storage stays allow-all
+(zero-trust); the storage layer does not know or care who wrote a
+descriptor. Trust lives at the verifier and reader layer — the
+signature check on write, the signature filter on read. Verticals can
+layer extra gates on top of storage if they want (the `css-gate` in
+front of the Foxxi tenant pod is one example, requiring a bearer on
+writes), but those are optional L3 patterns; the calibration loop's
+trustworthiness does not depend on them.
+
 This is calibration as a Knowable-regime act — it is the one regime that
 names a cause, so it is the one regime whose cause analysis can be right
 or wrong, measured, and improved.
@@ -308,17 +329,58 @@ and dereferenceable at `/ns/foxxi`.
 
 ## 11. Surface
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /performance` | self-describing index of the system + its affordances |
-| `POST /performance/plan` | contextualize a situation → the InterventionPlan, a content scaffold, and the plan's calibration track record |
-| `POST /performance/portfolio` | contextualize a set of situations → the performance-management read |
-| `POST /performance/calibration` | the reflexive loop — the recorded track record of the system's own recommendations, recomposed live, federated |
-| `POST /performance/outcome` | the reflexive loop's upward arm — a completed loop records its outcome into the live calibration profile |
-| `POST /content/compose-course` | author an emergent course (the authoring tool) |
-| `POST /content/personalize` | resolve a course for one performer (restriction + override) |
-| `GET /knowledge` | self-describing index of the knowledge architecture |
-| `POST /knowledge/map` | decompose a competency → what to codify, what to enable as flow |
+| Endpoint | Purpose | Request shape |
+|---|---|---|
+| `GET /performance` | self-describing index of the system + its affordances | — |
+| `POST /performance/plan` | contextualize a situation → the InterventionPlan, a content scaffold, and the plan's calibration track record | `{ situation }` |
+| `POST /performance/portfolio` | contextualize a set of situations → the performance-management read | `{ situations }` |
+| `POST /performance/calibration` | the reflexive loop — the recorded track record of the system's own recommendations, recomposed live, federated | — |
+| `POST /performance/outcome` | the reflexive loop's upward arm — a completed loop records its outcome into the live calibration profile. **Signature-gated.** | `{ author, signature, signedPayload }` |
+| `POST /agent/teach` | record an A2A teaching event (composes `ac:TeachingPackage`); transfer outcomes from this endpoint also flow into the calibration profile. **Signature-gated.** | `{ author, signature, signedPayload }` |
+| `POST /content/compose-course` | author an emergent course (the authoring tool) | `{ course }` |
+| `POST /content/personalize` | resolve a course for one performer (restriction + override) | `{ course, performer }` |
+| `GET /knowledge` | self-describing index of the knowledge architecture | — |
+| `POST /knowledge/map` | decompose a competency → what to codify, what to enable as flow | `{ competency }` |
+
+### Signature gate on outcome + teach
+
+`POST /performance/outcome` and `POST /agent/teach` require a signed
+body — the gate is what lets unsigned peer descriptors be filtered out
+of the federated calibration profile (see §9). The request shape is:
+
+```
+{
+  author:        { id: 'did:key:0x<addr>#agent', kind: 'agent' | 'human' },
+  signature:     '<ECDSA hex>',
+  signedPayload: '<JSON.stringify(<canonical body>)>'
+}
+```
+
+The canonical body is the outcome record for `/performance/outcome`, or
+`{ teachingPackage, targetBehaviour }` for `/agent/teach`. The
+signature is produced by signing a sha256 commitment over the
+payload:
+
+```
+signedPayload = JSON.stringify(<canonical body>)
+signature     = wallet.signMessage('sha256:' + sha256_hex(signedPayload))
+```
+
+Rejection responses:
+
+- **`401 signature required`** — `author`, `signature`, or
+  `signedPayload` is missing.
+- **`401 signature does not verify`** — the address recovered from the
+  signature does not match the `0x`-suffix in `author.id`.
+
+On success the server publishes the outcome (or teaching record) into
+the tenant pod with `cg:CryptographicallyVerified` trust. Publish is
+bounded (~4s) — if it does not land in time, the response returns with
+`published=[]` and the publish completes in the background.
+
+Reference clients that produce the right shape live in
+`tools/emergent-collective-*.mjs`, `tools/closed-loop-example.mjs`, and
+`tools/seed-federation-peer.mjs`.
 
 Verified by `tools/performance-architecture-example.mjs` (seven
 scenarios, 27/27) and `tools/knowledge-architecture-example.mjs` (six

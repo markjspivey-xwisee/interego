@@ -107,4 +107,59 @@ Per [`applications/README.md`](../README.md):
 | **Channel transport** — `POST /content/deliver` actually sends: a real per-channel webhook (Slack / email / SMS HTTP API, `FOXXI_TRANSPORT_<CHANNEL>`), or the Interego-native publish — a `document` delivery becomes a discoverable `foxxi:DeliveredContent` Context Descriptor on the pod | shipped — [`src/content-transport.ts`](src/content-transport.ts) |
 | **Content forms** — content is text in whatever form the situation calls for: plain, markdown, static HTML hypertext, or dynamic interactive hypermedia (a self-contained HTML artifact — collapsible sections + an inline self-check). `chooseForm()` picks per channel / kind / audience; no media generated | shipped — [`src/content-forms.ts`](src/content-forms.ts) |
 | **Browser dashboard** | shipped — [`dashboard-app/`](dashboard-app/) (Vite + React, auto-probes the bridge, falls back to sample mode) |
-| Live deployment | not yet — adopters run the bridge + dashboard locally; production deploy is a Docker/Container Apps step |
+| Live deployment | shipped — bridge + css-gate run as Azure Container Apps; see [`deploy/foxxi-bridge/`](../../deploy/foxxi-bridge/) and [`deploy/css-gate/`](../../deploy/css-gate/). Bridge: `https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io`. Tenant pod path: `/foxxi/`. |
+
+## Run the bridge locally
+
+```bash
+cd applications/foxxi-content-intelligence/bridge
+PORT=6080 \
+  FOXXI_TENANT_POD_URL=https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/ \
+  FOXXI_AUTHORITATIVE_SOURCE=did:web:acme-training.example \
+  FOXXI_AUDIENCE=both \
+  FOXXI_DASHBOARD_ORIGIN=http://localhost:5173 \
+  FOXXI_POD_WRITE_SECRET=<bearer matching the gate's WRITE_SECRET> \
+  FOXXI_BRIDGE_PRIVATE_KEY=0x<32-byte hex> \
+  npx tsx server.ts
+```
+
+### Bridge env vars
+
+| Var | What it does |
+|---|---|
+| `PORT` | Port the bridge HTTP server binds to. |
+| `FOXXI_TENANT_POD_URL` | Pod base the bridge reads and writes against. Must end in the tenant slug — the deployed tenant pod is `/foxxi/`. Against a local CSS use `http://localhost:3000/foxxi/`; against the deployed substrate use the **css-gate** URL (`https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/`), not the raw CSS URL. |
+| `FOXXI_AUTHORITATIVE_SOURCE` | `did:web:` (or other) identifier the bridge stamps on tenant-authored descriptors so federated readers can resolve attribution. |
+| `FOXXI_AUDIENCE` | Which audience slice the bridge serves (`learner`, `admin`, or `both`). |
+| `FOXXI_DASHBOARD_ORIGIN` | Origin the bridge allows through CORS for the dashboard's `fetch` calls. |
+| `FOXXI_POD_WRITE_SECRET` | Bearer token the bridge sends on every pod write. The css-gate ([`deploy/css-gate/`](../../deploy/css-gate/)) gates all `POST`/`PUT`/`PATCH`/`DELETE` behind `Authorization: Bearer <WRITE_SECRET>` — without this the bridge can read but every write 401s. Reads stay anonymous. Must match the gate's `WRITE_SECRET`. Omit when pointing at a local CSS that accepts anonymous writes. |
+| `FOXXI_BRIDGE_PRIVATE_KEY` | 0x-prefixed 32-byte hex. The bridge derives a stable `did:key:0x<addr>#bridge` from it and signs bridge-originated descriptors (snapshots, calibration-flip records) so federated readers admit them as `CryptographicallyVerified`. If unset, the bridge generates an ephemeral key at startup — the signing identity rotates on every restart and older descriptors fail signature recovery. Generate one with `node -e "const{Wallet}=require('ethers');console.log(Wallet.createRandom().privateKey)"`. |
+| `FOXXI_LLM_API_KEY` | Optional. Lets the bridge call an LLM for `foxxi.ask_course_question_agentic`. Retrieval works without it. |
+| `FOXXI_FEDERATION_PODS` | Optional. Comma-separated peer pod URLs the bridge composes federated calibration evidence from. |
+| `FOXXI_TRANSPORT_<CHANNEL>` | Optional. Per-channel webhook URL (e.g. `FOXXI_TRANSPORT_SLACK`) that `POST /content/deliver` calls. |
+
+### Substrate write path
+
+Storage stays zero-trust: anyone can read pod contents and the local CSS still accepts anonymous writes. On the deployed substrate, the css-gate fronts CSS — `GET`/`HEAD`/`OPTIONS` pass through anonymously, mutating verbs require the bearer. Trust lives at the verifier and reader layer: the bridge verifies wallet signatures on every `/performance/outcome` and `/agent/teach` write, and the reader-side federated-outcome loader silently drops any peer descriptor whose `foxxi:agentSignature` does not recover to its `prov:wasGeneratedBy` DID.
+
+### Demo invocations
+
+```bash
+# Scripted, deterministic — five wallets, signed per-agent contributions
+npx tsx applications/foxxi-content-intelligence/tools/emergent-collective-demo.mjs
+
+# Autonomous — five real Claude subagents via the Claude Agent SDK
+# (requires ANTHROPIC_API_KEY or an active Claude Code OAuth login)
+npx tsx applications/foxxi-content-intelligence/tools/emergent-collective-agents.mjs
+
+# Live — same scripted contributions, browser dashboard on http://127.0.0.1:8765
+npx tsx applications/foxxi-content-intelligence/tools/emergent-collective-live.mjs
+
+# Closed-loop course → cmi5 package → LMS → real-browser completion → xAPI in the live LRS
+npx tsx applications/foxxi-content-intelligence/tools/closed-loop-example.mjs
+
+# Seed a second pod with signed peer outcomes for federation testing
+npx tsx applications/foxxi-content-intelligence/tools/seed-federation-peer.mjs
+```
+
+See [`EMERGENT-COLLECTIVE.md`](EMERGENT-COLLECTIVE.md) for what the three editions share and where they differ, and [`CLOSING-THE-LOOP.md`](CLOSING-THE-LOOP.md) for the end-to-end content path.

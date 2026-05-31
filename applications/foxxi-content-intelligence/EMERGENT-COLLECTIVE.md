@@ -17,14 +17,55 @@ npx tsx applications/foxxi-content-intelligence/tools/emergent-collective-demo.m
 # each one independently deciding how to work its cases through the substrate.
 # Requires ANTHROPIC_API_KEY or an active Claude Code OAuth login.
 npx tsx applications/foxxi-content-intelligence/tools/emergent-collective-agents.mjs
+
+# live edition — same emergence, with a browser dashboard that shows it
+# happening in real time: per-agent event lanes, a system log, and an
+# artifact browser over the descriptors the run produces.
+npx tsx applications/foxxi-content-intelligence/tools/emergent-collective-live.mjs
+# then open http://127.0.0.1:8765 — per-agent event lanes, system log, artifact browser
 ```
 
-The two editions exercise the **same architecture** and the **same emergence** —
-they differ only in where the per-agent decisions come from: the scripted
-edition iterates a deterministic case list (useful for fast, free,
-deterministic verification); the autonomous edition spawns real Claude
-subagents that decide for themselves which tools to call and in what
-order, with the substrate as their only channel to each other.
+The three editions exercise the **same architecture** and the **same emergence** —
+they differ only in where the per-agent decisions come from and how the
+run is surfaced. The scripted edition iterates a deterministic case list
+(fast, free, deterministic verification). The autonomous edition spawns
+real Claude subagents that decide for themselves which tools to call and
+in what order, with the substrate as their only channel to each other.
+The live edition runs the same scripted contributions behind a local
+HTTP server on `127.0.0.1:8765`, streaming each agent's substrate calls
+into per-agent lanes and letting you click through the artifacts as they
+land.
+
+## Signed writes (all three editions)
+
+Every outcome and every teaching call is signed by the contributing
+agent's wallet before it is POSTed. The bridge rejects unsigned writes
+(`401 signature required`) and rejects writes whose recovered address
+does not match the author DID (`401 signature does not verify`). The
+three editions share one helper, `signPayload(wallet, payload)`:
+
+```
+signedPayload = JSON.stringify(payload)
+hash          = sha256_hex(signedPayload)
+signature     = wallet.signMessage(`sha256:${hash}`)
+```
+
+The body sent to `POST /performance/outcome` is:
+
+```
+{
+  author:        { id: 'did:key:0x<addr>#agent', kind: 'agent' },
+  signature,
+  signedPayload   // the canonical outcome JSON, as a string
+}
+```
+
+The body sent to `POST /agent/teach` follows the same shape, but the
+signed payload is `{ teachingPackage, targetBehaviour }` and the author
+is the teacher.
+
+A contributor writing their own tool against the bridge can copy the
+helper verbatim — that is the working signed-write path.
 
 ## Nothing is faked
 
@@ -33,12 +74,20 @@ simulated, or synthetic at all. It is not:
 
 - **Real identities.** Five agents, each a real ECDSA wallet → a real
   DID. Their participation claims are really signed and the signatures
-  are really recovered and verified.
+  are really recovered and verified. Every outcome record and every
+  teaching call is also signed by the contributing agent's wallet; the
+  bridge rejects the write if the signature is missing or if the
+  recovered address does not match the author DID.
 - **Real computation on live infrastructure.** Every diagnosis,
   evaluation, calibration read, outcome record and teaching call is a
   real HTTP request to the **live deployed bridge on Azure**, which
   really computes the result. The modal-status flip is the live bridge's
   own `buildCalibrationProfile` crossing its assertion threshold.
+  Storage stays zero-trust — anyone can read pod contents — and trust
+  lives at the verifier and reader layer: the bridge verifies signatures
+  on write, and the reader-side federated-outcome loader silently drops
+  any peer descriptor whose `foxxi:agentSignature` does not check out
+  against its `prov:wasGeneratedBy` DID.
 - **Real coordination through the substrate — stigmergy.** The agents
   never call each other. Their only channel is the substrate: one agent
   records an outcome, the calibration profile on the live bridge
@@ -84,7 +133,7 @@ given the finding the demo produces; none can establish it alone.
 | 5 | **Emergence.** The cell crosses the assertion threshold and flips `Hypothetical → Asserted`. The finding — a real ~80% closure rate — is now claimable knowledge, computed by the live bridge from the aggregate, held by no agent. |
 | 6 | A fresh plan is now annotated with the calibration evidence the collective produced — the whole pressing back on the next part (downward causation). |
 | 7 | One agent encodes the finding as a teaching package and teaches another; Foxxi's `/agent/teach` (composing agent-collective's `ac:TeachingPackage`) verifies the transfer from the learner's real trajectories. |
-| 8 | The finding now lives in the federated profile the live bridge composes across two organizations. |
+| 8 | The finding now lives in the federated profile the live bridge composes across two organizations — and only the signature-verified peer outcomes are admitted; anything unsigned is dropped by the reader. |
 
 ## The emergent property, precisely
 

@@ -1,8 +1,14 @@
 # ────────────────────────────────────────────────────────────
-#  CSS write-gate — tiny Node reverse proxy.
-#  Anonymous reads (GET/HEAD/OPTIONS) pass through unchanged.
-#  Anonymous writes (POST/PUT/PATCH/DELETE) are rejected with 401;
-#  only callers carrying Authorization: Bearer <WRITE_SECRET> can write.
+#  CSS write-gate — tiny Node reverse proxy fronting the CSS pod server.
+#  Buffered-body proxy (does NOT stream request bodies — streaming hung at
+#  Azure ingress for payloads larger than a few KB, so the gate reads the
+#  full request body into memory before forwarding it to CSS).
+#
+#  Write-gating model:
+#    - GET/HEAD/OPTIONS pass through anonymously (reads stay zero-trust at
+#      the storage layer).
+#    - POST/PUT/PATCH/DELETE require Authorization: Bearer <WRITE_SECRET>;
+#      missing or mismatched bearer → 401, request never reaches CSS.
 # ────────────────────────────────────────────────────────────
 
 FROM node:20-alpine
@@ -13,5 +19,19 @@ COPY deploy/css-gate/server.mjs /app/server.mjs
 
 EXPOSE 8080
 ENV PORT=8080
+
+# ── Required env vars ───────────────────────────────────────
+# WRITE_SECRET — bearer token the gate requires on every mutating request.
+# REQUIRED: the gate exits with an error at startup if this is unset, so the
+# container will refuse to start without it. MUST match the Foxxi bridge's
+# FOXXI_POD_WRITE_SECRET env var; otherwise the bridge's writes get 401'd.
+ENV WRITE_SECRET=
+
+# ── Optional env vars ───────────────────────────────────────
+# CSS_INTERNAL_URL — upstream CSS origin the gate forwards to. Optional;
+# server.mjs falls back to the public CSS URL baked into the code. Override
+# this when the gate should reach CSS over an internal/private hostname
+# (e.g., Azure Container Apps internal DNS) instead of the public URL.
+ENV CSS_INTERNAL_URL=
 
 CMD ["node", "/app/server.mjs"]

@@ -84,6 +84,35 @@ COPY --from=build /app/observatory.html ./
 EXPOSE 5000
 
 ENV PORT=5000
-ENV POD_NAME=markj
+
+# ────────────────────────────────────────────────────────────
+#  POD_NAME — pod slug the browser opens by default
+#
+#  Pod-naming convention (post-migration, see context-graphs
+#  CLAUDE.md §First-principles guardrails):
+#    - DIDs are canonical; userIds (== pod slugs) are derived.
+#    - Passkey-rooted users:  /u-pk-<sha256(credId)[:12]>/
+#    - Wallet-rooted users:   /u-eth-<addr[:12]>/
+#    - did:key-rooted users:  /u-did-<sha256(did)[:12]>/
+#    - The Foxxi tenant pod is at /foxxi/ (renamed from the
+#      legacy /markj/ slug; /markj/ was deleted in the migration
+#      along with ~202 orphaned files).
+#
+#  This image previously defaulted POD_NAME=markj, which now
+#  points at a pod path that does not exist. The browser would
+#  silently load an empty/404 surface for any operator who
+#  redeployed without overriding it.
+#
+#  The default below is a NEUTRAL EXAMPLE only. Production
+#  deployments MUST override POD_NAME with the operator's
+#  actual pod slug (their /u-pk-…/ passkey-derived slug, a
+#  tenant slug like /foxxi/, or whatever pod holds the data
+#  the browser should open against), e.g.:
+#
+#    az containerapp update -n pgsl-browser -g context-graphs-rg \
+#      --set-env-vars POD_NAME=u-pk-abc123def456
+#
+# ────────────────────────────────────────────────────────────
+ENV POD_NAME=example-pod
 
 CMD ["dist/server.js"]

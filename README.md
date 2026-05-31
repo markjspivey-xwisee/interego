@@ -102,9 +102,9 @@ The protocol surface has grown substantially. Highlights:
 - **[RDF 1.2 + SHACL 1.2 alignment](docs/ns/cg-shapes-1.2.ttl)** — triple-term annotations (`{| ... |}`), directional language tags, `sh:reifierShape` validation per April 2026 CR/WD.
 - **[Conformance test suite](spec/CONFORMANCE.md)** — four levels (L1 Core / L2 Federation / L3 Advanced / L4 Compliance) with badge output. Run `node spec/conformance/runner.mjs`.
 - **[Federated transactions](spec/FEDERATED-TRANSACTIONS.md)** + **[Constitutional layer](spec/CONSTITUTIONAL-LAYER.md)** + **[CRDT offline merge spec](spec/CRDT-OFFLINE-MERGE.md)** + **[DP+ZK aggregate spec](spec/AGGREGATE-PRIVACY.md)** + **[TLA+ proof outlines](spec/proofs/)** — protocol-level guarantees and design specs.
-- **45+ runnable demo scripts** in [`examples/`](examples/) including emergence demos, ABAC scenarios, Idehen-inspired (federated reasoning, nanotation pipeline), Verborgh-inspired (distributed affordances, cross-app interop, pod-as-graph views), agent registry, code domain. End-to-end compliance walkthrough at [`examples/compliance-end-to-end.mjs`](examples/compliance-end-to-end.mjs) — `node examples/compliance-end-to-end.mjs` to see ops event → check → framework report → wallet load, no live pod required. Most demos read `CG_DEMO_POD` / `CG_DEMO_POD_B` env vars; defaults point at the maintainer's deployed pods.
+- **Runnable demo scripts** in [`examples/`](examples/) covering emergence demos, ABAC scenarios, Idehen-inspired (federated reasoning, nanotation pipeline), Verborgh-inspired (distributed affordances, cross-app interop, pod-as-graph views), agent registry, code domain. End-to-end compliance walkthrough at [`examples/compliance-end-to-end.mjs`](examples/compliance-end-to-end.mjs) — `node examples/compliance-end-to-end.mjs` to see ops event → check → framework report → wallet load, no live pod required. Most demos read `CG_DEMO_POD` / `CG_DEMO_POD_B` env vars; defaults point at the maintainer's deployed pods.
 
-- **Twenty-three end-to-end demo scenarios** in [`demos/scenarios/`](demos/scenarios/) — autonomous multi-agent runs against the real Claude Code CLI, including Demo 22 (two agents design + ratify + play a commit-reveal RPS game) and Demo 23 (four agents emerge a federated zero-copy semantic layer over heterogeneous data sources via `hyprcat:`/`align:`/`amta:` composition). See [`demos/README.md`](demos/README.md).
+- **End-to-end demo scenarios** in [`demos/scenarios/`](demos/scenarios/) — autonomous multi-agent runs against the real Claude Code CLI, including Demo 22 (two agents design + ratify + play a commit-reveal RPS game) and Demo 23 (four agents emerge a federated zero-copy semantic layer over heterogeneous data sources via `hyprcat:`/`align:`/`amta:` composition). Demos 24 and 25 are the dual-audience pilots (organizational working memory + learning). See [`demos/README.md`](demos/README.md).
 
 - **Agent-runtime integration paths** — [`docs/integrations/agent-runtime-integration.md`](docs/integrations/agent-runtime-integration.md) maps five ways an OpenClaw / Hermes Agent / Codex / Cursor / Claude Code runtime can mount Interego: (1) MCP server (config-only — every substrate primitive becomes an LLM tool), (2) [OpenClaw memory plugin](integrations/openclaw-memory/) (pod-rooted typed memory replacing the local SQLite, with a fixed 5-tool HATEOAS surface that reaches the whole substrate), (3) [agentskills.io SKILL.md as `cg:Affordance`](docs/integrations/path-3-skills-as-affordances.md) (skills become federated, attestable, governable via existing primitives), (4) [compliance overlay](integrations/compliance-overlay/) (every agent action becomes a signed, framework-cited descriptor), (5) [Hermes memory provider](integrations/hermes-memory/) (a `MemoryProvider` plugin for Nous Research's Hermes Agent — same pod-rooted memory + HATEOAS shape). All five are translators, not extensions — no protocol surface added. [`hermes-full-substrate.md`](docs/integrations/hermes-full-substrate.md) / [`openclaw-full-substrate.md`](docs/integrations/openclaw-full-substrate.md) explain how a runtime reaches *all* of Interego without tool-list bloat.
 
@@ -119,7 +119,7 @@ Two complementary deployment paths. Both are open-source; both federate; pick by
 | Path | What it is | Best for |
 |---|---|---|
 | **Hosted reference** ([interego-relay.eastus...](https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io)) | Publicly-hosted Azure deployment. OAuth-gated MCP at `/mcp` exposing **15 protocol-level tools** (publish_context, discover_context, registry/federation, ABAC verification, etc.), per-user pods, claude.ai custom-connector compatible. Operated by the maintainer as a reference instance. | **Evaluation without running your own infrastructure.** You still enroll an identity (passkey / wallet — 2 min via the [landing page](https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/)) and wire up an MCP client; what you skip is hosting the relay / pod / identity server yourself. See the [first-hour walkthrough](docs/FIRST-HOUR.md). Tier 3 substrate. Vertical applications are NOT bundled into this relay — they deploy independently per the [verticals doc](applications/README.md). |
-| **Personal bridge** ([`examples/personal-bridge/`](examples/personal-bridge/)) | A small Node binary you run on your own infrastructure (laptop / Pi / NAS / Tailscale-exposed home server). Embedded relay, MCP at `/mcp` exposing **6 core p2p tools** (publish_p2p, share_encrypted, etc.), REST + admin UI. | **Self-hosting + local-first.** Your data on your network; one URL all your devices; sharing is per-publish (`share_with`) or per-bridge (mirror to public Nostr relays via `EXTERNAL_RELAYS`). Tier 5 substrate. Vertical bridges run alongside this generic bridge on different ports — see [`applications/`](applications/). |
+| **Personal bridge** ([`examples/personal-bridge/`](examples/personal-bridge/)) | A small Node binary you run on your own infrastructure (laptop / Pi / NAS / Tailscale-exposed home server). Embedded relay, MCP at `/mcp` exposing core p2p tools (`publish_p2p`, `query_p2p`, `share_encrypted`, `query_my_inbox`), REST + admin UI. | **Self-hosting + local-first.** Your data on your network; one URL all your devices; sharing is per-publish (`share_with`) or per-bridge (mirror to public Nostr relays via `EXTERNAL_RELAYS`). Tier 5 substrate. Vertical bridges run alongside this generic bridge on different ports — see [`applications/`](applications/). |
 
 **They federate when you need it.** A user on the hosted relay can share with a personal-bridge user via cross-pod E2EE share (Tier 4) or via a common public Nostr relay (Tier 5 with `WebSocketRelayMirror`). Identity stays the same — your wallet's secp256k1 key is your identity on every surface.
 
@@ -245,7 +245,12 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 │                     skillBundleToDescriptor, descriptorGraphToSkillBundle,
 │                     parseSkillMd, emitSkillMd. Composes existing affordance
 │                     + amta: + supersedes + PromotionConstraint primitives.
-├── mcp-server/       MCP server (60 tools) — stdio + SSE + Streamable HTTP.
+├── mcp-server/       Stdio MCP server — substrate tools (publish_context,
+│                     discover_context, get_descriptor, subscribe_to_pod,
+│                     register_agent, pgsl_*, federation, identity, …).
+│                     Top-level handler list lives in mcp-server/server.ts;
+│                     the deployed HTTP/SSE relay (deploy/mcp-relay/) exposes
+│                     a smaller OAuth-gated subset for claude.ai connectors.
 │                     v0.5.0 ships system-level instructions, doc resources,
 │                     workflow prompts so connecting agents understand the
 │                     system without trial-and-error tool calls. Subscriptions
@@ -257,7 +262,7 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 │   │                 (instructions / doc resources / prompts) for claude.ai
 │   │                 and other web-based MCP clients
 │   └── css-config/   Community Solid Server configuration
-├── examples/         17+ runnable demos — emergence (vocabulary alignment,
+├── examples/         Runnable demos — emergence (vocabulary alignment,
 │                     mediator pullback, stigmergic colony, localized
 │                     closed-world), ABAC (cross-pod, sybil-resistance, ZK,
 │                     emergent policy, supersession), code domain, agent
@@ -270,7 +275,9 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 ├── benchmarks/       LongMemEval (89.2% agentic, 92.4% raw) evaluation suite
 ├── integrations/     Path 2 (OpenClaw memory plugin) + Path 4 (compliance overlay)
 │                     + Path 5 (Hermes memory provider) — all HATEOAS-shaped
-└── tests/            1200+ tests across ~70 files
+└── tests/            Vitest suites covering the substrate (counts vary as
+                    new modules land; see CLAUDE.md for the canonical
+                    expectations on tests/context-graphs.test.ts).
 ```
 
 ### Design Principles
@@ -326,7 +333,7 @@ Each vertical has Tier 8 integration tests against real Azure CSS + real Lrsql +
 
 ### 🤖 I'm an AI coding agent (Claude Code, Cursor, Windsurf, Cline) — protocol-level access
 
-The fastest way to use the **protocol layer** is via the stdio MCP server, which exposes 60+ tools (publish, discover, ingest, resolve, compose, ontology lookup, runtime eval, identity, federation) to any MCP-capable client.
+The fastest way to use the **protocol layer** is via the stdio MCP server, which exposes the substrate's tool surface (publish, discover, ingest, resolve, compose, ontology lookup, runtime eval, identity, federation) to any MCP-capable client. The authoritative tool list lives in [`mcp-server/server.ts`](mcp-server/server.ts).
 
 Add this to your MCP client config:
 
@@ -416,7 +423,7 @@ git clone https://github.com/markjspivey-xwisee/interego.git
 cd context-graphs
 npm install
 npm run build
-npm test  # 1119+ tests across 65 files (3 env-gated tests skip when their creds are unset)
+npm test  # Vitest across the tests/ directory (3 env-gated tests skip when their creds are unset)
 
 # Build the MCP server too
 cd mcp-server
@@ -427,7 +434,34 @@ npm run build
 ./deploy/azure-deploy.sh
 ```
 
-CI auto-deploys to Azure Container Apps on every push to `master` ([workflow](.github/workflows/deploy-azure.yml)). Tagging a release as `vX.Y.Z` triggers npm publish for both packages ([workflow](.github/workflows/publish-npm.yml)).
+CI auto-deploys **five** container apps on every push to `master` that touches their inputs ([workflow](.github/workflows/deploy-azure.yml)): `interego-dashboard`, `interego-pgsl-browser`, `interego-relay`, `interego-identity`, `interego-css`. Per-image path filters mean an unrelated change to one image's inputs won't rebuild the others.
+
+The remaining container apps are **deployed manually** — they aren't wired into the workflow's matrix:
+
+- `interego-foxxi-bridge` (Dockerfile: [`deploy/Dockerfile.foxxi-bridge`](deploy/Dockerfile.foxxi-bridge))
+- `interego-css-gate` (Dockerfile: [`deploy/Dockerfile.css-gate`](deploy/Dockerfile.css-gate))
+- `interego-foxxi-microsite` (Dockerfile: [`deploy/Dockerfile.foxxi-microsite`](deploy/Dockerfile.foxxi-microsite))
+- `interego-foxxi-dashboard` (Dockerfile: [`deploy/Dockerfile.foxxi-dashboard`](deploy/Dockerfile.foxxi-dashboard))
+- `interego-foxxi-scorm-player` (Dockerfile: [`deploy/Dockerfile.foxxi-scorm-player`](deploy/Dockerfile.foxxi-scorm-player))
+- `interego-main` (Dockerfile: [`deploy/Dockerfile.interego-main`](deploy/Dockerfile.interego-main))
+
+Manual deploy for any of those uses the standard two-step ACR build + container-app update:
+
+```bash
+# Build the image in ACR from the current checkout, SHA-tagged for clean rollback.
+az acr build \
+  --registry contextgraphsacr \
+  --image <name>:<tag> \
+  -f deploy/Dockerfile.<name> .
+
+# Point the running container app at the new image.
+az containerapp update \
+  -n <containerapp-name> \
+  -g context-graphs-rg \
+  --image contextgraphsacr.azurecr.io/<name>:<tag>
+```
+
+Tagging a release as `vX.Y.Z` triggers npm publish for both packages ([workflow](.github/workflows/publish-npm.yml)).
 
 ---
 
@@ -838,7 +872,7 @@ const anchor = await pinDescriptor(descriptorId, turtle, { provider: 'pinata', a
 
 ---
 
-## MCP Server — 60+ Tools for AI Agents
+## MCP Server
 
 ### Setup
 
@@ -878,14 +912,14 @@ Auto-onboarding: first tool call provisions pod + registry + credential automati
 
 ### Progressive Tiers
 
-Set `CG_TOOL_TIER` to control which tools are exposed:
+Set `CG_TOOL_TIER` to control which tools are exposed. Tier membership is the source of truth — the sets in [`mcp-server/server.ts`](mcp-server/server.ts) (`CORE_TOOLS`, `FEDERATION_TOOLS`, `CRYPTO_TOOLS`, `PGSL_TOOLS`) drive `isToolEnabled`:
 
-| Tier | Tools | For |
-|------|-------|-----|
-| `core` | 6 | New users learning the basics |
-| `standard` | 17 | Teams federating across pods |
-| `full` | 19 | Users with crypto/wallet integration |
-| `all` (default) | 24 | Power users, researchers |
+| Tier | Tool sets exposed |
+|------|-------------------|
+| `core` | `CORE_TOOLS` only — new users learning the basics |
+| `standard` | + `FEDERATION_TOOLS` — teams federating across pods |
+| `full` | + `CRYPTO_TOOLS` — users with crypto/wallet integration |
+| `all` (default) | + `PGSL_TOOLS` — power users, researchers |
 
 ---
 
@@ -953,7 +987,7 @@ Deploys: CSS (Solid server), Dashboard (observation UI), MCP Relay (HTTP bridge)
 ```bash
 npm install
 npm run build        # TypeScript → dist/
-npm test             # ~1119 tests across ~65 files
+npm test             # Vitest across the tests/ directory
 npm run test:watch   # Watch mode
 ```
 

@@ -71,10 +71,28 @@ carry. Given a reference to an `ac:TeachingPackage`:
    acquired A2A *is* instruction — so agent-teaching outcomes calibrate
    the system's recommendations alongside human course completions. The
    reflexive loop ([`PERFORMANCE-ARCHITECTURE.md`](PERFORMANCE-ARCHITECTURE.md)
-   §9) spans humans and agents.
+   §9) spans humans and agents. **Admissibility is gated on the teacher
+   signature.** A teaching outcome only enters the cross-vertical
+   calibration cell because `POST /agent/teach` verified an ECDSA
+   signature by `teacher.id` over `{ teachingPackage, targetBehaviour }`
+   and the federation-outcome-loader re-verified `foxxi:agentSignature`
+   against `prov:wasGeneratedBy` on the read side. Without that gate
+   any caller could `POST` a fabricated transfer for an agent they do
+   not control and poison the profile — so the signature is the
+   admissibility predicate, not a wrapper around it. Unsigned or
+   misattributed teaching descriptors are silently dropped both at
+   write time and on the federated read.
 
 Live surface: `POST /agent/teach` — the performance lens over a teaching
-package reference. Verified by `tools/agent-teaching-example.mjs` (14/14).
+package reference. The request body is
+`{ author, signature, signedPayload }`, where `author.id` is the
+teacher's `did:key:0x<addr>#agent`, `signedPayload` is the canonical
+JSON of `{ teachingPackage, targetBehaviour }`, and `signature` is the
+teacher wallet's ECDSA signature over `'sha256:' + sha256_hex(signedPayload)`.
+The route rejects with `401 signature required` if any of the three
+fields are absent, and `401 signature does not verify` if the recovered
+address does not match the 0x-suffix in `author.id`. Verified by
+`tools/agent-teaching-example.mjs` (14/14).
 
 The principle worth stating plainly: **a capability is not verified by
 the teacher's claim or the learner's report — it is verified by the

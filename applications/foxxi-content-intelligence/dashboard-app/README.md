@@ -45,10 +45,12 @@ The transport status is shown as a pill in the top-right header
 # 1. Start the Foxxi bridge (in another terminal):
 cd ../bridge
 PORT=6080 \
-  FOXXI_TENANT_POD_URL=https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/ \
+  FOXXI_TENANT_POD_URL=https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/ \
   FOXXI_AUTHORITATIVE_SOURCE=did:web:acme-training.example \
   FOXXI_AUDIENCE=both \
   FOXXI_DASHBOARD_ORIGIN=http://localhost:5173 \
+  FOXXI_POD_WRITE_SECRET=<bearer matching the gate's WRITE_SECRET> \
+  FOXXI_BRIDGE_PRIVATE_KEY=0x<32-byte hex> \
   npx tsx server.ts
 
 # 2. Start the dashboard:
@@ -60,6 +62,35 @@ npm run dev
 
 (Step 1 is optional — the dashboard falls back to sample mode if you
 skip it. The header pill makes it explicit.)
+
+### Bridge env vars
+
+| Var | What it does |
+|---|---|
+| `PORT` | Port the bridge HTTP server binds to (the dashboard probes `${VITE_FOXXI_BRIDGE_URL}/affordances` here). |
+| `FOXXI_TENANT_POD_URL` | Pod base the bridge reads and writes against. See "Gate vs direct CSS" below — the URL changes depending on which CSS you point at. |
+| `FOXXI_AUTHORITATIVE_SOURCE` | `did:web:` (or other) identifier the bridge stamps on tenant-authored descriptors so federated readers can resolve attribution. |
+| `FOXXI_AUDIENCE` | Which audience slice the bridge serves (`learner`, `admin`, or `both`). |
+| `FOXXI_DASHBOARD_ORIGIN` | Origin the bridge allows through CORS for the dashboard's `fetch` calls. |
+| `FOXXI_POD_WRITE_SECRET` | Bearer token the bridge sends on every pod write. The css-gate (`deploy/css-gate/`) gates all `POST`/`PUT`/`PATCH`/`DELETE` behind `Authorization: Bearer <WRITE_SECRET>` — without this, every bridge write 401s. Reads stay anonymous. Must match the gate's `WRITE_SECRET`. |
+| `FOXXI_BRIDGE_PRIVATE_KEY` | 0x-prefixed 32-byte hex. The bridge derives a stable `did:key:0x<addr>#bridge` from it and signs bridge-originated descriptors (snapshots, calibration-flip records) so the pod-browser shows `CryptographicallyVerified`. If unset, the bridge generates an ephemeral key at startup and descriptors lose their verified-identity badge across restarts. Generate one with: |
+
+```bash
+node -e "const{Wallet}=require('ethers');const w=Wallet.createRandom();console.log(w.privateKey)"
+```
+
+### Gate vs direct CSS
+
+`FOXXI_TENANT_POD_URL` must match the substrate you're pointing the bridge at:
+
+- **Local CSS (dev)** — no gate is running, point directly at the CSS instance,
+  e.g. `http://localhost:3000/foxxi/`. `FOXXI_POD_WRITE_SECRET` can be omitted
+  (the local CSS accepts anonymous writes).
+- **Deployed CSS** — writes are gated by `css-gate`. The URL must be the
+  **gate's** URL (e.g.
+  `https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/`),
+  not the raw CSS URL, and `FOXXI_POD_WRITE_SECRET` must be set to the bearer
+  the gate expects. Reads still pass through the gate anonymously.
 
 ## Three LLM architectures (pick via Settings ⚙)
 

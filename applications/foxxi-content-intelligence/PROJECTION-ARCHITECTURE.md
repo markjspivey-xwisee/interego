@@ -18,7 +18,10 @@ standard they implement; from the inside every state change is a real
                               handler reads /
                               writes a typed
                               cache (the hot
-                              in-memory store)
+                              in-memory store);
+                              state mutation
+                              marks the surface
+                              dirty
                                     │
                                     ▼
                   ┌─────────────────────────────────────────┐
@@ -26,12 +29,27 @@ standard they implement; from the inside every state change is a real
                   │  PodStatementStore  (per-record)        │
                   │  PodKeyValueStore   (per-record, KV)    │
                   │  pod-snapshot-publisher (per-surface)   │
+                  │  withPublishLock()  (one publish        │
+                  │                      in-flight per      │
+                  │                      bridge process)    │
                   └─────────────────────────────────────────┘
                                     │
-                              publish() to pod
-                              (cg:ContextDescriptor
-                              + TriG named graph
-                              + pgsl:Atom)
+                              tryPublishBounded()
+                              (~4s budget on the
+                              synchronous path;
+                              overflow continues
+                              in background)
+                                    │
+                                    ▼
+                  ┌─────────────────────────────────────────┐
+                  │            css-gate (sidecar)           │
+                  │  GET/HEAD/OPTIONS → anonymous           │
+                  │  POST/PUT/PATCH/DELETE → Bearer-gated   │
+                  │  (buffers body, then forwards to CSS)   │
+                  └─────────────────────────────────────────┘
+                                    │
+                              authenticated
+                              write
                                     ▼
                   ┌─────────────────────────────────────────┐
                   │       INSIDE: Interego substrate        │
@@ -39,7 +57,22 @@ standard they implement; from the inside every state change is a real
                   │  Seven facets · supersedes chains ·     │
                   │  HATEOAS affordances · PGSL atoms       │
                   └─────────────────────────────────────────┘
+                                    ▲
+                                    │
+                              readers (federation,
+                              dashboard, peer
+                              bridges) hit CSS
+                              directly OR via the
+                              gate — reads are
+                              anonymous either way
 ```
+
+Storage stays zero-trust: the CSS instance accepts anonymous reads and
+writes if hit directly. The gate is an operational write boundary in
+front of CSS, not an ACL on the pod itself. Trust lives at the
+verifier + reader layer (signature checks on descriptors), so an L2 /
+L3 vertical that wants stricter write rules layers its own gate without
+changing the substrate.
 
 Two granularities of projection are in use:
 
@@ -49,13 +82,23 @@ Two granularities of projection are in use:
   (`outcome-descriptor-publisher.ts`). Voiding / supersedes is
   expressed as chained descriptors.
 
-- **Per-surface snapshot** (debounced). The whole surface's in-memory
-  state is captured as one `foxxi:<Surface>TenantSnapshot` descriptor,
-  versioned, supersedes-chained. Used for surfaces where many fields
-  are mutated together by long-running handlers (SCORM sequencing,
-  cmi5 launches, LTI line items, OneRoster overlay, Foxxi
-  TenantPartition stores). Cheaper to wire than per-record without
-  losing the substrate-as-source-of-truth property.
+- **Per-surface snapshot** (dirty-triggered). The whole surface's
+  in-memory state is captured as one `foxxi:<Surface>TenantSnapshot`
+  descriptor, versioned, supersedes-chained. A snapshot is published
+  only when the surface module itself calls `dirty()` after a real
+  state mutation — there is no heartbeat or periodic timer. (The
+  earlier 30-second auto-dirty interval was removed because it
+  generated a manifest-write storm against an idle bridge.) Used for
+  surfaces where many fields are mutated together by long-running
+  handlers (SCORM sequencing, cmi5 launches, LTI line items, OneRoster
+  overlay, Foxxi TenantPartition stores). Cheaper to wire than
+  per-record without losing the substrate-as-source-of-truth property.
+
+All publishes — per-record or per-surface — funnel through
+`withPublishLock()` in `src/bridge-signer.ts`. That mutex keeps at most
+one publish in-flight per bridge process, so concurrent dirty markers
+and incoming outcome posts serialize against the manifest instead of
+racing each other.
 
 The choice is a granularity trade-off, not an architectural compromise:
 per-record gives finer dereferencing + supersedes-chain semantics;
@@ -80,9 +123,9 @@ same seven-facet shape.
 | cmi5 launches + AU satisfaction   | `pod-snapshot`     | `foxxi:Cmi5TenantSnapshot`            | per-surface   |
 | LTI 1.3 line items                | `pod-snapshot`     | `foxxi:LtiTenantSnapshot`             | per-surface   |
 | OneRoster imported overlay        | `pod-snapshot`     | `foxxi:OneRosterSnapshot`             | per-surface   |
-| Agent trajectories                | `pod-snapshot`     | `foxxi:AgentTrajectorySnapshot`       | per-surface (periodic) |
-| Performance probes                | `pod-snapshot`     | `foxxi:PerformanceProbeSnapshot`      | per-surface (periodic) |
-| Evaluation registry               | `pod-snapshot`     | `foxxi:EvaluationSnapshot`            | per-surface (periodic) |
+| Agent trajectories                | `pod-snapshot`     | `foxxi:AgentTrajectorySnapshot`       | per-surface (dirty-triggered) |
+| Performance probes                | `pod-snapshot`     | `foxxi:PerformanceProbeSnapshot`      | per-surface (dirty-triggered) |
+| Evaluation registry               | `pod-snapshot`     | `foxxi:EvaluationSnapshot`            | per-surface (dirty-triggered) |
 
 ## Cross-restart durability
 
@@ -94,8 +137,37 @@ container restarts mid-run:
 - Agent trajectories / probes / evaluations come back via the bridge's
   `hydrateBridgeStateFromPod()`.
 
-The pod is the source of truth across container lifetimes; the
+The pod is the eventual source of truth across container lifetimes; the
 in-memory stores are derived hot caches.
+
+## The publish path is bounded, not blocking
+
+A `POST /performance/outcome` (and `POST /agent/teach`) does two
+things in order:
+
+1. **Synchronously, before the response.** Verify the request
+   signature (`signedPayload` + ECDSA recovered address must match
+   `author.id`'s 0x-suffix; missing fields → 401 `signature required`,
+   mismatched recovery → 401 `signature does not verify`). On success
+   the outcome is inserted into `liveOutcomes` immediately, so a
+   subsequent read on this bridge sees it without waiting on the pod.
+
+2. **On a bounded budget.** The descriptor PUT to the pod is wrapped
+   in `tryPublishBounded()` with a ~4s ceiling on the synchronous
+   path. If the pod write completes inside the budget, the response
+   includes the published descriptor URIs. If it doesn't, the
+   response returns with `published: []` and the same publish keeps
+   running in the background — the hot cache already has the outcome,
+   the pod catches up eventually, and the next read or hydrate sees
+   it. This is why slow pod writes no longer stall the API the way
+   they did before commit 32cc030.
+
+Concurrent publishes inside one bridge process serialize through
+`withPublishLock()`, so an in-flight background publish doesn't race
+a newly arriving synchronous one against the same manifest. The
+publish path is bounded per-request and serialized per-process; the
+pod is the eventual source of truth, and the in-memory mirror is the
+hot cache that fronts it.
 
 ## What's next (deferred work, intentionally scoped out of this cut)
 
@@ -107,16 +179,35 @@ real federation — `cg:FederationFacet` is populated, `composeCalibrationProfil
 is symmetric, descriptors are dereferenceable across pods — but no
 second deployed bridge instance + second pod is provisioned today.
 
+The reader-side filter that gates admission to the federated
+calibration profile already runs in production:
+`federation-outcome-loader` verifies each peer descriptor's
+`foxxi:agentSignature` against the DID named in `prov:wasGeneratedBy`,
+and drops anything that doesn't recover to that DID. Unsigned peer
+outcomes still land on disk (storage is zero-trust and will accept
+them), but the loader silently excludes them from composition. Trust
+lives at the reader, not at the store.
+
 To turn it on:
 1. Deploy a second bridge instance (e.g. `interego-foxxi-bridge-peer`)
    with its own `FOXXI_TENANT_POD_URL` pointing at a separate pod.
-2. Replace the `SAMPLE_PEER_OUTCOMES` seed with `discover()` calls
-   against the peer pod, filtered by `conformsTo foxxi:Outcome`.
-3. Each pod publishes its own outcomes; each bridge composes both;
-   the calibration profile becomes a real two-org composition.
+2. Give the peer bridge a stable service identity by setting
+   `FOXXI_BRIDGE_PRIVATE_KEY` (0x-prefixed 32-byte hex) so its
+   descriptors carry a recoverable `did:key:0x<addr>#bridge` —
+   without this, the loader will reject them as unsigned/unverifiable
+   and the calibration profile will compose with an empty peer set.
+3. Replace the `SAMPLE_PEER_OUTCOMES` seed with `discover()` calls
+   against the peer pod, filtered by `conformsTo foxxi:Outcome` and
+   passed through the same signature-verifying loader the local
+   tenant uses.
+4. Each pod publishes its own signed outcomes; each bridge composes
+   both; the calibration profile becomes a real two-org composition
+   that only counts descriptors whose `foxxi:agentSignature` recovers
+   to the claimed author DID.
 
 Scope: a second container app + DNS + ~50 lines of refactor in
-`performance-routes.ts` to swap the seed for a real fetch.
+`performance-routes.ts` to swap the seed for a real fetch through the
+existing signature-verifying loader.
 
 ### 2. Dashboard as linked-data browser
 
@@ -142,12 +233,13 @@ already serves.
 
 ### 3. Full per-record refactor of per-surface snapshots
 
-The snapshot pattern publishes the whole surface as one descriptor per
-debounce window. For some uses (xAPI Activity State documents, LTI
-line items) a per-record projection (one descriptor per state-doc,
-one descriptor per line-item) would give finer dereferenceability and
-cleaner federation semantics. Mechanical refactor — same
-`PodKeyValueStore<T>` primitive that backs `PodStatementStore`.
+The snapshot pattern publishes the whole surface as one descriptor each
+time the surface is marked dirty. For some uses (xAPI Activity State
+documents, LTI line items) a per-record projection (one descriptor per
+state-doc, one descriptor per line-item) would give finer
+dereferenceability and cleaner federation semantics. Mechanical
+refactor — same `PodKeyValueStore<T>` primitive that backs
+`PodStatementStore`.
 
 ## Why this is the right default
 

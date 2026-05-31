@@ -102,6 +102,27 @@ async function post(path: string, body: unknown): Promise<{ status: number; json
   return { status: r.status, json: await r.json().catch(() => ({})) };
 }
 
+// Match the bridge's canonical signing scheme (browser-side):
+//   signedPayload = JSON.stringify(<canonical payload>)
+//   message       = `sha256:<sha256-hex(signedPayload)>`
+//   signature     = await wallet.signMessage(message)
+// The bridge's verifySignature() recomputes the hash from the exact bytes
+// the agent signed (sent as signedPayload) and recovers the address from
+// the signature, then checks it matches author.id (the did:key suffix).
+// Web Crypto is used here (not node:crypto) because this runs in the browser.
+async function signPayload(
+  wallet: { signMessage: (msg: string) => Promise<string> },
+  payload: unknown,
+): Promise<{ signedPayload: string; signature: string }> {
+  const signedPayload = JSON.stringify(payload);
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(signedPayload));
+  const hex = Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+  const signature = await wallet.signMessage(`sha256:${hex}`);
+  return { signedPayload, signature };
+}
+
 async function readCell(): Promise<{
   cell: CellState; federated: { totalSamples: number; sources: number } | null;
 }> {
@@ -262,11 +283,21 @@ export function EmergentCollective({ onHome, onDemos }: { onHome: () => void; on
           const cause = dominantCause(planRes.json.diagnosis);
           const newObserved = reachable ? exemplary : situation.observed;
           const verdict = verdictOf(exemplary, situation.observed, newObserved, reachable);
-          await post('/performance/outcome', {
+          // The outcome the agent signs IS the canonical payload — exactly the
+          // shape the bridge's recordLiveOutcome validator expects. The bridge
+          // recomputes sha256 over signedPayload and recovers the address from
+          // signature; it must match author.id's 0x-suffix or it returns 401.
+          const outcomePayload = {
             regime: 'Knowable', method: 'gap-analysis',
             causeFactor: cause, intervention: 'reference', verdict,
             ...(verdict !== 'closed' ? { reDiagnosedCause: 'knowledgeSkill' } : {}),
             source: 'acme',
+          };
+          const outcomeSigned = await signPayload(wallets[ai], outcomePayload);
+          await post('/performance/outcome', {
+            author: { id: agent.did, kind: 'agent' },
+            signature: outcomeSigned.signature,
+            signedPayload: outcomeSigned.signedPayload,
           });
           // re-read live cell state
           const seen = await readCell();
@@ -325,20 +356,27 @@ export function EmergentCollective({ onHome, onDemos }: { onHome: () => void; on
         })),
       }];
       log({ kind: 'info', text: `${atlas.name} encodes the finding as an ac:TeachingPackage and teaches ${nova.name}` });
+      // The teacher signs the (teachingPackage, targetBehaviour) tuple — that's
+      // the attestation the bridge checks before counting the transfer.
+      const teachingPackage = {
+        iri: `urn:cg:teaching:reference-for-field-guidance-${Date.now()}`,
+        artifactIri: 'urn:cg:tool:field-reference',
+        competency: 'reaching guidance at the point of work',
+        olkeStage: 'Articulate', modalStatus: 'Hypothetical',
+      };
+      const targetBehaviour = {
+        description: 'consults the searchable reference at the point of work before acting',
+        signalMarkers: ['reference', 'look up', 'guidance'],
+        antiSignalMarkers: ['guess', 'skip'],
+      };
+      const teachSigned = await signPayload(wallets[3], { teachingPackage, targetBehaviour });
       const teachR = await post('/agent/teach', {
-        teachingPackage: {
-          iri: `urn:cg:teaching:reference-for-field-guidance-${Date.now()}`,
-          artifactIri: 'urn:cg:tool:field-reference',
-          competency: 'reaching guidance at the point of work',
-          olkeStage: 'Articulate', modalStatus: 'Hypothetical',
-        },
+        teachingPackage,
         teacher: { id: atlas.did, kind: 'agent' },
         learner: { id: nova.did, kind: 'agent' },
-        targetBehaviour: {
-          description: 'consults the searchable reference at the point of work before acting',
-          signalMarkers: ['reference', 'look up', 'guidance'],
-          antiSignalMarkers: ['guess', 'skip'],
-        },
+        targetBehaviour,
+        signature: teachSigned.signature,
+        signedPayload: teachSigned.signedPayload,
         before: traj([
           { v: 'guess', o: 'the next step' }, { v: 'skip', o: 'a checklist item' },
           { v: 'act', o: 'on assumptions' }, { v: 'escalate', o: 'a mistake' },

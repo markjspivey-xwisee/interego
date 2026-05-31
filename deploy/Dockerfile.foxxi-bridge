@@ -67,10 +67,44 @@ ENV PORT=6080
 ENV NODE_NO_WARNINGS=1
 
 # Defaults — override via Azure Container App env vars at deploy time.
-ENV FOXXI_TENANT_POD_URL=https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/
+#
+# ────────────────────────────────────────────────────────────
+#  Gate-fronted write architecture
+# ────────────────────────────────────────────────────────────
+#  Pod writes from this bridge go THROUGH the css-gate sidecar, not direct
+#  to CSS. The gate (deploy/css-gate/server.mjs) requires
+#  `Authorization: Bearer <WRITE_SECRET>` on every POST/PUT/PATCH/DELETE
+#  and forwards the buffered request to the underlying CSS instance.
+#  Reads (GET/HEAD/OPTIONS) pass through anonymously — CSS storage stays
+#  allow-all per Interego's zero-trust storage stance (trust lives at the
+#  verifier + reader layer, not at the storage layer).
+#
+#  Therefore FOXXI_TENANT_POD_URL MUST point at the gate URL (not the raw
+#  CSS URL), and FOXXI_POD_WRITE_SECRET MUST be set to match the gate's
+#  WRITE_SECRET — otherwise every bridge-originated write 401s at the gate.
+# ────────────────────────────────────────────────────────────
+ENV FOXXI_TENANT_POD_URL=https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/
 ENV FOXXI_AUTHORITATIVE_SOURCE=did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io
 ENV FOXXI_AUDIENCE=both
 ENV BRIDGE_DEPLOYMENT_URL=https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io
 ENV FOXXI_DASHBOARD_ORIGIN=https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io
+
+# Bearer token presented to css-gate on every pod write. MUST be overridden
+# at deploy time with the value matching the gate container's WRITE_SECRET;
+# the empty default exists only so the build doesn't bake a secret into the
+# image. With this unset, every publish() 401s at the gate and the bridge
+# silently produces published=[] on every signed-outcome request.
+ENV FOXXI_POD_WRITE_SECRET=
+
+# Stable bridge service identity. 0x-prefixed 32-byte hex ECDSA private key
+# whose derived address becomes the bridge's did:key:0x<addr>#bridge —
+# used to sign bridge-originated descriptors (snapshots, calibration-flip
+# records) with CryptographicallyVerified trust. If unset, an ephemeral key
+# is generated at container startup (the bridge logs a warning); the bridge
+# still runs, but the signing identity rotates on every restart, so peer
+# readers can't establish identity continuity across deployments and
+# previously-published bridge-signed descriptors can no longer be linked
+# back to a live signer. Override at deploy time for stable identity.
+ENV FOXXI_BRIDGE_PRIVATE_KEY=
 
 CMD ["npx", "tsx", "applications/foxxi-content-intelligence/bridge/server.ts"]

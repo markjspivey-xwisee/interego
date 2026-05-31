@@ -121,6 +121,34 @@ bridge, LMS and LRS, with a **real headless browser** completing a
    on all four channels, each instrumented into the LRS.
 6. **Evaluate** — the four-level evaluation returns `closed`: the
    measured new state supersedes the prior observed state.
+7. **Close the loop upward** — the resulting outcome is recorded via
+   `POST /performance/outcome` so the bridge's calibration profile
+   recomposes to absorb it. The bridge runs Option D (zero-trust storage;
+   trust at the verifier/reader layer), so this write must be signed.
+   `tools/closed-loop-example.mjs` generates a per-run wallet identity
+   for the loop closer — `LOOP_CLOSER = Wallet.createRandom()` with
+   `LOOP_CLOSER_DID = did:key:0x<addr>#agent` — and signs the outcome
+   with a small `signOutcome()` helper before POSTing. A fresh wallet
+   each run is fine for the demo; in production the role identity is
+   durable. The canonical body shape the bridge expects is:
+
+   ```json
+   {
+     "author":        { "id": "did:key:0x<addr>#agent", "kind": "agent" },
+     "signature":     "<ECDSA hex over 'sha256:' + sha256_hex(signedPayload)>",
+     "signedPayload": "<JSON.stringify(outcome)>"
+   }
+   ```
+
+   The signature is `wallet.signMessage('sha256:' + sha256_hex(signedPayload))`
+   and the recovered address must match the 0x-suffix of `author.id`, or
+   the bridge returns 401. Anyone using this walkthrough as a template
+   for their own loop closer needs to do the same — an unsigned POST
+   will be rejected. See `tools/closed-loop-example.mjs` for the
+   reference implementation (the `LOOP_CLOSER` / `signOutcome()` block
+   and the `/performance/outcome` call). The same shape applies to
+   `POST /agent/teach` (signature by `teacher.id` over
+   `{ teachingPackage, targetBehaviour }`).
 
 So a diagnosed gap genuinely produces a real, SCORM/cmi5-compliant
 training course, delivered and tracked on the live LMS; a learner
