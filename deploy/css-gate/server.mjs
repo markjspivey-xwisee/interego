@@ -100,10 +100,24 @@ const server = createServer(async (req, res) => {
   } catch { /* ignore */ }
 
   // Build the upstream request body: only methods that can have one.
+  //
+  // We BUFFER the body instead of streaming via `Readable.toWeb(req)`.
+  // Streaming the duplex='half' request through Node fetch to Azure
+  // Container Apps' ingress hangs for bodies > a few KB and eventually
+  // returns 504 "stream timeout" — the failure mode is consistent for
+  // string-body fetches from the client through here. Buffering keeps
+  // the request a normal HTTP/1.1 PUT with Content-Length, which Azure
+  // proxies cleanly. Trade-off: each request holds its body in memory.
+  // The gate fronts CSS for Interego descriptor / manifest writes —
+  // bounded to descriptor + manifest sizes, well under any sane limit.
   let upstreamBody;
   if (method !== 'GET' && method !== 'HEAD') {
-    // Node's req is a Readable; convert to a Web ReadableStream for fetch.
-    upstreamBody = Readable.toWeb(req);
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    upstreamBody = Buffer.concat(chunks);
+    // Set Content-Length explicitly so fetch doesn't fall back to chunked.
+    headers['content-length'] = String(upstreamBody.length);
+    delete headers['transfer-encoding'];
   }
 
   let upstreamRes;
@@ -112,8 +126,6 @@ const server = createServer(async (req, res) => {
       method,
       headers,
       body: upstreamBody,
-      // @ts-ignore — duplex required for body streaming
-      duplex: 'half',
       redirect: 'manual',
     });
   } catch (err) {

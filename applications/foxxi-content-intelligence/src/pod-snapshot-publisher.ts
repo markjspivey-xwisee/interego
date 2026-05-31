@@ -43,7 +43,7 @@ import type {
   FederationFacetData,
 } from '@interego/core';
 import { createHash } from 'node:crypto';
-import { bridgeDid, signAsBridge } from './bridge-signer.js';
+import { bridgeDid, signAsBridge, withPublishLock } from './bridge-signer.js';
 
 const FOXXI = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 const FOXXI_BUNDLE_JSON = `${FOXXI}bundleJson` as IRI;
@@ -219,12 +219,12 @@ async function doPublish(reg: SnapshotRegistration): Promise<void> {
     bridgeDid: bridgeSignature ? bridgeDid() : undefined,
   });
   try {
-    await publish(descriptor, graphContent, config.podUrl, {
+    await withPublishLock(() => publish(descriptor, graphContent, config.podUrl, {
       fetch: config.fetch,
       containerPath: 'foxxi/snapshots/',
       descriptorSlug: slug,
       graphSlug: `${slug}-graph`,
-    });
+    }));
     reg.lastPublishedAt = Date.now();
     reg.lastPublishedDescriptorIri = descriptorIri;
     reg.version += 1;

@@ -172,15 +172,17 @@ async function hydrateBridgeStateFromPod(): Promise<void> {
   }
 }
 void hydrateBridgeStateFromPod();
-// Periodic snapshot — every 30s the publisher checks each surface and
-// publishes a fresh snapshot if its in-memory state has changed since
-// the last publish. The snapshot publisher itself debounces and skips
-// no-op publishes, so this is cheap.
-setInterval(() => {
-  markBridgeDirty('foxxi-trajectories');
-  markBridgeDirty('foxxi-probes');
-  markBridgeDirty('foxxi-evals');
-}, 30_000).unref?.();
+// NOTE: there used to be a setInterval here that dirtied
+// foxxi-trajectories / foxxi-probes / foxxi-evals every 30s as a
+// belt-and-braces snapshot heartbeat. It was effectively a write storm
+// against the tenant pod's manifest — 6+ PUTs/minute regardless of
+// whether any surface state had actually changed, all serialized on
+// the same manifest's HTTP lock. Manifest writes started timing out
+// under contention (Azure ingress 504 "stream timeout"; CSS logged
+// "Request error: aborted") and that masked descriptor writes from
+// the agent-facing routes. Snapshots now fire only when real state
+// changes (the surface modules call dirty() themselves on update),
+// keeping the pod write-rate proportional to real activity.
 
 /** Resolve the tenant of an affordance call from its `tenant_pod_url`
  *  argument (falling back to the bridge's configured default tenant). */

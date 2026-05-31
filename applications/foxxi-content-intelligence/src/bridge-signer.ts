@@ -73,3 +73,30 @@ export async function signAsBridge(payload: unknown): Promise<string> {
   const hash = createHash('sha256').update(json, 'utf8').digest('hex');
   return bridgeWallet().signMessage(`sha256:${hash}`);
 }
+
+/**
+ * Process-wide pod-publish mutex. publish() in @interego/core does
+ * GET-then-PUT on the tenant manifest for every descriptor write, and
+ * CSS serializes manifest writes on a file lock. When multiple bridge
+ * publishes race (e.g. several agent outcomes within the same second,
+ * or a snapshot-flip burst), they each contend for the lock; in
+ * practice we've seen CSS's manifest endpoint stall and Azure ingress
+ * return 504 mid-flight. A single bridge-local async queue removes
+ * intra-process contention entirely: at most ONE publish() is in
+ * flight at any moment per bridge instance. Cross-bridge contention
+ * (other publishers writing to the same pod) still falls back to the
+ * If-Match/412 retry path in @interego/core's manifest update.
+ *
+ * The queue does not bound or drop work — every caller eventually
+ * completes (or surfaces an error). Callers that need a deadline
+ * should wrap with tryPublishBounded() in performance-routes.ts.
+ */
+let _publishChain: Promise<unknown> = Promise.resolve();
+
+export function withPublishLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = _publishChain.then(() => fn(), () => fn());
+  // Don't propagate the result into the chain — just keep the chain
+  // alive so the next caller waits for THIS one to settle.
+  _publishChain = next.catch(() => undefined);
+  return next;
+}

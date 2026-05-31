@@ -53,7 +53,7 @@ import {
   type DescriptorPublishConfig, type PublishedDescriptor,
 } from './outcome-descriptor-publisher.js';
 import { FederationOutcomeLoader, parseFederationPods } from './federation-outcome-loader.js';
-import { bridgeAuthor, signAsBridge } from './bridge-signer.js';
+import { bridgeAuthor, signAsBridge, withPublishLock } from './bridge-signer.js';
 import type { IRI } from '@interego/core';
 
 // ── JSON-LD context bound at the top of every linked-data response. ───
@@ -123,6 +123,36 @@ async function tryPublish<T>(label: string, fn: () => Promise<T>): Promise<T | n
   catch (err) {
     console.error(`[foxxi-bridge] descriptor publish failed (${label}):`, (err as Error).message);
     return null;
+  }
+}
+
+/**
+ * Bounded-await publish: return the result if it lands within `ms` ms,
+ * otherwise return null AND let the publish keep running in the
+ * background. The API call doesn't block on a slow pod (Azure ingress
+ * → CSS) — the upward-causation record is already in liveOutcomes, and
+ * the descriptor will catch up to the pod on its own schedule. When
+ * publish finishes after the timeout, its success / failure is logged
+ * via tryPublish() so operators can still see it.
+ */
+async function tryPublishBounded<T>(label: string, fn: () => Promise<T>, ms: number): Promise<T | null> {
+  const inFlight = tryPublish(label, fn);
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<null>(resolve => {
+    timer = setTimeout(() => {
+      console.warn(`[foxxi-bridge] publish (${label}) did not land in ${ms}ms; continuing in background`);
+      resolve(null);
+    }, ms);
+  });
+  try {
+    const result = await Promise.race([inFlight, timeout]);
+    return result;
+  } finally {
+    if (timer) clearTimeout(timer);
+    // Detach: in-flight publish keeps running after timeout. Swallow its
+    // promise so Node doesn't log an unhandled rejection if it later
+    // throws something tryPublish missed.
+    void inFlight.catch(() => {});
   }
 }
 
@@ -225,9 +255,9 @@ export function attachPerformanceRoutes(app: Express, config: {
     const author = bridgeAuthor();
     const signedPayloadJson = JSON.stringify(snapshot);
     const signature = await signAsBridge(snapshot).catch(() => undefined);
-    const result = await publishCalibrationSnapshotDescriptor(
+    const result = await withPublishLock(() => publishCalibrationSnapshotDescriptor(
       snapshot, author, signature, publishConfig, signedPayloadJson,
-    ).catch(err => {
+    )).catch(err => {
       console.error('[foxxi-bridge] calibration descriptor publish failed:', (err as Error).message);
       return null;
     });
@@ -368,12 +398,12 @@ export function attachPerformanceRoutes(app: Express, config: {
     // the content-addressed atom holding the raw JSON.
     const published: PublishedDescriptor[] = [];
     if (podConfigured && publishConfig) {
-      const situationDesc = await tryPublish('situation', () =>
-        publishSituationDescriptor(
+      const situationDesc = await tryPublishBounded('situation', () =>
+        withPublishLock(() => publishSituationDescriptor(
           { situation, diagnosis, plan: { paradigm: plan.paradigm, selected: plan.selected.map(o => o.type), summary: plan.summary } },
           author,
           publishConfig,
-        ));
+        )), 4000);
       if (situationDesc) published.push(situationDesc);
     }
 
@@ -484,23 +514,25 @@ export function attachPerformanceRoutes(app: Express, config: {
       // Pass the EXACT signed bytes through to the publisher so the
       // descriptor's atom + foxxi:bundleJson are byte-identical with
       // what the agent signed — federation peers re-verifying the
-      // signature key off the same bytes.
-      const outcomeDesc = await tryPublish('outcome', () =>
-        publishOutcomeDescriptor(
+      // signature key off the same bytes. Bounded wait: don't block the
+      // API call on a slow pod write; if the publish doesn't land in
+      // 4s, it keeps running in the background and the response just
+      // omits the descriptor URL. The upward-causation record is
+      // already in liveOutcomes — the substrate has it either way.
+      const outcomeDesc = await tryPublishBounded('outcome', () =>
+        withPublishLock(() => publishOutcomeDescriptor(
           { ...outcome, ...(evidence ? { evidence } : {}) },
           author,
           signature,
           publishConfig,
           signedPayload,
-        ));
+        )), 4000);
       if (outcomeDesc) published.push(outcomeDesc);
-      // Each outcome may push the cell across the modal-status threshold;
-      // when it does, publish a foxxi:CalibrationProfile descriptor that
-      // captures the moment of the Hypothetical → Asserted flip + chains
-      // via cg:supersedes to the previous calibration snapshot. This is
-      // the upward arm of the reflexive loop made permanent in the
-      // substrate, not just an in-process recomposition.
-      await maybePublishCalibrationFlipDescriptor();
+      // Calibration-flip descriptor is fire-and-forget — we never let
+      // the bridge response wait on it. It's a derived view; missing it
+      // here just means the next outcome's flip detection picks up the
+      // same cells.
+      void maybePublishCalibrationFlipDescriptor();
     }
 
     const responseBody = jsonLdEnvelope({
@@ -604,12 +636,12 @@ export function attachPerformanceRoutes(app: Express, config: {
     }
     const published: PublishedDescriptor[] = [];
     if (podConfigured && publishConfig) {
-      const result = await tryPublish('participation-claim', () =>
-        publishParticipationClaimDescriptor(
+      const result = await tryPublishBounded('participation-claim', () =>
+        withPublishLock(() => publishParticipationClaimDescriptor(
           { name, did, address, claim, signature,
             agentRoleHint: typeof b.agentRoleHint === 'string' ? b.agentRoleHint : undefined },
           publishConfig,
-        ));
+        )), 4000);
       if (result) {
         published.push(result);
         res.setHeader('Content-Type', 'application/ld+json');
@@ -706,19 +738,19 @@ export function attachPerformanceRoutes(app: Express, config: {
       // version: Asserted on a verified transfer).
       const published: PublishedDescriptor[] = [];
       if (podConfigured && publishConfig) {
-        const pkgDesc = await tryPublish('teaching-package', () =>
-          publishTeachingPackageDescriptor(
+        const pkgDesc = await tryPublishBounded('teaching-package', () =>
+          withPublishLock(() => publishTeachingPackageDescriptor(
             { package: pkg, targetBehaviour, teacher: teacher.id, learner: learner.id, intervention },
             { id: teacher.id, kind: 'agent' },
             publishConfig,
-          ));
+          )), 4000);
         if (pkgDesc) published.push(pkgDesc);
-        const attDesc = await tryPublish('teaching-attestation', () =>
-          publishTeachingAttestationDescriptor(
+        const attDesc = await tryPublishBounded('teaching-attestation', () =>
+          withPublishLock(() => publishTeachingAttestationDescriptor(
             { attestation, verdict, learner: learner.id, teacher: teacher.id, teachingPackageIri: tp.iri },
             { id: teacher.id, kind: 'agent' },
             publishConfig,
-          ));
+          )), 4000);
         if (attDesc) published.push(attDesc);
       }
 
