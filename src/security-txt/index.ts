@@ -43,9 +43,9 @@ const DEFAULT_CONTACT_FALLBACK =
   'https://github.com/markjspivey-xwisee/interego/security/advisories/new';
 const DEFAULT_EXPIRES = '2027-01-01T00:00:00Z';
 const POLICY_URL =
-  'https://github.com/markjspivey-xwisee/interego/blob/main/spec/policies/14-vulnerability-management.md';
+  'https://github.com/markjspivey-xwisee/interego/blob/master/spec/policies/14-vulnerability-management.md';
 const ACKNOWLEDGMENTS_URL =
-  'https://github.com/markjspivey-xwisee/interego/blob/main/SECURITY-ACKNOWLEDGMENTS.md';
+  'https://github.com/markjspivey-xwisee/interego/blob/master/SECURITY-ACKNOWLEDGMENTS.md';
 
 export function buildSecurityTxt(opts: SecurityTxtOptions = {}): string {
   const contact = opts.contact ?? DEFAULT_CONTACT_FALLBACK;

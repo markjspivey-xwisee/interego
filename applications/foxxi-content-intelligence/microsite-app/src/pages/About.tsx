@@ -44,7 +44,7 @@ export function About({ onTry, onHome }: { onTry: (role: 'learner' | 'admin' | '
           Every credential the bridge mints carries the official spec contexts —
           <code>https://purl.imsglobal.org/spec/ob/v3p0/...</code>, the CASE 1.0 JSON-LD context,
           W3C VC 2.0. Third-party verifiers don't need Foxxi-specific code; they just verify the
-          standard payload. The <a href="https://github.com/markjspivey-xwisee/interego/blob/main/applications/foxxi-content-intelligence/CONFORMANCE.md">CONFORMANCE.md</a>
+          standard payload. The <a href="https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/CONFORMANCE.md">CONFORMANCE.md</a>
           {' '}in the repo lists every standard with file:line citations to the implementation.
         </p>
       </Section>
@@ -74,7 +74,7 @@ export function About({ onTry, onHome }: { onTry: (role: 'learner' | 'admin' | '
           dashboard</a> is the production-grade surface for the same affordances. The
           {' '}<a href="https://github.com/markjspivey-xwisee/interego">source repo</a> has every
           conformance claim wired to code. The
-          {' '}<a href="https://github.com/markjspivey-xwisee/interego/blob/main/applications/foxxi-content-intelligence/CHANGELOG.md">
+          {' '}<a href="https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/CHANGELOG.md">
           CHANGELOG</a> walks the build history.
         </p>
       </Section>

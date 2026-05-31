@@ -1815,7 +1815,7 @@ First call triggers an OAuth flow in your browser. You'll be asked to enroll a <
 <ul>
   <li><a href="${IDENTITY_URL}/">Overview &amp; sign-up</a> — what Interego is, and the human/agent paths</li>
   <li><a href="${IDENTITY_URL}/connect">Create my identity</a> — enroll a passkey or wallet now</li>
-  <li><a href="https://github.com/markjspivey-xwisee/interego/blob/main/docs/FIRST-HOUR.md">First-hour walkthrough</a> · <a href="https://github.com/markjspivey-xwisee/interego/blob/main/docs/integrations/agent-runtime-integration.md">Runtime integration guide</a> (Hermes / OpenClaw / MCP)</li>
+  <li><a href="https://github.com/markjspivey-xwisee/interego/blob/master/docs/FIRST-HOUR.md">First-hour walkthrough</a> · <a href="https://github.com/markjspivey-xwisee/interego/blob/master/docs/integrations/agent-runtime-integration.md">Runtime integration guide</a> (Hermes / OpenClaw / MCP)</li>
 </ul>
 
 <h2>What's exposed here</h2>

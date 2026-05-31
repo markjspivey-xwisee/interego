@@ -335,8 +335,8 @@ const SECURITY_TXT_BODY = (() => {
   if (PUBLIC_BASE_URL) {
     lines.push(`Canonical: ${PUBLIC_BASE_URL.replace(/\/$/, '')}/.well-known/security.txt`);
   }
-  lines.push(`Policy: https://github.com/markjspivey-xwisee/interego/blob/main/spec/policies/14-vulnerability-management.md`);
-  lines.push(`Acknowledgments: https://github.com/markjspivey-xwisee/interego/blob/main/SECURITY-ACKNOWLEDGMENTS.md`);
+  lines.push(`Policy: https://github.com/markjspivey-xwisee/interego/blob/master/spec/policies/14-vulnerability-management.md`);
+  lines.push(`Acknowledgments: https://github.com/markjspivey-xwisee/interego/blob/master/SECURITY-ACKNOWLEDGMENTS.md`);
   lines.push('');
   return lines.join('\n');
 })();
