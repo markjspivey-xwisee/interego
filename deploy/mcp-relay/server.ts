@@ -1763,7 +1763,9 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
 // A non-technical user hitting the relay's root URL would otherwise
 // see "Cannot GET /" — not actionable. This serves a minimal page
 // pointing them at the right next step (configure their MCP client
-// with the /sse URL; OAuth-led flow handles enrollment).
+// with the /mcp URL — Streamable HTTP, current spec — falling back
+// to /sse only if their client doesn't support it; OAuth-led flow
+// handles enrollment).
 
 const RELAY_LANDING_HTML = `<!doctype html>
 <html lang="en">
@@ -1779,6 +1781,11 @@ const RELAY_LANDING_HTML = `<!doctype html>
   code { background: #f0f2f5; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
   pre { background: #f0f2f5; padding: 0.9em 1em; border-radius: 6px; overflow-x: auto; font-size: 0.86em; line-height: 1.5; }
   .note { background: #eaf6ff; border-left: 4px solid #0a66c2; padding: 0.8em 1em; margin: 1em 0; border-radius: 4px; }
+  .recommended { background: #ecf8ee; border-left: 4px solid #2e8b3d; padding: 0.8em 1em; margin: 1em 0; border-radius: 4px; }
+  .legacy { background: #f6f1e7; border-left: 4px solid #b58a2c; padding: 0.8em 1em; margin: 1em 0; border-radius: 4px; font-size: 0.92em; }
+  .badge { display: inline-block; background: #2e8b3d; color: #fff; font-size: 0.72em; font-weight: 600; padding: 2px 7px; border-radius: 10px; margin-left: 0.4em; vertical-align: middle; letter-spacing: 0.04em; }
+  .badge.legacy { background: #b58a2c; }
+  h3 { margin-top: 1.6em; margin-bottom: 0.4em; font-size: 1.05em; }
   a { color: #0a66c2; }
   ul { padding-left: 1.2em; }
   li { margin-bottom: 0.35em; }
@@ -1791,24 +1798,39 @@ const RELAY_LANDING_HTML = `<!doctype html>
 
 <h2>Connect your agent runtime</h2>
 
-<p>Add this URL to your MCP-speaking agent runtime (Claude Code, Claude Desktop, Cursor, Windsurf, Hermes, OpenClaw, claude.ai connectors, etc.):</p>
+<p>Add this URL to your MCP-speaking agent runtime (Claude Code, Claude Desktop, Cursor, Windsurf, Hermes, OpenClaw, claude.ai connectors, ChatGPT custom connectors, etc.).</p>
 
-<pre><strong>SSE endpoint:</strong>  <span id="sseUrl"></span>/sse
-<strong>HTTP endpoint:</strong> <span id="mcpUrl"></span>/mcp</pre>
+<div class="recommended">
+<strong>Use this endpoint<span class="badge">RECOMMENDED</span></strong><br>
+<code><span id="mcpUrl"></span>/mcp</code> — Streamable HTTP transport (current MCP spec). This is what every modern client should use.
+</div>
 
 <p>Example MCP config (file location depends on your client):</p>
 
 <pre>{
   "mcpServers": {
     "interego": {
-      "url": "<span id="sseUrl2"></span>/sse"
+      "url": "<span id="mcpUrl2"></span>/mcp"
     }
   }
 }</pre>
 
+<div class="legacy">
+<strong>Legacy / compat<span class="badge legacy">FALLBACK</span></strong><br>
+<code><span id="sseUrl"></span>/sse</code> — older Server-Sent-Events transport. Only use this if your client doesn't support Streamable HTTP yet. The relay keeps it running for backwards compatibility.
+</div>
+
 <div class="note">
 First call triggers an OAuth flow in your browser. You'll be asked to enroll a <strong>passkey</strong>, <strong>Ethereum wallet</strong>, or <strong>did:key</strong>. Your private keys never leave your device — no password, no email, no account database.
 </div>
+
+<h3>ChatGPT &amp; Claude.ai connector setup</h3>
+<p>For the hosted chat apps (web + mobile), paste the <code>/mcp</code> URL into the connector picker:</p>
+<ul>
+  <li><strong>ChatGPT</strong> (web or mobile) — Settings &rarr; Connectors &rarr; Add custom connector &rarr; paste <code><span id="mcpUrl3"></span>/mcp</code>. Sign in via the OAuth popup.</li>
+  <li><strong>Claude.ai</strong> (web or iOS/Android) — Settings &rarr; Connectors &rarr; Add custom connector &rarr; paste <code><span id="mcpUrl4"></span>/mcp</code>. Approve the passkey/wallet enrollment when prompted.</li>
+</ul>
+<p>Once connected, both apps will discover the 60+ Interego tools automatically. No CLI required.</p>
 
 <h2>New to Interego, or just a person?</h2>
 <p>You don't need an MCP client to start. Create an identity and pod directly — passkey or wallet, about 30 seconds — then point an agent at it later:</p>
@@ -1838,7 +1860,7 @@ First call triggers an OAuth flow in your browser. You'll be asked to enroll a <
 <script>
   const u = new URL(window.location.href);
   const base = u.origin;
-  for (const el of document.querySelectorAll('#sseUrl, #sseUrl2, #mcpUrl')) el.textContent = base;
+  for (const el of document.querySelectorAll('#sseUrl, #mcpUrl, #mcpUrl2, #mcpUrl3, #mcpUrl4')) el.textContent = base;
 </script>
 
 <footer>

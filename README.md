@@ -9,13 +9,36 @@ Drop the MCP relay into any agent that speaks MCP (Claude Code, Cursor, Codex, W
 {
   "mcpServers": {
     "interego": {
-      "url": "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/sse"
+      "url": "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp"
     }
   }
 }
 ```
 
+`/mcp` is the Streamable HTTP transport — a single endpoint that carries request, response, and notifications. Current MCP clients (Claude Code, Cursor, Codex CLI, Windsurf, Cline) prefer it. If your client only speaks the older SSE-style transport, use `/sse` on the same host — both endpoints are live on the relay and back the same identities and pods.
+
 The first tool call walks you through a passkey or wallet enrollment in the browser, mints your DID + pod, and issues a bearer token. Subsequent calls reuse the same identity from any device.
+
+### Adding the connector to ChatGPT or Claude.ai (web / mobile)
+
+The hosted relay is exposed as a remote MCP server, so GUI clients can mount it without a config file. The same connector entry covers web and mobile — settings sync through your account.
+
+**ChatGPT (web or mobile)**
+
+1. Open Settings → Connectors → **Add custom connector**. (Available on ChatGPT Pro, Team, and Enterprise; exact menu label and location vary by plan and platform.)
+2. Name it whatever you like, e.g. `Interego`.
+3. URL: `https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp`
+4. Save. On first use, ChatGPT opens a browser tab for OAuth — enroll a passkey or connect a wallet there, then return to the chat.
+5. The same connector then works in the ChatGPT web app and the ChatGPT mobile app (iOS / Android), because connector settings sync through your OpenAI account.
+
+**Claude.ai (web or mobile)**
+
+1. Open Settings → Connectors → **Add custom connector** (on some surfaces this appears as **Configure connector** in the conversation menu).
+2. URL: `https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp`
+3. Save. The OAuth flow opens in your browser — enroll a passkey or connect a wallet on first use.
+4. The same connector then covers Claude.ai on the web and the Claude mobile app, because connector settings sync through your Anthropic account.
+
+If a client only supports the older SSE-style endpoint, swap `/mcp` for `/sse` on the same host. Everything else stays identical.
 
 > **Status: reference implementation.** Hosted on the maintainer's free Azure instance for evaluation. Self-host (`examples/personal-bridge/`) before you depend on it. The compliance + audit-trail work in this repo is *infrastructure for* SOC 2 / EU AI Act / NIST RMF evidence — it is not an attested control environment by itself.
 

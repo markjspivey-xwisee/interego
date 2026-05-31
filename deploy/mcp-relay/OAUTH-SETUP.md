@@ -3,8 +3,24 @@
 The Interego relay is an OAuth 2.1 Protected Resource. Any MCP client
 that speaks OAuth (Claude Code, Claude Desktop, claude.ai, Cursor,
 Cline, Windsurf, ChatGPT custom connectors, Hermes Agent, OpenClaw)
-can mount the relay's `/sse` endpoint by following the discovery flow
+can mount the relay's `/mcp` endpoint by following the discovery flow
 documented here.
+
+## Transports: `/mcp` vs `/sse`
+
+The relay exposes two MCP transports on the same OAuth resource:
+
+- **`/mcp`** — Streamable HTTP, the modern unified MCP transport.
+  Preferred by Claude Code, Cursor, Codex CLI, Windsurf, Cline,
+  ChatGPT custom connectors, and Claude.ai. Use this everywhere
+  unless your client only supports the older transport.
+- **`/sse`** — Server-Sent Events, the original MCP transport.
+  Retained for backward compatibility with clients that haven't
+  moved to Streamable HTTP yet. Same OAuth, same scopes, same
+  agent-minting behavior — just swap the path suffix.
+
+All examples below publish the `/mcp` URL as the primary; replace
+the suffix with `/sse` only when a specific client requires it.
 
 ## Quick path — most clients
 
@@ -17,14 +33,14 @@ GET https://your-relay-host/.well-known/oauth-protected-resource
 ```
 
 These return JSON metadata pointing the client at the
-`/authorize`, `/token`, and `/sse` endpoints. **Most modern MCP
+`/authorize`, `/token`, and `/mcp` endpoints. **Most modern MCP
 clients discover all of this automatically the first time they hit
 the relay** — you only need to give the client the relay URL.
 
 The relay's hosted reference:
 
 ```
-https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/sse
+https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp
 ```
 
 ## Per-client config
@@ -37,7 +53,7 @@ Add to `~/.claude.json`:
 {
   "mcpServers": {
     "interego": {
-      "url": "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/sse"
+      "url": "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp"
     }
   }
 }
@@ -49,14 +65,19 @@ choose passkey / wallet / DID, you sign the challenge, the page
 redirects back with the token. Claude Code stores the refresh token
 in `~/.claude/oauth-tokens.json` (per-server).
 
-### Claude Desktop / claude.ai web
+### Claude Desktop / claude.ai web + mobile
 
 **Claude Desktop:** Settings → Connectors → Add custom connector.
-Paste the `/sse` URL. Click Connect. Same browser flow as above.
+Paste the `/mcp` URL. Click Connect. Same browser flow as above.
 
 **claude.ai:** Settings → Connectors → Custom connectors → New.
-Paste the `/sse` URL. claude.ai handles the OAuth dance entirely
+Paste the `/mcp` URL. claude.ai handles the OAuth dance entirely
 in-app.
+
+**Coverage:** the same connector entry covers Claude.ai web AND the
+Claude mobile app (iOS and Android). Connector settings sync via
+your Anthropic account, so you only configure it once — the mobile
+app picks it up automatically on next sign-in.
 
 ### Cursor
 
@@ -67,7 +88,7 @@ globally:
 {
   "mcpServers": {
     "interego": {
-      "url": "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/sse"
+      "url": "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp"
     }
   }
 }
@@ -90,7 +111,7 @@ Edit `~/.hermes/config.toml`:
 ```toml
 [[mcp.servers]]
 name = "interego"
-url = "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/sse"
+url = "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp"
 ```
 
 Restart Hermes. OAuth flow opens in your default browser; Hermes
@@ -100,15 +121,20 @@ caches the token in its config dir.
 
 ```bash
 openclaw mcp add interego \
-  --url "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/sse"
+  --url "https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp"
 ```
 
-### ChatGPT (custom connectors)
+### ChatGPT (custom connectors) — web + mobile
 
-If your subscription tier supports custom MCP connectors:
-Settings → Connectors → Add. Paste the `/sse` URL. ChatGPT runs the
-OAuth flow in a browser tab and persists the token for that
-workspace.
+Custom MCP connectors are available on **ChatGPT Pro, Team, and
+Enterprise** plans. Settings → Connectors → Add. Paste the `/mcp`
+URL. ChatGPT runs the OAuth flow in a browser tab and persists the
+token for that workspace.
+
+**Coverage:** the same connector covers ChatGPT on the web AND the
+ChatGPT mobile app (iOS and Android). Connector settings sync via
+your OpenAI account, so a connector added on the web is immediately
+usable from the mobile app once you're signed in.
 
 ## OAuth scopes
 

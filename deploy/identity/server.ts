@@ -1062,14 +1062,14 @@ const LANDING_HTML = `<!doctype html>
     <h3>Tighter integrations</h3>
     <p class="who">The MCP path above works with everything. These runtimes also have a native memory-slot plugin if you want it tighter.</p>
     <ul style="margin:0.4em 0 0 -0.5em">
-      <li><a href="${REPO_URL}/tree/main/integrations/hermes-memory">Hermes</a> — <code>hermes memory setup</code>, pick <code>interego</code>.</li>
-      <li><a href="${REPO_URL}/tree/main/integrations/openclaw-memory">OpenClaw</a> — <code>@interego/openclaw-memory</code> plugin claims the memory slot.</li>
-      <li><a href="${REPO_URL}/tree/main/integrations/compliance-overlay">Compliance overlay</a> — wraps any agent action into a signed, framework-cited evidence record.</li>
+      <li><a href="${REPO_URL}/tree/master/integrations/hermes-memory">Hermes</a> — <code>hermes memory setup</code>, pick <code>interego</code>.</li>
+      <li><a href="${REPO_URL}/tree/master/integrations/openclaw-memory">OpenClaw</a> — <code>@interego/openclaw-memory</code> plugin claims the memory slot.</li>
+      <li><a href="${REPO_URL}/tree/master/integrations/compliance-overlay">Compliance overlay</a> — wraps any agent action into a signed, framework-cited evidence record.</li>
     </ul>
   </div>
 </div>
 
-<p class="muted">Run it on your own infra instead? Everything is open source — see <a href="${REPO_URL}/tree/main/examples/personal-bridge">examples/personal-bridge</a> for the local-first deployment (laptop / Pi / NAS). New here? The <a href="${REPO_URL}/blob/main/docs/FIRST-HOUR.md">first-hour walkthrough</a> takes you end to end.</p>
+<p class="muted">Run it on your own infra instead? Everything is open source — see <a href="${REPO_URL}/tree/master/examples/personal-bridge">examples/personal-bridge</a> for the local-first deployment (laptop / Pi / NAS). New here? The <a href="${REPO_URL}/blob/master/docs/FIRST-HOUR.md">first-hour walkthrough</a> takes you end to end.</p>
 
 <footer>
 Open source · <a href="${REPO_URL}">github.com/markjspivey-xwisee/interego</a> ·

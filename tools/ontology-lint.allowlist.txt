@@ -37,3 +37,10 @@ soc2:P4
 # placeholder predicate (cg:evidenceForControl) that's mentioned as a
 # future extension to ManifestEntry. Not actually emitted to RDF.
 cg:evidenceForControl
+
+# ── align: ──
+# False positive from CSS text-align property in HTML style attributes
+# (e.g., style="text-align:center"). The lint's term regex matches
+# `align:center` because the negative lookbehind doesn't reject the
+# hyphen in `text-align`. This is CSS, not an RDF ontology reference.
+align:center

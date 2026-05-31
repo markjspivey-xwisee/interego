@@ -8,7 +8,7 @@ required for the basics. Each step takes 1–5 minutes.
 
 - A phone or laptop with a browser
 - A passkey-capable device (Face ID / Touch ID / Windows Hello / hardware key) OR a Web3 wallet (MetaMask / Coinbase Wallet)
-- An MCP-compatible AI client — claude.ai, Claude Code, Claude Desktop, Cursor, Hermes Agent, or OpenClaw all work
+- An MCP-compatible AI client — the easiest starting points are **ChatGPT (web or mobile)** and **Claude.ai (web or mobile)**; Claude Code, Claude Desktop, Cursor, Hermes Agent, and OpenClaw also work
 - ~30 minutes (most of which is the AI client doing the work)
 
 You do **not** need: an API key, an email address, a password, a credit card, or to install anything (beyond the AI client itself, which you probably already have).
@@ -45,14 +45,49 @@ You'll see four panels:
 
 ## Step 3 — Wire up your AI client (3 min)
 
-Pick your client and follow the matching section of [OAUTH-SETUP.md](../deploy/mcp-relay/OAUTH-SETUP.md):
+The connector URL you'll paste into every client:
 
-- **claude.ai** (web) — Settings → Connectors → Add custom connector → paste `https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/sse`. Click Connect.
-- **Claude iOS / Android app** — Settings → Connectors → Add custom → same URL.
+```
+https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp
+```
+
+`/mcp` is the modern Streamable HTTP transport and is preferred. The relay
+also serves `/sse` for older clients, but use `/mcp` unless a specific
+client tells you otherwise.
+
+### ChatGPT (web + mobile) — no CLI
+
+Works the same on chatgpt.com and on the iOS / Android app.
+
+1. Open **Settings → Connectors → Add custom connector**.
+2. Name it `Interego`.
+3. Paste the `/mcp` URL above.
+4. Save. The first time you ask ChatGPT to use it, ChatGPT opens a
+   browser window at the relay's `/authorize` page. Pick the credential
+   you enrolled in Step 1 (passkey or wallet), sign the challenge, and
+   the page closes automatically. The connector is now bound to your
+   identity for that ChatGPT account.
+
+### Claude.ai (web + mobile) — no CLI
+
+Works the same on claude.ai and on the Claude iOS / Android app.
+
+1. Open **Settings → Connectors → Add custom connector**.
+2. Name it `Interego`.
+3. Paste the `/mcp` URL above.
+4. Click Connect. The first tool call opens the OAuth flow at the
+   relay's `/authorize` page — pick your credential, sign the challenge,
+   done.
+
+### Other clients (CLI / IDE)
+
 - **Claude Code (CLI)** — add 5 lines to `~/.claude.json`, restart Claude Code, first tool call triggers the OAuth browser flow.
-- **Cursor / Cline / Windsurf / Hermes / OpenClaw** — see the per-client recipes in the OAuth setup doc.
+- **Cursor / Cline / Windsurf / Hermes / OpenClaw** — see the per-client recipes in [OAUTH-SETUP.md](../deploy/mcp-relay/OAUTH-SETUP.md).
 
-The first call from your client opens a browser window at the relay's `/authorize` page. You'll see a method picker — pick the credential you enrolled in Step 1, sign the challenge, and the page closes automatically.
+For all clients, the first call opens the relay's `/authorize` page in a
+browser. Pick the credential you enrolled in Step 1, sign the challenge,
+and the page closes automatically. Your client is now bound to your
+identity.
 
 Your client now has access to ~60 substrate primitives. The most useful ones are:
 
