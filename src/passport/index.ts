@@ -236,6 +236,15 @@ export function passportToDescriptor(passport: Passport): ContextDescriptorData 
   };
 }
 
+// ── Heartbeat (tick → LifeEvent, only when biographically significant) ──
+
+export {
+  heartbeatOutcomesAreSignificant,
+  recordHeartbeatTickIfChanged,
+  type HeartbeatOutcomes,
+  type ValueDriftFinding,
+} from './heartbeat.js';
+
 /** Audit summary: counts + key milestones. */
 export function passportSummary(passport: Passport): {
   agentIdentity: IRI;
