@@ -67,7 +67,7 @@ ENV PORT=6080
 ENV NODE_NO_WARNINGS=1
 
 # Defaults — override via Azure Container App env vars at deploy time.
-ENV FOXXI_TENANT_POD_URL=https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/
+ENV FOXXI_TENANT_POD_URL=https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/
 ENV FOXXI_AUTHORITATIVE_SOURCE=did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io
 ENV FOXXI_AUDIENCE=both
 ENV BRIDGE_DEPLOYMENT_URL=https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io

@@ -44,6 +44,20 @@
 import { Wallet, verifyMessage } from 'ethers';
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
+
+// Match the bridge's canonical signing scheme:
+//   message = `sha256:<sha256-hex(JSON.stringify(payload))>`
+//   sig = wallet.signMessage(message)
+// The bridge's verifySignature() recomputes the hash from the exact bytes
+// the agent signed (sent as signedPayload) and recovers the address from
+// the signature, then checks it matches author.id (the did:key suffix).
+async function signPayload(wallet, payload) {
+  const signedPayload = JSON.stringify(payload);
+  const hash = createHash('sha256').update(signedPayload, 'utf8').digest('hex');
+  const signature = await wallet.signMessage(`sha256:${hash}`);
+  return { signedPayload, signature };
+}
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
   ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
@@ -196,14 +210,21 @@ function makeAgentTools(agent, perAgentLog) {
       },
       async ({ causeFactor, intervention, verdict, reDiagnosedCause, evidence }) => {
         perAgentLog.push({ kind: 'record', verdict });
-        const body = {
+        // The outcome the agent signs is the canonical payload — same
+        // shape the bridge's recordLiveOutcome validator expects.
+        const outcomePayload = {
           regime: 'Knowable', method: 'gap-analysis',
           causeFactor, intervention, verdict, source: 'acme',
           evidence,
           ...(verdict !== 'closed' && reDiagnosedCause ? { reDiagnosedCause } : {}),
         };
-        const out = await post('/performance/outcome', body);
-        return { content: [{ type: 'text', text: JSON.stringify({ recorded: out.status === 200, totalSamples: out.json?.profile?.totalSamples ?? null }, null, 2) }] };
+        const { signedPayload, signature } = await signPayload(agent.wallet, outcomePayload);
+        const out = await post('/performance/outcome', {
+          author: { id: agent.did, kind: 'agent' },
+          signature,
+          signedPayload,
+        });
+        return { content: [{ type: 'text', text: JSON.stringify({ recorded: out.status === 200, status: out.status, totalSamples: out.json?.profile?.totalSamples ?? null }, null, 2) }] };
       },
     ),
   ];
@@ -450,15 +471,23 @@ const atlasTools = [
           objectName: x.o, recordedAt: new Date().toISOString(),
         })),
       }];
+      // The teacher (Atlas) signs the { teachingPackage, targetBehaviour }
+      // tuple — that's the attestation the bridge checks before counting
+      // the transfer in the calibration profile.
+      const teachingPackage = {
+        iri: 'urn:cg:teaching:reference-for-field-guidance-autonomous',
+        artifactIri: 'urn:cg:tool:field-reference',
+        competency, olkeStage: 'Articulate', modalStatus: 'Hypothetical',
+      };
+      const targetBehaviour = { description: behaviourDescription, signalMarkers, antiSignalMarkers };
+      const { signedPayload, signature } = await signPayload(atlas.wallet, { teachingPackage, targetBehaviour });
       const res = await post('/agent/teach', {
-        teachingPackage: {
-          iri: 'urn:cg:teaching:reference-for-field-guidance-autonomous',
-          artifactIri: 'urn:cg:tool:field-reference',
-          competency, olkeStage: 'Articulate', modalStatus: 'Hypothetical',
-        },
+        teachingPackage,
         teacher: { id: atlas.did, kind: 'agent' },
         learner: { id: nova.did, kind: 'agent' },
-        targetBehaviour: { description: behaviourDescription, signalMarkers, antiSignalMarkers },
+        targetBehaviour,
+        signature,
+        signedPayload,
         before: traj([{ v: 'guess', o: 'the next step' }, { v: 'skip', o: 'a checklist item' }, { v: 'act', o: 'on assumptions' }, { v: 'escalate', o: 'a mistake' }]),
         after: traj([{ v: 'look up', o: 'the reference for the procedure' }, { v: 'consult', o: 'the guidance' }, { v: 'apply', o: 'the referenced step' }, { v: 'look up', o: 'the reference again' }, { v: 'complete', o: 'the procedure' }, { v: 'verify', o: 'against the guidance' }]),
       });

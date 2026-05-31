@@ -129,6 +129,36 @@ const typeColor = (iri: string): string => {
   return `hsl(${h % 360}, 35%, 45%)`;
 };
 
+// Trust badge — Interego's Option D bet visible in the UI. CSS is
+// allow-all so anonymous PUTs can still land on the pod; readers
+// distinguish what the bridge signed (or what an agent signed,
+// verified) from junk that arrived without a verifying signature.
+// Verified = real cryptographic provenance. Self-asserted = a DID is
+// claimed but no signature backs it. Unknown = neither facet visible
+// (likely a pre-Option-D legacy descriptor).
+function TrustBadge({ level }: { level: string }) {
+  const config = (() => {
+    switch (level) {
+      case 'CryptographicallyVerified':
+        return { label: 'signed ✓', bg: 'rgba(46,160,67,0.14)', fg: '#3fa84c', title: 'cryptographically verified — ECDSA signature checked against the author DID' };
+      case 'SelfAsserted':
+        return { label: 'self-asserted', bg: 'rgba(218,165,32,0.14)', fg: '#caa028', title: 'DID claimed but no verifying signature — readers downgrade' };
+      case 'ThirdPartyAttested':
+        return { label: 'attested', bg: 'rgba(82,139,219,0.14)', fg: '#5290da', title: 'third-party attestation present' };
+      default:
+        return { label: 'unsigned', bg: 'rgba(193,67,42,0.14)', fg: '#c1432a', title: 'no signature visible — calibration loop and federation reader will ignore' };
+    }
+  })();
+  return (
+    <span title={config.title} style={{
+      display: 'inline-block', padding: '1px 6px', borderRadius: 3,
+      background: config.bg, color: config.fg, fontFamily: mono, fontSize: 9,
+      letterSpacing: '0.04em', textTransform: 'lowercase',
+      border: `1px solid ${config.fg}33`,
+    }}>{config.label}</span>
+  );
+}
+
 export function PodBrowser({ onHome }: { onHome: () => void }) {
   const [podUrl, setPodUrl] = useState(TENANT_POD);
   const [entries, setEntries] = useState<ManifestEntry[]>([]);
@@ -263,8 +293,9 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
                   <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--text)', wordBreak: 'break-all', marginTop: 2 }}>
                     {typeShortName(e.describes)}
                   </div>
-                  <div style={{ fontFamily: mono, fontSize: 9, color: 'var(--text-dim)', marginTop: 2 }}>
-                    {e.modalStatus} · {e.trustLevel} · {e.facetTypes.length} facets
+                  <div style={{ fontFamily: mono, fontSize: 9, color: 'var(--text-dim)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <TrustBadge level={e.trustLevel} />
+                    <span>{e.modalStatus} · {e.facetTypes.length} facets</span>
                   </div>
                 </div>
               );
@@ -290,8 +321,9 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
                 <div style={{ fontFamily: mono, fontSize: 11, color: 'var(--text)', wordBreak: 'break-all' }}>
                   {selected.describes}
                 </div>
-                <div style={{ ...label, marginTop: 4 }}>
-                  {selected.conformsTo.map(typeShortName).join(' · ')} · {selected.modalStatus} · {selected.trustLevel}
+                <div style={{ ...label, marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <TrustBadge level={selected.trustLevel} />
+                  <span>{selected.conformsTo.map(typeShortName).join(' · ')} · {selected.modalStatus}</span>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                   <button onClick={() => setView('turtle')} style={tabStyle(view === 'turtle')}>descriptor (Turtle)</button>

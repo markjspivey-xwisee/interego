@@ -27,6 +27,20 @@ import { mintSessionToken } from '../src/auth.ts';
 import { evaluateIntervention } from '../src/performance-architecture.js';
 import { recordOutcome } from '../src/performance-calibration.js';
 import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
+import { Wallet } from 'ethers';
+import { createHash } from 'node:crypto';
+
+// The scripted demo represents an instructional designer ("J. Liu") acting
+// as the loop closer. Give that role a real wallet so its outcome write
+// passes the bridge's Option D signature gate. A fresh wallet each run is
+// fine for the demo; in production the role identity is durable.
+const LOOP_CLOSER = Wallet.createRandom();
+const LOOP_CLOSER_DID = `did:key:${LOOP_CLOSER.address.toLowerCase()}#agent`;
+async function signOutcome(payload) {
+  const signedPayload = JSON.stringify(payload);
+  const hash = createHash('sha256').update(signedPayload, 'utf8').digest('hex');
+  return { signedPayload, signature: await LOOP_CLOSER.signMessage(`sha256:${hash}`) };
+}
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
   ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
@@ -173,7 +187,11 @@ check('the intervention evaluation closes the gap', evaluation.verdict === 'clos
 h('7. CLOSE THE LOOP UPWARD — the outcome feeds the calibration loop');
 const outcome = recordOutcome(planRes.json.diagnosis, planRes.json.plan, evaluation);
 const calBefore = (await post('/performance/calibration', {})).json;
-const rec = await post('/performance/outcome', outcome);
+const { signedPayload, signature } = await signOutcome(outcome);
+const rec = await post('/performance/outcome', {
+  author: { id: LOOP_CLOSER_DID, kind: 'agent' },
+  signature, signedPayload,
+});
 const calAfter = (await post('/performance/calibration', {})).json;
 console.log(`   recorded outcome: ${outcome?.intervention}/${outcome?.causeFactor}/${outcome?.verdict}`);
 console.log(`   live outcomes on the bridge: ${rec.json.liveOutcomes}`);

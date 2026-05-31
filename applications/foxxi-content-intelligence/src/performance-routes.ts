@@ -49,10 +49,11 @@ import {
 import {
   publishOutcomeDescriptor, publishSituationDescriptor, publishTeachingPackageDescriptor,
   publishTeachingAttestationDescriptor, publishCalibrationSnapshotDescriptor,
-  publishParticipationClaimDescriptor, FOXXI_TYPES,
+  publishParticipationClaimDescriptor, verifySignature, FOXXI_TYPES,
   type DescriptorPublishConfig, type PublishedDescriptor,
 } from './outcome-descriptor-publisher.js';
 import { FederationOutcomeLoader, parseFederationPods } from './federation-outcome-loader.js';
+import { bridgeAuthor, signAsBridge } from './bridge-signer.js';
 import type { IRI } from '@interego/core';
 
 // ── JSON-LD context bound at the top of every linked-data response. ───
@@ -217,7 +218,16 @@ export function attachPerformanceRoutes(app: Express, config: {
       supersedes: lastCalibrationDescriptorIri,
       flippedAt: new Date().toISOString(),
     };
-    const result = await publishCalibrationSnapshotDescriptor(snapshot, publishConfig).catch(err => {
+    // Bridge-originated descriptor: sign as the bridge service so the
+    // calibration snapshot lands with cg:CryptographicallyVerified trust
+    // (not SelfAsserted). Readers that filter on trust level still accept
+    // it; anonymous junk that gets PUT directly to CSS does not.
+    const author = bridgeAuthor();
+    const signedPayloadJson = JSON.stringify(snapshot);
+    const signature = await signAsBridge(snapshot).catch(() => undefined);
+    const result = await publishCalibrationSnapshotDescriptor(
+      snapshot, author, signature, publishConfig, signedPayloadJson,
+    ).catch(err => {
       console.error('[foxxi-bridge] calibration descriptor publish failed:', (err as Error).message);
       return null;
     });
@@ -424,30 +434,64 @@ export function attachPerformanceRoutes(app: Express, config: {
   });
 
   // ── POST /performance/outcome — the reflexive loop's upward arm. ───
-  // A completed performance loop records its outcome here. The outcome
-  // is published as a real cg:ContextDescriptor (conformsTo foxxi:Outcome)
-  // on the tenant pod: signed by the calling agent, content-addressed by
-  // its PGSL atom, dereferenceable by anyone who follows the descriptor
-  // URL with Accept: text/turtle. The bridge keeps an in-memory MIRROR of
-  // outcomes for fast calibration reads — but the pod is the source of
-  // truth; the mirror rehydrates from the pod on startup.
+  // A completed performance loop records its outcome here.
+  //
+  // SIGNATURE REQUIRED (Option D — signature-verified writes):
+  //   body must include { signedPayload: <stringified outcome JSON>,
+  //                       signature: <ECDSA sig over `sha256:<hash>`>,
+  //                       author: { id: <did:key:0x…>, kind } }.
+  //   The bridge verifies the signature recovers to the author's DID
+  //   before recording. Unsigned / unverifiable writes return 401.
+  //   The substrate-level rationale: CSS stays allow-all (zero-trust
+  //   storage); anonymous PUTs can still land on the pod but the bridge
+  //   API rejects them, AND all readers (federation loader, calibration
+  //   recompose) filter on cg:CryptographicallyVerified — so anonymous
+  //   junk is inert at every consumer surface even when it bypasses the
+  //   API.
   app.post('/performance/outcome', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const outcome = recordLiveOutcome(body);
+    const author = asPerformer(body.author);
+    const signature = typeof body.signature === 'string' ? body.signature : undefined;
+    const signedPayload = typeof body.signedPayload === 'string' ? body.signedPayload : undefined;
+    if (!author?.id || !signature || !signedPayload) {
+      res.status(401).json({
+        error: 'signature required',
+        detail: 'POST /performance/outcome requires { author: { id: did:key:0x…, kind }, signature: <ecdsa>, signedPayload: <canonical outcome JSON string> }. The bridge verifies the ECDSA signature against author.id before recording.',
+      });
+      return;
+    }
+    const verdict = verifySignature({ signature, agentDid: author.id, payloadJson: signedPayload });
+    if (!verdict.verified) {
+      res.status(401).json({
+        error: 'signature does not verify',
+        detail: `recovered address ${verdict.recoveredAddress ?? '<none>'} did not match author.id ${author.id}.`,
+      });
+      return;
+    }
+    // signedPayload is the EXACT bytes the agent signed; parse + validate it.
+    let parsedPayload: unknown;
+    try { parsedPayload = JSON.parse(signedPayload); }
+    catch { bad(res, 'signedPayload must be valid JSON'); return; }
+    const outcome = recordLiveOutcome(parsedPayload);
     if (typeof outcome === 'string') { bad(res, outcome); return; }
     liveOutcomes.push(outcome);
 
-    const author = asPerformer(body.author);
-    const signature = typeof body.signature === 'string' ? body.signature : undefined;
+    const evidence = typeof (parsedPayload as Record<string, unknown>)?.evidence === 'string'
+      ? (parsedPayload as Record<string, unknown>).evidence as string : undefined;
     const published: PublishedDescriptor[] = [];
     if (podConfigured && publishConfig) {
+      // Pass the EXACT signed bytes through to the publisher so the
+      // descriptor's atom + foxxi:bundleJson are byte-identical with
+      // what the agent signed — federation peers re-verifying the
+      // signature key off the same bytes.
       const outcomeDesc = await tryPublish('outcome', () =>
         publishOutcomeDescriptor(
-          { ...outcome, evidence: typeof body.evidence === 'string' ? body.evidence : undefined },
+          { ...outcome, ...(evidence ? { evidence } : {}) },
           author,
           signature,
           publishConfig,
+          signedPayload,
         ));
       if (outcomeDesc) published.push(outcomeDesc);
       // Each outcome may push the cell across the modal-status threshold;
@@ -594,6 +638,31 @@ export function attachPerformanceRoutes(app: Express, config: {
     const learner = asPerformer(b.learner);
     if (!teacher || teacher.kind !== 'agent') { bad(res, 'teacher must be an agent — { id, kind: "agent" }'); return; }
     if (!learner || learner.kind !== 'agent') { bad(res, 'learner must be an agent — { id, kind: "agent" }'); return; }
+
+    // Signature gate (Option D): the TEACHER must sign the teaching
+    // package + targetBehaviour they're transmitting. Without a verified
+    // ECDSA signature recovering to teacher.id, the teaching transfer
+    // doesn't count — the calibration profile (outcome.source 'teaching')
+    // would otherwise be poisonable by anyone POSTing to /agent/teach.
+    const teacherSignature = typeof b.signature === 'string' ? b.signature : undefined;
+    const signedPayload = typeof b.signedPayload === 'string' ? b.signedPayload : undefined;
+    if (!teacherSignature || !signedPayload) {
+      res.status(401).json({
+        error: 'signature required',
+        detail: 'POST /agent/teach requires { signature: <ecdsa>, signedPayload: <canonical { teachingPackage, targetBehaviour } JSON string> } signed by teacher.id. The transfer attests to a behaviour transmission; an unsigned attestation has no weight.',
+      });
+      return;
+    }
+    const teachVerdict = verifySignature({
+      signature: teacherSignature, agentDid: teacher.id, payloadJson: signedPayload,
+    });
+    if (!teachVerdict.verified) {
+      res.status(401).json({
+        error: 'signature does not verify',
+        detail: `recovered address ${teachVerdict.recoveredAddress ?? '<none>'} did not match teacher.id ${teacher.id}.`,
+      });
+      return;
+    }
     const tp = b.teachingPackage as Record<string, unknown> | undefined;
     if (!tp || typeof tp.iri !== 'string' || typeof tp.competency !== 'string') {
       bad(res, 'a "teachingPackage" reference { iri, artifactIri, competency, olkeStage } is required '

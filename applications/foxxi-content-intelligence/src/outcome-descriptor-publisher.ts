@@ -122,7 +122,7 @@ function contentHash(input: string): string {
  * canonical JSON payload using its wallet — exactly what
  * verifyMessage() expects.
  */
-function verifySignature(args: {
+export function verifySignature(args: {
   signature: string;
   agentDid: string;
   payloadJson: string;
@@ -161,9 +161,12 @@ function buildEntityGraph(args: {
   authoritativeSource: IRI;
   authoredBy?: string;
   payload: unknown;
+  signedPayloadJson?: string;
   agentSignature?: string;
 }): string {
-  const json = JSON.stringify(args.payload);
+  // Use the agent's canonical signed bytes when present so the graph's
+  // foxxi:bundleJson hashes identically to what the signature covers.
+  const json = args.signedPayloadJson ?? JSON.stringify(args.payload);
   const b64 = Buffer.from(json, 'utf8').toString('base64');
   const hash = contentHash(json);
   const lines: string[] = [];
@@ -279,6 +282,16 @@ interface PublishEntityArgs {
   authoredBy?: { id: string; kind: 'human' | 'agent'; role?: string };
   /** Detached ECDSA signature over the payload, if the caller supplied one. */
   agentSignature?: string;
+  /**
+   * The EXACT JSON bytes the agentSignature was computed over (the
+   * agent's canonical payload string). When set, the publisher verifies
+   * the signature against THESE bytes (not against a re-stringified
+   * args.payload — JSON key order would diverge). Atomized + base64'd
+   * into the graph instead of `JSON.stringify(payload)` so the on-pod
+   * descriptor is byte-identical with what the agent signed and any
+   * federation peer can re-verify with the same bytes.
+   */
+  signedPayloadJson?: string;
   /** Modal status to embed in the descriptor's Semiotic facet. */
   modalStatus?: 'Asserted' | 'Hypothetical' | 'Counterfactual';
   /** Optional tenant/source label for the Federation facet. */
@@ -302,13 +315,16 @@ function resolveTrust(args: {
   authoredBy?: { id: string };
   payload: Record<string, unknown>;
   signature?: string;
+  /** Exact bytes the signature was over, if the caller has them. */
+  signedPayloadJson?: string;
 }): ResolvedTrust {
   if (!args.authoredBy) return { trustLevel: 'SelfAsserted', signatureVerified: false, recoveredAddress: null };
   if (!args.signature) return { trustLevel: 'SelfAsserted', signatureVerified: false, recoveredAddress: null };
+  const payloadJson = args.signedPayloadJson ?? JSON.stringify(args.payload);
   const result = verifySignature({
     signature: args.signature,
     agentDid: args.authoredBy.id,
-    payloadJson: JSON.stringify(args.payload),
+    payloadJson,
   });
   if (result.verified) {
     return { trustLevel: 'CryptographicallyVerified', signatureVerified: true, recoveredAddress: result.recoveredAddress };
@@ -329,7 +345,11 @@ function resolveTrust(args: {
  */
 export async function publishFoxxiEntity(args: PublishEntityArgs): Promise<PublishedDescriptor & { trust: ResolvedTrust }> {
   const pgsl = args.config.pgsl ?? processPgsl();
-  const payloadJson = JSON.stringify(args.payload);
+  // Atomize the EXACT signed bytes when present — guarantees that the
+  // pod's content-addressed atom hashes the same value the agent signed,
+  // and that federation peers re-verifying the descriptor key off the
+  // same canonical bytes.
+  const payloadJson = args.signedPayloadJson ?? JSON.stringify(args.payload);
   const payloadAtom = mintAtom(pgsl, payloadJson);
 
   // Honest trust evaluation: if caller supplied a signature, verify it
@@ -340,6 +360,7 @@ export async function publishFoxxiEntity(args: PublishEntityArgs): Promise<Publi
     authoredBy: args.authoredBy,
     payload: args.payload,
     signature: args.agentSignature,
+    signedPayloadJson: args.signedPayloadJson,
   });
 
   const uid = randomUUID().slice(0, 8);
@@ -354,6 +375,7 @@ export async function publishFoxxiEntity(args: PublishEntityArgs): Promise<Publi
     authoritativeSource: args.config.authoritativeSource,
     authoredBy: args.authoredBy?.id,
     payload: args.payload,
+    signedPayloadJson: args.signedPayloadJson,
     agentSignature: args.agentSignature,
   });
 
@@ -401,6 +423,7 @@ export async function publishOutcomeDescriptor(
   author: { id: string; kind: 'human' | 'agent'; role?: string } | undefined,
   signature: string | undefined,
   config: DescriptorPublishConfig,
+  signedPayloadJson?: string,
 ): Promise<PublishedDescriptor> {
   return publishFoxxiEntity({
     config,
@@ -409,6 +432,7 @@ export async function publishOutcomeDescriptor(
     payload: outcome,
     authoredBy: author,
     agentSignature: signature,
+    signedPayloadJson,
     modalStatus: 'Asserted',
     source: typeof outcome.source === 'string' ? outcome.source : 'live',
   });
@@ -498,13 +522,19 @@ export async function publishParticipationClaimDescriptor(
 
 export async function publishCalibrationSnapshotDescriptor(
   payload: Record<string, unknown>,
+  author: { id: string; kind: 'human' | 'agent'; role?: string } | undefined,
+  signature: string | undefined,
   config: DescriptorPublishConfig,
+  signedPayloadJson?: string,
 ): Promise<PublishedDescriptor> {
   return publishFoxxiEntity({
     config,
     slugPrefix: 'calibration-snapshot',
     foxxiType: FOXXI_TYPES.CalibrationProfile,
     payload,
+    authoredBy: author,
+    agentSignature: signature,
+    signedPayloadJson,
     modalStatus: 'Asserted',
     source: 'tenant-recompose',
   });

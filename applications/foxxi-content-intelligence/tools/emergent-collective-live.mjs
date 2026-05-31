@@ -27,6 +27,15 @@ import { createServer } from 'http';
 import { Wallet, verifyMessage } from 'ethers';
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
+
+// Canonical signing for outcomes/teach — matches the bridge's verifySignature().
+async function signPayload(wallet, payload) {
+  const signedPayload = JSON.stringify(payload);
+  const hash = createHash('sha256').update(signedPayload, 'utf8').digest('hex');
+  const signature = await wallet.signMessage(`sha256:${hash}`);
+  return { signedPayload, signature };
+}
 
 const PORT = Number(process.env.FOXXI_LIVE_PORT ?? 8765);
 const HOST = '127.0.0.1';
@@ -334,10 +343,15 @@ async function runAutonomousCollective({ emit, cancelled }) {
         async ({ causeFactor, intervention, verdict, reDiagnosedCause, evidence }) => {
           log('agent-tool', { name: agent.name, tool: 'record_outcome', detail: verdict });
           perAgentLog.push({ kind: 'record' });
-          const requestBody = {
+          const outcomePayload = {
             regime: 'Knowable', method: 'gap-analysis',
             causeFactor, intervention, verdict, source: 'acme', evidence,
             ...(verdict !== 'closed' && reDiagnosedCause ? { reDiagnosedCause } : {}),
+          };
+          const { signedPayload, signature } = await signPayload(agent.wallet, outcomePayload);
+          const requestBody = {
+            author: { id: agent.did, kind: 'agent' },
+            signature, signedPayload,
           };
           const out = await post('/performance/outcome', requestBody);
           emitArtifact('outcome',
@@ -528,11 +542,16 @@ Begin.`;
           agentDid: nova.did, agentName: nova.name, createdAt: new Date().toISOString(),
           steps: steps.map((x, i) => ({ modalStatus: 'Asserted', granularity: 'tool-call', verb: x.v, objectId: `o${i}`, objectName: x.o, recordedAt: new Date().toISOString() })),
         }];
+        const teachingPackage = { iri: 'urn:cg:teaching:reference-for-field-guidance-live', artifactIri: 'urn:cg:tool:field-reference', competency, olkeStage: 'Articulate', modalStatus: 'Hypothetical' };
+        const targetBehaviour = { description: behaviourDescription, signalMarkers, antiSignalMarkers };
+        const teachSig = await signPayload(atlas.wallet, { teachingPackage, targetBehaviour });
         teachRequest = {
-          teachingPackage: { iri: 'urn:cg:teaching:reference-for-field-guidance-live', artifactIri: 'urn:cg:tool:field-reference', competency, olkeStage: 'Articulate', modalStatus: 'Hypothetical' },
+          teachingPackage,
           teacher: { id: atlas.did, kind: 'agent' },
           learner: { id: nova.did, kind: 'agent' },
-          targetBehaviour: { description: behaviourDescription, signalMarkers, antiSignalMarkers },
+          targetBehaviour,
+          signature: teachSig.signature,
+          signedPayload: teachSig.signedPayload,
           before: traj([{ v: 'guess', o: 'the next step' }, { v: 'skip', o: 'a checklist item' }, { v: 'act', o: 'on assumptions' }, { v: 'escalate', o: 'a mistake' }]),
           after: traj([{ v: 'look up', o: 'the reference for the procedure' }, { v: 'consult', o: 'the guidance' }, { v: 'apply', o: 'the referenced step' }, { v: 'look up', o: 'the reference again' }, { v: 'complete', o: 'the procedure' }, { v: 'verify', o: 'against the guidance' }]),
         };

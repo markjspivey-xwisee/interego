@@ -43,6 +43,7 @@ import type {
   FederationFacetData,
 } from '@interego/core';
 import { createHash } from 'node:crypto';
+import { bridgeDid, signAsBridge } from './bridge-signer.js';
 
 const FOXXI = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 const FOXXI_BUNDLE_JSON = `${FOXXI}bundleJson` as IRI;
@@ -96,20 +97,24 @@ function snapshotDescriptor(args: {
   typeIri: IRI;
   authoritativeSource: IRI;
   previousIri: IRI | null;
+  signedByBridge: boolean;
 }): ContextDescriptorData {
   const now = new Date().toISOString();
+  const bridgeId = bridgeDid() as unknown as IRI;
   const temporal: TemporalFacetData = { type: 'Temporal', validFrom: now };
   const provenance: ProvenanceFacetData = {
     type: 'Provenance',
     wasAttributedTo: args.authoritativeSource,
+    ...(args.signedByBridge ? { wasGeneratedBy: { agent: bridgeId, endedAt: now } } : {}),
     generatedAtTime: now,
   };
   const agentFacet: AgentFacetData = {
     type: 'Agent',
     assertingAgent: {
-      id: 'urn:foxxi:bridge:snapshot-publisher' as IRI,
-      identity: args.authoritativeSource,
+      id: args.signedByBridge ? bridgeId : ('urn:foxxi:bridge:snapshot-publisher' as IRI),
+      identity: args.signedByBridge ? bridgeId : args.authoritativeSource,
       isSoftwareAgent: true,
+      ...(args.signedByBridge ? { label: 'bridge service' } : {}),
     },
   };
   const accessControl: AccessControlFacetData = {
@@ -117,7 +122,15 @@ function snapshotDescriptor(args: {
     authorizations: [{ agentClass: 'http://xmlns.com/foaf/0.1/Agent' as IRI, mode: ['Read'] }],
   };
   const semiotic: SemioticFacetData = { type: 'Semiotic', modalStatus: 'Asserted', groundTruth: true };
-  const trust: TrustFacetData = { type: 'Trust', trustLevel: 'SelfAsserted', issuer: args.authoritativeSource };
+  // Bridge-signed snapshots claim CryptographicallyVerified — the
+  // signature is embedded in the graph (foxxi:agentSignature) and any
+  // reader can re-verify with bridgeDid()'s recovered address. Without a
+  // bridge key the snapshot downgrades to SelfAsserted.
+  const trust: TrustFacetData = {
+    type: 'Trust',
+    trustLevel: args.signedByBridge ? 'CryptographicallyVerified' : 'SelfAsserted',
+    issuer: args.signedByBridge ? bridgeId : args.authoritativeSource,
+  };
   const federation: FederationFacetData = { type: 'Federation', origin: args.authoritativeSource };
   const facets: ContextFacetData[] = [temporal, provenance, agentFacet, accessControl, semiotic, trust, federation];
   return {
@@ -135,10 +148,16 @@ function snapshotGraph(args: {
   payloadAtom: IRI;
   authoritativeSource: IRI;
   payload: unknown;
+  signedPayloadJson: string;
   version: number;
   previousIri: IRI | null;
+  bridgeSignature?: string;
+  bridgeDid?: string;
 }): string {
-  const json = JSON.stringify(args.payload);
+  // Atomize + serialize the EXACT signed bytes so the on-pod graph's
+  // hash matches what bridgeSignature covers (and so federation readers
+  // can re-verify with the same bytes).
+  const json = args.signedPayloadJson;
   const b64 = Buffer.from(json, 'utf8').toString('base64');
   const hash = sha256Hex(json);
   const lines: string[] = [];
@@ -152,10 +171,12 @@ function snapshotGraph(args: {
   lines.push(`<${args.graphIri}>`);
   lines.push(`  a <${args.typeIri}> ;`);
   lines.push(`  prov:wasAttributedTo <${args.authoritativeSource}> ;`);
+  if (args.bridgeDid) lines.push(`  prov:wasGeneratedBy <${args.bridgeDid}> ;`);
   lines.push(`  pgsl:hasAtom <${args.payloadAtom}> ;`);
   lines.push(`  dct:identifier "sha256:${hash}" ;`);
   lines.push(`  <${FOXXI_VERSION}> "${args.version}"^^xsd:integer ;`);
   if (args.previousIri) lines.push(`  cg:supersedes <${args.previousIri}> ;`);
+  if (args.bridgeSignature) lines.push(`  foxxi:agentSignature "${args.bridgeSignature}" ;`);
   lines.push(`  <${FOXXI_BUNDLE_JSON}> "${b64}"^^xsd:base64Binary .`);
   return lines.join('\n');
 }
@@ -175,17 +196,27 @@ async function doPublish(reg: SnapshotRegistration): Promise<void> {
   const descriptorIri = `${graphIri}#descriptor` as IRI;
   const payloadJson = JSON.stringify(payload);
   const payloadAtom = mintAtom(pgsl(), payloadJson);
+  // Sign as the bridge service so the snapshot lands with
+  // cg:CryptographicallyVerified trust; failure to sign just degrades to
+  // SelfAsserted (a missing FOXXI_BRIDGE_PRIVATE_KEY in dev, for
+  // example, shouldn't break the publish path).
+  let bridgeSignature: string | undefined;
+  try { bridgeSignature = await signAsBridge(payload); }
+  catch (err) { console.warn(`[pod-snapshot/${reg.surface}] bridge sign failed:`, (err as Error).message); }
   const descriptor = snapshotDescriptor({
     descriptorIri, graphIri,
     typeIri: reg.typeIri,
     authoritativeSource: config.authoritativeSource,
     previousIri: reg.lastPublishedDescriptorIri,
+    signedByBridge: !!bridgeSignature,
   });
   const graphContent = snapshotGraph({
     graphIri, typeIri: reg.typeIri, payloadAtom,
     authoritativeSource: config.authoritativeSource,
-    payload, version: reg.version,
+    payload, signedPayloadJson: payloadJson, version: reg.version,
     previousIri: reg.lastPublishedDescriptorIri,
+    bridgeSignature,
+    bridgeDid: bridgeSignature ? bridgeDid() : undefined,
   });
   try {
     await publish(descriptor, graphContent, config.podUrl, {

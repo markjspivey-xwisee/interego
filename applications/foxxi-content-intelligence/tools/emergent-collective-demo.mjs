@@ -41,6 +41,15 @@ import { Wallet, verifyMessage } from 'ethers';
 import { evaluateIntervention } from '../src/performance-architecture.js';
 import { dominantCause } from '../src/performance-calibration.js';
 import { SAMPLE_OUTCOMES } from '../src/sample-outcomes.js';
+import { createHash } from 'node:crypto';
+
+// Canonical signing for outcomes — matches the bridge's verifySignature().
+async function signPayload(wallet, payload) {
+  const signedPayload = JSON.stringify(payload);
+  const hash = createHash('sha256').update(signedPayload, 'utf8').digest('hex');
+  const signature = await wallet.signMessage(`sha256:${hash}`);
+  return { signedPayload, signature };
+}
 
 const BRIDGE = process.env.FOXXI_BRIDGE_URL
   ?? 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io';
@@ -168,12 +177,18 @@ for (let ai = 0; ai < AGENTS.length; ai++) {
       transfer: { transferred: reachable, evidence: reachable ? 'the operator reached the reference in time' : 'the reference was not found in time' },
       newObserved: reachable ? exemplary : situation.observed,
     });
-    await post('/performance/outcome', {
+    const outcomePayload = {
       regime: 'Knowable', method: 'gap-analysis',
       causeFactor: cause, intervention: 'reference',
       verdict: evaluation.verdict,
       ...(evaluation.verdict !== 'closed' ? { reDiagnosedCause: 'knowledgeSkill' } : {}),
       source: 'acme',
+    };
+    const { signedPayload, signature } = await signPayload(agent.wallet, outcomePayload);
+    await post('/performance/outcome', {
+      author: { id: agent.did, kind: 'agent' },
+      signature,
+      signedPayload,
     });
     contributed++;
   }
@@ -242,17 +257,22 @@ const traj = (steps) => [{
     objectName: x.o, recordedAt: new Date().toISOString(),
   })),
 }];
+const teachingPackage = {
+  iri: 'urn:cg:teaching:reference-for-field-guidance', artifactIri: 'urn:cg:tool:field-reference',
+  competency: 'reaching guidance at the point of work', olkeStage: 'Articulate', modalStatus: 'Hypothetical',
+};
+const targetBehaviour = {
+  description: 'consults the searchable reference at the point of work before acting',
+  signalMarkers: ['reference', 'look up', 'guidance'], antiSignalMarkers: ['guess', 'skip'],
+};
+const teachSig = await signPayload(atlas.wallet, { teachingPackage, targetBehaviour });
 const teach = await post('/agent/teach', {
-  teachingPackage: {
-    iri: 'urn:cg:teaching:reference-for-field-guidance', artifactIri: 'urn:cg:tool:field-reference',
-    competency: 'reaching guidance at the point of work', olkeStage: 'Articulate', modalStatus: 'Hypothetical',
-  },
+  teachingPackage,
   teacher: { id: atlas.did, kind: 'agent' },
   learner: { id: nova.did, kind: 'agent' },
-  targetBehaviour: {
-    description: 'consults the searchable reference at the point of work before acting',
-    signalMarkers: ['reference', 'look up', 'guidance'], antiSignalMarkers: ['guess', 'skip'],
-  },
+  targetBehaviour,
+  signature: teachSig.signature,
+  signedPayload: teachSig.signedPayload,
   before: traj([{ v: 'guess', o: 'the next step' }, { v: 'skip', o: 'a checklist item' }, { v: 'act', o: 'on assumptions' }, { v: 'escalate', o: 'a mistake' }]),
   after: traj([{ v: 'look up', o: 'the reference for the procedure' }, { v: 'consult', o: 'the guidance' }, { v: 'apply', o: 'the referenced step' }, { v: 'look up', o: 'the reference again' }, { v: 'complete', o: 'the procedure' }, { v: 'verify', o: 'against the guidance' }]),
 });

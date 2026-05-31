@@ -18,6 +18,7 @@
 import { discover } from '@interego/core';
 import type { IRI } from '@interego/core';
 import type { OutcomeRecord, CauseKey } from './performance-calibration.js';
+import { verifySignature } from './outcome-descriptor-publisher.js';
 
 const FOXXI = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
 const FOXXI_OUTCOME = `${FOXXI}Outcome`;
@@ -47,10 +48,26 @@ function asOutcome(o: unknown): OutcomeRecord | null {
 }
 
 function decodeOutcomeFromGraphTurtle(turtle: string): OutcomeRecord | null {
-  const m = turtle.match(/foxxi:bundleJson\s+"([^"]+)"\^\^xsd:base64Binary/);
-  if (!m) return null;
+  const bundleMatch = turtle.match(/foxxi:bundleJson\s+"([^"]+)"\^\^xsd:base64Binary/);
+  if (!bundleMatch) return null;
+  // SIGNATURE GATE (Option D): only accept outcomes that carry a
+  // foxxi:agentSignature AND a prov:wasGeneratedBy DID, AND whose
+  // signature verifies against that DID over the exact bundle bytes.
+  // This makes anonymous junk PUT directly to CSS inert: the peer
+  // descriptors that count are only the ones the peer's bridge (or
+  // signed agent) actually emitted. Unsigned legacy peer data is
+  // silently dropped — re-seed peers with signed outcomes if needed.
+  const sigMatch = turtle.match(/foxxi:agentSignature\s+"([^"]+)"/);
+  const authorMatch = turtle.match(/prov:wasGeneratedBy\s+<([^>]+)>/);
+  if (!sigMatch || !authorMatch) return null;
   try {
-    const json = Buffer.from(m[1], 'base64').toString('utf8');
+    const json = Buffer.from(bundleMatch[1], 'base64').toString('utf8');
+    const verdict = verifySignature({
+      signature: sigMatch[1],
+      agentDid: authorMatch[1],
+      payloadJson: json,
+    });
+    if (!verdict.verified) return null;
     const parsed = JSON.parse(json) as unknown;
     return asOutcome(parsed);
   } catch { return null; }

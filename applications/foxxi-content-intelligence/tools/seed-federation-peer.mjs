@@ -15,11 +15,28 @@
  */
 
 import { publishFoxxiEntity, FOXXI_TYPES } from '../src/outcome-descriptor-publisher.js';
+import { Wallet } from 'ethers';
+import { createHash } from 'node:crypto';
 
 const PEER_POD = process.env.PEER_POD_URL
   ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/federation-peer/';
 const PEER_AUTHORITATIVE_SOURCE = process.env.PEER_AUTHORITATIVE_SOURCE
   ?? 'did:web:peer-academy.example';
+
+// Federation peer needs a real signing identity — the bridge's federation
+// loader (Option D) drops any outcome whose graph doesn't carry a
+// foxxi:agentSignature that verifies against prov:wasGeneratedBy. Set
+// PEER_SIGNING_KEY to a stable 0x-prefixed 32-byte hex to keep the peer's
+// DID stable across re-seeds; otherwise this generates an ephemeral key.
+const PEER_WALLET = process.env.PEER_SIGNING_KEY && /^0x[0-9a-fA-F]{64}$/.test(process.env.PEER_SIGNING_KEY)
+  ? new Wallet(process.env.PEER_SIGNING_KEY)
+  : Wallet.createRandom();
+const PEER_DID = `did:key:${PEER_WALLET.address.toLowerCase()}#peer-academy`;
+async function signOutcome(payload) {
+  const signedPayloadJson = JSON.stringify(payload);
+  const hash = createHash('sha256').update(signedPayloadJson, 'utf8').digest('hex');
+  return { signedPayloadJson, signature: await PEER_WALLET.signMessage(`sha256:${hash}`) };
+}
 
 // 30 outcomes spread across plausible cells. The mix is designed so the
 // peer's calibration looks like a realistic L&D operator: heavy
@@ -89,18 +106,23 @@ const podConfig = {
 
 console.log(`\n  Seeding ${PEER_OUTCOMES.length} foxxi:Outcome descriptors to peer pod:`);
 console.log(`  ${PEER_POD}`);
-console.log(`  authoritativeSource: ${PEER_AUTHORITATIVE_SOURCE}\n`);
+console.log(`  authoritativeSource: ${PEER_AUTHORITATIVE_SOURCE}`);
+console.log(`  signing DID: ${PEER_DID}\n`);
 
 let ok = 0;
 let fail = 0;
 for (let i = 0; i < PEER_OUTCOMES.length; i++) {
   const o = PEER_OUTCOMES[i];
   try {
+    const { signedPayloadJson, signature } = await signOutcome(o);
     const result = await publishFoxxiEntity({
       config: podConfig,
       slugPrefix: 'outcome',
       foxxiType: FOXXI_TYPES.Outcome,
       payload: o,
+      authoredBy: { id: PEER_DID, kind: 'agent', role: 'peer-academy-publisher' },
+      agentSignature: signature,
+      signedPayloadJson,
       modalStatus: 'Asserted',
       source: 'peer-academy',
     });
