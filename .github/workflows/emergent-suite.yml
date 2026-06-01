@@ -1,0 +1,315 @@
+name: Emergent test suite
+
+# Runs the substrate-adversarial harness in examples/emergent/ against
+# the live deployed CSS pod. Each scenario is its own .mjs script that
+# wallet-roots N agents in-process, publishes typed descriptors to the
+# pod, and asserts substrate-level invariants (composition algebra,
+# modal-status drift, sybil resistance, constitutional amendment quorum,
+# etc.). No LLM calls — every scenario costs $0 in API spend.
+#
+# This workflow only RUNS the suite. It does NOT deploy anything.
+# Deploys happen in deploy-azure.yml.
+#
+# Job shape
+#   - One matrix job per scenario, isolated by unique pod subpath
+#     (each scenario honors a *_DATE env var which gets baked into its
+#     pod path — we use ${{ github.run_id }} so concurrent / repeat
+#     runs cannot stomp each other's manifests).
+#   - dist/ is built once in the `build` job and shared via artifact;
+#     matrix jobs download it instead of rebuilding.
+#   - Required tests (4) gate the workflow. Advisory tests (4) run with
+#     continue-on-error: true so flaky / known-unstable scenarios don't
+#     red-X the run. The compressed Vigil scenario is skipped by
+#     default and only runs on workflow_dispatch with run_all=true.
+#
+# Triggers
+#   - schedule: nightly at 03:00 UTC, catches regressions in the
+#     deployed CSS pod even when nobody pushed.
+#   - workflow_dispatch: ad-hoc; lets you pick a subset of scenarios
+#     and decide whether to include the long Vigil run.
+#   - pull_request labeled `emergent-suite`: opt-in on PRs that touch
+#     substrate code (composition, ABAC, registry, passport, etc.)
+#     where it's worth paying the wall-clock cost to exercise the
+#     scenarios before merge.
+
+on:
+  schedule:
+    # 03:00 UTC daily. After the typical Azure deploy window so any
+    # deploy-azure run that morning has settled before we hit it.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: 'Comma-separated scenario names (default: all required+advisory)'
+        required: false
+        default: 'all'
+      include_watcher:
+        description: 'Include watcher-vigil-compressed (~45min)'
+        required: false
+        default: 'false'
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Don't cancel in-progress runs — the suite is observational, and a
+  # half-finished run still leaves diagnostic artifacts attached.
+  group: emergent-suite-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # The deployed CSS pod. Same default as examples/_lib.mjs so a
+  # local `npx tsx examples/emergent/<name>.mjs` hits the same target.
+  CG_DEMO_POD_BASE: https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io
+  # Unique tag baked into every scenario's pod subpath so parallel
+  # runs (and re-runs of the same workflow) never collide on the
+  # manifest at .well-known/context-graphs.
+  RUN_TAG: ${{ github.run_id }}-${{ github.run_attempt }}
+
+jobs:
+  # Gate the pull_request trigger on the `emergent-suite` label.
+  # GitHub will fire `labeled` for any label add; we filter here so
+  # adding an unrelated label doesn't kick off a 30-minute run.
+  gate:
+    name: Gate (label / schedule / dispatch)
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'emergent-suite'))
+    steps:
+      - run: echo "Gate passed for event=${{ github.event_name }}"
+
+  # Compile TypeScript once. The emergent .mjs scripts import from
+  # dist/, so a fresh build is required; doing it once and uploading
+  # avoids paying tsc on every matrix shard.
+  build:
+    name: Build dist/
+    runs-on: ubuntu-latest
+    needs: gate
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      # Belt-and-braces cache: setup-node@v4+ already caches ~/.npm
+      # via the cache: 'npm' input above, but we ALSO cache node_modules
+      # and dist/. npm ci is the slowest single step in the workflow
+      # (~30s cold), and on a cache hit we skip both ci and tsc.
+      - name: Cache node_modules + dist
+        id: cache-build
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            dist
+          key: node-22-build-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/**/*.ts') }}
+          restore-keys: |
+            node-22-build-
+
+      - name: Install deps
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        run: npm run build
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          retention-days: 3
+          if-no-files-found: error
+
+  # One job per scenario. Required scenarios fail the workflow on
+  # error; advisory scenarios are tagged continue-on-error so a known
+  # flake doesn't red-X the run. Each job downloads dist/ and runs
+  # exactly one .mjs script via tsx with a pod subpath unique to this
+  # workflow run.
+  scenario:
+    name: ${{ matrix.scenario }}
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: ${{ matrix.scenario == 'watcher-vigil-compressed' && 45 || 20 }}
+    # advisory scenarios swallow failures; required scenarios don't.
+    continue-on-error: ${{ matrix.tier == 'advisory' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Required: must pass for the workflow to be green. ────
+          - scenario: concurrent-cartographers
+            tier: required
+            date_env: CC_DATE
+          - scenario: disputed-fact-arena
+            tier: required
+            date_env: DISPUTED_FACT_DATE
+          - scenario: sybil-swarm-attestation
+            tier: required
+            date_env: SYBIL_SWARM_DATE
+          - scenario: constitutional-amendment-vote
+            tier: required
+            date_env: CAV_DATE
+
+          # ── Advisory: known-unstable; runs but never blocks. ─────
+          - scenario: closed-loop-learner
+            tier: advisory
+            date_env: EMERGENT_DATE
+          - scenario: three-runtime-pilgrimage
+            tier: advisory
+            date_env: PILGRIMAGE_DATE
+          - scenario: wallet-rotation
+            tier: advisory
+            date_env: WALLET_ROTATION_DATE
+            script: wallet-rotation-mid-relationship.mjs
+          - scenario: forge-and-flood
+            tier: advisory
+            date_env: FORGE_AND_FLOOD_DATE
+
+          # ── Off by default: long-running Vigil simulation. ───────
+          # Only runs on workflow_dispatch when include_watcher=true.
+          # The `if:` on the job is what skips it elsewhere; including
+          # it in the matrix unconditionally keeps the matrix shape
+          # stable across triggers.
+          - scenario: watcher-vigil-compressed
+            tier: advisory
+            date_env: WATCHER_DATE
+
+    # Skip the Vigil scenario unless the user explicitly opted in via
+    # workflow_dispatch. Other scenarios always run when reached.
+    # workflow_dispatch.inputs.tests is also respected: passing
+    # 'all' or leaving blank runs everything in the matrix; passing a
+    # comma-separated list narrows to those scenario names.
+    if: >-
+      (matrix.scenario != 'watcher-vigil-compressed' ||
+       (github.event_name == 'workflow_dispatch' &&
+        github.event.inputs.include_watcher == 'true')) &&
+      (github.event_name != 'workflow_dispatch' ||
+       github.event.inputs.tests == 'all' ||
+       github.event.inputs.tests == '' ||
+       contains(github.event.inputs.tests, matrix.scenario))
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Restore node_modules + dist cache
+        id: cache-build
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            dist
+          key: node-22-build-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/**/*.ts') }}
+          restore-keys: |
+            node-22-build-
+
+      # If the cache key didn't hit (e.g. a different src/ hash), we
+      # need node_modules at least so tsx can resolve imports. The
+      # `build` job has already produced + uploaded dist/, so we
+      # download that rather than rebuild.
+      - name: Install deps (cache miss only)
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        run: npm ci --no-audit --no-fund
+
+      - name: Download dist artifact
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist/
+
+      # Run the scenario. The scenario script's date-env (CC_DATE,
+      # DISPUTED_FACT_DATE, etc.) gets the RUN_TAG so this job's pod
+      # subpath is unique to (run_id, run_attempt). Output is teed to
+      # a per-scenario log file that becomes an artifact.
+      - name: Run ${{ matrix.scenario }}
+        id: run
+        env:
+          # Each scenario reads its own *_DATE env var; we set it by
+          # name via the matrix entry's date_env field.
+          # The value embeds run_id + run_attempt so concurrent jobs
+          # never collide on the same .well-known/context-graphs.
+          SCENARIO_DATE_VAR: ${{ matrix.date_env }}
+          SCENARIO_DATE_VAL: ci-${{ env.RUN_TAG }}-${{ matrix.scenario }}
+        run: |
+          mkdir -p logs
+          export "$SCENARIO_DATE_VAR=$SCENARIO_DATE_VAL"
+          SCRIPT="${{ matrix.script || format('{0}.mjs', matrix.scenario) }}"
+          echo "=== scenario:  ${{ matrix.scenario }}"
+          echo "=== tier:      ${{ matrix.tier }}"
+          echo "=== script:    examples/emergent/$SCRIPT"
+          echo "=== pod base:  $CG_DEMO_POD_BASE"
+          echo "=== date var:  $SCENARIO_DATE_VAR=$SCENARIO_DATE_VAL"
+          # tsx runs the .mjs against the just-built dist/ imports.
+          # set -o pipefail so the script's exit code survives the tee.
+          set -o pipefail
+          npx tsx "examples/emergent/$SCRIPT" 2>&1 | tee "logs/${{ matrix.scenario }}.log"
+
+      # Always upload the log — even on failure (especially on failure).
+      # Advisory scenarios use continue-on-error so the job is "success"
+      # even when the assertion failed; we still want the log.
+      - name: Upload scenario log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: log-${{ matrix.scenario }}
+          path: logs/${{ matrix.scenario }}.log
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### ${{ matrix.scenario }} (${{ matrix.tier }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Outcome:** ${{ steps.run.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Pod date tag:** \`ci-${{ env.RUN_TAG }}-${{ matrix.scenario }}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ matrix.tier }}" = "advisory" ] && [ "${{ steps.run.outcome }}" = "failure" ]; then
+            echo "- _Advisory tier — failure does not block the workflow._" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Workflow-level aggregate. Succeeds iff every REQUIRED scenario job
+  # succeeded. Advisory failures pass through. This is the job that
+  # branch-protection rules should reference, not the individual
+  # scenario jobs (matrix job names include the scenario, which makes
+  # them unstable as required-check identifiers).
+  required-suite:
+    name: Required suite
+    runs-on: ubuntu-latest
+    needs: scenario
+    if: always() && needs.scenario.result != 'cancelled'
+    steps:
+      - name: Evaluate required tier
+        run: |
+          # needs.scenario.result aggregates across the whole matrix.
+          # advisory shards are continue-on-error so they cannot turn
+          # this into 'failure'; only a required shard's failure can.
+          # 'skipped' is also fine — that's the Vigil scenario when
+          # nobody opted in.
+          R='${{ needs.scenario.result }}'
+          echo "Aggregate scenario result: $R"
+          if [ "$R" = "success" ]; then
+            echo "All required scenarios passed."
+            exit 0
+          fi
+          echo "::error::At least one required scenario failed."
+          exit 1
