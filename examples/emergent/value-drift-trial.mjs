@@ -440,7 +440,20 @@ h('ACT 6 — Verifier: fetch the biography from the pod and detect drift');
 // in-memory orchestrator shortcut.
 async function fetchValueRecord(entry) {
   try {
-    const ttl = await fetchGraphContent(entry.graphUrl);
+    // ManifestEntry currently surfaces descriptorUrl + describes but not
+    // graphUrl — publish() writes the graph at <podUrl>context-graphs/
+    // <slug>-graph.trig using a slug derived from the descriptor file
+    // (publish convention: `<slug>.ttl` -> `<slug>-graph.trig`).
+    // Recover graphUrl from descriptorUrl so the regex extractions
+    // below don't run against an undefined fetch result.
+    if (!entry.graphUrl) {
+      const slug = entry.descriptorUrl.split('/').pop().replace(/\.ttl$/, '');
+      entry.graphUrl = `${POD}context-graphs/${slug}-graph.trig`;
+    }
+    // fetchGraphContent() returns { content, encrypted, mediaType } —
+    // pull the body string before running TTL regex extractions.
+    const fetched = await fetchGraphContent(entry.graphUrl);
+    const ttl = (typeof fetched === 'string' ? fetched : fetched?.content) ?? '';
     const topic = (ttl.match(/scen:topic\s+"([^"]+)"/) ?? [])[1] ?? null;
     const polarity = (ttl.match(/scen:polarity\s+"([^"]+)"/) ?? [])[1] ?? null;
     const monthIndex = Number((ttl.match(/scen:monthIndex\s+(\d+)/) ?? [])[1] ?? -1);

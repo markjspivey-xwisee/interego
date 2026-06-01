@@ -844,11 +844,40 @@ h('ACT 5 — federation loader ingests all 5 peers; per-peer trust accounting');
 // Helper — pull the literal value of a forge-style predicate from the
 // peer's TTL graph. Same field-extraction shape as forge-and-flood; no
 // SPARQL needed for a 5-field assertion.
+//
+// Turtle quoted literals are line-wrappable and support escape sequences
+// — a naive `"[^"]*"` truncates at the first unescaped quote inside a
+// line-wrapped string, and silently misses long values like 132-char
+// signature hex. Handle:
+//   - single-line `"..."` with `\"` / `\\` / `\n` / etc. escapes
+//   - triple-quoted `"""..."""` blocks that may span multiple lines
+function unescapeTurtleString(s) {
+  // Turtle escape sequences per the spec — leave unicode escapes alone
+  // (they're not used in our signature/commitment fields).
+  return s.replace(/\\([tnrfb"'\\])/g, (_match, esc) => {
+    switch (esc) {
+      case 't': return '\t';
+      case 'n': return '\n';
+      case 'r': return '\r';
+      case 'f': return '\f';
+      case 'b': return '\b';
+      case '"':
+      case "'":
+      case '\\': return esc;
+      default: return esc;
+    }
+  });
+}
 function extractFieldLiteral(ttl, localName) {
-  // Match either prefixed (byz:foo) or bare local name spelling.
-  const re = new RegExp(`(?:byz:|\\b)${localName}\\s+"([^"]*)"`);
-  const m = re.exec(ttl);
-  return m ? m[1] : null;
+  // Prefer the triple-quoted form (multi-line, allows raw quotes) when
+  // both are present in the file. The /s flag lets `[\s\S]` span lines.
+  const tripleRe = new RegExp(`(?:byz:|\\b)${localName}\\s+"""([\\s\\S]*?)"""`);
+  const tm = tripleRe.exec(ttl);
+  if (tm) return unescapeTurtleString(tm[1]);
+  // Single-line form — allow escaped characters inside the literal.
+  const singleRe = new RegExp(`(?:byz:|\\b)${localName}\\s+"((?:\\\\.|[^"\\\\])*)"`);
+  const sm = singleRe.exec(ttl);
+  return sm ? unescapeTurtleString(sm[1]) : null;
 }
 
 // Cache TTL once per peer (the loader walks each peer's pod exactly

@@ -165,8 +165,18 @@ async function bestEffortCleanup() {
   // mid-test. Verify the manifest is empty post-cleanup; if entries
   // survived, fail loudly so the operator knows the substrate needs a
   // hard reset rather than letting the test crash much later at ACT 4.
+  // The post-cleanup discover() must survive transient 500s from the
+  // CSS manifest endpoint — otherwise a 500 here silently masks stale
+  // entries and the next publish() will pile new entries on top until
+  // the server trips its size threshold mid-test. Wrap in a small
+  // bounded retry; if it still fails, log loudly so the operator knows
+  // manifest state is uncertain (rather than silently swallowing).
   let surviving = [];
-  try { surviving = await discover(POD); } catch { /* manifest gone — good */ }
+  try {
+    surviving = await withTransientRetry(() => discover(POD), { maxAttempts: 3, baseMs: 500 });
+  } catch (err) {
+    console.log(`   warning: post-cleanup discover() failed after retries (${err.message}); manifest state uncertain, proceeding anyway`);
+  }
   if (surviving.length > 0) {
     console.log(`   warning: ${surviving.length} stale manifest entries survived DELETE; retrying per-entry`);
     for (const e of surviving) {
@@ -176,6 +186,16 @@ async function bestEffortCleanup() {
       }
     }
     await tryDelete(manifestUrl);
+    // Verify per-entry retry actually worked. If entries persist the
+    // substrate may need a hard reset — log instead of silent return.
+    try {
+      surviving = await withTransientRetry(() => discover(POD), { maxAttempts: 2, baseMs: 1000 });
+      if (surviving.length > 0) {
+        console.log(`   error: ${surviving.length} entries still on manifest after per-entry cleanup; substrate may need a hard reset`);
+      }
+    } catch (err) {
+      console.log(`   warning: final discover() also failed (${err.message}); proceeding anyway`);
+    }
   }
   return entries.length;
 }
@@ -433,7 +453,7 @@ async function publishCompositionIntent(agent, selected, supersedesIri) {
       descriptorSlug: `composition-${randomUUID().slice(0, 8)}`,
       graphSlug: `composition-${randomUUID().slice(0, 8)}-graph`,
     }),
-    { maxAttempts: 5, baseMs: 2000 },
+    { maxAttempts: 8, baseMs: 3000 },
   );
 }
 

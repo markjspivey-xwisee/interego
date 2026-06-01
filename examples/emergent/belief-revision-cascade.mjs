@@ -691,15 +691,33 @@ const assertedHits = await discover(SCENARIO_POD, { modalStatus: 'Asserted' });
 const assertedUrls = new Set(assertedHits.map(e => e.descriptorUrl));
 // The raw filter only checks the entry's own modal status. The
 // substrate-level claim we're testing is that callers building a
-// "still-believed" view MUST combine the modal filter with the
-// cascade walk; the resulting set is { Asserted descriptors } \
-// { tainted ∪ Counterfactual }. We assert the composition holds.
+// "still-believed" view MUST combine three filters:
+//   (a) discover(modalStatus=Asserted)
+//   (b) exclude descriptors that are themselves the supersede target
+//       of a Counterfactual (A0 is replaced by A1 — A0 is no longer
+//       believed even though its OWN modal-status entry still says
+//       Asserted on the historical record)
+//   (c) exclude the cascade — descriptors derived from anything in (b)
+// The cascade walk starts FROM A0; it does not include A0 itself, so
+// without (b) the still-believed set keeps A0. Compose all three.
 const taintedUrls = new Set();
 for (const url of allUrls) {
   const urn = urnForUrl.get(url);
   if (tainted.has(urn)) taintedUrls.add(url);
 }
-const stillBelievedUrls = [...assertedUrls].filter(u => !taintedUrls.has(u));
+// Build (b): URLs whose URN is the supersede target of a Counterfactual.
+const supersededByCounterfactual = new Set();
+for (const e of m2) {
+  if (e.modalStatus === 'Counterfactual' && Array.isArray(e.supersedes)) {
+    for (const s of e.supersedes) supersededByCounterfactual.add(s);
+  }
+}
+const stillBelievedUrls = [...assertedUrls].filter(u => {
+  if (taintedUrls.has(u)) return false;
+  const urn = urnForUrl.get(u);
+  if (urn && supersededByCounterfactual.has(urn)) return false;
+  return true;
+});
 console.log(`   raw Asserted filter: ${assertedHits.length} hits`);
 console.log(`   after subtracting cascade: ${stillBelievedUrls.length} still-believed`);
 check(
@@ -789,19 +807,33 @@ urnForUrl.set(publishedUrls.b2, B2_ID);
 const b2Derived = urnIdsFromGraph(trigs[publishedUrls.b2], 'prov:wasDerivedFrom');
 for (const up of b2Derived) addEdge(up, B2_ID);
 
-// Build "reconfirmed" set: descriptors that explicitly cite a
-// known-false ancestor in their wasDerivedFrom AND are themselves
-// Asserted. These are acknowledgement-rooted re-derivations.
+// Build "reconfirmed" set: descriptors that explicitly re-published
+// themselves (carry a cg:supersedes edge in the manifest) AND cite a
+// known-false ancestor (or A1) in their wasDerivedFrom AND are
+// themselves Asserted. The supersedes gate is critical — a stale
+// descriptor (C / D) that merely persists in the manifest and happens
+// to cite A0 in its derivedFrom is NOT reconfirmed; only descriptors
+// that publish a new version (B' supersedes B) while citing the
+// corrected upstream count as acknowledgement-rooted re-derivations.
+const assertedSuperseding = new Set();
+for (const e of m3) {
+  if (e.modalStatus === 'Asserted' && Array.isArray(e.supersedes) && e.supersedes.length > 0) {
+    const urn = urnForUrl.get(e.descriptorUrl);
+    if (urn) assertedSuperseding.add(urn);
+  }
+}
 const reconfirmed = new Set();
 for (const e of m3) {
   if (e.modalStatus !== 'Asserted') continue;
   const url = e.descriptorUrl;
+  const urn = urnForUrl.get(url);
+  if (!urn || !assertedSuperseding.has(urn)) continue; // must have explicitly republished
   const trig = trigs[url];
   if (!trig) continue;
   const derived = urnIdsFromGraph(trig, 'prov:wasDerivedFrom');
   for (const up of derived) {
     if (knownFalseUpstreamUrns.has(up) || up === A1_ID) {
-      reconfirmed.add(urnForUrl.get(url));
+      reconfirmed.add(urn);
       break;
     }
   }
