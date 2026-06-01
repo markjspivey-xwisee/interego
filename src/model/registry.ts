@@ -49,6 +49,100 @@ export function getRegisteredTypes(): string[] {
 }
 
 /**
+ * Structural fingerprint of a facet for deduplication purposes.
+ *
+ * Two facets that produce the same fingerprint are treated as the same
+ * sign-instance for the purpose of lattice idempotence. This is keyed
+ * off the facet `type` plus the substantive identity fields per type:
+ *   - Agent:      identity / role / onBehalfOf
+ *   - Semiotic:   modalStatus / epistemicConfidence / groundTruth / sign-system
+ *   - Trust:      trustLevel / issuer / verifiableCredential / proofMechanism
+ *   - Federation: origin / storageEndpoint / endpointURL / syncProtocol / replicaOf
+ *   - Causal:     causalModel / causalRole / parentObservation / parentIntervention
+ *
+ * Falls back to JSON of the full facet for any other shape — so
+ * unknown / extension facets dedupe conservatively (structurally-identical
+ * payloads collapse; anything else stays distinct).
+ */
+function facetFingerprint(f: any): string {
+  if (!f || typeof f !== 'object') return JSON.stringify(f);
+  switch (f.type) {
+    case 'Agent': {
+      const ag = f.assertingAgent ?? {};
+      return [
+        'Agent',
+        ag.id ?? '',
+        ag.identity ?? '',
+        ag.label ?? '',
+        ag.isSoftwareAgent ?? '',
+        f.onBehalfOf ?? '',
+        f.agentRole ?? '',
+      ].join('|');
+    }
+    case 'Semiotic':
+      return [
+        'Semiotic',
+        f.modalStatus ?? '',
+        f.epistemicConfidence ?? '',
+        f.groundTruth ?? '',
+        f.interpretationFrame ?? '',
+        f.signSystem ?? '',
+        f.languageTag ?? '',
+      ].join('|');
+    case 'Trust':
+      return [
+        'Trust',
+        f.trustLevel ?? '',
+        f.issuer ?? '',
+        f.verifiableCredential ?? '',
+        f.proofMechanism ?? '',
+        f.revocationStatus ?? '',
+      ].join('|');
+    case 'Federation':
+      return [
+        'Federation',
+        f.origin ?? '',
+        f.storageEndpoint ?? '',
+        f.endpointURL ?? '',
+        f.syncProtocol ?? '',
+        f.replicaOf ?? '',
+      ].join('|');
+    case 'Causal':
+      return [
+        'Causal',
+        f.causalModel ?? '',
+        f.causalRole ?? '',
+        f.parentObservation ?? '',
+        f.parentIntervention ?? '',
+        f.effectSize ?? '',
+        f.causalConfidence ?? '',
+      ].join('|');
+    default:
+      return JSON.stringify(f);
+  }
+}
+
+/**
+ * Deduplicate facets by structural fingerprint. Preserves first
+ * occurrence order so that union(A, B) keeps A's facets in front.
+ *
+ * Required for lattice idempotence: union(A, A) must collapse the two
+ * copies of each preserve-all facet back to a single instance.
+ */
+function dedupeByFingerprint(facets: any[]): any[] {
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const f of facets) {
+    const key = facetFingerprint(f);
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(f);
+    }
+  }
+  return out;
+}
+
+/**
  * Execute the merge strategy for a facet type.
  * Returns the merged facets (may be 0, 1, or many).
  */
@@ -62,7 +156,13 @@ export function executeMerge(
   }
   switch (strategy) {
     case 'preserve-all':
-      return facets;
+      // Structural dedupe — facets with identical sign-identity collapse
+      // back to one instance. This is what makes union(A, A) ≅ A hold
+      // for the preserve-all family (Agent / Semiotic / Trust / Federation /
+      // Causal). Distinct facets (different DIDs, different confidences,
+      // different storage endpoints) still survive as siblings — modal
+      // polyphony is preserved.
+      return dedupeByFingerprint(facets);
     case 'left-wins':
       // In override context: take the last (overriding) facets
       return facets.length > 0 ? [facets[facets.length - 1]] : [];

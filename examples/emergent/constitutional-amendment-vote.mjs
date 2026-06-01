@@ -614,7 +614,7 @@ try {
 } catch {}
 let resolutionGraphTtl = '';
 try {
-  const content = await fetchGraphContent(resolutionResult.descriptorUrl);
+  const { content } = await fetchGraphContent(resolutionResult.descriptorUrl);
   resolutionGraphTtl = content ?? '';
 } catch {}
 
@@ -643,7 +643,7 @@ let voteIntegrityHolds = true;
 const voteIntegrityDetail = [];
 for (const sv of succeededVotes) {
   try {
-    const voteContent = await fetchGraphContent(sv.result.descriptorUrl);
+    const { content: voteContent } = await fetchGraphContent(sv.result.descriptorUrl);
     const body = voteContent ?? '';
     const hasVoterDid = body.includes(`<${sv.voter.did}>`);
     const hasModal = body.includes(`"${sv.voter.modal}"`);

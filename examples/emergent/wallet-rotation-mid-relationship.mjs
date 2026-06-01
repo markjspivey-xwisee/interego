@@ -610,9 +610,14 @@ check('Verifier reads v1 + v2 passports + valid rotation descriptor',
   { v1: !!v1OnPod, v2: !!v2OnPod, rot: !!rotOnPod });
 
 // Pull the TTLs and rebuild the wallet history.
-const v1Ttl  = (await fetchTtl(passportV1.descriptorUrl)).body;
-const v2Ttl  = (await fetchTtl(passportV2.descriptorUrl)).body;
-const rotTtl = (await fetchTtl(rotation.descriptorUrl)).body;
+// The user-level scen: predicates (currentWalletAddress, previousWalletAddress,
+// retiredWalletAddress, newActiveWalletAddress) live in the published GRAPH
+// content (TriG named-graph block), NOT in the descriptor TTL — the
+// descriptor only carries framework-level facets + distribution links.
+// Fetch the graphUrl so the extractors see the user-provided payload.
+const v1Ttl  = (await fetchTtl(passportV1.graphUrl)).body;
+const v2Ttl  = (await fetchTtl(passportV2.graphUrl)).body;
+const rotTtl = (await fetchTtl(rotation.graphUrl)).body;
 
 const v1AddrFromPod = extractLiteral(v1Ttl, 'scen:currentWalletAddress');
 const v2AddrFromPod = extractLiteral(v2Ttl, 'scen:currentWalletAddress');

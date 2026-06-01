@@ -502,11 +502,30 @@ function extractMigrationDetails(ttl) {
   // and return its previousIdentity / previousPod (encoded as
   // scen:detail_previousIdentity / scen:detail_previousPod — DIDs and
   // pod URLs ARE strings on the wire).
+  //
+  // The lifeEventTriples() emitter uses Object.entries() which iterates
+  // in insertion order, so previousPod / previousIdentity may appear in
+  // either order depending on how the source event's `.details` was
+  // constructed. We therefore (1) locate each blank-node block by its
+  // opening `[` after `scen:lifeEvent` / `,` and ending matching `]`,
+  // and (2) extract each property independently inside that block.
   const out = [];
-  const re = /scen:eventKind\s+"infrastructure-migration"[^[\]]*?(?:scen:detail_previousIdentity\s+"([^"]+)")?[^[\]]*?(?:scen:detail_previousPod\s+"([^"]+)")?/g;
-  let m;
-  while ((m = re.exec(ttl)) !== null) {
-    if (m[1] || m[2]) out.push({ previousIdentity: m[1] ?? null, previousPod: m[2] ?? null });
+  // Walk every "[ ... ]" block in the TTL and inspect those that contain
+  // eventKind "infrastructure-migration". This avoids relying on the
+  // emission order of properties inside the block.
+  const blockRe = /\[([^\[\]]*)\]/g;
+  let bm;
+  while ((bm = blockRe.exec(ttl)) !== null) {
+    const block = bm[1];
+    if (!/scen:eventKind\s+"infrastructure-migration"/.test(block)) continue;
+    const idMatch = block.match(/scen:detail_previousIdentity\s+"([^"]+)"/);
+    const podMatch = block.match(/scen:detail_previousPod\s+"([^"]+)"/);
+    if (idMatch || podMatch) {
+      out.push({
+        previousIdentity: idMatch ? idMatch[1] : null,
+        previousPod: podMatch ? podMatch[1] : null,
+      });
+    }
   }
   return out;
 }

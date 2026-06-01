@@ -532,7 +532,13 @@ export async function publish(
   //    two cold-start clients clobbering each other.
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
   const newEntry = manifestEntryTurtle(descriptorUrl, descriptor);
-  const maxAttempts = 5;
+  // Under N-way concurrent contention (e.g. 5 voters firing Promise.all),
+  // 5 internal retries are not enough — the exponential window doesn't
+  // grow fast enough to scatter every writer to a clean If-Match slot.
+  // 8 attempts gives 50/100/200/400/800/1500/1500/1500ms (each + 0-200ms
+  // jitter) ≈ up to ~7s of scatter, which keeps every writer in the
+  // queue under realistic governance / cartographer-fanout contention.
+  const maxAttempts = 8;
   let lastError: string | null = null;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let manifestBody: string;
@@ -575,14 +581,14 @@ export async function publish(
     if (manifestResp.status === 412) {
       // Precondition Failed: another writer beat us. Retry with fresh GET.
       lastError = `412 (concurrent manifest update detected, attempt ${attempt}/${maxAttempts})`;
-      // Exponential backoff with jitter, capped at 1.5s per attempt.
+      // Exponential backoff with wider jitter, capped at 1.5s per attempt.
       // Linear backoff retry-storms under heavy contention because the
       // re-attempt window doesn't grow fast enough to spread writers.
-      // Exponential (50ms, 100ms, 200ms, 400ms, 800ms) plus 0-50ms
-      // jitter scatters retries effectively while keeping the worst-
-      // case total wait under 2 seconds.
+      // Exponential (50/100/200/400/800/1500/1500/1500ms) plus 0-200ms
+      // jitter scatters 5+ concurrent retries effectively (wider jitter
+      // than the original 50ms because the writer pool is larger).
       const exponentialBase = 50 * Math.pow(2, attempt - 1);
-      const jitter = Math.floor(Math.random() * 50);
+      const jitter = Math.floor(Math.random() * 200);
       const backoff = Math.min(exponentialBase + jitter, 1500);
       await new Promise(r => setTimeout(r, backoff));
       continue;
