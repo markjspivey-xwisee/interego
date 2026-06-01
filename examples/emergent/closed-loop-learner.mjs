@@ -79,6 +79,17 @@ const POD = `${CSS}/demos/emergent-closed-loop-learner-${RUN_DATE}/`;
 const SCENARIO_NS = 'https://interego-emergent.example/ns/closed-loop-learner#';
 const ec = (s) => `${SCENARIO_NS}${s}`;
 
+// ── helpers ─────────────────────────────────────────────────────────
+// ManifestEntry doesn't carry the graph URL — the substrate writes the
+// named-graph payload to a sibling resource by convention (`<slug>.ttl`
+// + `<slug>-graph.trig`) and links it from the descriptor's
+// cg:affordance / hydra:target. Until the manifest parser surfaces the
+// distribution link directly we derive the graph URL from the descriptor
+// URL using the same convention publish() uses (see src/naming/index.ts).
+function graphUrlFor(descriptorUrl) {
+  return descriptorUrl.replace(/\.ttl$/, '-graph.trig');
+}
+
 // ── tiny test harness ───────────────────────────────────────────────
 let pass = 0, fail = 0;
 const results = [];
@@ -614,13 +625,13 @@ console.log(`   discoverable catalog entries: ${catalogEntries.length}`);
 const discoveredAffordances = []; // [{vertical, action, target, ...}]
 const discoveredCatalogIris = [];
 for (const entry of catalogEntries) {
-  if (!entry.graphUrl) continue;
-  const fetched = await fetchGraphContent(entry.graphUrl, {});
+  if (!entry.descriptorUrl) continue;
+  const fetched = await fetchGraphContent(graphUrlFor(entry.descriptorUrl), {});
   const ttl = fetched.content ?? '';
   const affs = parseAffordanceBlocks(ttl);
   for (const a of affs) discoveredAffordances.push({ ...a, sourceDescriptor: entry.descriptorUrl });
   // Catalog IRI is the subject — pull it from the descriptor IRI.
-  if (entry.descriptorUrl) discoveredCatalogIris.push(entry.descriptorUrl);
+  discoveredCatalogIris.push(entry.descriptorUrl);
 }
 console.log(`   total affordances discovered: ${discoveredAffordances.length}`);
 for (const v of AGENT_SLUGS) {
@@ -716,8 +727,8 @@ console.log(`   final manifest entries: ${finalEntries.length}`);
 const synthEntry = finalEntries.find(e => e.descriptorUrl === synthPub.descriptorUrl);
 check('synthesis descriptor is on the manifest', !!synthEntry);
 
-if (synthEntry?.graphUrl) {
-  const synthFetched = await fetchGraphContent(synthEntry.graphUrl, {});
+if (synthEntry) {
+  const synthFetched = await fetchGraphContent(graphUrlFor(synthEntry.descriptorUrl), {});
   const synthTtl = synthFetched.content ?? '';
 
   // Pull participatingVertical strings out of the TTL.
@@ -750,8 +761,8 @@ check(`every invocation final descriptor supersedes its prior (got ${invocationF
 // we do a per-graph spot check for sentinel inventions.)
 let ownedDriftHits = 0;
 for (const e of finalEntries) {
-  if (!e.graphUrl) continue;
-  const tx = (await fetchGraphContent(e.graphUrl, {})).content ?? '';
+  if (!e.descriptorUrl) continue;
+  const tx = (await fetchGraphContent(graphUrlFor(e.descriptorUrl), {})).content ?? '';
   // Inventions would look like cg:closed-loop... or cgh:closed-loop...
   // None of the owned prefixes should host scenario terms.
   if (/(?:cg|cgh|pgsl|ie|hyprcat|hypragent|hela|sat|cts|olke|amta|abac|registry|passport)\s*:\s*(?:Closed-?Loop|ClosedLoop|closedLoop|emergent[A-Z])/i.test(tx)) {

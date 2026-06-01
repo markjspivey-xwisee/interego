@@ -64,7 +64,7 @@ export function getRegisteredTypes(): string[] {
  * unknown / extension facets dedupe conservatively (structurally-identical
  * payloads collapse; anything else stays distinct).
  */
-function facetFingerprint(f: any): string {
+export function facetFingerprint(f: any): string {
   if (!f || typeof f !== 'object') return JSON.stringify(f);
   switch (f.type) {
     case 'Agent': {

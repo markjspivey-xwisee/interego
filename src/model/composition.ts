@@ -19,7 +19,7 @@ import type {
   ContextTypeName,
   ComposedDescriptorData,
 } from './types.js';
-import { getFacetEntry, executeMerge } from './registry.js';
+import { getFacetEntry, executeMerge, facetFingerprint } from './registry.js';
 
 // ── Helpers ──────────────────────────────────────────────────
 
@@ -41,6 +41,61 @@ function allDescribedGraphs(descriptors: readonly ContextDescriptorData[]): IRI[
     for (const g of d.describes) set.add(g);
   }
   return [...set];
+}
+
+/**
+ * Compute the lattice meet of two facet-lists of the SAME type.
+ *
+ * For preserve-all facet types this is a true set intersection on the
+ * structural fingerprint (an instance survives only if it appears in both
+ * operands). For arithmetic strategies (convex-hull / intersect-range / chain /
+ * etc.) we call executeMerge on the concatenated list, since those strategies
+ * already compute a meet-style result (e.g. intersect-range narrows a temporal
+ * interval).
+ */
+function meetFacetsOfType(
+  type: ContextTypeName,
+  f1: readonly ContextFacetData[],
+  f2: readonly ContextFacetData[],
+): ContextFacetData[] {
+  const entry = getFacetEntry(type);
+  if (!entry) {
+    // Unknown facet type — fall back to structural set-meet on JSON shape so
+    // open-extension facets still respect lattice meet.
+    const fp2 = new Set(f2.map(f => JSON.stringify(f)));
+    const seen = new Set<string>();
+    const out: ContextFacetData[] = [];
+    for (const f of f1) {
+      const fp = JSON.stringify(f);
+      if (fp2.has(fp) && !seen.has(fp)) {
+        seen.add(fp);
+        out.push(f);
+      }
+    }
+    return out;
+  }
+  if (entry.intersectionStrategy === 'preserve-all') {
+    // Sign-instance level set intersection. Two facets are the "same instance"
+    // iff facetFingerprint() collapses them. This is what makes A ∧ B ≤ A and
+    // therefore makes the absorption law union(A, A ∧ B) ≅ A hold for
+    // operands with disjoint preserve-all instances (different DIDs, different
+    // confidences, different storage endpoints, etc.).
+    const fp2 = new Set(f2.map(facetFingerprint));
+    const seen = new Set<string>();
+    const out: ContextFacetData[] = [];
+    for (const f of f1) {
+      const fp = facetFingerprint(f);
+      if (fp2.has(fp) && !seen.has(fp)) {
+        seen.add(fp);
+        out.push(f);
+      }
+    }
+    return out;
+  }
+  // Arithmetic strategies (convex-hull / intersect-range / chain / flatten-set /
+  // highest-confidence / merge-bindings / left-wins / custom) already compute
+  // a meet-style result over the concatenated list.
+  return executeMerge(entry.intersectionStrategy, [...f1, ...f2], entry.intersectionMerge);
 }
 
 // ── Composition Operators ────────────────────────────────────
@@ -86,16 +141,15 @@ export function union(
     }
   }
 
-  // Compute shared boundary (facet types in both operands)
+  // Compute shared boundary (facet types in both operands) — uses the same
+  // lattice-meet semantics as intersection() so the PGSL structural marker
+  // stays consistent across operators.
   const sharedTypes = [...g1.keys()].filter(t => g2.has(t));
   const sharedBoundary: ContextFacetData[] = [];
   for (const type of sharedTypes) {
     const f1 = g1.get(type)!;
     const f2 = g2.get(type)!;
-    const entry = getFacetEntry(type);
-    if (entry) {
-      sharedBoundary.push(...executeMerge(entry.intersectionStrategy, [...f1, ...f2], entry.intersectionMerge));
-    }
+    sharedBoundary.push(...meetFacetsOfType(type, f1, f2));
   }
 
   return {
@@ -131,13 +185,10 @@ export function intersection(
   for (const type of sharedTypes) {
     const f1 = g1.get(type)!;
     const f2 = g2.get(type)!;
-    const all = [...f1, ...f2];
-    const entry = getFacetEntry(type);
-    if (entry) {
-      resultFacets.push(...executeMerge(entry.intersectionStrategy, all, entry.intersectionMerge));
-    } else {
-      resultFacets.push(...all);
-    }
+    // Lattice meet at the sign-instance level for preserve-all types
+    // (Agent / Semiotic / Trust / Federation / Causal) and arithmetic meet
+    // for the others — see meetFacetsOfType().
+    resultFacets.push(...meetFacetsOfType(type, f1, f2));
   }
 
   // Intersection of described graphs — meet is the GREATEST LOWER BOUND, so

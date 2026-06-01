@@ -385,7 +385,14 @@ async function publishComplianceRotationEvent({
 // ── verifier-side TTL extractors (regex, no parser dep) ──────────────
 async function fetchTtl(url) {
   try {
-    const r = await fetch(url, { headers: { Accept: 'text/turtle' } });
+    // Ask for TriG first so the server preserves any named-graph block
+    // (where scen:currentWalletAddress / scen:previousWalletAddress /
+    // scen:retiredWalletAddress / scen:newActiveWalletAddress actually
+    // live). text/turtle stays in the Accept set as a fallback for
+    // pure-descriptor resources. CSS strips the named-graph block when
+    // asked for text/turtle alone, which leaves the wallet-rotation
+    // extractors looking at the descriptor body only and returning null.
+    const r = await fetch(url, { headers: { Accept: 'application/trig, text/turtle' } });
     if (!r.ok) return { ok: false, status: r.status, body: '' };
     return { ok: true, status: r.status, body: await r.text() };
   } catch (err) {

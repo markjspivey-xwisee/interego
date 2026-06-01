@@ -465,10 +465,35 @@ check('Discoverer fetches pod-C and reads passport v4', !!v4Entry, {
 // We refuse to use orchestrator-side memory of the previous URLs — the
 // walk uses ONLY the supersedes field on each fetched descriptor.
 async function fetchDescriptorTtl(url) {
+  // The substrate splits a published descriptor into two resources: the
+  // descriptor TTL (cg:hasFacet blocks, the cg:supersedes chain) and the
+  // separately-addressed graph file (the user-supplied payload with
+  // scen:lifeEvent / scen:detail_previousPod / scen:detail_previousIdentity
+  // triples). Lineage walking needs BOTH — supersedes lives in the
+  // descriptor, infrastructure-migration events live in the graph. We
+  // fetch each and concatenate so the downstream regex extractors see one
+  // body containing everything.
+  const headers = { Accept: 'application/trig, text/turtle' };
   try {
-    const r = await fetch(url, { headers: { Accept: 'text/turtle' } });
-    if (!r.ok) return { ok: false, status: r.status, body: '' };
-    return { ok: true, status: r.status, body: await r.text() };
+    const descResp = await fetch(url, { headers });
+    if (!descResp.ok) return { ok: false, status: descResp.status, body: '' };
+    const descBody = await descResp.text();
+    // Graph URL by substrate naming convention (publish() writes
+    // <slug>.ttl + <slug>-graph.trig). The descriptor's cg:affordance /
+    // hydra:target carries the authoritative URL; we fall back to the
+    // convention if the descriptor link can't be parsed.
+    let graphUrl = null;
+    const targetMatch = descBody.match(/hydra:target\s+<([^>]+-graph\.trig)>/);
+    if (targetMatch) graphUrl = targetMatch[1];
+    else if (url.endsWith('.ttl')) graphUrl = url.replace(/\.ttl$/, '-graph.trig');
+    let graphBody = '';
+    if (graphUrl) {
+      try {
+        const graphResp = await fetch(graphUrl, { headers });
+        if (graphResp.ok) graphBody = await graphResp.text();
+      } catch { /* graph may not exist for some descriptors — that's fine */ }
+    }
+    return { ok: true, status: descResp.status, body: descBody + '\n' + graphBody };
   } catch (err) {
     return { ok: false, status: 0, body: '', err: err?.message };
   }

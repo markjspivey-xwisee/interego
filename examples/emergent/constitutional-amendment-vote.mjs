@@ -643,8 +643,28 @@ let voteIntegrityHolds = true;
 const voteIntegrityDetail = [];
 for (const sv of succeededVotes) {
   try {
-    const { content: voteContent } = await fetchGraphContent(sv.result.descriptorUrl);
-    const body = voteContent ?? '';
+    // The substrate writes two resources per publish(): the descriptor
+    // TTL (cg:hasFacet / cg:assertingAgent / cg:supersedes — that's where
+    // the voter DID lives) and the named-graph TriG (the scenario payload,
+    // including cav:voteModalStatus). Vote-integrity needs BOTH, so we
+    // fetch each and concatenate before searching. The graph URL follows
+    // the publish() convention `<slug>-graph.trig`; we also honour an
+    // explicit hydra:target if the descriptor exposes one.
+    const descUrl = sv.result.descriptorUrl;
+    const { content: descContent } = await fetchGraphContent(descUrl);
+    const descBody = descContent ?? '';
+    let graphUrl = null;
+    const targetMatch = descBody.match(/hydra:target\s+<([^>]+-graph\.trig)>/);
+    if (targetMatch) graphUrl = targetMatch[1];
+    else if (descUrl.endsWith('.ttl')) graphUrl = descUrl.replace(/\.ttl$/, '-graph.trig');
+    let graphBody = '';
+    if (graphUrl) {
+      try {
+        const { content: graphContent } = await fetchGraphContent(graphUrl);
+        graphBody = graphContent ?? '';
+      } catch { /* a vote that has no separate graph body is still verifiable from the descriptor alone */ }
+    }
+    const body = descBody + '\n' + graphBody;
     const hasVoterDid = body.includes(`<${sv.voter.did}>`);
     const hasModal = body.includes(`"${sv.voter.modal}"`);
     if (!hasVoterDid || !hasModal) {

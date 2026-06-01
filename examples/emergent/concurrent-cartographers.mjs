@@ -379,9 +379,17 @@ check(
   i12.describes.length === 1,
   i12.describes,
 );
-const expectedSharedTypes = ['Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation'];
+// Intersection is the lattice meet (A ∧ B ≤ A): each shared facet type
+// survives only if its instances actually overlap. Temporal uses an
+// arithmetic meet (intersect-range) so it always yields the overlapping
+// interval; Provenance uses 'chain' which always produces an output;
+// Federation here is identical across all four agents (same origin /
+// storageEndpoint / syncProtocol) so its single instance survives. Agent /
+// Semiotic / Trust are disjoint by DID / confidence / issuer across the
+// agents, so the instance-level meet is empty and the type drops out.
+const expectedSharedTypes = ['Temporal', 'Provenance', 'Federation'];
 check(
-  'intersection(d1, d2) preserves only facet types present in BOTH operands (Temporal, Provenance, Agent, Semiotic, Trust, Federation)',
+  'intersection(d1, d2) preserves only sign-instances present in BOTH operands (Temporal interval overlap, Provenance chain, shared Federation; Agent/Semiotic/Trust drop out at the instance level)',
   expectedSharedTypes.every(t => i12Types.has(t)) && i12Types.size === expectedSharedTypes.length,
   [...i12Types],
 );

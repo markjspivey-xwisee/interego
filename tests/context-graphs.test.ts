@@ -213,9 +213,43 @@ describe('Composition Operators', () => {
     it('excludes facet types not in both operands', () => {
       const result = intersection(d1, d2);
       const types = new Set(result.facets.map(f => f.type));
+      // Temporal is in both operands AND uses an arithmetic meet
+      // (intersect-range) that always yields a non-empty result when the
+      // intervals overlap. d1 [2026-01..2026-06] ∩ d2 [2026-03..2026-12]
+      // = [2026-03..2026-06] — so Temporal survives.
       expect(types.has('Temporal')).toBe(true);
-      expect(types.has('Trust')).toBe(true);
-      expect(types.has('Semiotic')).toBe(false); // only in d2
+      // Semiotic is only on d2 — excluded by type-level meet.
+      expect(types.has('Semiotic')).toBe(false);
+      // Trust is on both operands BUT d1.Trust(alice, CryptographicallyVerified)
+      // and d2.Trust(bob, ThirdPartyAttested) are distinct sign-instances.
+      // Lattice meet at the instance level requires A ∧ B ≤ A, so disjoint
+      // preserve-all instances drop out. (This is what makes absorption hold —
+      // see verifyAbsorption + concurrent-cartographers ACT 9.)
+      expect(types.has('Trust')).toBe(false);
+    });
+
+    it('keeps preserve-all instances that share a structural fingerprint', () => {
+      const sharedIssuer = 'did:web:shared' as IRI;
+      const a: ContextDescriptorData = {
+        id: 'urn:cg:a' as IRI,
+        describes: ['urn:graph:g' as IRI],
+        facets: [
+          { type: 'Trust', trustLevel: 'CryptographicallyVerified', issuer: sharedIssuer },
+          { type: 'Trust', trustLevel: 'SelfAsserted', issuer: 'did:web:alice' as IRI },
+        ],
+      };
+      const b: ContextDescriptorData = {
+        id: 'urn:cg:b' as IRI,
+        describes: ['urn:graph:g' as IRI],
+        facets: [
+          { type: 'Trust', trustLevel: 'CryptographicallyVerified', issuer: sharedIssuer },
+          { type: 'Trust', trustLevel: 'ThirdPartyAttested', issuer: 'did:web:bob' as IRI },
+        ],
+      };
+      const result = intersection(a, b);
+      const trusts = result.facets.filter(f => f.type === 'Trust');
+      expect(trusts).toHaveLength(1);
+      expect((trusts[0] as { issuer: IRI }).issuer).toBe(sharedIssuer);
     });
 
     it('returns null temporal facet for non-overlapping intervals', () => {

@@ -570,7 +570,11 @@ describe('CausalFacet Composition', () => {
     expect(causalFacets).toHaveLength(2);
   });
 
-  it('intersection retains causal facets when both have them', () => {
+  it('intersection retains shared causal sign-instances only', () => {
+    // Causal facets are preserve-all, so intersection takes the lattice
+    // meet at the sign-instance level (facetFingerprint equality).
+    // Disjoint observations (urn:scm:a vs urn:scm:b) drop out so that
+    // A ∧ B ≤ A still holds.
     const d1 = ContextDescriptor.create('urn:cg:d1' as IRI)
       .describes('urn:graph:g' as IRI)
       .temporal({ validFrom: '2026-01-01T00:00:00Z' })
@@ -585,7 +589,25 @@ describe('CausalFacet Composition', () => {
 
     const composed = intersection(d1, d2);
     const causalFacets = composed.facets.filter(f => f.type === 'Causal');
-    expect(causalFacets).toHaveLength(2);
+    expect(causalFacets).toHaveLength(0);
+
+    // Sanity: when the two operands DO share a causal sign-instance the
+    // shared one survives (and only the shared one).
+    const d3 = ContextDescriptor.create('urn:cg:d3' as IRI)
+      .describes('urn:graph:g' as IRI)
+      .temporal({ validFrom: '2026-01-01T00:00:00Z' })
+      .observation('urn:scm:shared' as IRI)
+      .build();
+
+    const d4 = ContextDescriptor.create('urn:cg:d4' as IRI)
+      .describes('urn:graph:g' as IRI)
+      .temporal({ validFrom: '2026-01-01T00:00:00Z' })
+      .observation('urn:scm:shared' as IRI)
+      .build();
+
+    const composedShared = intersection(d3, d4);
+    const sharedCausal = composedShared.facets.filter(f => f.type === 'Causal');
+    expect(sharedCausal).toHaveLength(1);
   });
 });
 
