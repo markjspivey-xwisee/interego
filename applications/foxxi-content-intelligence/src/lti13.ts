@@ -44,6 +44,7 @@ import { createHash, createHmac, randomUUID, createPrivateKey, createPublicKey, 
 import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
 import { tenantOrUsers, type OrUser } from './oneroster.js';
 import { listCmi5Courses } from './cmi5-lms.js';
+import { withTransientRetry } from '@interego/core';
 
 // ── Config ──────────────────────────────────────────────────────────
 
@@ -198,7 +199,16 @@ async function jwsVerifyRs256OrEs256(jwt: string, jwksUrl: string): Promise<Veri
   // Fetch JWKS and find key by kid
   let jwks: { keys?: Array<Record<string, unknown>> };
   try {
-    const r = await fetch(jwksUrl, { headers: { Accept: 'application/json' } });
+    // Transient-network retry: platform JWKS endpoints are hosted by the
+    // LMS and may be momentarily unreachable. withTransientRetry handles
+    // 5xx / connect blips; 4xx falls through to the caller as "bad URL".
+    const r = await withTransientRetry(async () => {
+      const resp = await fetch(jwksUrl, { headers: { Accept: 'application/json' } });
+      if (resp.status >= 500) {
+        throw new Error(`JWKS fetch failed: ${resp.status} ${resp.statusText}`);
+      }
+      return resp;
+    });
     if (!r.ok) return { ok: false, error: `JWKS fetch ${r.status}` };
     jwks = await r.json() as typeof jwks;
   } catch (err) { return { ok: false, error: `JWKS fetch threw: ${(err as Error).message}` }; }
@@ -404,15 +414,25 @@ async function platformToken(
   }, keys);
   let resp: Awaited<ReturnType<typeof fetch>>;
   try {
-    resp = await fetch(platform.auth_token_url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-        client_assertion: assertion,
-        scope,
-      }).toString(),
+    // Transient-network retry: OAuth2 client-credentials calls to the
+    // platform's token endpoint cross the public internet; transient 5xx
+    // or socket errors should not fail an entire AGS/NRPS flow. 4xx
+    // surfaces immediately as a registration / auth fault.
+    resp = await withTransientRetry(async () => {
+      const r = await fetch(platform.auth_token_url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+          client_assertion: assertion,
+          scope,
+        }).toString(),
+      });
+      if (r.status >= 500) {
+        throw new Error(`platform token endpoint failed: ${r.status} ${r.statusText}`);
+      }
+      return r;
     });
   } catch (err) { return { ok: false, status: 502, error: `platform token endpoint unreachable: ${(err as Error).message}` }; }
   if (!resp.ok) return { ok: false, status: 502, error: `platform token endpoint ${resp.status}` };

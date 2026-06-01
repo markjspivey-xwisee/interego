@@ -15,7 +15,7 @@
  * substrate enforces aggregate privacy without needing extra plumbing.
  */
 
-import { discover } from '@interego/core';
+import { discover, withTransientRetry } from '@interego/core';
 import type { IRI } from '@interego/core';
 import type { OutcomeRecord, CauseKey } from './performance-calibration.js';
 import { verifySignature } from './outcome-descriptor-publisher.js';
@@ -125,6 +125,7 @@ export class FederationOutcomeLoader {
   }
 
   private async loadFromPod(podUrl: string): Promise<OutcomeRecord[]> {
+    // transient-network retry now provided by @interego/core's discover
     const entries = await discover(podUrl, {}, { fetch: this.fetchFn });
     const outcomeEntries = entries.filter(e => {
       const ct = (e as { conformsTo?: readonly IRI[] }).conformsTo;
@@ -147,9 +148,11 @@ export class FederationOutcomeLoader {
         ?? this.guessGraphUrl(podUrl, graphIri);
       if (!graphUrl) continue;
       try {
-        const r = await this.fetchFn(graphUrl, { headers: { Accept: 'application/trig, text/turtle' } });
-        if (!r.ok) continue;
-        const ttl = await r.text();
+        const ttl = await withTransientRetry(async () => {
+          const r = await this.fetchFn(graphUrl, { headers: { Accept: 'application/trig, text/turtle' } });
+          if (!r.ok) throw new Error(`graph fetch failed: ${r.status} ${r.statusText}`);
+          return r.text();
+        });
         const o = decodeOutcomeFromGraphTurtle(ttl);
         if (o) outcomes.push(o);
       } catch { /* skip this entry; partial peer is OK */ }

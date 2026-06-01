@@ -16,7 +16,7 @@
  *     applies (verbatim citation, no confabulation, tamper detection)
  */
 
-import { discover, fetchGraphContent, parseManifest } from '../../../src/index.js';
+import { discover, fetchGraphContent, parseManifest, withTransientRetry } from '../../../src/index.js';
 import { createHash } from 'node:crypto';
 import type {
   UserWallet,
@@ -76,15 +76,29 @@ async function fetchTurtle(url: string, timeoutMs: number): Promise<string | nul
   // Prefer trig over turtle so .trig graph files return BOTH default and
   // named graph content; CSS may strip named graphs when serving as
   // turtle, and named graphs are where domain-namespace triples live.
+  //
+  // Transient 5xx / socket blips are retried by withTransientRetry
+  // (substrate-shared schedule: 4 attempts, 1s/2s/4s/8s backoff).
+  // 4xx and non-transient errors surface as a single null — no retry.
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const r = await fetch(url, {
-      headers: { Accept: 'application/trig, text/turtle;q=0.5, application/ld+json;q=0.3, */*;q=0.1' },
-      signal: ac.signal,
+    return await withTransientRetry(async () => {
+      const r = await fetch(url, {
+        headers: { Accept: 'application/trig, text/turtle;q=0.5, application/ld+json;q=0.3, */*;q=0.1' },
+        signal: ac.signal,
+      });
+      if (!r.ok) {
+        // Throw on 5xx so withTransientRetry's pattern matcher kicks in;
+        // throw a plain "not-ok" sentinel for 4xx so retry bails fast and
+        // the outer catch returns null (caller logs + skips this entry).
+        if (r.status >= 500) {
+          throw new Error(`Failed to GET ${url}: ${r.status} ${r.statusText}`);
+        }
+        throw new Error(`non-ok:${r.status}`);
+      }
+      return await r.text();
     });
-    if (!r.ok) return null;
-    return await r.text();
   } catch {
     return null;
   } finally {
@@ -278,7 +292,8 @@ export async function loadWalletFromPod(config: PodWalletConfig): Promise<UserWa
     if (level === 'warn') console.warn(`[pod-wallet] ${msg}`);
   });
 
-  // 1. Fetch the manifest to discover all descriptors in the pod
+  // 1. Fetch the manifest to discover all descriptors in the pod.
+  //    Transient-network retry is provided by @interego/core's discover().
   const manifestEntries = await discover(config.podUrl).catch((e) => {
     log('warn', `manifest discovery failed: ${(e as Error).message}`);
     return [];

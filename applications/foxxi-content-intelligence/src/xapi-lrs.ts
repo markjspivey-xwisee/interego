@@ -53,6 +53,7 @@ import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adap
 import { createStatementStore, ConflictError, matchesFilter, type StatementStore, type StoredStatement } from './statement-store.js';
 import { validateStatement, validateAgentObject } from './xapi-validate.js';
 import { TenantPartition, DEFAULT_TENANT, parseTenantCredentials, type TenantId } from './tenant-context.js';
+import { withTransientRetry } from '@interego/core';
 import type { IRI } from '@interego/core';
 
 void _unusedTypeAnchor;
@@ -1205,14 +1206,24 @@ async function forwardStatement(stmt: Record<string, unknown>, config: XapiLrsCo
     const [endpoint, creds, version] = tgt.split('||');
     if (!endpoint || !creds) continue;
     try {
-      const r = await fetch(`${endpoint.replace(/\/$/, '')}/statements`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Basic ${Buffer.from(creds).toString('base64')}`,
-          'X-Experience-API-Version': version || '2.0.0',
-        },
-        body: JSON.stringify(stmt),
+      // Transient-network retry: outbound Statement-Forwarding POSTs cross
+      // the public internet to peer LRSes; a single connection blip should
+      // not silently drop the statement. Treat 5xx + connect errors as
+      // transient via withTransientRetry; 4xx surfaces immediately.
+      const r = await withTransientRetry(async () => {
+        const resp = await fetch(`${endpoint.replace(/\/$/, '')}/statements`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Basic ${Buffer.from(creds).toString('base64')}`,
+            'X-Experience-API-Version': version || '2.0.0',
+          },
+          body: JSON.stringify(stmt),
+        });
+        if (resp.status >= 500) {
+          throw new Error(`forward POST failed: ${resp.status} ${resp.statusText}`);
+        }
+        return resp;
       });
       if (!r.ok) {
         // eslint-disable-next-line no-console
@@ -1235,7 +1246,18 @@ async function fetchExternalProfile(url: string): Promise<Record<string, unknown
     return _profileCache.doc;
   }
   try {
-    const r = await fetch(url, { headers: { Accept: 'application/ld+json, application/json' } });
+    // Transient-network retry: external xAPI Profile registries (e.g.,
+    // profiles.adlnet.gov mirrors) occasionally return 5xx or drop the
+    // connection. withTransientRetry only retries those classes; 404 /
+    // non-OK responses surface immediately so the caller can fall back
+    // to the bundled local profile doc.
+    const r = await withTransientRetry(async () => {
+      const resp = await fetch(url, { headers: { Accept: 'application/ld+json, application/json' } });
+      if (resp.status >= 500) {
+        throw new Error(`profile fetch failed: ${resp.status} ${resp.statusText}`);
+      }
+      return resp;
+    });
     if (!r.ok) return null;
     const doc = await r.json() as Record<string, unknown>;
     _profileCache = { url, doc, fetchedAt: Date.now() };

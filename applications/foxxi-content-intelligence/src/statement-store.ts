@@ -28,6 +28,7 @@
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { withTransientRetry } from '@interego/core';
 import { PodStatementStore } from './pod-statement-store.js';
 
 export interface StoredStatement {
@@ -258,14 +259,24 @@ export class PrimaryForwardStatementStore implements StatementStore {
   ) {}
   async put(record: StoredStatement): Promise<void> {
     await this.cache.put(record);
-    const r = await fetch(`${this.endpoint.replace(/\/$/, '')}/statements`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Experience-API-Version': this.version,
-        'Authorization': `Basic ${Buffer.from(`${this.auth.user}:${this.auth.pass}`).toString('base64')}`,
-      },
-      body: JSON.stringify(record.statement),
+    // Transient-network retry: the external primary LRS is the source of
+    // truth; a 5xx or socket blip should retry rather than silently
+    // diverging the local cache from the primary. 4xx (incl. 409
+    // immutability) surfaces immediately as the spec requires.
+    const r = await withTransientRetry(async () => {
+      const resp = await fetch(`${this.endpoint.replace(/\/$/, '')}/statements`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Experience-API-Version': this.version,
+          'Authorization': `Basic ${Buffer.from(`${this.auth.user}:${this.auth.pass}`).toString('base64')}`,
+        },
+        body: JSON.stringify(record.statement),
+      });
+      if (resp.status >= 500) {
+        throw new Error(`primary LRS failed: ${resp.status} ${resp.statusText}`);
+      }
+      return resp;
     }).catch(err => { throw new Error(`primary LRS unreachable: ${(err as Error).message}`); });
     if (!r.ok && r.status !== 204 && r.status !== 409) {
       throw new Error(`primary LRS rejected statement (HTTP ${r.status})`);

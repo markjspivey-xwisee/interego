@@ -27,7 +27,7 @@
  * because that's the natural unit of their state.
  */
 
-import { publish, createPGSL, mintAtom } from '@interego/core';
+import { publish, createPGSL, mintAtom, withTransientRetry } from '@interego/core';
 import type {
   ContextDescriptorData,
   ContextFacetData,
@@ -300,9 +300,17 @@ export async function loadLatestSnapshot<T>(surface: string): Promise<T | null> 
   if (!config) return null;
   const graphUrl = `${config.podUrl}foxxi/snapshots/${surface}-snapshot-graph.trig`;
   try {
-    const r = await config.fetch(graphUrl, { headers: { Accept: 'application/trig, text/turtle' } });
-    if (!r.ok) return null;
-    const ttl = await r.text();
+    const ttl = await withTransientRetry(async () => {
+      const r = await config.fetch(graphUrl, { headers: { Accept: 'application/trig, text/turtle' } });
+      if (!r.ok) {
+        // 404 means no snapshot yet (first run) — surface as a sentinel so
+        // the outer caller can return null without retrying.
+        if (r.status === 404) return null;
+        throw new Error(`snapshot fetch failed: ${r.status} ${r.statusText}`);
+      }
+      return r.text();
+    });
+    if (ttl === null) return null;
     const m = ttl.match(/foxxi:bundleJson\s+"([^"]+)"\^\^xsd:base64Binary/);
     if (!m) return null;
     return JSON.parse(Buffer.from(m[1], 'base64').toString('utf8')) as T;

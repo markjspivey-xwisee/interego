@@ -42,6 +42,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { withTransientRetry } from '@interego/core';
 import type { IRI } from '@interego/core';
 import type { FoxxiCourseContent } from './course-qa.js';
 
@@ -403,25 +404,30 @@ async function callAnthropic(args: {
   messages: AnthropicMessage[];
   maxTokens?: number;
 }): Promise<string> {
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': args.apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: args.model,
-      max_tokens: args.maxTokens ?? 1000,
-      system: args.system,
-      messages: args.messages,
-    }),
+  // Transient-network retry (5xx / ECONNRESET / "fetch failed") via the
+  // substrate's shared wrapper. 4xx (auth/quota) surfaces immediately —
+  // isTransientNetworkError() treats only durable-blip signals as retryable.
+  const data = await withTransientRetry<{ content?: { type: string; text?: string }[]; error?: { message: string } }>(async () => {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': args.apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: args.model,
+        max_tokens: args.maxTokens ?? 1000,
+        system: args.system,
+        messages: args.messages,
+      }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`Anthropic API ${resp.status}: ${text.slice(0, 300)}`);
+    }
+    return await resp.json() as { content?: { type: string; text?: string }[]; error?: { message: string } };
   });
-  if (!resp.ok) {
-    const text = await resp.text();
-    throw new Error(`Anthropic API ${resp.status}: ${text.slice(0, 300)}`);
-  }
-  const data: { content?: { type: string; text?: string }[]; error?: { message: string } } = await resp.json();
   if (data.error) throw new Error(`Anthropic error: ${data.error.message}`);
   return (data.content ?? [])
     .filter(b => b.type === 'text' && typeof b.text === 'string')

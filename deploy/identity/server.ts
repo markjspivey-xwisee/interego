@@ -136,6 +136,14 @@ function deriveUserIdFromCredentialId(credentialId: string): string {
 }
 function deriveUserIdFromWallet(addressLower: string): string {
   // Ethereum addresses are already 160-bit; slice directly.
+  //
+  // NOTE — do NOT migrate this to loadAgentKeypair({ envVar, label }):
+  // the input here is a CLIENT-SUPPLIED Ethereum address from the
+  // registration payload, not an operator-held private key. The userId
+  // shape `u-eth-<addr-slice>` is also intentionally distinct from the
+  // did:key format that loadAgentKeypair produces; changing it would
+  // break the federation invariant documented in the section comment
+  // above (same wallet → same userId across identity-server instances).
   return `u-eth-${addressLower.replace(/^0x/, '').slice(0, 12)}`;
 }
 function deriveUserIdFromDid(did: string): string {

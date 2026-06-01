@@ -6,7 +6,7 @@
  * evolution steps, constraints, capability evolution events.
  */
 
-import { discover } from '../../../src/index.js';
+import { discover, withTransientRetry } from '../../../src/index.js';
 import type { IRI } from '../../../src/index.js';
 
 // ── Typed records ────────────────────────────────────────────────────
@@ -114,14 +114,26 @@ async function fetchTurtle(url: string, timeoutMs: number): Promise<string | nul
   // CSS does content negotiation; for .trig files asking for text/turtle
   // strips named graphs (which is where domain-namespace triples live).
   // Request trig+turtle so we get both default + named graph content.
+  //
+  // Transient 5xx / socket blips are retried by withTransientRetry
+  // (substrate-shared schedule: 4 attempts, 1s/2s/4s/8s backoff).
+  // 4xx and non-transient errors collapse to a single null — no retry.
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const r = await fetch(url, {
-      headers: { Accept: 'application/trig, text/turtle;q=0.5, */*;q=0.1' },
-      signal: ac.signal,
+    return await withTransientRetry(async () => {
+      const r = await fetch(url, {
+        headers: { Accept: 'application/trig, text/turtle;q=0.5, */*;q=0.1' },
+        signal: ac.signal,
+      });
+      if (!r.ok) {
+        if (r.status >= 500) {
+          throw new Error(`Failed to GET ${url}: ${r.status} ${r.statusText}`);
+        }
+        throw new Error(`non-ok:${r.status}`);
+      }
+      return await r.text();
     });
-    return r.ok ? await r.text() : null;
   } catch { return null; } finally { clearTimeout(t); }
 }
 
@@ -201,6 +213,7 @@ export async function loadProbeCycle(config: LoaderConfig): Promise<ProbeCycleSt
   const timeoutMs = config.fetchTimeoutMs ?? 6000;
   const log = config.logger ?? ((level, msg) => { if (level === 'warn') console.warn(`[adp-loader] ${msg}`); });
 
+  // Transient-network retry is provided by @interego/core's discover().
   const entries = await discover(config.podUrl).catch((e) => {
     log('warn', `manifest discovery failed: ${(e as Error).message}`);
     return [];

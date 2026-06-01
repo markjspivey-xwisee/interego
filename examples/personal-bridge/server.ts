@@ -72,6 +72,27 @@ function log(msg: string): void {
 // Bridge identity — your wallet's private key. If unset we mint a
 // fresh one for the session (development only). Persist this for
 // stable identity across restarts.
+//
+// Why this site keeps `importWallet(BRIDGE_KEY, …)` instead of
+// composing `loadAgentKeypair` from `@interego/core`:
+//   1. The bridge's published pubkey is `client.pubkey`, which P2pClient
+//      sets to the wallet's CHECKSUMMED ethers address (`0xAbC…`).
+//      `loadAgentKeypair` lowercases the address before exposing it,
+//      which would silently rotate the bridge's on-relay identity for
+//      every operator who upgrades. Identity preservation wins over
+//      tidiness here.
+//   2. `P2pClient` with `signingScheme: 'schnorr'` calls
+//      `exportPrivateKey(wallet.address)`, which reads from the
+//      in-process `walletKeys` map populated by `importWallet`.
+//      `loadAgentKeypair` does not register the key there, so Schnorr
+//      signing would break.
+//   3. We need the RAW BRIDGE_KEY hex anyway for `deriveEncryptionKeyPair`
+//      and `deriveStorageKey`, so the env-or-mint decision is still
+//      meaningfully tied to a hex string the rest of this file consumes.
+// The bridge-originated identity wrapper used by Foxxi
+// (applications/foxxi-content-intelligence/src/bridge-signer.ts) does
+// use `loadAgentKeypair` because it signs as a did:key author and
+// never goes through P2pClient.
 function loadOrMintKey(): string {
   const fromEnv = process.env['BRIDGE_KEY'];
   if (fromEnv) return fromEnv;
