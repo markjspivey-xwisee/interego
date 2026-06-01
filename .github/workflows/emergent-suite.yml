@@ -17,7 +17,7 @@ name: Emergent test suite
 #     runs cannot stomp each other's manifests).
 #   - dist/ is built once in the `build` job and shared via artifact;
 #     matrix jobs download it instead of rebuilding.
-#   - Required tests (4) gate the workflow. Advisory tests (4) run with
+#   - Required tests (4) gate the workflow. Advisory tests (9) run with
 #     continue-on-error: true so flaky / known-unstable scenarios don't
 #     red-X the run. The compressed Vigil scenario is skipped by
 #     default and only runs on workflow_dispatch with run_all=true.
@@ -177,6 +177,26 @@ jobs:
           - scenario: forge-and-flood
             tier: advisory
             date_env: FORGE_AND_FLOOD_DATE
+
+          # ── Advisory (second tier): new, not-yet-tested vs substrate. ──
+          # These were committed in a6b4a26 and have never run against the
+          # deployed CSS. Marked advisory until we've seen them green
+          # across a few nightly runs.
+          - scenario: byzantine-federation-loader
+            tier: advisory
+            date_env: BYZANTINE_FEDERATION_DATE
+          - scenario: time-travel-audit
+            tier: advisory
+            date_env: TTA_DATE
+          - scenario: belief-revision-cascade
+            tier: advisory
+            date_env: BRC_DATE
+          - scenario: partitioned-saga-replay
+            tier: advisory
+            date_env: PSR_DATE
+          - scenario: value-drift-trial
+            tier: advisory
+            date_env: VALUE_DRIFT_DATE
 
           # ── Off by default: long-running Vigil simulation. ───────
           # Only runs on workflow_dispatch when include_watcher=true.

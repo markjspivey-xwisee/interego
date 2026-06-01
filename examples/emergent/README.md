@@ -50,6 +50,11 @@ and the script prints `got vs. expected` for the failure.
 | `three-runtime-pilgrimage`        | `three-runtime-pilgrimage.mjs`            | `PILGRIMAGE_DATE`       | advisory  | unstable |
 | `wallet-rotation`                 | `wallet-rotation-mid-relationship.mjs`    | `WALLET_ROTATION_DATE`  | advisory  | unstable |
 | `forge-and-flood`                 | `forge-and-flood.mjs`                     | `FORGE_AND_FLOOD_DATE`  | advisory  | unstable |
+| `byzantine-federation-loader`     | `byzantine-federation-loader.mjs`         | `BYZANTINE_FEDERATION_DATE` | advisory | not yet run against substrate |
+| `time-travel-audit`               | `time-travel-audit.mjs`                   | `TTA_DATE`              | advisory  | not yet run against substrate |
+| `belief-revision-cascade`         | `belief-revision-cascade.mjs`             | `BRC_DATE`              | advisory  | not yet run against substrate |
+| `partitioned-saga-replay`         | `partitioned-saga-replay.mjs`             | `PSR_DATE`              | advisory  | not yet run against substrate |
+| `value-drift-trial`               | `value-drift-trial.mjs`                   | `VALUE_DRIFT_DATE`      | advisory  | not yet run against substrate |
 | `watcher-vigil-compressed`        | `watcher-vigil-compressed.mjs`            | `WATCHER_DATE`          | opt-in    | long-running (~45min) |
 
 ### Required (4)
@@ -61,13 +66,21 @@ amendment quorum. Branch protection should reference the workflow's
 `Required suite` job (not the individual matrix shards — matrix job
 names are unstable as required-check identifiers).
 
-### Advisory (4)
+### Advisory (9)
 
-Run in CI with `continue-on-error: true`. They surface real substrate
-gaps but currently exhibit intermittent failures we haven't fully
-chased down — typically timing / propagation around cross-pod
-discovery and CAS retry. Log output is uploaded as a per-scenario
-artifact (`log-<scenario>`) for post-mortem.
+Run in CI with `continue-on-error: true`. Two subgroups:
+
+- **First tier (4)** — `closed-loop-learner`, `three-runtime-pilgrimage`,
+  `wallet-rotation`, `forge-and-flood`. Surface real substrate gaps but
+  currently exhibit intermittent failures we haven't fully chased down —
+  typically timing / propagation around cross-pod discovery and CAS retry.
+- **Second tier (5)** — `byzantine-federation-loader`, `time-travel-audit`,
+  `belief-revision-cascade`, `partitioned-saga-replay`, `value-drift-trial`.
+  New scenarios, not yet run against the deployed substrate. Advisory until
+  they've gone green across a few nightly runs and we promote them.
+
+Log output is uploaded as a per-scenario artifact (`log-<scenario>`) for
+post-mortem.
 
 ### Opt-in (1)
 

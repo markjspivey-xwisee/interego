@@ -126,17 +126,47 @@ async function deleteIfExists(url) {
 async function wipePod(podUrl) {
   // CSS exposes containers as LDP — we issue DELETE on the container
   // contents we know we wrote. Best effort; missing resources are fine.
+  //
+  // IMPORTANT: do NOT rely on discover() alone to enumerate cleanup
+  // targets. discover() reads the manifest, and if a prior run's
+  // publish() only partially registered an entry (or the manifest is
+  // stale relative to the actual files on disk), the *-graph.trig
+  // payloads can stay on the pod even though the descriptor pointer
+  // looks gone. The subsequent publish() uses `If-None-Match: *` on
+  // the graph PUT and silently treats a 412 (file already exists) as
+  // success — so a stale graph file from an earlier run survives,
+  // and the discoverer reads stale DIDs out of LifeEvent details.
+  //
+  // Fix: brute-force delete every known descriptor/graph URL by
+  // convention (passport-v{1..4}.ttl + passport-v{1..4}-graph.trig +
+  // verdict.ttl + verdict-graph.trig), then *also* drain via
+  // discover() in case prior runs used different slugs. Only after
+  // these targeted deletes do we drop the manifest + container.
   const cgRoot = `${podUrl}context-graphs/`;
-  // Recursively walk and delete via the LDP listing. We just probe
-  // the container with a HEAD; if 404 we skip.
+  // Brute-force delete the well-known passport + verdict URLs first.
+  // These run unconditionally — even if HEAD on the container returns
+  // 404 the individual files might still exist if the container
+  // listing is out of sync with storage.
+  for (const slug of ['passport-v1', 'passport-v2', 'passport-v3', 'passport-v4', 'verdict']) {
+    await deleteIfExists(`${cgRoot}${slug}.ttl`);
+    await deleteIfExists(`${cgRoot}${slug}-graph.trig`);
+  }
+  // Now probe the container; if it's gone we can stop early.
   try {
     const head = await fetch(cgRoot, { method: 'HEAD' });
-    if (head.status === 404) return;
-  } catch { return; }
-  // Enumerate via discover() and delete each entry's descriptor + graph.
+    if (head.status === 404) {
+      await deleteIfExists(`${podUrl}.well-known/context-graphs`);
+      return;
+    }
+  } catch {
+    await deleteIfExists(`${podUrl}.well-known/context-graphs`);
+    return;
+  }
+  // Enumerate via discover() and delete any remaining entries that
+  // used non-default slugs (defence-in-depth against future renames).
   let entries;
   try { entries = await discover(podUrl); }
-  catch { return; }
+  catch { entries = []; }
   for (const e of entries) {
     if (e.descriptorUrl) await deleteIfExists(e.descriptorUrl);
     if (e.graphUrl) await deleteIfExists(e.graphUrl);

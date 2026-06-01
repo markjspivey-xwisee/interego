@@ -155,6 +155,28 @@ async function bestEffortCleanup() {
   await tryDelete(manifestUrl);
   await tryDelete(`${POD}.well-known/`);
   await tryDelete(`${POD}context-graphs/`);
+  // Belt-and-suspenders: the CSS manifest endpoint has been observed to
+  // return 500 once it carries more than ~14 entries (see client.js'
+  // 5xx-retry branch). If the bulk DELETE above failed to actually
+  // remove the manifest resource (e.g. the container wouldn't drop while
+  // a sibling held a write lock), discover() will still return stale
+  // entries on the next call — and the publish() that follows will pile
+  // its NEW entry on top of the old ones until the server trips the limit
+  // mid-test. Verify the manifest is empty post-cleanup; if entries
+  // survived, fail loudly so the operator knows the substrate needs a
+  // hard reset rather than letting the test crash much later at ACT 4.
+  let surviving = [];
+  try { surviving = await discover(POD); } catch { /* manifest gone — good */ }
+  if (surviving.length > 0) {
+    console.log(`   warning: ${surviving.length} stale manifest entries survived DELETE; retrying per-entry`);
+    for (const e of surviving) {
+      if (e.descriptorUrl) {
+        await tryDelete(graphUrlFor(e.descriptorUrl));
+        await tryDelete(e.descriptorUrl);
+      }
+    }
+    await tryDelete(manifestUrl);
+  }
   return entries.length;
 }
 
@@ -397,12 +419,21 @@ async function publishCompositionIntent(agent, selected, supersedesIri) {
     .verified(agent.did);
   if (supersedesIri) builder = builder.supersedes(supersedesIri);
 
+  // The composition-intent publish lands at the point in the test where
+  // the manifest is largest (5 catalogs + 1 discovery already on the pod
+  // from this run, plus any stragglers the cleanup couldn't shake off).
+  // CSS has been observed to return 500 from the manifest endpoint as
+  // the entry count climbs; give the outer retry a bigger budget than
+  // the default 3 attempts and a longer base backoff so the server gets
+  // real recovery time between retries (the inner publish() already
+  // burns its 8 attempts in ~7s — chasing it with another 3 attempts at
+  // 1s/2s/4s isn't enough).
   return withTransientRetry(
     () => publish(builder.build(), graph.trim(), POD, {
       descriptorSlug: `composition-${randomUUID().slice(0, 8)}`,
       graphSlug: `composition-${randomUUID().slice(0, 8)}-graph`,
     }),
-    { maxAttempts: 3 },
+    { maxAttempts: 5, baseMs: 2000 },
   );
 }
 

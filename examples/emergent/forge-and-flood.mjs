@@ -268,6 +268,7 @@ async function publishHonestOutcome(issuer, idx, value) {
     did: issuer.did,
     address: issuer.address,
     descriptorUrl: res.descriptorUrl,
+    graphUrl: res.graphUrl,
     commitment, signature, value,
     fingerprint,
   });
@@ -357,6 +358,7 @@ async function publishForgedOutcome(attacker, victim, idx, value, kind) {
     claimedAddress: victim.address,
     attackerAddress: attacker.address,
     descriptorUrl: res.descriptorUrl,
+    graphUrl: res.graphUrl,
     commitment, signature, value,
     forgeryKind: kind,
   });
@@ -420,6 +422,7 @@ async function publishReplayedOutcome(attacker, original, idx) {
   ledger.replayed.push({
     originalDescriptorUrl: original.descriptorUrl,
     replayDescriptorUrl: res.descriptorUrl,
+    replayGraphUrl: res.graphUrl,
     commitment: original.commitment,
     signature: original.signature,
     fingerprint: original.fingerprint,
@@ -670,13 +673,29 @@ const outcomeEntries = discovered.filter(e =>
   (e.conformsTo ?? []).some(c => outcomeTypes.has(c)));
 console.log(`   outcome-typed entries on pod: ${outcomeEntries.length}`);
 
-// Cache the TTL once — all 4 readers will see the same content
+// Build a descriptorUrl -> graphUrl lookup from the publish ledger. The
+// manifest entry exposes only descriptorUrl (the .ttl pointer); the
+// signed payload (forge:commitment + forge:signature) lives in the
+// separate .trig graph file written by publish(). To run the signature
+// filter the reader must fetch the GRAPH, not the descriptor TTL.
+const graphUrlByDescriptor = new Map();
+for (const o of ledger.honest)   graphUrlByDescriptor.set(o.descriptorUrl, o.graphUrl);
+for (const f of ledger.forged)   graphUrlByDescriptor.set(f.descriptorUrl, f.graphUrl);
+for (const r of ledger.replayed) graphUrlByDescriptor.set(r.replayDescriptorUrl, r.replayGraphUrl);
+
+// Cache the TriG payload once — all 4 readers will see the same content
 // (deterministic across observers is one of the assertions).
 const ttlCache = new Map();
 for (const entry of outcomeEntries) {
   let ttl = '';
+  const graphUrl = graphUrlByDescriptor.get(entry.descriptorUrl)
+    // Fallback: derive the graph URL from the descriptor URL by the
+    // publish slug convention (<slug>.ttl -> <slug>-graph.trig). Used
+    // only if the ledger lookup misses (e.g. on re-discover after
+    // restart) — exact same shape publish() writes.
+    ?? entry.descriptorUrl.replace(/\.ttl$/, '-graph.trig');
   try {
-    const dist = await fetchGraphContent(entry.descriptorUrl, {});
+    const dist = await fetchGraphContent(graphUrl, {});
     ttl = dist.content ?? '';
   } catch { ttl = ''; }
   ttlCache.set(entry.descriptorUrl, ttl);
