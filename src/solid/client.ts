@@ -18,6 +18,7 @@ import { toTurtle } from '../rdf/serializer.js';
 import { turtlePrefixes } from '../rdf/namespaces.js';
 import { ownerProfileToTurtle, parseOwnerProfile, delegationCredentialToJsonLd, verifyDelegation } from '../model/delegation.js';
 import { createEncryptedEnvelope, openEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair } from '../crypto/encryption.js';
+import { withTransientRetry } from './retry.js';
 
 import type {
   FetchFn,
@@ -467,19 +468,21 @@ export async function publish(
     graphContentType = TRIG_CONTENT_TYPE;
   }
 
-  const graphResponse = await fetchFn(graphUrl, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': graphContentType,
-      'If-None-Match': '*',
-    },
-    body: graphBody,
+  await withTransientRetry(async () => {
+    const graphResponse = await fetchFn(graphUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': graphContentType,
+        'If-None-Match': '*',
+      },
+      body: graphBody,
+    });
+    if (!graphResponse.ok && graphResponse.status !== 412) {
+      throw new Error(
+        `Failed to write graph to ${graphUrl}: ${graphResponse.status} ${graphResponse.statusText}`,
+      );
+    }
   });
-  if (!graphResponse.ok && graphResponse.status !== 412) {
-    throw new Error(
-      `Failed to write graph to ${graphUrl}: ${graphResponse.status} ${graphResponse.statusText}`,
-    );
-  }
 
   // 2. PUT the descriptor as standalone Turtle — augmented with a
   //    hypermedia Distribution block linking to the graph payload.
@@ -497,16 +500,18 @@ export async function publish(
     recipientCount: options.encrypt?.recipients.length,
   });
   const descriptorWithDistribution = descriptorTurtle.trimEnd() + '\n\n' + distributionBlock + '\n';
-  const descResponse = await fetchFn(descriptorUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': TURTLE_CONTENT_TYPE },
-    body: descriptorWithDistribution,
+  await withTransientRetry(async () => {
+    const descResponse = await fetchFn(descriptorUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': TURTLE_CONTENT_TYPE },
+      body: descriptorWithDistribution,
+    });
+    if (!descResponse.ok) {
+      throw new Error(
+        `Failed to write descriptor to ${descriptorUrl}: ${descResponse.status} ${descResponse.statusText}`,
+      );
+    }
   });
-  if (!descResponse.ok) {
-    throw new Error(
-      `Failed to write descriptor to ${descriptorUrl}: ${descResponse.status} ${descResponse.statusText}`,
-    );
-  }
 
   // 3. Update the manifest — CAS-safe via HTTP If-Match.
   //
@@ -533,30 +538,35 @@ export async function publish(
     let manifestBody: string;
     let etag: string | null = null;
 
-    const existingResp = await fetchFn(manifestUrl, {
+    const existingResp = await withTransientRetry(() => fetchFn(manifestUrl, {
       method: 'GET',
       headers: { 'Accept': TURTLE_CONTENT_TYPE },
-    });
+    }));
 
+    let alreadyPublished = false;
     if (existingResp.ok) {
       etag = existingResp.headers?.get('etag') ?? null;
       const existing = await existingResp.text();
       if (existing.includes(`<${descriptorUrl}>`)) {
         // Already in manifest (idempotent re-publish); skip the PUT.
-        break;
+        alreadyPublished = true;
+        manifestBody = existing;
+      } else {
+        manifestBody = `${existing.trimEnd()}\n\n${newEntry}\n`;
       }
-      manifestBody = `${existing.trimEnd()}\n\n${newEntry}\n`;
     } else {
       manifestBody = `${turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod', 'dct'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
     }
+
+    if (alreadyPublished) break;
 
     const headers: Record<string, string> = { 'Content-Type': TURTLE_CONTENT_TYPE };
     if (etag) headers['If-Match'] = etag;
     else headers['If-None-Match'] = '*';   // cold-start: only PUT if no manifest exists
 
-    const manifestResp = await fetchFn(manifestUrl, {
+    const manifestResp = await withTransientRetry(() => fetchFn(manifestUrl, {
       method: 'PUT', headers, body: manifestBody,
-    });
+    }));
 
     if (manifestResp.ok) {
       lastError = null;
@@ -722,8 +732,11 @@ export async function fetchGraphContent(
   options: { fetch?: FetchFn; recipientKeyPair?: EncryptionKeyPair } = {},
 ): Promise<{ content: string | null; encrypted: boolean; mediaType: string }> {
   const fetchFn = options.fetch ?? getDefaultFetch();
-  const r = await fetchFn(graphUrl, { headers: { 'Accept': `${ENVELOPE_CONTENT_TYPE}, ${TRIG_CONTENT_TYPE}, ${TURTLE_CONTENT_TYPE}` } });
-  if (!r.ok) throw new Error(`Failed to GET ${graphUrl}: ${r.status} ${r.statusText}`);
+  const r = await withTransientRetry(async () => {
+    const resp = await fetchFn(graphUrl, { headers: { 'Accept': `${ENVELOPE_CONTENT_TYPE}, ${TRIG_CONTENT_TYPE}, ${TURTLE_CONTENT_TYPE}` } });
+    if (!resp.ok) throw new Error(`Failed to GET ${graphUrl}: ${resp.status} ${resp.statusText}`);
+    return resp;
+  });
   const mediaType = r.headers?.get('Content-Type') ?? '';
   const body = await r.text();
 
@@ -773,10 +786,10 @@ export async function discover(
   const pod = ensureTrailingSlash(podUrl);
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
 
-  const response = await fetchFn(manifestUrl, {
+  const response = await withTransientRetry(() => fetchFn(manifestUrl, {
     method: 'GET',
     headers: { 'Accept': TURTLE_CONTENT_TYPE },
-  });
+  }));
 
   if (!response.ok) {
     if (response.status === 404) {
@@ -831,9 +844,9 @@ export async function subscribe(
   // Step 1: Discover the storage description URL.
   // Per Solid Protocol, any resource's response includes a Link header
   // with rel="http://www.w3.org/ns/solid/terms#storageDescription".
-  const headResponse = await fetchFn(pod, {
+  const headResponse = await withTransientRetry(() => fetchFn(pod, {
     method: 'HEAD',
-  });
+  }));
 
   let storageDescUrl: string | undefined;
 
@@ -850,10 +863,10 @@ export async function subscribe(
   }
 
   // Step 2: Fetch the storage description to find the notification endpoint.
-  const descResponse = await fetchFn(storageDescUrl, {
+  const descResponse = await withTransientRetry(() => fetchFn(storageDescUrl, {
     method: 'GET',
     headers: { 'Accept': 'text/turtle' },
-  });
+  }));
 
   if (!descResponse.ok) {
     throw new Error(
@@ -887,7 +900,7 @@ export async function subscribe(
   }
 
   // Step 3: Request a WebSocket subscription for the topic.
-  const subResponse = await fetchFn(subscriptionEndpoint, {
+  const subResponse = await withTransientRetry(() => fetchFn(subscriptionEndpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/ld+json' },
     body: JSON.stringify({
@@ -895,7 +908,7 @@ export async function subscribe(
       type: 'http://www.w3.org/ns/solid/notifications#WebSocketChannel2023',
       topic,
     }),
-  });
+  }));
 
   if (!subResponse.ok) {
     throw new Error(
@@ -911,7 +924,14 @@ export async function subscribe(
   }
 
   // Step 4: Open WebSocket and listen for notifications.
-  const ws = new WS(wsUrl);
+  //
+  // Some WebSocket implementations throw synchronously from the
+  // constructor on transient failures (DNS hiccup, refused connect).
+  // We retry the open itself with the same backoff schedule the rest
+  // of the substrate uses — but only for the open. Once the channel
+  // is established the long-lived stream is the caller's resume
+  // problem; we deliberately do not paper over disconnects below.
+  const ws = await withTransientRetry(() => Promise.resolve(new WS(wsUrl)));
 
   ws.onmessage = (event: { data: unknown }) => {
     try {

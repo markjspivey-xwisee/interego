@@ -25,36 +25,38 @@
  *       bridge-signed descriptors will see them downgrade to SelfAsserted.
  */
 
-import { Wallet, HDNodeWallet } from 'ethers';
 import { createHash } from 'node:crypto';
+import { loadAgentKeypair, type AgentKeypair, type AgentWallet } from '@interego/core';
 
-// Ethers's Wallet.createRandom() returns HDNodeWallet; new Wallet(key)
-// returns Wallet. Both expose .address + .signMessage — type the cache
-// against the common surface.
-type SigningWallet = Wallet | HDNodeWallet;
-let _wallet: SigningWallet | null = null;
+// Cache the resolved keypair so the bridge has a single identity for
+// the lifetime of the process. The first caller mints (or loads) it
+// and prints the startup banner; subsequent callers reuse the cached
+// instance. loadAgentKeypair itself is silent — the banner lives here
+// so the [foxxi-bridge] prefix stays consistent with the rest of the
+// service's logging.
+let _keypair: AgentKeypair | null = null;
 
-export function bridgeWallet(): SigningWallet {
-  if (_wallet) return _wallet;
-  const raw = process.env.FOXXI_BRIDGE_PRIVATE_KEY?.trim();
-  let next: SigningWallet;
-  if (raw && /^0x[0-9a-fA-F]{64}$/.test(raw)) {
-    next = new Wallet(raw);
-    _wallet = next;
-    console.log(`[foxxi-bridge] using FOXXI_BRIDGE_PRIVATE_KEY identity ${bridgeDid()}`);
+function ensureKeypair(): AgentKeypair {
+  if (_keypair) return _keypair;
+  const next = loadAgentKeypair({ envVar: 'FOXXI_BRIDGE_PRIVATE_KEY', label: 'bridge' });
+  _keypair = next;
+  if (next.source === 'env') {
+    console.log(`[foxxi-bridge] using FOXXI_BRIDGE_PRIVATE_KEY identity ${next.did}`);
   } else {
-    next = Wallet.createRandom();
-    _wallet = next;
     console.warn(
       '[foxxi-bridge] FOXXI_BRIDGE_PRIVATE_KEY not set — generated ephemeral',
-      `identity ${bridgeDid()}. Bridge-signed descriptors will not survive restart.`,
+      `identity ${next.did}. Bridge-signed descriptors will not survive restart.`,
     );
   }
   return next;
 }
 
+export function bridgeWallet(): AgentWallet {
+  return ensureKeypair().wallet;
+}
+
 export function bridgeDid(): string {
-  return `did:key:${bridgeWallet().address.toLowerCase()}#bridge`;
+  return ensureKeypair().did;
 }
 
 export function bridgeAuthor(): { id: string; kind: 'agent'; role: string } {

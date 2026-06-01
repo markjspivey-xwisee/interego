@@ -85,6 +85,13 @@ export {
   readAnchors,
 } from './anchors.js';
 
+// ── Transient-network retry (substrate plumbing) ────────────
+export {
+  withTransientRetry,
+  isTransientNetworkError,
+} from './retry.js';
+export type { TransientRetryOptions } from './retry.js';
+
 export type {
   IpfsAnchorReceipt,
   SignatureAnchorReceipt,

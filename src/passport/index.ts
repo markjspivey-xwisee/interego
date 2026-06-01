@@ -245,6 +245,15 @@ export {
   type ValueDriftFinding,
 } from './heartbeat.js';
 
+// ── Agent keypair loader (env-or-ephemeral, did:key derivation) ──
+
+export {
+  loadAgentKeypair,
+  type AgentKeypair,
+  type AgentWallet,
+  type LoadAgentKeypairOptions,
+} from './wallet.js';
+
 /** Audit summary: counts + key milestones. */
 export function passportSummary(passport: Passport): {
   agentIdentity: IRI;

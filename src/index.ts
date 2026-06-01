@@ -343,9 +343,13 @@ export {
   WELL_KNOWN_AGENTS_PATH,
   socialWalk,
   predictDescriptorUrl,
+  // Transient-network retry (substrate plumbing for fetch wrappers)
+  withTransientRetry,
+  isTransientNetworkError,
 } from './solid/index.js';
 
 export type {
+  TransientRetryOptions,
   FetchFn,
   FetchResponse,
   WebSocketLike,
@@ -928,6 +932,12 @@ export type {
   LifeEvent,
   LifeEventKind,
   StatedValue,
+} from './passport/index.js';
+export { loadAgentKeypair } from './passport/index.js';
+export type {
+  AgentKeypair,
+  AgentWallet,
+  LoadAgentKeypairOptions,
 } from './passport/index.js';
 
 // ── ABAC (attribute-based access control) ───────────────────

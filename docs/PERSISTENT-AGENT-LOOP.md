@@ -73,6 +73,26 @@ async function tick(ctx: LoopContext): Promise<void> {
 
 ---
 
+## Built-in resilience: withTransientRetry + loadAgentKeypair
+
+Two pieces of plumbing the loop relies on are worth knowing about because they remove boilerplate that every runtime would otherwise reinvent. Neither adds a protocol primitive — they are network and identity helpers the substrate uses internally.
+
+**Transient retry is automatic.** The network calls in the loop — `subscribe`, `discover_all`, `publish`, `fetchGraphContent` — are wrapped in `withTransientRetry` inside the client. Callers don't need to add their own retry loop. The schedule is 4 attempts with exponential backoff (~1 s, 2 s, 4 s, 8 s; ~15 s total ceiling), and it triggers on the classes of failure that are worth retrying: `ECONNRESET`, `ETIMEDOUT`, `UND_ERR_CONNECT*`, `UND_ERR_SOCKET*`, `fetch failed`, and 5xx responses. Non-transient errors (4xx other than 412, malformed responses, signature failures) bypass the retry and surface immediately. The existing manifest 412 CAS retry in `publish` composes through the same helper, so all retry paths are consistent. Lives in [`src/solid/retry.ts`](../src/solid/retry.ts).
+
+**A stable agent identity is one call.** Most persistent runtimes want the same wallet across restarts so the agent's pod-rooted identity survives the loop being relaunched. `loadAgentKeypair` is the canonical place to ask for it:
+
+```ts
+const me = loadAgentKeypair({ envVar: 'MY_AGENT_KEY', label: 'agent' });
+// me.wallet — ethers Wallet
+// me.did    — did:key:<lower(address)>#agent
+// me.address — 0x…
+// me.source — 'env' | 'ephemeral'
+```
+
+If the env var holds a `0x`-prefixed 64-hex private key, the helper imports it; otherwise it mints a fresh wallet and returns `source: 'ephemeral'`. The helper itself is silent — the caller decides whether an ephemeral identity is worth a `console.warn` (always-on bridges usually want the warning; one-shot OS-cron processes usually don't). Lives in [`src/passport/wallet.ts`](../src/passport/wallet.ts).
+
+---
+
 ## Per-runtime mountings
 
 Every runtime below mounts the *same* canonical loop. What changes is the scheduler, the channel for push notifications, and the failure mode when the host is suspended.

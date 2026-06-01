@@ -65,7 +65,7 @@
  * repo root: `npm i --no-save @anthropic-ai/claude-agent-sdk zod`.
  */
 
-import { Wallet, verifyMessage } from 'ethers';
+import { verifyMessage } from 'ethers';
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
@@ -74,6 +74,8 @@ import {
   publish,
   discover,
   fetchGraphContent,
+  withTransientRetry,
+  loadAgentKeypair,
 } from '../dist/index.js';
 import { recordHeartbeatTickIfChanged } from '../src/passport/heartbeat.js';
 
@@ -151,6 +153,21 @@ function evalBoard(board) {
 const ts = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 const log = (...args) => console.log(`[${ts()}]`, ...args);
 
+// Demo-level adapter around the substrate's withTransientRetry: the
+// watcher tick wants null-on-failure-with-log semantics so a single
+// flaky call doesn't crash the whole tick. The substrate helper does
+// the actual retry schedule (1s / 2s / 4s / 8s exponential backoff +
+// transient-error detection); this only converts the throw into a
+// null + log so the rest of the tick can keep making progress.
+async function withRetry(label, fn) {
+  try {
+    return await withTransientRetry(fn);
+  } catch (err) {
+    log(`${label} failed: ${err?.message ?? String(err)}`);
+    return null;
+  }
+}
+
 // ── collective wallets ──────────────────────────────────────────────
 const COLLECTIVE_SPECS = [
   { name: 'Aggressor', disposition: 'offensive', envKey: 'AGGRESSOR_KEY' },
@@ -160,22 +177,12 @@ const COLLECTIVE_SPECS = [
 ];
 
 function buildCollective() {
-  let warnedEphemeral = false;
   const players = new Map();
   const byDid = new Map();
+  let sawEphemeral = false;
   for (const spec of COLLECTIVE_SPECS) {
-    const raw = process.env[spec.envKey];
-    let wallet;
-    if (raw && /^0x[0-9a-fA-F]{64}$/.test(raw)) {
-      wallet = new Wallet(raw);
-    } else {
-      if (!warnedEphemeral) {
-        log(`WARN: at least one of ${COLLECTIVE_SPECS.map(s => s.envKey).join(' / ')} is unset — minting ephemeral keys; collective DIDs will NOT survive a restart.`);
-        warnedEphemeral = true;
-      }
-      wallet = Wallet.createRandom();
-    }
-    const did = `did:key:${wallet.address.toLowerCase()}#agent`;
+    const { wallet, did, source } = loadAgentKeypair({ envVar: spec.envKey, label: 'agent' });
+    if (source === 'ephemeral') sawEphemeral = true;
     const entry = {
       ...spec,
       wallet,
@@ -186,6 +193,9 @@ function buildCollective() {
     };
     players.set(spec.name, entry);
     byDid.set(did.toLowerCase(), entry);
+  }
+  if (sawEphemeral) {
+    log(`WARN: at least one of ${COLLECTIVE_SPECS.map(s => s.envKey).join(' / ')} is unset — minting ephemeral keys; collective DIDs will NOT survive a restart.`);
   }
   return { players, byDid };
 }
@@ -247,10 +257,13 @@ async function publishCollectiveRoster(collective) {
     .verified(signer.did)
     .build();
 
-  return publish(desc, graph.trim(), TOURNAMENT_POD, {
-    descriptorSlug: 'collective-roster',
-    graphSlug: 'collective-roster-graph',
-  });
+  return withRetry(
+    'publishCollectiveRoster publish',
+    () => publish(desc, graph.trim(), TOURNAMENT_POD, {
+      descriptorSlug: 'collective-roster',
+      graphSlug: 'collective-roster-graph',
+    }),
+  );
 }
 
 async function publishAcceptance(player, challenge) {
@@ -301,10 +314,13 @@ async function publishAcceptance(player, challenge) {
     .verified(player.did)
     .build();
 
-  return publish(desc, graph.trim(), TOURNAMENT_POD, {
-    descriptorSlug: `${challenge.gameSlug}-acceptance`,
-    graphSlug: `${challenge.gameSlug}-acceptance-graph`,
-  });
+  return withRetry(
+    `publishAcceptance ${challenge.gameSlug}`,
+    () => publish(desc, graph.trim(), TOURNAMENT_POD, {
+      descriptorSlug: `${challenge.gameSlug}-acceptance`,
+      graphSlug: `${challenge.gameSlug}-acceptance-graph`,
+    }),
+  );
 }
 
 async function publishMove({ game, player, mark, cell, signedPayload, signature, reason }) {
@@ -376,10 +392,17 @@ async function publishMove({ game, player, mark, cell, signedPayload, signature,
     .verified(player.did)
     .build();
 
-  const result = await publish(desc, graph.trim(), TOURNAMENT_POD, {
-    descriptorSlug: `${game.gameSlug}-move-${String(n).padStart(2, '0')}`,
-    graphSlug: `${game.gameSlug}-move-${String(n).padStart(2, '0')}-graph`,
-  });
+  const result = await withRetry(
+    `publishMove ${game.gameSlug} move-${String(n).padStart(2, '0')}`,
+    () => publish(desc, graph.trim(), TOURNAMENT_POD, {
+      descriptorSlug: `${game.gameSlug}-move-${String(n).padStart(2, '0')}`,
+      graphSlug: `${game.gameSlug}-move-${String(n).padStart(2, '0')}-graph`,
+    }),
+  );
+  if (!result) {
+    log(`publishMove ${game.gameSlug} move-${String(n).padStart(2, '0')}: giving up — leaving game state un-advanced so a later tick can retry the move`);
+    return { descriptorUrl: null, boardAfter, terminal: false, verdict: null, failed: true };
+  }
 
   game.moveNumber = n;
   game.board = boardAfter;
@@ -417,7 +440,11 @@ async function readChallengeDetails(descriptorUrl, conformsTo) {
   // publishing (descriptorSlug + graphSlug = `${descriptorSlug}-graph`).
   // fetchGraphContent wants the GRAPH url, not the descriptor's.
   const graphUrl = descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1');
-  const fetched = await fetchGraphContent(graphUrl, {});
+  const fetched = await withRetry(
+    `readChallengeDetails fetchGraphContent ${graphUrl}`,
+    () => fetchGraphContent(graphUrl, {}),
+  );
+  if (!fetched) return null;
   const turtle = fetched.content ?? '';
 
   const gameIdMatch = turtle.match(/tictactoe:gameId\s+<([^>]+)>/);
@@ -464,7 +491,11 @@ async function readChallengeDetails(descriptorUrl, conformsTo) {
 
 async function readMoveDetails(descriptorUrl) {
   const graphUrl = descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1');
-  const fetched = await fetchGraphContent(graphUrl, {});
+  const fetched = await withRetry(
+    `readMoveDetails fetchGraphContent ${graphUrl}`,
+    () => fetchGraphContent(graphUrl, {}),
+  );
+  if (!fetched) return null;
   const turtle = fetched.content ?? '';
   const gameIdMatch = turtle.match(/tictactoe:gameId\s+<([^>]+)>/);
   const moveNumberMatch = turtle.match(/tictactoe:moveNumber\s+(\d+)/);
@@ -559,6 +590,9 @@ function makePlayerTools(player, game) {
           return { content: [{ type: 'text', text: JSON.stringify({ error: 'signature self-check failed', expected: player.did, recovered }) }] };
         }
         const out = await publishMove({ game, player, mark, cell, signedPayload, signature, reason });
+        if (out.failed) {
+          return { content: [{ type: 'text', text: JSON.stringify({ error: 'publish failed after retries', cell, mark }) }] };
+        }
         return { content: [{ type: 'text', text: JSON.stringify({
           ok: true,
           descriptor_url: out.descriptorUrl,
@@ -754,7 +788,14 @@ async function tick(collective) {
   const publishedDescriptors = [];
   const transactionsExecuted = [];
   try {
-    const entries = await discover(TOURNAMENT_POD);
+    const entries = await withRetry(
+      `tick discover(${TOURNAMENT_POD})`,
+      () => discover(TOURNAMENT_POD),
+    );
+    if (!entries) {
+      log('tick: discover failed after retries — skipping this tick, will retry on next interval');
+      return;
+    }
     const { challenges, acceptances, moves } = classify(entries);
 
     // Index acceptances + moves by what they supersede so we can ask
@@ -786,6 +827,10 @@ async function tick(collective) {
       }
       const chosen = chooseCollectivePlayer(collective, challenge);
       const acceptance = await publishAcceptance(chosen, challenge);
+      if (!acceptance) {
+        log(`challenge ${challenge.gameSlug}: acceptance publish failed after retries — leaving challenge pending for next tick`);
+        continue;
+      }
       publishedDescriptors.push(acceptance.descriptorUrl);
 
       // Seed orchestrator-side game state. Challenger plays
@@ -931,10 +976,14 @@ async function main() {
   log('publishing collective roster…');
   try {
     const roster = await publishCollectiveRoster(collective);
-    log(`roster descriptor: ${roster.descriptorUrl}`);
-    collectivePassport = recordHeartbeatTickIfChanged(collectivePassport, {
-      publishedDescriptors: [roster.descriptorUrl],
-    });
+    if (!roster) {
+      log('failed to publish roster after retries — continuing without it; challengers can still target known DIDs directly');
+    } else {
+      log(`roster descriptor: ${roster.descriptorUrl}`);
+      collectivePassport = recordHeartbeatTickIfChanged(collectivePassport, {
+        publishedDescriptors: [roster.descriptorUrl],
+      });
+    }
   } catch (err) {
     log(`failed to publish roster: ${err.message}`);
   }

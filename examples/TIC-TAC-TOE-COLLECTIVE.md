@@ -110,6 +110,46 @@ Cost note: $0. The watcher uses the same Claude Code OAuth subscription.
 
 ---
 
+## Make the collective's identity persistent across restarts
+
+By default the watcher mints a fresh ECDSA wallet for each of the four
+members on every startup. That works for a one-shot demo, but the DID
+is derived deterministically from the wallet's credentials — so when
+the keys rotate, the DIDs rotate with them, and peers who played the
+collective yesterday have no way to link those past games to the
+signer they reach today. The supersedes chain still validates, but
+the actor on the other end is, cryptographically, a different agent.
+
+To keep the same four DIDs across restarts, generate one ECDSA
+private key per member and pass them in via env vars
+(`AGGRESSOR_KEY`, `SENTINEL_KEY`, `MIRROR_KEY`, `WILDCARD_KEY`). A
+helper script is included to do this safely:
+
+```
+npx tsx examples/tic-tac-toe-mint-collective-keys.mjs
+```
+
+The script generates any of the four keys that aren't already set in
+the environment, prints them as `export AGGRESSOR_KEY=0x…` lines, and
+writes a `.env.collective` file alongside. Re-running it is safe — it
+preserves keys that are already present and only fills in the missing
+ones, so you can rotate one member without touching the others.
+
+Use the output in whichever shape fits your deployment:
+
+- Paste the `export` lines into your shell rc for local runs.
+- Source `.env.collective` directly, or launch the watcher via
+  `tsx --env-file .env.collective examples/tic-tac-toe-watcher.mjs`.
+- Stash the four hex strings in your secret manager and inject them
+  as env vars in your container / systemd unit / CI runner.
+
+If the watcher starts without all four keys present it falls back to
+ephemeral wallets and logs a single warning — fine for a smoke test,
+not what you want for an online collective that other identities are
+tracking.
+
+---
+
 ## 3. Challenge the collective
 
 A small client any Interego identity can run to discover the
@@ -138,6 +178,30 @@ or a DID. The challenger:
 The collective member's response comes from the watcher process —
 the challenger doesn't run any Claude code itself unless you pass
 `--ai` to delegate move selection to a local Claude session.
+
+### If you hit transient network errors
+
+The substrate is the source of truth: the game state lives on the
+pod, not in the running challenger process. Every move is a signed
+descriptor that's already published before the next turn begins, and
+the supersedes chain reconstructs the board from scratch on demand.
+A challenger that crashes mid-game has lost nothing the pod doesn't
+already have.
+
+Both the watcher and the challenger wrap every network call —
+`discover`, `fetchGraphContent`, `publish`, and the startup pod
+reachability check — in retry-with-exponential-backoff (1s, 2s, 4s,
+8s) on transient errors like `UND_ERR_CONNECT_TIMEOUT`, dropped
+sockets, and 5xx responses. Brief CSS hiccups don't break a game in
+flight; they just delay the next move by a few seconds.
+
+If the challenger does hard-crash (laptop closes, network gives up
+entirely), just re-run it against the same opponent. A future
+`--resume <gameId>` flag will rejoin an in-progress game by reading
+the supersedes chain and picking up at the next un-played turn;
+today, restart starts a fresh challenge and the abandoned game
+remains on the pod as a draw-by-timeout once the watcher's match
+timeout elapses.
 
 Cost note: $0 on a Claude Code OAuth subscription; the challenger
 itself is just a signed-HTTP loop and has no model cost.

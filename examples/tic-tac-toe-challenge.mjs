@@ -45,7 +45,7 @@
  * completed). Exits non-zero only on substrate / publishing failure.
  */
 
-import { Wallet, verifyMessage } from 'ethers';
+import { verifyMessage } from 'ethers';
 import { createHash } from 'node:crypto';
 import readline from 'node:readline';
 import {
@@ -53,6 +53,8 @@ import {
   publish,
   discover,
   fetchGraphContent,
+  withTransientRetry,
+  loadAgentKeypair,
 } from '../dist/index.js';
 
 // ── config ──────────────────────────────────────────────────────────
@@ -133,18 +135,36 @@ function evalBoard(b) {
   return null;
 }
 
-// ── wallet bootstrap ────────────────────────────────────────────────
-function loadOrMintWallet() {
-  const key = process.env.CHALLENGER_KEY;
-  if (key) {
-    const w = new Wallet(key.startsWith('0x') ? key : `0x${key}`);
-    return { wallet: w, fresh: false };
+// ── retry-with-backoff helper ───────────────────────────────────────
+// Demo-level adapter around the substrate's withTransientRetry: the
+// challenger wants null-on-failure-with-log semantics (read paths skip
+// + keep polling; write paths call abortOnLostConnection on null). The
+// substrate helper does the actual retry schedule (1s / 2s / 4s / 8s
+// exponential backoff + transient-error detection); this only converts
+// the throw into a null + log so each call site can decide what to do.
+async function withRetry(label, fn) {
+  try {
+    return await withTransientRetry(fn);
+  } catch (err) {
+    console.error(`   ${label} failed: ${err?.message ?? String(err)}`);
+    return null;
   }
-  return { wallet: Wallet.createRandom(), fresh: true };
 }
 
-const { wallet: ME, fresh: WALLET_IS_FRESH } = loadOrMintWallet();
-const MY_DID = `did:key:${ME.address.toLowerCase()}#agent`;
+// Abort the game gracefully on a write that exhausted retries. Reads can
+// skip and continue polling, but writes (publish) must succeed before
+// telling the user their move landed — otherwise local state diverges
+// from the pod (the actual source of truth).
+function abortOnLostConnection(label) {
+  console.error(`\nlost connection to CSS after 4 attempts while ${label}.`);
+  console.error(`game state may be inconsistent; the pod is the source of truth.`);
+  console.error(`you can re-run the challenger to resume from the last move.`);
+  process.exit(1);
+}
+
+// ── wallet bootstrap ────────────────────────────────────────────────
+const { wallet: ME, did: MY_DID, source: WALLET_SOURCE } = loadAgentKeypair({ envVar: 'CHALLENGER_KEY', label: 'agent' });
+const WALLET_IS_FRESH = WALLET_SOURCE === 'ephemeral';
 
 // ── header ──────────────────────────────────────────────────────────
 console.log('=== Interego Tic-Tac-Toe — Challenger ===');
@@ -169,7 +189,11 @@ if (!podLive) {
 console.log(`   pod is live`);
 
 console.log(`\n— discovering the collective roster + rules —`);
-let entries = await discover(TOURNAMENT_POD);
+let entries = await withRetry('initial roster discover', () => discover(TOURNAMENT_POD));
+if (!entries) {
+  console.error(`could not reach the tournament pod to discover the roster after retries. aborting.`);
+  process.exit(1);
+}
 const rulesEntry = entries.find(e => (e.conformsTo ?? []).includes(RULES_IRI) && /rules/i.test(e.descriptorUrl));
 if (rulesEntry) {
   console.log(`   rules descriptor: ${rulesEntry.descriptorUrl}`);
@@ -184,7 +208,8 @@ async function findOpponentDid(name) {
   // Cheap path: try the move descriptors — any move from the opponent
   // exposes its DID in tictactoe:player + prov:wasGeneratedBy.
   for (const e of entries) {
-    const fetched = await fetchGraphContent(e.descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1'), {}).catch(() => null);
+    const graphUrl = e.descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1');
+    const fetched = await withRetry(`findOpponentDid fetch ${graphUrl}`, () => fetchGraphContent(graphUrl, {}));
     if (!fetched?.content) continue;
     if (fetched.content.includes(`"${name}"`) || fetched.content.includes(`tictactoe:playerName "${name}"`)) {
       const m = fetched.content.match(/tictactoe:player\s+<([^>]+)>/);
@@ -260,10 +285,13 @@ const challengeDesc = ContextDescriptor.create(challengeIri)
   .build();
 
 console.log(`\n— publishing your challenge —`);
-const challengePub = await publish(challengeDesc, challengeGraph.trim(), TOURNAMENT_POD, {
+const challengePub = await withRetry('publish challenge', () => publish(challengeDesc, challengeGraph.trim(), TOURNAMENT_POD, {
   descriptorSlug: challengeSlug,
   graphSlug: `${challengeSlug}-graph`,
-});
+}));
+if (!challengePub) {
+  abortOnLostConnection('publishing the NewGameChallenge');
+}
 console.log(`   challenge descriptor: ${challengePub.descriptorUrl}`);
 console.log(`   challenge graph:      ${challengePub.graphUrl}`);
 
@@ -273,11 +301,13 @@ const allDescriptorUrls = [challengePub.descriptorUrl];
 console.log(`\n— waiting for ${OPPONENT_NAME} to accept (poll every 5s, ctrl-c to abort) —`);
 
 async function findAcceptance() {
-  const latest = await discover(TOURNAMENT_POD);
+  const latest = await withRetry('findAcceptance discover', () => discover(TOURNAMENT_POD));
+  if (!latest) return null; // transient — keep polling, don't crash
   for (const e of latest) {
     if (!(e.conformsTo ?? []).includes(CHALLENGE_ACCEPTED_IRI)
         && !(e.conformsTo ?? []).some(c => c.endsWith('ChallengeAccepted'))) continue;
-    const fetched = await fetchGraphContent(e.descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1'), {}).catch(() => null);
+    const graphUrl = e.descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1');
+    const fetched = await withRetry(`findAcceptance fetch ${graphUrl}`, () => fetchGraphContent(graphUrl, {}));
     if (!fetched?.content) continue;
     if (fetched.content.includes(`<${gameId}>`)) {
       // Pull the opponent DID out if we didn't have it yet.
@@ -298,7 +328,8 @@ while (!acceptance && (Date.now() - acceptStart) < ACCEPT_TIMEOUT_MS) {
   if (acceptance) break;
   process.stdout.write('.');
   await new Promise(r => setTimeout(r, ACCEPT_POLL_MS));
-  entries = await discover(TOURNAMENT_POD); // refresh
+  const refreshed = await withRetry('findAcceptance refresh discover', () => discover(TOURNAMENT_POD));
+  if (refreshed) entries = refreshed; // transient — keep the old snapshot, don't crash
 }
 process.stdout.write('\n');
 
@@ -411,10 +442,13 @@ async function publishChallengerMove({ cell, reason }) {
     .verified(MY_DID)
     .build();
 
-  const result = await publish(desc, graph.trim(), TOURNAMENT_POD, {
+  const result = await withRetry(`publish move ${n}`, () => publish(desc, graph.trim(), TOURNAMENT_POD, {
     descriptorSlug: moveSlug(n),
     graphSlug: `${moveSlug(n)}-graph`,
-  });
+  }));
+  if (!result) {
+    abortOnLostConnection(`publishing your move ${n}`);
+  }
 
   state.moveNumber = n;
   state.board = boardAfter;
@@ -489,10 +523,13 @@ async function publishForfeit() {
     .verified(MY_DID)
     .build();
 
-  const result = await publish(desc, graph.trim(), TOURNAMENT_POD, {
+  const result = await withRetry(`publish forfeit ${n}`, () => publish(desc, graph.trim(), TOURNAMENT_POD, {
     descriptorSlug: moveSlug(n),
     graphSlug: `${moveSlug(n)}-graph`,
-  });
+  }));
+  if (!result) {
+    abortOnLostConnection(`publishing your forfeit`);
+  }
   state.moveNumber = n;
   state.over = true;
   state.winnerDid = opponentDid;
@@ -512,11 +549,18 @@ async function waitForOpponentMove() {
   const TIMEOUT_MS = 5 * 60 * 1000;
   const start = Date.now();
   while ((Date.now() - start) < TIMEOUT_MS) {
-    const latest = await discover(TOURNAMENT_POD);
+    const latest = await withRetry('waitForOpponentMove discover', () => discover(TOURNAMENT_POD));
+    if (!latest) {
+      // transient — try again next tick, don't crash the game
+      process.stdout.write('.');
+      await new Promise(r => setTimeout(r, POLL_MS));
+      continue;
+    }
     for (const e of latest) {
       if (!(e.supersedes ?? []).includes(state.lastDescriptorUrl)) continue;
       // Must be from the opponent, not from us.
-      const fetched = await fetchGraphContent(e.descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1'), {}).catch(() => null);
+      const graphUrl = e.descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1');
+      const fetched = await withRetry(`waitForOpponentMove fetch ${graphUrl}`, () => fetchGraphContent(graphUrl, {}));
       if (!fetched?.content) continue;
       const playerMatch = fetched.content.match(/tictactoe:player\s+<([^>]+)>/);
       const playerDid = playerMatch?.[1];
