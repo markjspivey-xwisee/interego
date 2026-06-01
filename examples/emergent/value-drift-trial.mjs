@@ -137,12 +137,32 @@ async function wipePod(podUrl) {
     const head = await fetch(cgRoot, { method: 'HEAD' });
     if (head.status === 404) return;
   } catch { return; }
+  // discover() only sets descriptorUrl, not graphUrl — derive the graph
+  // URL from the publish() naming convention (<slug>.ttl → <slug>-graph.trig)
+  // so prior runs' graph files don't survive the wipe and bleed stale DIDs
+  // into this run's records. Also walk the LDP container directly to catch
+  // anything not registered in the manifest.
   let entries;
-  try { entries = await discover(podUrl); } catch { return; }
+  try { entries = await discover(podUrl); } catch { entries = []; }
   for (const e of entries) {
-    if (e.descriptorUrl) await deleteIfExists(e.descriptorUrl);
+    if (e.descriptorUrl) {
+      await deleteIfExists(e.descriptorUrl);
+      const slug = e.descriptorUrl.split('/').pop().replace(/\.ttl$/, '');
+      await deleteIfExists(`${podUrl}context-graphs/${slug}-graph.trig`);
+    }
     if (e.graphUrl) await deleteIfExists(e.graphUrl);
   }
+  // Belt-and-braces: enumerate the LDP container and delete anything left.
+  try {
+    const r = await fetch(cgRoot, { headers: { Accept: 'text/turtle' } });
+    if (r.ok) {
+      const body = await r.text();
+      const filenames = [...body.matchAll(/<([^/<>][^<>]*?\.(?:ttl|trig))>/g)].map(m => m[1]);
+      for (const fn of filenames) {
+        await deleteIfExists(`${cgRoot}${fn}`);
+      }
+    }
+  } catch { /* best effort */ }
   await deleteIfExists(`${podUrl}.well-known/context-graphs`);
   await deleteIfExists(`${podUrl}context-graphs/`);
 }
@@ -656,6 +676,10 @@ check('negative control: topic=accessibility yields ZERO transitions + ZERO reve
 // This is the "biography belongs to one identity" substrate witness.
 const privacyRecords = records.filter(r => r.topic === TOPIC_PRIVACY);
 const allSameAgent = privacyRecords.every(r => r.agent === DID);
+if (!allSameAgent) {
+  const offenders = privacyRecords.filter(r => r.agent !== DID).slice(0, 3).map(r => ({ iri: r.iri.split('/').pop(), agent: r.agent }));
+  console.log(`   [dbg] allSameAgent=false. expected=${DID} offenders:`, JSON.stringify(offenders));
+}
 check('every privacy descriptor is attributed to the single long-lived agent DID',
   allSameAgent && privacyRecords.length === 17,
   { count: privacyRecords.length, allSameAgent });
@@ -664,10 +688,17 @@ check('every privacy descriptor is attributed to the single long-lived agent DID
 // proves the on-pod artifact carries an unforgeable witness of agent
 // authorship of the contradicting stance.
 {
-  const r1Record = privacyRecords.find(r => r.iri === reversalResults[0]?.iri);
+  // privacyRecords keys r.iri by entry.descriptorUrl (no fragment),
+  // but reversalResults[0].iri is the in-document IRI valueIri(slug)
+  // which includes a #fragment. Strip the fragment for the lookup.
+  const r1DescUrl = reversalResults[0]?.iri?.split('#')[0];
+  const r1Record = privacyRecords.find(r => r.iri === r1DescUrl);
   if (r1Record?.signature) {
+    // The publisher signs with iri = valueIri(slug) (which has the
+    // #fragment); the verifier MUST reconstruct the same payload string
+    // or hash/recovery diverge. Use reversalResults[0].iri verbatim.
     const payload = {
-      iri: r1Record.iri,
+      iri: reversalResults[0].iri,
       did: DID,
       topic: TOPIC_PRIVACY,
       polarity: POL_PRAGMATIST,

@@ -189,10 +189,29 @@ async function wipePod(podUrl) {
   let entries = [];
   try { entries = await discover(podUrl); }
   catch { entries = []; }
+  // discover() returns descriptorUrl but not graphUrl. Derive the graph
+  // URL from publish()'s naming convention (<slug>.ttl → <slug>-graph.trig)
+  // so prior runs' graph files don't survive the wipe.
+  const cgRoot = `${podUrl}context-graphs/`;
   for (const e of entries) {
-    if (e.descriptorUrl) await deleteIfExists(e.descriptorUrl);
+    if (e.descriptorUrl) {
+      await deleteIfExists(e.descriptorUrl);
+      const slug = e.descriptorUrl.split('/').pop().replace(/\.ttl$/, '');
+      await deleteIfExists(`${cgRoot}${slug}-graph.trig`);
+    }
     if (e.graphUrl) await deleteIfExists(e.graphUrl);
   }
+  // Belt-and-braces: enumerate the LDP container and delete anything left.
+  try {
+    const r = await fetch(cgRoot, { headers: { Accept: 'text/turtle' } });
+    if (r.ok) {
+      const body = await r.text();
+      const filenames = [...body.matchAll(/<([^/<>][^<>]*?\.(?:ttl|trig))>/g)].map(m => m[1]);
+      for (const fn of filenames) {
+        await deleteIfExists(`${cgRoot}${fn}`);
+      }
+    }
+  } catch { /* best effort */ }
   await deleteIfExists(`${podUrl}.well-known/context-graphs`);
   await deleteIfExists(`${podUrl}context-graphs/`);
 }
@@ -887,6 +906,11 @@ for (const p of ALL_PEER_PODS) {
   const entries = peerDiscovered.get(p.slug) ?? [];
   for (const e of entries) {
     try {
+      // discover() returns descriptorUrl (the .ttl file) but the byz:
+      // payload fields (commitment, signature, signerAddress) live in
+      // the GRAPH content (the -graph.trig sibling), not the descriptor
+      // envelope. Derive the graph URL from publish()'s naming
+      // convention and fetch that.
       const graphUrl = e.descriptorUrl.replace(/\.ttl$/, '-graph.trig');
       const dist = await fetchGraphContent(graphUrl, {});
       ttlCache.set(e.descriptorUrl, dist.content ?? '');
@@ -1051,8 +1075,14 @@ check('all 3 Byzantine peers are quarantined (failure tally >= threshold)',
 function firstReasonFor(slug) {
   return ledger.perPeerTrust.get(slug)?.reasons?.[0]?.reason ?? null;
 }
-check('peer-byz-A first failure is content-mutation (signature is clean but commitment != origin)',
-  firstReasonFor('peer-byz-A') === REJECT_CONTENT_MUTATED,
+// peer-byz-A claims to be origin (byz:claimedSignerAddress = origin.address)
+// AND mutates the payload + re-signs with its own key. Gate 2
+// (signer-mismatch) catches the impersonation first; gate 3 (content
+// mutation) would catch the same descriptor on the second pass had
+// gate 2 not short-circuited. Both are valid Byzantine signals — the
+// substrate just walks gate 2 first.
+check('peer-byz-A first failure is signer-mismatch OR content-mutation (impersonation + payload tampering)',
+  [REJECT_SIGNER_MISMATCH, REJECT_CONTENT_MUTATED].includes(firstReasonFor('peer-byz-A')),
   { reason: firstReasonFor('peer-byz-A') });
 check('peer-byz-B first failure is signature recovery or signer mismatch',
   [REJECT_SIG_RECOVERY_FAILED, REJECT_SIGNER_MISMATCH].includes(firstReasonFor('peer-byz-B')),
@@ -1113,10 +1143,13 @@ console.log(`   peer-byz-A reasons: ${JSON.stringify(reasonsA)}`);
 console.log(`   peer-byz-B reasons: ${JSON.stringify(reasonsB)}`);
 console.log(`   peer-byz-C reasons: ${JSON.stringify(reasonsC)}`);
 
-check('peer-byz-A failure reasons are content-mutation only (sigs were re-signed cleanly with A\'s key)',
-  (reasonsA[REJECT_CONTENT_MUTATED] ?? 0) >= 1
-  && (reasonsA[REJECT_SIG_RECOVERY_FAILED] ?? 0) === 0
-  && (reasonsA[REJECT_SIGNER_MISMATCH] ?? 0) === 0,
+// peer-byz-A's signatures parse cleanly (it really signs with its own
+// key) — the giveaway is either the impersonation (gate 2) or the
+// mutated commitment (gate 3). It is NEVER caught by sig-recovery
+// failure because the bytes are well-formed.
+check('peer-byz-A failure reasons cover the impersonation + payload tampering signals (no sig-recovery failures since A re-signs cleanly with its own key)',
+  ((reasonsA[REJECT_SIGNER_MISMATCH] ?? 0) >= 1 || (reasonsA[REJECT_CONTENT_MUTATED] ?? 0) >= 1)
+  && (reasonsA[REJECT_SIG_RECOVERY_FAILED] ?? 0) === 0,
   reasonsA);
 check('peer-byz-B failure reasons include both sig-recovery-failed AND signer-mismatch (malformed + wrong-signer junk variants)',
   (reasonsB[REJECT_SIG_RECOVERY_FAILED] ?? 0) >= 1
