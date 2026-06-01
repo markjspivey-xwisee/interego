@@ -253,7 +253,7 @@ async function publishValueDescriptor({
   // (Passport, StatedValue, LifeEvent, agentIdentity) are all defined
   // in docs/ns/passport.ttl — no new ontology terms minted.
   const retractsTriples = retractsIri
-    ? `  scen:retractsValueAt <${retractsIri}> ;\n  scen:retractedStatement "${escapeTurtle(retractsStatement ?? '')}" ;\n`
+    ? `  scen:retractsValueAt <${retractsIri}> ;\n  scen:retractedStatement "${escapeTurtle(retractsStatement ?? '')}" ;`
     : '';
 
   const graph = `
@@ -272,7 +272,7 @@ async function publishValueDescriptor({
   scen:monthIndex ${monthIndex} ;
   scen:assertedAt "${assertedAt}"^^xsd:dateTime ;
   scen:valueStatement "${escapeTurtle(statement)}" ;
-${retractsTriples}  scen:signatureSha256 "${hash}" ;
+${retractsTriples}${retractsTriples ? '\n' : ''}  scen:signatureSha256 "${hash}" ;
   scen:walletSignature "${signature}" ;
   prov:wasAttributedTo <${did}> ;
   prov:generatedAtTime "${assertedAt}"^^xsd:dateTime .

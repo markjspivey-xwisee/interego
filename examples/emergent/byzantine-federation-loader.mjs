@@ -887,7 +887,8 @@ for (const p of ALL_PEER_PODS) {
   const entries = peerDiscovered.get(p.slug) ?? [];
   for (const e of entries) {
     try {
-      const dist = await fetchGraphContent(e.descriptorUrl, {});
+      const graphUrl = e.descriptorUrl.replace(/\.ttl$/, '-graph.trig');
+      const dist = await fetchGraphContent(graphUrl, {});
       ttlCache.set(e.descriptorUrl, dist.content ?? '');
     } catch {
       ttlCache.set(e.descriptorUrl, '');
