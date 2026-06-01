@@ -126,6 +126,13 @@ async function tryDelete(url) {
 // the demo's prior state lives in `context-graphs/<slug>.ttl` + the manifest.
 // We attempt a best-effort idempotent cleanup of known slugs, then DELETE
 // the container. Either order: if it's the first run, this is a no-op.
+//
+// Cleanup MUST include the named-graph .trig files because publish() writes
+// the graph payload with `If-None-Match: '*'` and tolerates 412 — a stale
+// .trig left over from a prior run survives the next publish and the
+// verifier ends up reading old content. ManifestEntry does NOT surface
+// the graph URL (it only carries the descriptor URL); we therefore derive
+// the graph URL via the same slug convention publish() uses.
 async function bestEffortCleanup() {
   const manifestUrl = `${POD}.well-known/context-graphs`;
   // Discover anything already on the pod and try to DELETE its descriptor +
@@ -134,8 +141,15 @@ async function bestEffortCleanup() {
   let entries = [];
   try { entries = await discover(POD); } catch { /* first run, no manifest yet */ }
   for (const e of entries) {
-    if (e.descriptorUrl) await tryDelete(e.descriptorUrl);
-    if (e.graphUrl) await tryDelete(e.graphUrl);
+    if (e.descriptorUrl) {
+      // Delete the graph payload first — order matters because the
+      // descriptor DELETE may also free the .ttl file that the graph
+      // URL was derived from. ManifestEntry doesn't carry the graph URL
+      // directly, so we use graphUrlFor() to apply the publish() naming
+      // convention (`<slug>.ttl` -> `<slug>-graph.trig`). Best-effort.
+      await tryDelete(graphUrlFor(e.descriptorUrl));
+      await tryDelete(e.descriptorUrl);
+    }
   }
   // Manifest + parent containers
   await tryDelete(manifestUrl);

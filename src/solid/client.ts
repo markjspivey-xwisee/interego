@@ -13,7 +13,7 @@
  * Uses only fetch and WebSocket — zero additional dependencies.
  */
 
-import type { ContextDescriptorData, ContextTypeName, OwnerProfileData, AgentDelegationCredential, DelegationVerification, IRI, SemioticFacetData, TrustFacetData, ModalStatus, TrustLevel } from '../model/types.js';
+import type { ContextDescriptorData, ContextTypeName, OwnerProfileData, AgentDelegationCredential, DelegationVerification, IRI, SemioticFacetData, TrustFacetData, ModalStatus, TrustLevel, ContextFacetData } from '../model/types.js';
 import { toTurtle } from '../rdf/serializer.js';
 import { turtlePrefixes } from '../rdf/namespaces.js';
 import { ownerProfileToTurtle, parseOwnerProfile, delegationCredentialToJsonLd, verifyDelegation } from '../model/delegation.js';
@@ -227,10 +227,17 @@ function manifestEntryTurtle(
     lines.push(`    cg:modalStatus cg:${semioticFacet.modalStatus} ;`);
   }
 
-  // Extract trustLevel from Trust facet if present
+  // Extract trustLevel + issuer from Trust facet if present
   const trustFacet = descriptor.facets.find((f): f is TrustFacetData => f.type === 'Trust');
   if (trustFacet?.trustLevel) {
     lines.push(`    cg:trustLevel cg:${trustFacet.trustLevel} ;`);
+  }
+  if (trustFacet?.issuer) {
+    // Cleartext-mirror the issuer DID so trust-aware federation readers
+    // can filter by author from the manifest alone (no descriptor fetch).
+    // cg:issuer is already defined in docs/ns/cg.ttl as "the issuer of
+    // the trust assertion (typically a DID)" — exactly what we need here.
+    lines.push(`    cg:issuer <${trustFacet.issuer}> ;`);
   }
 
   // Replace trailing ; with .
@@ -261,9 +268,43 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     validUntil?: string;
     modalStatus?: ModalStatus;
     trustLevel?: TrustLevel;
+    issuer?: string;
     conformsTo?: string[];
     supersedes?: string[];
   } | null = null;
+
+  const finalize = (
+    e: NonNullable<typeof current>,
+  ): ManifestEntry => {
+    // Reconstruct the minimal facet set the manifest mirrors so that
+    // trust-aware readers can filter by facet shape without re-fetching
+    // each descriptor's TriG. Only the fields the manifest itself
+    // carries are populated; everything else stays in the descriptor.
+    const facets: ContextFacetData[] = [];
+    if (e.trustLevel || e.issuer) {
+      const tf: { type: 'Trust'; trustLevel?: TrustLevel; issuer?: IRI } = { type: 'Trust' };
+      if (e.trustLevel) tf.trustLevel = e.trustLevel;
+      if (e.issuer) tf.issuer = e.issuer as IRI;
+      facets.push(tf as ContextFacetData);
+    }
+    if (e.modalStatus) {
+      facets.push({ type: 'Semiotic', modalStatus: e.modalStatus } as ContextFacetData);
+    }
+    const out: ManifestEntry = {
+      descriptorUrl: e.descriptorUrl,
+      describes: e.describes,
+      facetTypes: e.facetTypes,
+      ...(e.validFrom !== undefined ? { validFrom: e.validFrom } : {}),
+      ...(e.validUntil !== undefined ? { validUntil: e.validUntil } : {}),
+      ...(e.modalStatus !== undefined ? { modalStatus: e.modalStatus } : {}),
+      ...(e.trustLevel !== undefined ? { trustLevel: e.trustLevel } : {}),
+      ...(e.issuer !== undefined ? { issuer: e.issuer } : {}),
+      ...(e.conformsTo !== undefined ? { conformsTo: e.conformsTo } : {}),
+      ...(e.supersedes !== undefined ? { supersedes: e.supersedes } : {}),
+      ...(facets.length > 0 ? { facets } : {}),
+    };
+    return out;
+  };
 
   for (const rawLine of turtle.split('\n')) {
     const line = rawLine.trim();
@@ -271,7 +312,7 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     const entryMatch = line.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry/);
     if (entryMatch) {
       if (current) {
-        entries.push({ ...current });
+        entries.push(finalize(current));
       }
       current = {
         descriptorUrl: entryMatch[1]!,
@@ -313,6 +354,11 @@ export function parseManifest(turtle: string): ManifestEntry[] {
       current.trustLevel = trustMatch[1]! as TrustLevel;
     }
 
+    const issuerMatch = line.match(/cg:issuer\s+<([^>]+)>/);
+    if (issuerMatch) {
+      current.issuer = issuerMatch[1]!;
+    }
+
     const conformsMatch = line.match(/dct:conformsTo\s+<([^>]+)>/);
     if (conformsMatch) {
       current.conformsTo = current.conformsTo ?? [];
@@ -327,14 +373,14 @@ export function parseManifest(turtle: string): ManifestEntry[] {
 
     if (line.endsWith('.')) {
       if (current) {
-        entries.push({ ...current });
+        entries.push(finalize(current));
         current = null;
       }
     }
   }
 
   if (current) {
-    entries.push({ ...current });
+    entries.push(finalize(current));
   }
 
   return entries;

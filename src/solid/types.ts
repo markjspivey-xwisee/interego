@@ -10,6 +10,7 @@ import type {
   ContextTypeName,
   TrustLevel,
   ModalStatus,
+  ContextFacetData,
 } from '../model/types.js';
 
 // ── Minimal HTTP/WS interfaces ──────────────────────────────
@@ -168,6 +169,25 @@ export interface ManifestEntry {
    * publish or a head we haven't traced backward yet.
    */
   readonly supersedes?: readonly string[];
+  /**
+   * Issuer DID extracted from the descriptor's Trust facet (if present).
+   * Cleartext-mirrored on the manifest so trust-aware readers can filter
+   * by author without re-fetching every descriptor's TriG. The full Trust
+   * facet (including this issuer) is also surfaced on `facets` below.
+   */
+  readonly issuer?: string;
+  /**
+   * Minimal reconstruction of the descriptor's facets, surfaced on the
+   * manifest so trust-aware readers can filter by facet shape (e.g.
+   * Trust.trustLevel + Trust.issuer) without re-fetching every TriG.
+   *
+   * Only the subset of facet fields that the manifest mirrors is
+   * populated here — full facet round-trip requires fetching the
+   * descriptor itself. Currently populated:
+   *   - Trust: { type, trustLevel, issuer }
+   *   - Semiotic: { type, modalStatus }
+   */
+  readonly facets?: readonly ContextFacetData[];
   /**
    * PGSL structural URI (if the content was ingested into the lattice).
    * Same content from different pods produces the same URI —

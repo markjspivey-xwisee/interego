@@ -121,15 +121,30 @@ async function safeDelete(url) {
   } catch { return false; }
 }
 
+// publish() writes the named-graph payload to a sibling URL using the
+// `<slug>-graph.trig` (or `.envelope.jose.json` for encrypted) convention.
+// ManifestEntry doesn't surface that URL, so we derive it from the
+// descriptor URL using the same naming rule the substrate uses.
+function graphUrlFor(descriptorUrl) {
+  return descriptorUrl.replace(/\.ttl$/, '-graph.trig');
+}
+
 async function wipePod() {
   // Best-effort: list the pod's known descriptors via discover() and
-  // delete each one, then the manifest + container. A 404 on a fresh
-  // run is normal and not a failure.
+  // delete each one + its associated graph file, then the manifest +
+  // container. A 404 on a fresh run is normal and not a failure.
+  //
+  // The graph .trig sibling MUST be deleted explicitly: publish() PUTs
+  // graph payloads with `If-None-Match: '*'` and tolerates 412, so a
+  // stale .trig from a prior run silently survives the next publish and
+  // the verifier ends up reading old content.
   let entries = [];
   try { entries = await discover(POD); } catch { /* fresh pod */ }
   for (const e of entries) {
-    if (e.descriptorUrl) await safeDelete(e.descriptorUrl);
-    if (e.graphUrl) await safeDelete(e.graphUrl);
+    if (e.descriptorUrl) {
+      await safeDelete(graphUrlFor(e.descriptorUrl));
+      await safeDelete(e.descriptorUrl);
+    }
   }
   await safeDelete(`${POD}.well-known/context-graphs`);
   await safeDelete(`${POD}context-graphs/`);
