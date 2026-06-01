@@ -184,7 +184,7 @@ async function findOpponentDid(name) {
   // Cheap path: try the move descriptors — any move from the opponent
   // exposes its DID in tictactoe:player + prov:wasGeneratedBy.
   for (const e of entries) {
-    const fetched = await fetchGraphContent(e.descriptorUrl, {}).catch(() => null);
+    const fetched = await fetchGraphContent(e.descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1'), {}).catch(() => null);
     if (!fetched?.content) continue;
     if (fetched.content.includes(`"${name}"`) || fetched.content.includes(`tictactoe:playerName "${name}"`)) {
       const m = fetched.content.match(/tictactoe:player\s+<([^>]+)>/);
@@ -234,6 +234,8 @@ const challengeGraph = `
   tictactoe:gameId <${gameId}> ;
   tictactoe:xPlayer <${xPlayerDid}> ;
   tictactoe:oPlayer <${oPlayerDid}> ;
+  tictactoe:challenger <${MY_DID}> ;
+  tictactoe:challengerMark "${I_AM_X ? 'X' : 'O'}" ;
   tictactoe:moveNumber 0 ;
   tictactoe:opponentName "${OPPONENT_NAME}" ;
   tictactoe:boardAfter "${JSON.stringify(boardToGrid(emptyBoard())).replace(/"/g, '\\"')}" ;
@@ -274,7 +276,7 @@ async function findAcceptance() {
   for (const e of latest) {
     if (!(e.conformsTo ?? []).includes(CHALLENGE_ACCEPTED_IRI)
         && !(e.conformsTo ?? []).some(c => c.endsWith('ChallengeAccepted'))) continue;
-    const fetched = await fetchGraphContent(e.descriptorUrl, {}).catch(() => null);
+    const fetched = await fetchGraphContent(e.descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1'), {}).catch(() => null);
     if (!fetched?.content) continue;
     if (fetched.content.includes(`<${gameId}>`)) {
       // Pull the opponent DID out if we didn't have it yet.
@@ -513,7 +515,7 @@ async function waitForOpponentMove() {
     for (const e of latest) {
       if (!(e.supersedes ?? []).includes(state.lastDescriptorUrl)) continue;
       // Must be from the opponent, not from us.
-      const fetched = await fetchGraphContent(e.descriptorUrl, {}).catch(() => null);
+      const fetched = await fetchGraphContent(e.descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1'), {}).catch(() => null);
       if (!fetched?.content) continue;
       const playerMatch = fetched.content.match(/tictactoe:player\s+<([^>]+)>/);
       const playerDid = playerMatch?.[1];

@@ -412,13 +412,12 @@ async function publishMove({ game, player, mark, cell, signedPayload, signature,
 // acceptance but no terminal move yet.
 
 async function readChallengeDetails(descriptorUrl, conformsTo) {
-  // The challenge graph lives alongside the descriptor; fetchGraphContent
-  // resolves the descriptor's dcat:Distribution to the actual graph URL.
-  // We then read out the four bits we need with the same kind of
-  // line-by-line regex parsing the rest of the codebase uses for
-  // demo-grade Turtle (this is not a general TriG parser — it's a
-  // narrow read of fields we put in the graph ourselves).
-  const fetched = await fetchGraphContent(descriptorUrl, {});
+  // The graph lives at the descriptor's -graph.trig sibling — a convention
+  // both this watcher and the companion challenger script use when
+  // publishing (descriptorSlug + graphSlug = `${descriptorSlug}-graph`).
+  // fetchGraphContent wants the GRAPH url, not the descriptor's.
+  const graphUrl = descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1');
+  const fetched = await fetchGraphContent(graphUrl, {});
   const turtle = fetched.content ?? '';
 
   const gameIdMatch = turtle.match(/tictactoe:gameId\s+<([^>]+)>/);
@@ -464,7 +463,8 @@ async function readChallengeDetails(descriptorUrl, conformsTo) {
 }
 
 async function readMoveDetails(descriptorUrl) {
-  const fetched = await fetchGraphContent(descriptorUrl, {});
+  const graphUrl = descriptorUrl.replace(/\.ttl(\?.*)?$/, '-graph.trig$1');
+  const fetched = await fetchGraphContent(graphUrl, {});
   const turtle = fetched.content ?? '';
   const gameIdMatch = turtle.match(/tictactoe:gameId\s+<([^>]+)>/);
   const moveNumberMatch = turtle.match(/tictactoe:moveNumber\s+(\d+)/);
