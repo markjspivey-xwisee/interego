@@ -575,6 +575,29 @@ export async function publish(
     }));
 
     if (manifestResp.ok) {
+      // Belt-and-suspenders: under N-way contention (e.g. 4+ concurrent
+      // writers), some storage backends accept simultaneous PUTs with
+      // matching If-Match etags due to a TOCTOU gap between the etag
+      // check and the body write. A 200 OK then is misleading — the
+      // server may have already overwritten our payload with a later
+      // writer's body. Verify by reading the manifest back; if our entry
+      // is missing, treat as a conflict and retry. This terminates
+      // because each retry GETs the freshest etag and rebuilds the body.
+      const verifyResp = await withTransientRetry(() => fetchFn(manifestUrl, {
+        method: 'GET',
+        headers: { 'Accept': TURTLE_CONTENT_TYPE },
+      }));
+      if (verifyResp.ok) {
+        const verifyBody = await verifyResp.text();
+        if (!verifyBody.includes(`<${descriptorUrl}>`)) {
+          lastError = `post-PUT verification: entry missing after 200 OK (attempt ${attempt}/${maxAttempts}; concurrent writer clobbered us)`;
+          const exponentialBase = 50 * Math.pow(2, attempt - 1);
+          const jitter = Math.floor(Math.random() * 200);
+          const backoff = Math.min(exponentialBase + jitter, 1500);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+      }
       lastError = null;
       break;
     }

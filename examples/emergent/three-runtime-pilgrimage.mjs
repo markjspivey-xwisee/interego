@@ -538,10 +538,40 @@ function extractMigrationDetails(ttl) {
   // Walk every "[ ... ]" block in the TTL and inspect those that contain
   // eventKind "infrastructure-migration". This avoids relying on the
   // emission order of properties inside the block.
-  const blockRe = /\[([^\[\]]*)\]/g;
-  let bm;
-  while ((bm = blockRe.exec(ttl)) !== null) {
-    const block = bm[1];
+  //
+  // NOTE: a naive `\[([^\[\]]*?)\]` regex fails here because each event
+  // block carries an `scen:eventJson "..."` literal whose JSON payload
+  // commonly contains `[` and `]` characters (e.g. arrays inside `details`
+  // or `evidence`). Those embedded brackets confuse a flat regex, which
+  // terminates blocks prematurely and drops the migration properties.
+  // We instead do a depth-tracked scan that respects string quoting.
+  for (let i = 0; i < ttl.length; i++) {
+    if (ttl[i] !== '[') continue;
+    // Walk forward, tracking bracket depth and skipping over string
+    // literals so brackets inside `"..."` don't change depth.
+    let depth = 1;
+    let j = i + 1;
+    while (j < ttl.length && depth > 0) {
+      const ch = ttl[j];
+      if (ch === '"') {
+        // Skip past the closing quote, honoring backslash escapes.
+        j++;
+        while (j < ttl.length && ttl[j] !== '"') {
+          if (ttl[j] === '\\' && j + 1 < ttl.length) j++;
+          j++;
+        }
+        j++; // consume closing quote
+        continue;
+      }
+      if (ch === '[') depth++;
+      else if (ch === ']') depth--;
+      j++;
+    }
+    if (depth !== 0) break; // unbalanced — give up rather than over-match
+    const block = ttl.slice(i + 1, j - 1);
+    // Advance past this block on next outer iteration; nested blocks are
+    // already consumed by the depth walker.
+    i = j - 1;
     if (!/scen:eventKind\s+"infrastructure-migration"/.test(block)) continue;
     const idMatch = block.match(/scen:detail_previousIdentity\s+"([^"]+)"/);
     const podMatch = block.match(/scen:detail_previousPod\s+"([^"]+)"/);

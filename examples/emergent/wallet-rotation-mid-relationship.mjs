@@ -664,8 +664,14 @@ check('Verifier rejects forged rotation descriptor signature (signer not in v1/v
 const compTtl = (await fetchTtl(complianceEvent.descriptorUrl)).body;
 const compGraphUrl = complianceEvent.graphUrl;
 const compGraphTtl = compGraphUrl ? (await fetchTtl(compGraphUrl)).body : '';
-const compRetiredHit = compGraphTtl.includes(v1Address);
-const compNewHit = compGraphTtl.includes(v2Address);
+// The compliance event was populated from the addresses extracted from
+// the passport graphs (v1AddrFromPod / v2AddrFromPod), not from the
+// in-script wallet variables. When AGENT1_V1_KEY is unset, loadAgentKeypair
+// generates an ephemeral random wallet whose script-side address never
+// matches pod-stored values. Search against the pod-extracted addresses
+// so the verifier checks the same identifiers the publisher actually used.
+const compRetiredHit = !!v1AddrFromPod && compGraphTtl.includes(v1AddrFromPod);
+const compNewHit = !!v2AddrFromPod && compGraphTtl.includes(v2AddrFromPod);
 const compCitesCC67 = compGraphTtl.includes('soc2:CC6.7');
 
 const chainOk = !!v1AddrFromPod

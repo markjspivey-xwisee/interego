@@ -140,8 +140,11 @@ describe('publish', () => {
       fetch: mockFetch,
     });
 
-    // Should have made 4 fetch calls: PUT graph, PUT descriptor, GET manifest, PUT manifest
-    expect(calls).toHaveLength(4);
+    // Should have made 5 fetch calls: PUT graph, PUT descriptor, GET manifest,
+    // PUT manifest, GET manifest (post-write verification — guards against
+    // N-way concurrent silent-clobber where the storage backend accepts
+    // multiple If-Match PUTs against the same etag).
+    expect(calls).toHaveLength(5);
 
     // 1. PUT TriG graph
     expect(calls[0]!.method).toBe('PUT');
@@ -165,6 +168,10 @@ describe('publish', () => {
     expect(calls[3]!.url).toContain('.well-known/context-graphs');
     expect(calls[3]!.body).toContain('cg:ManifestEntry');
     expect(calls[3]!.body).toContain('cg:describes');
+
+    // 5. GET manifest (post-write verification)
+    expect(calls[4]!.method).toBe('GET');
+    expect(calls[4]!.url).toContain('.well-known/context-graphs');
 
     // Check result URLs
     expect(result.descriptorUrl).toContain('test-solid.ttl');
