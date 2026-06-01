@@ -280,8 +280,20 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     // trust-aware readers can filter by facet shape without re-fetching
     // each descriptor's TriG. Only the fields the manifest itself
     // carries are populated; everything else stays in the descriptor.
+    //
+    // Trust-facet reconstruction has two trigger paths:
+    //   (a) trustLevel and/or issuer were directly extracted from the
+    //       manifest entry by the regex sweep above — populate the facet
+    //       with whichever fields landed.
+    //   (b) the manifest declared `cg:hasFacetType cg:Trust` for the entry
+    //       but neither trustLevel nor issuer were captured. This can
+    //       happen when an upstream serializer flattens or re-orders the
+    //       entry. Still emit a Trust facet so trust-aware readers see the
+    //       declared shape; they will fall back to the descriptor for the
+    //       missing fields rather than misclassify the entry as untrusted.
     const facets: ContextFacetData[] = [];
-    if (e.trustLevel || e.issuer) {
+    const hasTrustFacetType = e.facetTypes.includes('Trust' as ContextTypeName);
+    if (e.trustLevel || e.issuer || hasTrustFacetType) {
       const tf: { type: 'Trust'; trustLevel?: TrustLevel; issuer?: IRI } = { type: 'Trust' };
       if (e.trustLevel) tf.trustLevel = e.trustLevel;
       if (e.issuer) tf.issuer = e.issuer as IRI;
@@ -656,6 +668,21 @@ export async function publish(
       // Exponential (50/100/200/400/800/1500/1500/1500ms) plus 0-200ms
       // jitter scatters 5+ concurrent retries effectively (wider jitter
       // than the original 50ms because the writer pool is larger).
+      const exponentialBase = 50 * Math.pow(2, attempt - 1);
+      const jitter = Math.floor(Math.random() * 200);
+      const backoff = Math.min(exponentialBase + jitter, 1500);
+      await new Promise(r => setTimeout(r, backoff));
+      continue;
+    }
+    // 5xx — server is unhappy (CSS has been observed returning 500 from the
+    // manifest endpoint once the manifest grows past ~14 entries; the failure
+    // mode is server-internal and transient from our side). Treat like 412:
+    // back off, GET the freshest etag, rebuild the body, and re-PUT. This is
+    // the same recovery shape the in-loop CAS retry already implements, just
+    // gated on the server-side overload signal instead of the concurrent-write
+    // signal.
+    if (manifestResp.status >= 500 && manifestResp.status < 600) {
+      lastError = `${manifestResp.status} (server-side manifest update failure, attempt ${attempt}/${maxAttempts})`;
       const exponentialBase = 50 * Math.pow(2, attempt - 1);
       const jitter = Math.floor(Math.random() * 200);
       const backoff = Math.min(exponentialBase + jitter, 1500);

@@ -93,10 +93,31 @@ function check(label, cond, detail) {
 function h(s) { console.log(`\n${'-'.repeat(72)}\n${s}\n${'-'.repeat(72)}`); }
 
 // ── cleanup: best-effort wipe of prior run's containers ──────────────
+// IMPORTANT: 405 (Method Not Allowed) is NOT a successful deletion — it means
+// the pod's storage layer refused to delete that resource and the file is
+// still there. Treating 405 as "ok, gone" left stale v1/v2 passport
+// descriptors on the pod across runs; the next run then read DIDs out of
+// those stale resources and the migration-lineage chain pointed at addresses
+// the current run never minted. Accept only true success (2xx) plus the
+// HTTP "definitely not present" outcomes (404 / 410).
 async function deleteIfExists(url) {
   try {
     const r = await fetch(url, { method: 'DELETE' });
-    return r.ok || r.status === 404 || r.status === 405;
+    if (r.status >= 200 && r.status < 205) return true;
+    if (r.status === 404 || r.status === 410) return true;
+    // 405 (or any other non-success): confirm the resource is actually gone
+    // by issuing a HEAD. If HEAD returns 404 the cleanup was effective via
+    // some other path (e.g. ancestor container delete); otherwise the stale
+    // file is still present and we report failure so the caller can react.
+    if (r.status === 405) {
+      try {
+        const head = await fetch(url, { method: 'HEAD' });
+        if (head.status === 404 || head.status === 410) return true;
+      } catch {
+        // HEAD failed — fall through to false.
+      }
+    }
+    return false;
   } catch {
     return false;
   }
