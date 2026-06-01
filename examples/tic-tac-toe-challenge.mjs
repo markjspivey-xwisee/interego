@@ -239,6 +239,7 @@ const challengeGraph = `
   tictactoe:moveNumber 0 ;
   tictactoe:opponentName "${OPPONENT_NAME}" ;
   tictactoe:boardAfter "${JSON.stringify(boardToGrid(emptyBoard())).replace(/"/g, '\\"')}" ;
+  tictactoe:challengeJson "${challengeSigned.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}" ;
   tictactoe:signature "sha256:${createHash('sha256').update(challengeSigned, 'utf8').digest('hex')}:${challengeSig}" ;
   prov:wasGeneratedBy <${MY_DID}> ;
   prov:generatedAtTime "${new Date().toISOString()}"^^xsd:dateTime .

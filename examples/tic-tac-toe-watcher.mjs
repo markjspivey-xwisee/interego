@@ -715,8 +715,16 @@ function chooseCollectivePlayer(collective, challenge) {
 // the challenge carries one. A missing signature is allowed for
 // hand-crafted challenges in early demos, but the log records it.
 function verifyChallengerSignature(challenge) {
+  // Require BOTH the signed payload and the signature. An unsigned
+  // challenge is inert per Option D — the reader-side filter is what
+  // gates trust, and we're the reader here. Pre-existing tournament
+  // match-pairing descriptors (which share the type tictactoe:
+  // NewGameChallenge but lack a tictactoe:signature because the
+  // tournament's intra-collective pairings didn't need one) fall into
+  // this branch and get skipped — exactly the right behavior since
+  // they've already been played to terminal.
   if (!challenge.payloadJson || !challenge.signature) {
-    return { ok: true, note: 'no embedded signature — accepting without verification' };
+    return { ok: false, note: 'unsigned challenge — skipping (no tictactoe:signature or tictactoe:challengeJson present)' };
   }
   try {
     // signature blob format: "sha256:<hex>:<sig>"
