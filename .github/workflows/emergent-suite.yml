@@ -163,9 +163,13 @@ jobs:
             tier: required
             date_env: CAV_DATE
 
-          # ── Advisory: known-unstable; runs but never blocks. ─────
+          # ── More required: green when run against a virgin pod
+          # path (which CI always is — RUN_TAG keeps each run's path
+          # unique). Local re-runs against today's date can inherit
+          # CSS file-backend corruption from a crashed prior run; see
+          # the comment block at the top of closed-loop-learner.mjs.
           - scenario: closed-loop-learner
-            tier: advisory
+            tier: required
             date_env: EMERGENT_DATE
           - scenario: three-runtime-pilgrimage
             tier: advisory

@@ -69,6 +69,16 @@ import {
 // ── config ───────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
   ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+// RUN_DATE seeds the pod subpath. If a previous run on the same date
+// crashed mid-manifest-write, CSS's file backend can be left with an
+// orphan .meta file referencing a missing $.ttl body — every subsequent
+// PUT to that path 500s with ENOENT and no client-side cleanup recovers
+// it (CSS refuses to delete .meta directly, treats $-suffixed paths as
+// reserved, and DELETE on the resource clears the file but not the
+// in-memory cache). The safe escape is a fresh subpath. CI sets
+// EMERGENT_DATE to a date+timestamp combo so every run lands on a
+// virgin path; local runs default to today and inherit any same-day
+// corruption.
 const RUN_DATE = process.env.EMERGENT_DATE ?? new Date().toISOString().slice(0, 10);
 const POD = `${CSS}/demos/emergent-closed-loop-learner-${RUN_DATE}/`;
 
