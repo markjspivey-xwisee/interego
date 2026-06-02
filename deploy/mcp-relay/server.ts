@@ -35,6 +35,13 @@ import { fileURLToPath } from 'node:url';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { InteregoOAuthProvider } from './oauth-provider.js';
+import {
+  loadClients as loadOAuthClients,
+  saveClient as saveOAuthClient,
+  resolveMaintainerPodUrl as resolveOAuthStorePodUrl,
+  relayDidFromAddress,
+  type OAuthClientStoreConfig,
+} from './oauth-client-store.js';
 
 import {
   ContextDescriptor,
@@ -192,10 +199,21 @@ function surfaceAgentFromClient(clientName: string | undefined): string {
 // provider's login form collects userId+password, server.ts /oauth/login
 // forwards to ${IDENTITY_URL}/login, and the returned identity is baked into
 // the OAuth access token. Per-user, fully federated, no shared admin secret.
-const oauthProvider = new InteregoOAuthProvider({
-  identityUrl: IDENTITY_URL,
-  tokenTtlSec: 3600,
-});
+//
+// Dynamic Client Registration persistence:
+//   The Map of registered OAuth clients is hydrated at startup from the
+//   maintainer's pod (see deploy/mcp-relay/oauth-client-store.ts) and
+//   each subsequent registerClient call is mirrored back to the pod as
+//   a typed Context Descriptor. Without this, every container restart
+//   would silently invalidate every previously-issued client_id and
+//   every existing ChatGPT / claude.ai / etc. connector would fail
+//   with {"error":"invalid_client"} on its next request.
+//
+//   Wiring lives further down in this module (after solidFetch, log,
+//   and ensureRelayComplianceWallet are defined). The provider binding
+//   here is intentionally `let` so the async init can assign it before
+//   any top-level consumer (mcpAuthRouter, requireBearerAuth) runs.
+let oauthProvider!: InteregoOAuthProvider;
 
 // Org-level IPFS/CDP keys — used as defaults when users don't provide their own
 const ORG_IPFS_PROVIDER = (process.env['IPFS_PROVIDER'] ?? 'local') as 'pinata' | 'web3storage' | 'local';
@@ -349,6 +367,38 @@ async function ensureRelayComplianceWallet(): Promise<PersistedComplianceWallet>
   );
   return _relayComplianceWallet;
 }
+
+// ── OAuth provider init (DCR-persistent) ────────────────────
+//
+// Hydrate the OAuth provider's client map from the maintainer's pod
+// BEFORE any top-level consumer (mcpAuthRouter, requireBearerAuth) is
+// wired below. Without this, every container restart silently
+// invalidates every previously-issued DCR client_id. The store module
+// also gives the provider a `persistClient` sink so each future
+// registerClient mirrors back to the pod as its own Context Descriptor
+// with an AccessControl facet restricting reads to the relay's DID.
+//
+// All cold-start failures collapse to "empty Map": loadClients catches
+// network / parse errors and returns an empty map, so a brand-new
+// deployment (no maintainer pod yet, no manifest) starts cleanly.
+const oauthStorePodUrl = resolveOAuthStorePodUrl(CSS_URL);
+const _oauthStoreWallet = await ensureRelayComplianceWallet();
+const oauthStoreCfg: OAuthClientStoreConfig = {
+  podUrl: oauthStorePodUrl,
+  relayDid: relayDidFromAddress(_oauthStoreWallet.wallet.address),
+  fetch: solidFetch,
+  log: (msg: string) => log(msg),
+};
+const _oauthInitialClients = await loadOAuthClients(oauthStoreCfg);
+log(`OAuth DCR store: pod=${oauthStorePodUrl} relayDid=${oauthStoreCfg.relayDid} loaded=${_oauthInitialClients.size}`);
+oauthProvider = new InteregoOAuthProvider({
+  identityUrl: IDENTITY_URL,
+  tokenTtlSec: 3600,
+  initialClients: _oauthInitialClients,
+  persistClient: (client_id, client_data) =>
+    saveOAuthClient(client_id, client_data, oauthStoreCfg),
+  log: (msg: string) => log(msg),
+});
 
 // ── Tool Handlers ───────────────────────────────────────────
 

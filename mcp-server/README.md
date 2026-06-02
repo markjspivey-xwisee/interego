@@ -165,9 +165,11 @@ npm run build
 node dist/server.js
 ```
 
-## Remote MCP for mobile / claude.ai
+## Remote MCP for mobile / claude.ai / ChatGPT
 
-The stdio server in this package is for desktop clients that can spawn a subprocess. For **claude.ai mobile / web custom connectors** (which speak MCP over HTTPS and require OAuth), use the cloud-hosted `interego-relay` instead.
+The stdio server in this package is for desktop clients that can spawn a subprocess. For **claude.ai mobile / web custom connectors, ChatGPT custom connectors, Cursor remote MCP**, and any other OAuth-authenticated remote MCP client, use the cloud-hosted `interego-relay` instead.
+
+**Tool surface parity:** the relay exposes the same 26 tools as this stdio server, with two carve-outs that fit the remote OAuth model: `setup_identity` and `link_wallet` are present in the relay's tool list but return a redirect message ("you're already identified via OAuth; use the local stdio for wallet management"), since the user's wallet keys live on their device, not on the relay server. `check_balance` is a real read-only call against the relay's compliance wallet.
 
 - **Connector URL:** your deployment's relay, e.g. `https://interego-relay.<your-env>.azurecontainerapps.io/mcp`
 - **Authentication:** OAuth 2.1 + PKCE + Dynamic Client Registration. The relay's `/authorize` page offers three passwordless sign-in methods: **passkey** (WebAuthn), **Ethereum wallet** (SIWE), and **did:key** (Ed25519 signature). No shared secrets anywhere, no user-claimable identifiers — the userId is derived from your first credential (`u-pk-<hash>` / `u-eth-<addr>` / `u-did-<hash>`), so an attacker can't bind their passkey to your display alias.

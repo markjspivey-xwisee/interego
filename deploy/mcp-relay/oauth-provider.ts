@@ -72,7 +72,10 @@ export interface InteregoAuthInfo extends AuthInfo {
  * - No refresh tokens yet; tokens TTL = 1h; re-login via identity /login.
  */
 export class InteregoOAuthProvider implements OAuthServerProvider {
-  private clients = new Map<string, OAuthClientInformationFull>();
+  // Initial state can be hydrated from a persistent store at startup; see
+  // deploy/mcp-relay/oauth-client-store.ts. When the constructor's
+  // `initialClients` arg is empty the map starts empty (legacy behavior).
+  private clients: Map<string, OAuthClientInformationFull>;
   private authCodes = new Map<string, {
     clientId: string;
     codeChallenge: string;
@@ -101,8 +104,32 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     private readonly cfg: {
       identityUrl: string;
       tokenTtlSec?: number;
+      /**
+       * Map of pre-existing client_id → OAuthClientInformationFull,
+       * typically loaded from the persistent store at startup. The
+       * provider takes ownership of the Map (does not copy) — callers
+       * MUST NOT mutate it after handing it over.
+       */
+      initialClients?: Map<string, OAuthClientInformationFull>;
+      /**
+       * Optional async sink invoked after a successful registerClient.
+       * Fire-and-forget — the caller awaits Promise rejection only via
+       * the supplied logger. Persistence failures DO NOT fail the DCR
+       * call: the client is in this process's map for the lifetime of
+       * this process, so the user's authorization succeeds; the worst
+       * case is the registration is lost on the next restart, which
+       * is the same as the legacy in-memory-only behavior.
+       */
+      persistClient?: (
+        client_id: string,
+        client_data: OAuthClientInformationFull,
+      ) => Promise<void>;
+      /** Optional logger used by the fire-and-forget persistence path. */
+      log?: (msg: string) => void;
     },
-  ) {}
+  ) {
+    this.clients = cfg.initialClients ?? new Map();
+  }
 
   get clientsStore(): OAuthRegisteredClientsStore {
     return {
@@ -116,6 +143,18 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
           client_id_issued_at,
         };
         this.clients.set(client_id, registered);
+        // Fire-and-forget persistence. If this throws / rejects we
+        // still return the freshly-minted registration to the caller —
+        // the DCR endpoint MUST return per RFC 7591 even if a back-
+        // store write fails. Logging is the only side effect.
+        const persist = this.cfg.persistClient;
+        const log = this.cfg.log;
+        if (persist) {
+          void persist(client_id, registered).catch((err: unknown) => {
+            const msg = (err as Error)?.message ?? String(err);
+            if (log) log(`[oauth-provider] persistClient(${client_id}) failed: ${msg}`);
+          });
+        }
         return registered;
       },
     };
