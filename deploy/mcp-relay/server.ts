@@ -80,6 +80,24 @@ import {
   type AuditableDescriptor,
   type PersistedComplianceWallet,
   type SignedDescriptor,
+  // PGSL lattice — process-wide instance used by pgsl_* tools
+  createPGSL,
+  embedInPGSL,
+  latticeStats,
+  pgslResolve,
+  liftToDescriptor,
+  latticeMeet,
+  pullbackSquare,
+  pgslToTurtle,
+  // Affordance engine — used by analyze_question
+  computeCognitiveStrategy,
+  extractEntities,
+  shouldAbstain,
+  // Wallet — used by check_balance
+  checkBalance,
+  getChainConfig,
+  type NodeProvenance,
+  type PGSLInstance,
 } from '@interego/core';
 
 import type {
@@ -267,6 +285,16 @@ const solidFetch: FetchFn = async (url, init) => {
 
 let subscriptions: Map<string, Subscription> = new Map();
 let notificationLog: ContextChangeEvent[] = [];
+
+// PGSL lattice — process-wide instance, mirrors the stdio MCP server.
+// Provenance is attributed to a synthetic relay-owned identity because
+// the lattice is shared across all authenticated callers; per-ingest
+// attribution lives on each minted node, not the instance itself.
+const pgslProvenance: NodeProvenance = {
+  wasAttributedTo: 'urn:agent:mcp-relay:pgsl' as IRI,
+  generatedAtTime: new Date().toISOString(),
+};
+const pgslInstance: PGSLInstance = createPGSL(pgslProvenance);
 
 // Per-process X25519 keypair used to encrypt content the relay publishes on
 // behalf of the authenticated mobile agent. Persisted to disk so container
@@ -913,6 +941,274 @@ async function handleRevokeAgent(args: ToolArgs): Promise<string> {
   return JSON.stringify({ revoked: true, agent: args.agent_id });
 }
 
+// ── Federation: subscription management ─────────────────────
+
+async function handleUnsubscribeFromPod(args: ToolArgs): Promise<string> {
+  const podUrl = args.pod_url as string;
+  const sub = subscriptions.get(podUrl);
+  if (!sub) {
+    return JSON.stringify({ unsubscribed: false, message: `No active subscription on ${podUrl}.` });
+  }
+  try {
+    sub.unsubscribe();
+  } catch (err) {
+    log(`unsubscribe() failed for ${podUrl}: ${(err as Error).message}`);
+  }
+  subscriptions.delete(podUrl);
+  return JSON.stringify({ unsubscribed: true, pod: podUrl, remaining: subscriptions.size });
+}
+
+async function handleSubscribeAll(_args: ToolArgs): Promise<string> {
+  const pods = [...knownPods.values()];
+  let subscribed = 0;
+  let skipped = 0;
+  let failed = 0;
+  const failures: Array<{ pod: string; error: string }> = [];
+
+  for (const pod of pods) {
+    if (subscriptions.has(pod.url)) {
+      skipped++;
+      continue;
+    }
+    try {
+      const sub = await subscribe(pod.url, (event: ContextChangeEvent) => {
+        notificationLog.push(event);
+        log(`[notification] ${event.type} on ${event.resource}`);
+      }, {
+        fetch: solidFetch,
+        WebSocket: WebSocket as unknown as WebSocketConstructor,
+      });
+      subscriptions.set(pod.url, sub);
+      subscribed++;
+    } catch (err) {
+      failed++;
+      failures.push({ pod: pod.url, error: (err as Error).message });
+    }
+  }
+
+  return JSON.stringify({
+    total: pods.length,
+    subscribed,
+    skipped,
+    failed,
+    failures: failures.length > 0 ? failures : undefined,
+  });
+}
+
+// ── Identity / wallet — stubs on the remote OAuth surface ───
+//
+// setup_identity and link_wallet are designed for the local stdio MCP
+// context where the agent can drive identity provisioning + wallet
+// signing flows. On the remote relay the user is already identified
+// via OAuth (their pod, WebID, agent IRI, and credentials are bound
+// to the access token), so these tools have no useful work to do
+// here. Returning a clear redirect message keeps the tool surface
+// uniform across both servers while pointing the agent at the right
+// place to manage credentials.
+
+async function handleSetupIdentity(args: ToolArgs): Promise<string> {
+  const userId = (args.agent_id as string | undefined) ?? '(unknown user)';
+  return JSON.stringify({
+    skipped: true,
+    reason: 'already-identified-via-oauth',
+    message: `You're already identified on this relay as ${userId} via OAuth. ` +
+      `The setup_identity/link_wallet tools are only meaningful in the local stdio MCP ` +
+      `context where the agent has direct access to your wallet keystore. To manage your ` +
+      `wallet, use the local stdio MCP server (Claude Desktop / Claude Code) or the ` +
+      `relay's /auth-methods/me endpoint to view your registered credentials.`,
+  });
+}
+
+async function handleLinkWallet(args: ToolArgs): Promise<string> {
+  const userId = (args.agent_id as string | undefined) ?? '(unknown user)';
+  return JSON.stringify({
+    skipped: true,
+    reason: 'already-identified-via-oauth',
+    message: `You're already identified on this relay as ${userId} via OAuth. ` +
+      `The setup_identity/link_wallet tools are only meaningful in the local stdio MCP ` +
+      `context where the agent has direct access to your wallet keystore. To manage your ` +
+      `wallet, use the local stdio MCP server (Claude Desktop / Claude Code) or the ` +
+      `relay's /auth-methods/me endpoint to view your registered credentials.`,
+  });
+}
+
+// ── Wallet — read-only balance check ────────────────────────
+
+async function handleCheckBalance(args: ToolArgs): Promise<string> {
+  const chain = getChainConfig();
+
+  if (chain.mode === 'local') {
+    return JSON.stringify({
+      chain: { mode: chain.mode, chainId: chain.chainId },
+      message: 'Chain mode is local — no blockchain connection. Set CG_CHAIN=base-sepolia or CG_CHAIN=base for on-chain operations.',
+    });
+  }
+
+  // Address resolution: explicit arg wins, otherwise fall back to the
+  // relay's compliance wallet (loaded lazily on first compliance publish).
+  let address = (args.address as string | undefined);
+  if (!address) {
+    try {
+      const cw = await ensureRelayComplianceWallet();
+      address = cw.wallet.address;
+    } catch (err) {
+      return JSON.stringify({
+        error: 'no-address',
+        message: `No address provided and relay compliance wallet unavailable: ${(err as Error).message}. ` +
+          `Pass an explicit { "address": "0x..." } argument.`,
+      });
+    }
+  }
+
+  const balance = await checkBalance(address);
+  return JSON.stringify({
+    wallet: balance.address,
+    chain: { mode: chain.mode, chainId: chain.chainId },
+    balance: balance.balance,
+    funded: balance.funded,
+    sufficient: balance.sufficient,
+    fundingInstructions: balance.fundingInstructions,
+  });
+}
+
+// ── Comprehension — cognitive strategy for a question ───────
+
+async function handleAnalyzeQuestion(args: ToolArgs): Promise<string> {
+  const question = args.question as string;
+  const sessionContent = args.session_content as string | undefined;
+  const strategy = computeCognitiveStrategy(question);
+
+  let abstainInfo: { abstain: boolean; missingEntities: string[]; matchRatio: number } | undefined;
+  if (sessionContent) {
+    const sessionExtr = extractEntities(sessionContent);
+    const sessionEntities = new Set(sessionExtr.allEntities.map(e => e.toLowerCase()));
+    abstainInfo = shouldAbstain(
+      [...strategy.entities.contentWords],
+      sessionEntities,
+    );
+  }
+
+  return JSON.stringify({
+    questionType: strategy.questionType,
+    strategy: abstainInfo?.abstain ? 'abstain' : strategy.strategy,
+    requiresComputation: strategy.requiresComputation,
+    computationType: strategy.computationType,
+    entities: {
+      contentWords: strategy.entities.contentWords,
+      nounPhrases: strategy.entities.nounPhrases,
+    },
+    confidence: strategy.confidence,
+    abstention: abstainInfo,
+  });
+}
+
+// ── PGSL — lattice operations on the relay's process-wide instance ──
+
+async function handlePgslIngest(args: ToolArgs): Promise<string> {
+  const content = args.content as string;
+  const topUri = embedInPGSL(pgslInstance, content);
+  const stats = latticeStats(pgslInstance);
+  const resolved = pgslResolve(pgslInstance, topUri);
+
+  const result: Record<string, unknown> = {
+    ingested: true,
+    topUri,
+    resolved,
+    stats,
+  };
+
+  // Optional: lift to a context descriptor and publish to the user's pod.
+  // Mirrors toolPgslIngest in the stdio server, but uses the authenticated
+  // user's WebID + agent from the relay's authContext-injected args.
+  if (args.publish_to_pod) {
+    const podName = (args.pod_name as string) ?? 'default';
+    const podUrl = `${CSS_URL}${podName}/`;
+    const ownerWebId = (args.owner_webid as string) ?? `https://id.example.com/${podName}/profile#me`;
+    const agentId = (args.agent_id as string) ?? 'urn:agent:remote:unknown';
+    const now = new Date().toISOString();
+
+    try {
+      const desc = liftToDescriptor(
+        pgslInstance,
+        topUri,
+        `urn:cg:${podName}:pgsl:${Date.now()}` as IRI,
+        [{
+          type: 'Temporal',
+          validFrom: now,
+        }, {
+          type: 'Provenance',
+          wasAttributedTo: ownerWebId as IRI,
+          generatedAtTime: now,
+          wasGeneratedBy: { agent: agentId as IRI, endedAt: now },
+        }],
+      );
+      const turtle = pgslToTurtle(pgslInstance);
+      const publishResult = await publish(desc, turtle, podUrl, { fetch: solidFetch });
+      result.publishedDescriptorUrl = publishResult.descriptorUrl;
+    } catch (err) {
+      result.publishError = (err as Error).message;
+    }
+  }
+
+  return JSON.stringify(result);
+}
+
+async function handlePgslResolve(args: ToolArgs): Promise<string> {
+  const uri = args.uri as IRI;
+  const node = pgslInstance.nodes.get(uri);
+  if (!node) {
+    return JSON.stringify({ error: `Not found: ${uri}` });
+  }
+  const resolved = pgslResolve(pgslInstance, uri);
+  const base: Record<string, unknown> = {
+    uri,
+    resolved,
+    kind: node.kind,
+    provenance: {
+      wasAttributedTo: node.provenance.wasAttributedTo,
+      generatedAtTime: node.provenance.generatedAtTime,
+    },
+  };
+  if (node.kind === 'Atom') {
+    base.level = 0;
+    base.value = node.value;
+  } else {
+    base.level = node.level;
+    base.itemCount = node.items.length;
+    if (node.left) base.left = node.left;
+    if (node.right) base.right = node.right;
+    const pb = pullbackSquare(pgslInstance, uri);
+    if (pb) base.overlap = pb.overlap;
+  }
+  return JSON.stringify(base);
+}
+
+async function handlePgslLatticeStatus(_args: ToolArgs): Promise<string> {
+  return JSON.stringify(latticeStats(pgslInstance));
+}
+
+async function handlePgslMeet(args: ToolArgs): Promise<string> {
+  const uriA = args.uri_a as IRI;
+  const uriB = args.uri_b as IRI;
+  const meet = latticeMeet(pgslInstance, uriA, uriB);
+  if (!meet) {
+    return JSON.stringify({
+      meet: null,
+      message: `No shared sub-fragment between ${uriA} and ${uriB}`,
+    });
+  }
+  return JSON.stringify({
+    meet,
+    resolved: pgslResolve(pgslInstance, meet),
+    a: uriA,
+    b: uriB,
+  });
+}
+
+async function handlePgslToTurtle(_args: ToolArgs): Promise<string> {
+  return JSON.stringify({ turtle: pgslToTurtle(pgslInstance) });
+}
+
 // ── Tool Registry ───────────────────────────────────────────
 
 const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => Promise<string> }> = {
@@ -933,6 +1229,21 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   discover_directory: { description: 'Import pods from a directory graph', handler: handleDiscoverDirectory },
   publish_directory: { description: 'Publish pod registry as a directory', handler: handlePublishDirectory },
   resolve_webfinger: { description: 'Resolve WebFinger to find a pod', handler: handleResolveWebfinger },
+  // Subscription management
+  unsubscribe_from_pod: { description: 'Close an active WebSocket subscription on a pod', handler: handleUnsubscribeFromPod },
+  subscribe_all: { description: 'Subscribe to notifications from all known pods', handler: handleSubscribeAll },
+  // Onboarding / wallet (stubbed on the remote OAuth surface)
+  setup_identity: { description: 'Identity onboarding (not applicable on remote relay — see message)', handler: handleSetupIdentity },
+  link_wallet: { description: 'Link an Ethereum wallet (not applicable on remote relay — see message)', handler: handleLinkWallet },
+  check_balance: { description: 'Check ETH balance for a wallet address', handler: handleCheckBalance },
+  // Comprehension
+  analyze_question: { description: 'Analyze a question to pick the optimal cognitive strategy', handler: handleAnalyzeQuestion },
+  // PGSL lattice
+  pgsl_ingest: { description: 'Ingest content into the PGSL lattice', handler: handlePgslIngest },
+  pgsl_resolve: { description: 'Resolve a PGSL URI to its content + metadata', handler: handlePgslResolve },
+  pgsl_lattice_status: { description: 'Report PGSL lattice statistics', handler: handlePgslLatticeStatus },
+  pgsl_meet: { description: 'Compute the lattice meet of two PGSL fragments', handler: handlePgslMeet },
+  pgsl_to_turtle: { description: 'Serialize the PGSL lattice as RDF Turtle', handler: handlePgslToTurtle },
 };
 
 // ── MCP Tool Schemas ────────────────────────────────────────
@@ -1135,6 +1446,113 @@ const TOOL_SCHEMAS = [
       },
       required: ['resource'],
     },
+  },
+  {
+    name: 'unsubscribe_from_pod',
+    description: 'Close an active WebSocket subscription on a Solid pod. Releases a slot toward the relay-wide subscription cap. No-op if not subscribed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pod_url: { type: 'string', description: 'Solid pod URL to unsubscribe from' },
+      },
+      required: ['pod_url'],
+    },
+  },
+  {
+    name: 'subscribe_all',
+    description: 'Subscribe to WebSocket notifications from ALL pods currently in the relay\'s federation registry. Use add_pod / discover_directory first to populate.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'setup_identity',
+    description: 'First-time onboarding for a human (local stdio surface). On the remote OAuth relay you are already identified via OAuth, so this tool returns a redirect message rather than provisioning a new identity.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Human-readable name (e.g. "Sarah Chen")' },
+        user_id: { type: 'string', description: 'Short identifier (e.g. "sarah") — auto-derived from name if omitted' },
+        agent_name: { type: 'string', description: 'Label for the agent (e.g. "Claude Code (Sarah)")' },
+      },
+    },
+  },
+  {
+    name: 'link_wallet',
+    description: 'Link an existing Ethereum wallet to your identity (local stdio surface). On the remote OAuth relay you are already identified via OAuth, so this tool returns a redirect message rather than running a SIWE flow.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        wallet_address: { type: 'string', description: 'Your Ethereum wallet address (0x...)' },
+        signature: { type: 'string', description: 'SIWE signature (0x...) — if you already signed offline. Omit to get the message to sign.' },
+      },
+      required: ['wallet_address'],
+    },
+  },
+  {
+    name: 'check_balance',
+    description: 'Check the ETH balance of a wallet on the active chain. Returns balance, funding status, and instructions if unfunded.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        address: { type: 'string', description: 'Wallet address to check (default: the relay\'s compliance wallet)' },
+      },
+    },
+  },
+  {
+    name: 'analyze_question',
+    description: 'Analyze a question using the affordance engine to determine the optimal cognitive strategy. Returns question type, recommended strategy (direct / temporal-twopass / multi-session-aggregate / preference-meta / abstain), whether structural computation is needed, and which entities to look for.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'The question to analyze' },
+        session_content: { type: 'string', description: 'Optional session content to check for abstention (are the question entities present?)' },
+      },
+      required: ['question'],
+    },
+  },
+  {
+    name: 'pgsl_ingest',
+    description: 'Ingest content into the PGSL lattice. Tokenizes the content, builds the overlapping-pair lattice bottom-up, and returns the top fragment URI. Optionally publishes the lattice as a context descriptor to the pod.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        content: { type: 'string', description: 'Text content to ingest into the lattice' },
+        publish_to_pod: { type: 'boolean', description: 'Also publish as a context descriptor to the pod (default: false)' },
+      },
+      required: ['content'],
+    },
+  },
+  {
+    name: 'pgsl_resolve',
+    description: 'Resolve a PGSL URI to its content. For atoms: returns the value. For fragments: returns the full reconstructed text. Also shows node metadata (level, constituents, pullback, provenance).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uri: { type: 'string', description: 'PGSL URI to resolve (urn:pgsl:atom:... or urn:pgsl:fragment:...)' },
+      },
+      required: ['uri'],
+    },
+  },
+  {
+    name: 'pgsl_lattice_status',
+    description: 'Show the current state of the PGSL lattice — atom count, fragment count, levels, total nodes.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'pgsl_meet',
+    description: 'Compute the lattice meet (greatest lower bound) of two fragments — the largest shared sub-sequence. This is the categorical intersection in the presheaf topos.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        uri_a: { type: 'string', description: 'First PGSL fragment URI' },
+        uri_b: { type: 'string', description: 'Second PGSL fragment URI' },
+      },
+      required: ['uri_a', 'uri_b'],
+    },
+  },
+  {
+    name: 'pgsl_to_turtle',
+    description: 'Serialize the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance — all as typed RDF resources with the pgsl: vocabulary.',
+    inputSchema: { type: 'object', properties: {} },
   },
 ] as const;
 
