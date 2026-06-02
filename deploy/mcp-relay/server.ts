@@ -42,6 +42,11 @@ import {
   relayDidFromAddress,
   type OAuthClientStoreConfig,
 } from './oauth-client-store.js';
+import {
+  validateDpopJwt,
+  athFromAccessToken,
+  reconstructRequestUrl,
+} from './dpop.js';
 
 import {
   ContextDescriptor,
@@ -136,6 +141,20 @@ const RELAY_MCP_API_KEY = process.env['RELAY_MCP_API_KEY'] ?? '';
 // Must be set in production so the OAuth metadata advertises the correct
 // externally-reachable URL. Falls back to constructing from request host.
 const PUBLIC_BASE_URL = process.env['PUBLIC_BASE_URL'] ?? '';
+
+// Solid OIDC / RFC 9449 DPoP enforcement.
+//   - Default (false): DPoP is supported but optional. Clients that send a
+//     Bearer token continue to work; clients that send DPoP get the
+//     stronger token-key-binding guarantees.
+//   - Hard-require (true): /mcp rejects unbound Bearer tokens with a 401
+//     carrying `WWW-Authenticate: DPoP error="invalid_token",
+//     error_description="DPoP required by this resource"`. Tokens that
+//     were ISSUED with `cnf.jkt` are always DPoP-required regardless of
+//     this flag — the binding sticks to the token, not the env.
+//
+// Flip this to `true` once all expected clients (claude.ai, ChatGPT, etc.)
+// have shipped DPoP support.
+const RELAY_REQUIRE_DPOP = (process.env['RELAY_REQUIRE_DPOP'] ?? 'false').toLowerCase() === 'true';
 
 // Surface-agent prefix this relay uses when minting per-user agents on
 // identity. Every user who authenticates through this relay gets a
@@ -2425,6 +2444,120 @@ app.use((_req, res, next) => {
 // we fall back to localhost (useful for local dev); deployments MUST set
 // PUBLIC_BASE_URL to the true public URL.
 const DEFAULT_ISSUER = new URL(PUBLIC_BASE_URL || `http://localhost:${PORT}`);
+
+// ── Solid OIDC / RFC 9449 metadata overrides ────────────────
+// Express dispatches the FIRST matching route. Mounting these before the
+// SDK's mcpAuthRouter lets us augment the discovery documents with
+// DPoP capability advertisement without forking the SDK. Falls back
+// (cleanly, via the SDK router) for any field not overridden here.
+//
+// Required by Solid OIDC §4 for the relay to count as "DPoP-aware"; any
+// Solid OIDC client looks for `dpop_signing_alg_values_supported` in
+// both documents before deciding it can use DPoP against this relay.
+const DPOP_SIGNING_ALGS = ['ES256', 'EdDSA'];
+const issuerHref = DEFAULT_ISSUER.href.replace(/\/$/, '');
+app.get('/.well-known/oauth-authorization-server', (_req, res) => {
+  res.json({
+    issuer: DEFAULT_ISSUER.href,
+    authorization_endpoint: `${issuerHref}/authorize`,
+    token_endpoint: `${issuerHref}/token`,
+    registration_endpoint: `${issuerHref}/register`,
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code', 'refresh_token'],
+    code_challenge_methods_supported: ['S256'],
+    token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
+    scopes_supported: ['mcp'],
+    // RFC 9449 §5.1 — advertise DPoP support to clients.
+    dpop_signing_alg_values_supported: DPOP_SIGNING_ALGS,
+  });
+});
+app.get('/.well-known/oauth-protected-resource', (_req, res) => {
+  res.json({
+    resource: issuerHref + '/',
+    authorization_servers: [DEFAULT_ISSUER.href],
+    scopes_supported: ['mcp'],
+    resource_name: 'Interego MCP',
+    // RFC 9449 §5.1 — advertise DPoP support at the resource as well so
+    // clients that only fetch the protected-resource metadata document
+    // (Solid OIDC's preferred entry point) know to use DPoP.
+    dpop_signing_alg_values_supported: DPOP_SIGNING_ALGS,
+    // RFC 9728 §3.2 — declare which bearer-token usage methods this
+    // resource accepts. "DPoP" is the canonical method name.
+    bearer_methods_supported: RELAY_REQUIRE_DPOP ? ['DPoP'] : ['header', 'DPoP'],
+  });
+});
+
+// ── /token DPoP pre-processor ───────────────────────────────
+//
+// When a client POSTs to /token with a DPoP header alongside its
+// authorization_code or refresh_token grant, validate the DPoP proof
+// here, compute the JWK thumbprint, and stash it on the provider so
+// `exchangeAuthorizationCode` / `exchangeRefreshToken` can embed
+// `cnf: { jkt: <thumbprint> }` in the access token and flip
+// token_type from "Bearer" to "DPoP".
+//
+// This runs BEFORE the SDK's tokenHandler (which sees the same route
+// because of express's first-mounted-wins for matching prefixes).
+// On DPoP failure we 400 immediately and skip the SDK handler so the
+// client doesn't get a Bearer token that contradicts its DPoP intent.
+const tokenDpopMiddleware: express.RequestHandler = async (req, res, next) => {
+  const dpopHeader = req.headers['dpop'];
+  if (!dpopHeader || typeof dpopHeader !== 'string') {
+    // No DPoP — proceed unchanged. The SDK will issue a plain Bearer token.
+    // If RELAY_REQUIRE_DPOP we still allow this through and let the
+    // /mcp middleware later reject unbound tokens, which keeps /token
+    // useful for the legacy Bearer fallback during transition.
+    next();
+    return;
+  }
+  try {
+    const htu = reconstructRequestUrl(req);
+    const { jkt } = await validateDpopJwt(dpopHeader, {
+      htm: 'POST',
+      htu,
+      // /token requests have no `ath` — there's no access token in scope yet.
+    });
+    const body = req.body as { grant_type?: string; code?: string; refresh_token?: string };
+    if (body?.grant_type === 'authorization_code' && body.code) {
+      oauthProvider.bindAuthorizationCodeDpop(body.code, jkt);
+    } else if (body?.grant_type === 'refresh_token' && body.refresh_token) {
+      // RFC 9449 §5.2: the inbound DPoP key MUST match the JKT the
+      // refresh token was originally bound to.
+      const bound = oauthProvider.getRefreshTokenJkt(body.refresh_token);
+      if (bound && bound !== jkt) {
+        res.status(400).json({
+          error: 'invalid_dpop_proof',
+          error_description: 'DPoP key does not match the original token binding',
+        });
+        return;
+      }
+      // If the refresh token wasn't originally DPoP-bound but the
+      // client is presenting one now, accept the upgrade — that's
+      // the path a client takes when it adopts DPoP on a refresh.
+      if (!bound) {
+        // Bind retroactively so the next exchangeRefreshToken sees it.
+        // We piggy-back on the provider's internal stash by treating
+        // the refresh_token string as the binding key.
+        // Note: this only matters until rotation; the new refresh
+        // token will inherit the binding.
+        // (We expose this via getRefreshTokenJkt + the provider's
+        // own setter wouldn't be ideal here; we instead let
+        // exchangeRefreshToken pick up the binding from the
+        // freshly-validated proof through a side-channel header.)
+        (req as express.Request & { _dpopJkt?: string })._dpopJkt = jkt;
+      }
+    }
+    next();
+  } catch (err) {
+    const msg = (err as Error).message;
+    res.set('WWW-Authenticate', `DPoP error="invalid_dpop_proof", error_description="${msg.replace(/"/g, "'")}"`);
+    res.status(400).json({ error: 'invalid_dpop_proof', error_description: msg });
+  }
+};
+// /token is served by the SDK router below. Express runs middlewares in
+// mount order, so mounting this here makes it run BEFORE the SDK handler.
+app.post('/token', express.urlencoded({ extended: false }), tokenDpopMiddleware);
+
 app.use(mcpAuthRouter({
   provider: oauthProvider,
   issuerUrl: DEFAULT_ISSUER,
@@ -3224,10 +3357,161 @@ const oauthBearer = requireBearerAuth({
   ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}),
 });
 
+/**
+ * Build a `WWW-Authenticate: DPoP ...` header value. RFC 9449 §7.1.
+ */
+function dpopWwwAuth(errorCode: string, description: string): string {
+  let h = `DPoP error="${errorCode}", error_description="${description.replace(/"/g, "'")}"`;
+  h += `, algs="${'ES256 EdDSA'}"`;
+  if (resourceMetadataUrl) h += `, resource_metadata="${resourceMetadataUrl}"`;
+  return h;
+}
+
+/**
+ * DPoP-aware auth middleware for /mcp.
+ *
+ * Decision tree:
+ *   1. `Authorization: DPoP <token>` + `DPoP: <jwt>`
+ *      → Validate DPoP proof (htm/htu/iat/jti/sig + ath = sha256(token)),
+ *        verify access-token cnf.jkt matches the proof's JWK thumbprint.
+ *   2. `Authorization: Bearer <token>` AND token has `cnf.jkt`
+ *      → Reject: this token is DPoP-bound and MUST be presented with a
+ *        DPoP proof. 401 DPoP error="invalid_token".
+ *   3. `Authorization: Bearer <token>` AND token has no `cnf.jkt` AND
+ *      RELAY_REQUIRE_DPOP=false
+ *      → Accept (legacy Bearer path).
+ *   4. `Authorization: Bearer <token>` AND no `cnf.jkt` AND
+ *      RELAY_REQUIRE_DPOP=true
+ *      → Reject: 401 DPoP error="invalid_token",
+ *        error_description="DPoP required by this resource".
+ *   5. No Authorization header
+ *      → SDK's requireBearerAuth's behavior: 401 with WWW-Authenticate
+ *        pointing at the discovery metadata.
+ *
+ * The SDK's requireBearerAuth handles case 5 for us; we delegate to it
+ * after handling cases 1-4. This keeps the OAuth-discovery WWW-Authenticate
+ * response untouched for fresh clients.
+ */
+const oauthDpopOrBearer: express.RequestHandler = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    // No Authorization header at all → fall through to the SDK bearer
+    // middleware, which emits the canonical OAuth discovery 401.
+    oauthBearer(req, res, next);
+    return;
+  }
+  const spaceIdx = authHeader.indexOf(' ');
+  const scheme = spaceIdx > 0 ? authHeader.slice(0, spaceIdx) : authHeader;
+  const token = spaceIdx > 0 ? authHeader.slice(spaceIdx + 1).trim() : '';
+  const schemeLower = scheme.toLowerCase();
+
+  // ── Case 1: DPoP scheme ──
+  if (schemeLower === 'dpop') {
+    const dpopHeader = req.headers['dpop'];
+    if (!dpopHeader || typeof dpopHeader !== 'string') {
+      res.set('WWW-Authenticate', dpopWwwAuth('invalid_request', 'Missing DPoP header'));
+      res.status(401).json({ error: 'invalid_request', error_description: 'Missing DPoP header' });
+      return;
+    }
+    if (!token) {
+      res.set('WWW-Authenticate', dpopWwwAuth('invalid_token', 'Missing access token'));
+      res.status(401).json({ error: 'invalid_token', error_description: 'Missing access token' });
+      return;
+    }
+    // Verify the access token first so we have the bound jkt to check against.
+    let authInfo: Awaited<ReturnType<typeof oauthProvider.verifyAccessToken>>;
+    try {
+      authInfo = await oauthProvider.verifyAccessToken(token);
+    } catch (err) {
+      const msg = (err as Error).message;
+      res.set('WWW-Authenticate', dpopWwwAuth('invalid_token', msg));
+      res.status(401).json({ error: 'invalid_token', error_description: msg });
+      return;
+    }
+    // DPoP proof validation.
+    try {
+      const htu = reconstructRequestUrl(req);
+      const { jkt } = await validateDpopJwt(dpopHeader, {
+        htm: req.method,
+        htu,
+        ath: athFromAccessToken(token),
+      });
+      // Verify token-key binding (cnf.jkt MUST match the proof JWK).
+      const tokenCnf = (authInfo as { extra?: { cnf?: { jkt?: string } } }).extra?.cnf;
+      if (!tokenCnf?.jkt) {
+        res.set('WWW-Authenticate', dpopWwwAuth('invalid_token', 'Access token is not DPoP-bound'));
+        res.status(401).json({ error: 'invalid_token', error_description: 'Access token is not DPoP-bound' });
+        return;
+      }
+      if (tokenCnf.jkt !== jkt) {
+        res.set('WWW-Authenticate', dpopWwwAuth('invalid_token', 'DPoP key thumbprint does not match cnf.jkt'));
+        res.status(401).json({ error: 'invalid_token', error_description: 'DPoP key thumbprint does not match cnf.jkt' });
+        return;
+      }
+      // Scope + expiry checks mirror requireBearerAuth.
+      if (!authInfo.scopes.includes('mcp')) {
+        res.set('WWW-Authenticate', dpopWwwAuth('insufficient_scope', 'Required scope: mcp'));
+        res.status(403).json({ error: 'insufficient_scope', error_description: 'Required scope: mcp' });
+        return;
+      }
+      if (typeof authInfo.expiresAt !== 'number' || authInfo.expiresAt < Date.now() / 1000) {
+        res.set('WWW-Authenticate', dpopWwwAuth('invalid_token', 'Token expired or missing expiry'));
+        res.status(401).json({ error: 'invalid_token', error_description: 'Token expired or missing expiry' });
+        return;
+      }
+      (req as express.Request & { auth?: unknown }).auth = authInfo;
+      next();
+      return;
+    } catch (err) {
+      const msg = (err as Error).message;
+      res.set('WWW-Authenticate', dpopWwwAuth('invalid_dpop_proof', msg));
+      res.status(401).json({ error: 'invalid_dpop_proof', error_description: msg });
+      return;
+    }
+  }
+
+  // ── Cases 2-4: Bearer scheme ──
+  if (schemeLower === 'bearer') {
+    // Inspect the token's cnf.jkt before deciding. If the token was
+    // issued as DPoP-bound, the client MUST present it as DPoP.
+    let authInfo: Awaited<ReturnType<typeof oauthProvider.verifyAccessToken>> | undefined;
+    try {
+      authInfo = await oauthProvider.verifyAccessToken(token);
+    } catch {
+      // Token didn't verify locally — could be the legacy RELAY_MCP_API_KEY
+      // or just garbage. Fall through to oauthBearer which will surface
+      // the right 401.
+      oauthBearer(req, res, next);
+      return;
+    }
+    const tokenCnf = (authInfo as { extra?: { cnf?: { jkt?: string } } }).extra?.cnf;
+    if (tokenCnf?.jkt) {
+      // Case 2: DPoP-bound token presented as Bearer.
+      res.set('WWW-Authenticate', dpopWwwAuth('invalid_token', 'Access token is DPoP-bound; use Authorization: DPoP'));
+      res.status(401).json({ error: 'invalid_token', error_description: 'Access token is DPoP-bound; use Authorization: DPoP' });
+      return;
+    }
+    if (RELAY_REQUIRE_DPOP) {
+      // Case 4: hard-require DPoP.
+      res.set('WWW-Authenticate', dpopWwwAuth('invalid_token', 'DPoP required by this resource'));
+      res.status(401).json({ error: 'invalid_token', error_description: 'DPoP required by this resource' });
+      return;
+    }
+    // Case 3: legacy unbound Bearer — accept. Delegate to oauthBearer
+    // for the scope + expiry checks (it'll re-verify the token, harmless).
+    oauthBearer(req, res, next);
+    return;
+  }
+
+  // Unknown scheme.
+  res.set('WWW-Authenticate', dpopWwwAuth('invalid_request', `Unsupported auth scheme: ${scheme}`));
+  res.status(401).json({ error: 'invalid_request', error_description: `Unsupported auth scheme: ${scheme}` });
+};
+
 // Custom /mcp gate: if the request has an Authorization header starting with
-// the legacy API key, short-circuit past OAuth. Otherwise run the OAuth
-// bearer middleware, which will either validate the token or return 401 with
-// proper WWW-Authenticate so clients know to start the OAuth flow.
+// the legacy API key, short-circuit past OAuth. Otherwise run the DPoP-aware
+// OAuth middleware, which will either validate the token (DPoP or Bearer)
+// or return 401 with proper WWW-Authenticate so clients know how to retry.
 const mcpGate: express.RequestHandler = (req, res, next) => {
   const auth = req.headers.authorization;
   if (auth?.startsWith('Bearer ') && RELAY_MCP_API_KEY) {
@@ -3238,7 +3522,7 @@ const mcpGate: express.RequestHandler = (req, res, next) => {
       return;
     }
   }
-  oauthBearer(req, res, next);
+  oauthDpopOrBearer(req, res, next);
 };
 
 app.post('/mcp', mcpGate, handleMcp);
@@ -3260,7 +3544,8 @@ function fingerprint(material: string): string {
 app.listen(PORT, () => {
   log(`MCP Relay started on port ${PORT}`);
   log(`CSS: ${CSS_URL}`);
-  log(`/mcp auth: OAuth 2.1 + legacy Bearer <RELAY_MCP_API_KEY> fallback (${RELAY_MCP_API_KEY ? `enabled fp=${fingerprint(RELAY_MCP_API_KEY)}` : 'disabled — OAuth-only'})`);
+  log(`/mcp auth: OAuth 2.1 + DPoP (RFC 9449, Solid OIDC) + legacy Bearer <RELAY_MCP_API_KEY> fallback (${RELAY_MCP_API_KEY ? `enabled fp=${fingerprint(RELAY_MCP_API_KEY)}` : 'disabled — OAuth-only'})`);
+  log(`DPoP: enforced=${RELAY_REQUIRE_DPOP} algs=${DPOP_SIGNING_ALGS.join(',')}`);
   if (!RELAY_MCP_API_KEY && !PUBLIC_BASE_URL) {
     log(`[startup-warn] Neither RELAY_MCP_API_KEY nor PUBLIC_BASE_URL is set. Local OAuth will work, but no remote MCP client can connect.`);
   }

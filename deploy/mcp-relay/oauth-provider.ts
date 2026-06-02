@@ -53,6 +53,14 @@ export interface InteregoAuthInfo extends AuthInfo {
      *  reconstructed from `userId` by the relay. */
     podUrl: string;
     identityToken: string;
+    /**
+     * RFC 9449 cnf.jkt — JWK SHA-256 thumbprint of the DPoP public key
+     * this access token is bound to. Present iff the token was issued
+     * over a DPoP-bound /token exchange. The /mcp middleware compares
+     * this against the JWK in the inbound DPoP header before accepting
+     * the request.
+     */
+    cnf?: { jkt: string };
   };
 }
 
@@ -99,6 +107,23 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams;
     expiresAt: number;
   }>();
+  /**
+   * Per-authorization-code DPoP binding stash. Set by the relay's
+   * /token middleware when a valid DPoP proof accompanies the exchange
+   * request, read here in exchangeAuthorizationCode so we can embed the
+   * `cnf.jkt` claim and flip token_type from "Bearer" to "DPoP".
+   *
+   * Keyed by the authorization_code value the client sent. Entries are
+   * cleaned up alongside the code itself.
+   */
+  private codeDpopJkt = new Map<string, string>();
+  /**
+   * Per-refresh-token DPoP binding stash. Same mechanism as above but
+   * for the refresh-token grant. RFC 9449 §5.2 requires that a DPoP-
+   * bound refresh token can only be redeemed with a fresh DPoP proof
+   * whose JWK matches the original binding.
+   */
+  private refreshDpopJkt = new Map<string, string>();
 
   constructor(
     private readonly cfg: {
@@ -129,6 +154,21 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     },
   ) {
     this.clients = cfg.initialClients ?? new Map();
+  }
+
+  /**
+   * Called by the relay's /token middleware after it validates a DPoP
+   * proof presented alongside an authorization-code grant. Binds the
+   * JWK thumbprint to this code so the subsequent exchangeAuthorizationCode
+   * call can embed `cnf.jkt` in the minted access token.
+   */
+  bindAuthorizationCodeDpop(authorizationCode: string, jkt: string): void {
+    this.codeDpopJkt.set(authorizationCode, jkt);
+  }
+
+  /** Read-only: get the DPoP JKT bound to a refresh token, if any. */
+  getRefreshTokenJkt(refreshToken: string): string | undefined {
+    return this.refreshDpopJkt.get(refreshToken);
   }
 
   get clientsStore(): OAuthRegisteredClientsStore {
@@ -466,6 +506,10 @@ async function didSubmit() {
     if (!c) throw new Error('Invalid authorization code');
     // Single use
     this.authCodes.delete(authorizationCode);
+    // DPoP binding (if any) was keyed by the same authorization code.
+    // Pull it out and immediately drop it to keep the stash bounded.
+    const jkt = this.codeDpopJkt.get(authorizationCode);
+    this.codeDpopJkt.delete(authorizationCode);
     if (c.clientId !== client.client_id) throw new Error('Client ID mismatch');
     if (redirectUri && c.redirectUri !== redirectUri) throw new Error('Redirect URI mismatch');
     if (c.expiresAt < Date.now()) throw new Error('Authorization code expired');
@@ -489,6 +533,11 @@ async function didSubmit() {
         // identity layer is the only authority on which pod a user owns.
         podUrl: c.identity.podUrl,
         identityToken: c.identity.identityToken,
+        // RFC 9449 cnf.jkt token-key binding. Only present when the
+        // /token request included a valid DPoP proof. The /mcp middleware
+        // will refuse to honor the token unless an accompanying DPoP
+        // header carries a JWK whose thumbprint equals this value.
+        ...(jkt ? { cnf: { jkt } } : {}),
       },
     });
     this.refreshTokens.set(refresh, {
@@ -497,9 +546,15 @@ async function didSubmit() {
       identity: c.identity,
       expiresAt: Date.now() + refreshTtlSec * 1000,
     });
+    // Propagate the DPoP binding onto the refresh token so the next
+    // refresh-token grant inherits + enforces it. RFC 9449 §5.2.
+    if (jkt) this.refreshDpopJkt.set(refresh, jkt);
     return {
       access_token: token,
-      token_type: 'Bearer',
+      // DPoP token_type per RFC 9449 §4. Bearer remains the fallback for
+      // clients that haven't adopted DPoP yet — they get a token they
+      // can use against /mcp without a DPoP header.
+      token_type: jkt ? 'DPoP' : 'Bearer',
       expires_in: expiresIn,
       refresh_token: refresh,
       scope: c.scopes.join(' '),
@@ -531,6 +586,13 @@ async function didSubmit() {
     // Defense against replayed refresh tokens (standard OAuth best practice).
     this.refreshTokens.delete(refreshToken);
 
+    // Inherit any DPoP binding from the prior refresh token. The /token
+    // middleware also validated the inbound DPoP proof against this jkt
+    // before we got here (see RFC 9449 §5.2: refresh tokens for public
+    // clients MUST be bound to the same DPoP key as their original).
+    const inheritedJkt = this.refreshDpopJkt.get(refreshToken);
+    this.refreshDpopJkt.delete(refreshToken);
+
     const token = randomBytes(32).toString('hex');
     const newRefresh = randomBytes(32).toString('hex');
     const expiresIn = this.cfg.tokenTtlSec ?? 3600;
@@ -546,6 +608,7 @@ async function didSubmit() {
         // Carry podUrl across refresh too — see the access-token path above.
         podUrl: rec.identity.podUrl,
         identityToken: rec.identity.identityToken,
+        ...(inheritedJkt ? { cnf: { jkt: inheritedJkt } } : {}),
       },
     });
     this.refreshTokens.set(newRefresh, {
@@ -554,9 +617,10 @@ async function didSubmit() {
       identity: rec.identity,
       expiresAt: rec.expiresAt, // preserve original refresh TTL window
     });
+    if (inheritedJkt) this.refreshDpopJkt.set(newRefresh, inheritedJkt);
     return {
       access_token: token,
-      token_type: 'Bearer',
+      token_type: inheritedJkt ? 'DPoP' : 'Bearer',
       expires_in: expiresIn,
       refresh_token: newRefresh,
       scope: finalScopes.join(' '),

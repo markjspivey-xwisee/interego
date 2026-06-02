@@ -12,6 +12,6 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["server.ts", "oauth-provider.ts", "oauth-client-store.ts"],
+  "include": ["server.ts", "oauth-provider.ts", "oauth-client-store.ts", "dpop.ts"],
   "exclude": ["node_modules", "dist"]
 }
