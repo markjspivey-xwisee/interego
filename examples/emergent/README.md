@@ -46,38 +46,53 @@ and the script prints `got vs. expected` for the failure.
 | `disputed-fact-arena`             | `disputed-fact-arena.mjs`                 | `DISPUTED_FACT_DATE`    | required  | passing |
 | `sybil-swarm-attestation`         | `sybil-swarm-attestation.mjs`             | `SYBIL_SWARM_DATE`      | required  | passing |
 | `constitutional-amendment-vote`   | `constitutional-amendment-vote.mjs`       | `CAV_DATE`              | required  | passing |
-| `closed-loop-learner`             | `closed-loop-learner.mjs`                 | `EMERGENT_DATE`         | advisory  | unstable |
-| `three-runtime-pilgrimage`        | `three-runtime-pilgrimage.mjs`            | `PILGRIMAGE_DATE`       | advisory  | unstable |
-| `wallet-rotation`                 | `wallet-rotation-mid-relationship.mjs`    | `WALLET_ROTATION_DATE`  | advisory  | unstable |
-| `forge-and-flood`                 | `forge-and-flood.mjs`                     | `FORGE_AND_FLOOD_DATE`  | advisory  | unstable |
-| `byzantine-federation-loader`     | `byzantine-federation-loader.mjs`         | `BYZANTINE_FEDERATION_DATE` | advisory | not yet run against substrate |
-| `time-travel-audit`               | `time-travel-audit.mjs`                   | `TTA_DATE`              | advisory  | not yet run against substrate |
-| `belief-revision-cascade`         | `belief-revision-cascade.mjs`             | `BRC_DATE`              | advisory  | not yet run against substrate |
-| `partitioned-saga-replay`         | `partitioned-saga-replay.mjs`             | `PSR_DATE`              | advisory  | not yet run against substrate |
-| `value-drift-trial`               | `value-drift-trial.mjs`                   | `VALUE_DRIFT_DATE`      | advisory  | not yet run against substrate |
+| `closed-loop-learner`             | `closed-loop-learner.mjs`                 | `EMERGENT_DATE`         | required  | passing |
+| `three-runtime-pilgrimage`        | `three-runtime-pilgrimage.mjs`            | `PILGRIMAGE_DATE`       | advisory  | passing |
+| `wallet-rotation`                 | `wallet-rotation-mid-relationship.mjs`    | `WALLET_ROTATION_DATE`  | advisory  | passing |
+| `forge-and-flood`                 | `forge-and-flood.mjs`                     | `FORGE_AND_FLOOD_DATE`  | advisory  | passing |
+| `byzantine-federation-loader`     | `byzantine-federation-loader.mjs`         | `BYZANTINE_FEDERATION_DATE` | advisory | passing |
+| `time-travel-audit`               | `time-travel-audit.mjs`                   | `TTA_DATE`              | advisory  | passing |
+| `belief-revision-cascade`         | `belief-revision-cascade.mjs`             | `BRC_DATE`              | advisory  | passing |
+| `partitioned-saga-replay`         | `partitioned-saga-replay.mjs`             | `PSR_DATE`              | advisory  | passing |
+| `value-drift-trial`               | `value-drift-trial.mjs`                   | `VALUE_DRIFT_DATE`      | advisory  | passing |
 | `watcher-vigil-compressed`        | `watcher-vigil-compressed.mjs`            | `WATCHER_DATE`          | opt-in    | long-running (~45min) |
 
-### Required (4)
+All 13 mechanical scenarios (everything except the opt-in Vigil) pass
+against the live deployed CSS pod when each is given a fresh per-run
+pod subpath — which CI always provides via `RUN_TAG`. The substrate
+fixes that made them green are in `src/solid/client.ts` (manifest CAS
+retry budget, post-PUT verify-GET, 5xx retry, Trust+Semiotic facet
+projection) and in the relevant facet merge operators (`union` and
+`intersection` collapsed onto a single lattice meet so absorption
+holds).
 
-These four must pass for the workflow to be green. They exercise the
+### Required (5)
+
+These five must pass for the workflow to be green. They exercise the
 core substrate invariants — composition algebra, modal-status drift
-under disputed assertion, sybil resistance, and constitutional
-amendment quorum. Branch protection should reference the workflow's
-`Required suite` job (not the individual matrix shards — matrix job
-names are unstable as required-check identifiers).
+under disputed assertion, sybil resistance, constitutional amendment
+quorum, and runtime cross-vertical affordance discovery + invocation.
+Branch protection should reference the workflow's `Required suite`
+job (not the individual matrix shards — matrix job names are unstable
+as required-check identifiers).
 
-### Advisory (9)
+### Advisory (8)
 
-Run in CI with `continue-on-error: true`. Two subgroups:
+Run in CI with `continue-on-error: true`. All currently pass on the
+deployed CSS pod, but stay advisory until they've gone green across a
+few nightly runs and earn promotion. Failures here flag a regression
+worth investigating without red-X'ing the workflow.
 
-- **First tier (4)** — `closed-loop-learner`, `three-runtime-pilgrimage`,
-  `wallet-rotation`, `forge-and-flood`. Surface real substrate gaps but
-  currently exhibit intermittent failures we haven't fully chased down —
-  typically timing / propagation around cross-pod discovery and CAS retry.
+- **First tier (3)** — `three-runtime-pilgrimage`, `wallet-rotation`,
+  `forge-and-flood`. Exercise cross-pod identity continuity, wallet
+  rotation lineage, and reader-side trust filtering against forged
+  descriptors.
 - **Second tier (5)** — `byzantine-federation-loader`, `time-travel-audit`,
   `belief-revision-cascade`, `partitioned-saga-replay`, `value-drift-trial`.
-  New scenarios, not yet run against the deployed substrate. Advisory until
-  they've gone green across a few nightly runs and we promote them.
+  Each exercises a distinct substrate primitive (per-peer trust
+  ledger, bitemporal effective-at queries, counterfactual taint
+  cascade, saga heal without double-compensation, signed value
+  trajectory across an 18-month biography).
 
 Log output is uploaded as a per-scenario artifact (`log-<scenario>`) for
 post-mortem.
@@ -147,3 +162,46 @@ CI run writes to `${CG_DEMO_POD_BASE}/markj/demos/emergent-<name>-ci-<run_id>-<a
 which is human-grep-able if you need to inspect or remove old
 artifacts. There is no automatic garbage collection; the substrate is
 content-addressed and old descriptors are cheap to retain.
+
+## Recovering a corrupted pod path
+
+If a local re-run on the same date crashes mid-write and leaves CSS
+serving an unwritable resource — the symptom is `HTTP 500` with
+`ENOENT: ... open '<path>$.<ext>'` on every PUT, while `GET` returns
+200 with a stale etag that survives container restart — the file
+backend has lost the resource's body file but kept its metadata. This
+is unrepairable through the HTTP API (see CSS upstream issue
+[#2163](https://github.com/CommunitySolidServer/CommunitySolidServer/issues/2163)):
+`DELETE` on the resource returns 205 but doesn't clear the cache,
+`DELETE` on the `.meta` companion is rejected by design, parent
+containers refuse to delete because they're "not empty", and
+`If-None-Match: *` returns 412 because CSS still thinks the resource
+exists.
+
+The fix is to put a fresh body file directly into the storage volume.
+On the deployed Azure Files-backed CSS:
+
+```bash
+RG=context-graphs-rg
+ACCT=interegocssdata1730
+SHARE=css-data
+KEY=$(az storage account keys list --account-name "$ACCT" \
+       --resource-group "$RG" --query "[0].value" -o tsv)
+
+# Upload a non-empty body file at the expected $-suffixed path.
+# Any valid Turtle (even an empty manifest header) is enough — the
+# very next HTTP write will overwrite it with the real content.
+az storage file upload \
+  --account-name "$ACCT" --account-key "$KEY" --share-name "$SHARE" \
+  --source ./recovery-body.ttl \
+  --path "demos/<corrupted-path>/.well-known/context-graphs\$.ttl"
+```
+
+The next `HEAD` against CSS picks up the new file (new etag) and
+`PUT` works normally. Re-running the test against the same date then
+passes end-to-end.
+
+Easier in practice: just use a fresh date suffix
+(`EMERGENT_DATE=$(date +%Y-%m-%d-%s) npx tsx examples/emergent/closed-loop-learner.mjs`)
+so each local run lands on a virgin pod path. CI already does this
+via `RUN_TAG`.

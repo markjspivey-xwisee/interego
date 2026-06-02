@@ -1,6 +1,6 @@
 # @interego/mcp
 
-**MCP server for [Interego](https://github.com/markjspivey-xwisee/interego)** — exposes 25 tools for publishing, discovering, composing, and reasoning over typed knowledge graphs through Solid pods. Compatible with Claude Code, Claude Desktop, Cursor, Windsurf, Cline, and any other MCP client.
+**MCP server for [Interego](https://github.com/markjspivey-xwisee/interego)** — exposes 26 tools for publishing, discovering, composing, and reasoning over typed knowledge graphs through Solid pods. Compatible with Claude Code, Claude Desktop, Cursor, Windsurf, Cline, and any other MCP client.
 
 ## Install
 
@@ -82,14 +82,14 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ## What you get
 
-Once configured, your AI agent has these 25 tools available:
+Once configured, your AI agent has these 26 tools available:
 
 | Category | Tools |
 |---|---|
 | **Identity** | `setup_identity`, `link_wallet`, `register_agent`, `verify_agent`, `revoke_agent` |
 | **Publishing** | `publish_context` (with optional `share_with`), `publish_directory` |
 | **Discovery** | `discover_context`, `discover_all`, `discover_directory`, `get_descriptor`, `resolve_webfinger`, `list_known_pods`, `get_pod_status` |
-| **Federation** | `add_pod`, `remove_pod`, `subscribe_to_pod`, `subscribe_all` |
+| **Federation** | `add_pod`, `remove_pod`, `subscribe_to_pod`, `unsubscribe_from_pod`, `subscribe_all` |
 | **PGSL substrate** | `pgsl_ingest`, `pgsl_resolve`, `pgsl_lattice_status`, `pgsl_meet`, `pgsl_to_turtle` |
 | **Reasoning** | `analyze_question` |
 | **Wallet** | `check_balance` |

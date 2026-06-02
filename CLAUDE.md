@@ -64,7 +64,7 @@ src/
 Plus surrounding infrastructure:
 
 ```
-mcp-server/    Stdio MCP server — 60 tools including publish_context + share_with;
+mcp-server/    Stdio MCP server — 26 tools including publish_context + share_with;
                subscriptions capped at CG_MAX_SUBSCRIPTIONS (default 32);
                unsubscribe_from_pod tool releases a slot
 deploy/
