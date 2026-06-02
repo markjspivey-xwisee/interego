@@ -1300,6 +1300,296 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
 // Input schemas for each tool. Claude's LLM uses these to know how to call
 // each tool; empty inputSchema means the model can never pick the right args.
 // Property names match what each handler reads off args.
+//
+// outputSchema describes the wire-level MCP response envelope (top-level
+// `type: 'object'` is required by the SDK validator). Where the handler
+// returns a known JSON object, the inner `text` payload schema is
+// attached as `x-payload-schema` so downstream catalogs can show clients
+// the structured response shape (no more "output schema missing" in
+// OpenAI Apps). Generic tools fall back to a permissive object. Tier-1
+// (publish_context / discover_context / get_descriptor / list_known_pods /
+// get_pod_status / analyze_question) have hand-authored shapes. This is
+// metadata only — handler behavior is untouched.
+
+function mcpOutputSchema(
+  textPayloadSchema?: Record<string, unknown>,
+): Record<string, unknown> {
+  const textProp: Record<string, unknown> = {
+    type: 'string',
+    description: textPayloadSchema && typeof textPayloadSchema.description === 'string'
+      ? textPayloadSchema.description
+      : 'JSON-encoded result payload (or human-readable summary with embedded URLs).',
+  };
+  if (textPayloadSchema) {
+    textProp['x-payload-schema'] = textPayloadSchema;
+  }
+  return {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', const: 'text' },
+            text: textProp,
+          },
+          required: ['type', 'text'],
+        },
+      },
+      isError: { type: 'boolean' },
+    },
+    required: ['content'],
+  };
+}
+
+const GENERIC_OUTPUT_SCHEMA = mcpOutputSchema({
+  type: 'object',
+  additionalProperties: true,
+  description: "Tool returned a JSON object (or human-readable text) embedded in the MCP content[0].text field. See the tool's source for the exact shape.",
+});
+
+const PUBLISH_CONTEXT_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'publish_context returns a human-readable multi-line summary embedding the fields below; the relay variant returns the same fields as a JSON object.',
+  properties: {
+    published: { type: 'boolean' },
+    owner: { type: 'string', description: 'Pod owner WebID' },
+    agent: { type: 'string', description: 'Acting agent IRI' },
+    pod: { type: 'string', description: 'Pod URL the descriptor was written to' },
+    descriptorUrl: { type: 'string', description: 'URL of the published descriptor .ttl' },
+    graphUrl: { type: 'string', description: 'URL of the graph payload (.trig or .envelope.jose.json)' },
+    encrypted: { type: 'boolean', description: 'True when the graph was wrapped in a JOSE envelope' },
+    recipients: { type: 'integer', description: 'Number of envelope recipients (includes self)' },
+    manifestUrl: { type: 'string', description: 'URL of the pod manifest entry for this descriptor' },
+    sharedWith: {
+      type: 'array',
+      description: 'When share_with was supplied: per-handle resolution outcome',
+      items: {
+        type: 'object',
+        properties: {
+          handle: { type: 'string' },
+          podUrl: { type: 'string' },
+          agentCount: { type: 'integer' },
+        },
+      },
+    },
+    supersedesPriorVersions: {
+      type: 'array',
+      description: 'When auto_supersede_prior was active: prior descriptor URLs marked superseded',
+      items: { type: 'string' },
+    },
+    ipfs: {
+      type: 'object',
+      description: 'IPFS pin result (or local CID when no provider configured)',
+      properties: {
+        cid: { type: 'string' },
+        url: { type: 'string' },
+        provider: { type: 'string', description: 'local | pinata | web3-storage | …' },
+      },
+    },
+    anchorUrl: { type: 'string', description: 'Pod-anchored receipt URL (zero-copy metadata)' },
+    sensitivityPreflight: {
+      type: 'string',
+      description: 'Privacy-hygiene warning if HIGH-severity content detected (was allowed via allow_sensitive_content) or LOW/MEDIUM flagged content',
+    },
+    complianceCheck: {
+      type: 'object',
+      description: 'When compliance: true — framework conformance report',
+      properties: {
+        compliant: { type: 'boolean' },
+        framework: { type: 'string' },
+        violations: { type: 'array', items: { type: 'string' } },
+        upgradedFacets: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    signature: {
+      type: 'object',
+      description: 'When compliance: true — ECDSA signature record sibling .sig.json',
+      properties: {
+        url: { type: 'string' },
+        signer: { type: 'string', description: 'Ethereum address of signer' },
+        signedAt: { type: 'string', description: 'ISO 8601 signing timestamp' },
+        ipfsCid: { type: 'string' },
+        error: { type: 'string' },
+      },
+    },
+  },
+});
+
+const DISCOVER_CONTEXT_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'Aggregated discovery result: array of ManifestEntry plus optional registry info when verify_delegation was true.',
+  properties: {
+    entries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        description: 'ManifestEntry — one row per descriptor known to the pod manifest',
+        properties: {
+          descriptorUrl: { type: 'string' },
+          describes: { type: 'array', items: { type: 'string' }, description: 'Graph IRIs the descriptor describes' },
+          conformsTo: { type: 'array', items: { type: 'string' } },
+          facetTypes: { type: 'array', items: { type: 'string' }, description: 'Facet type names (Temporal, Provenance, …)' },
+          modalStatus: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'] },
+          trustLevel: { type: 'string' },
+          validFrom: { type: 'string' },
+          validUntil: { type: 'string' },
+        },
+        required: ['descriptorUrl'],
+      },
+    },
+    registry: {
+      type: 'object',
+      description: 'When verify_delegation: true — owner + authorized agents snapshot',
+      properties: {
+        owner: { type: 'string' },
+        name: { type: 'string' },
+        agents: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              scope: { type: 'string' },
+              label: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  },
+});
+
+const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: "Descriptor Turtle plus optional decrypted graph payload reached via the descriptor's cg:hasDistribution link.",
+  properties: {
+    url: { type: 'string', description: 'Echo of the descriptor URL requested' },
+    turtle: { type: 'string', description: 'Full Turtle of the descriptor (when the URL is a .ttl)' },
+    encrypted: { type: 'boolean', description: 'For .envelope.jose.json / .trig URLs: was the payload encrypted' },
+    mediaType: { type: 'string' },
+    content: { type: 'string', description: 'Resolved graph payload (decrypted when this agent is a recipient)' },
+    graph: {
+      type: 'object',
+      description: 'Distribution-followed graph payload (when descriptor has cg:hasDistribution and content was reachable)',
+      properties: {
+        url: { type: 'string' },
+        mediaType: { type: 'string' },
+        encrypted: { type: 'boolean' },
+        content: { type: 'string' },
+      },
+    },
+    error: { type: 'string', description: 'HTTP error from the pod when the fetch failed' },
+  },
+});
+
+const LIST_KNOWN_PODS_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'Federation pod registry snapshot. The stdio server returns a human-readable list; the relay returns the array directly under `pods`/at the top level.',
+  properties: {
+    pods: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          url: { type: 'string' },
+          label: { type: 'string' },
+          owner: { type: 'string', description: 'Owner WebID when known' },
+          via: { type: 'string', description: 'How the pod entered the registry (manual / directory / webfinger / home)' },
+          isHome: { type: 'boolean' },
+          lastSeen: { type: 'string' },
+          subscribed: { type: 'boolean' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+});
+
+const GET_POD_STATUS_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'Pod liveness + registry summary + descriptor count + recent notifications.',
+  properties: {
+    pod: { type: 'string' },
+    css: { type: 'string', description: 'CSS / pod-host base URL' },
+    registry: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        name: { type: 'string' },
+        agents: { type: 'integer', description: 'Active (non-revoked) authorized agent count' },
+      },
+    },
+    descriptors: { type: 'integer', description: 'Number of descriptors currently in the manifest' },
+    entries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          descriptorUrl: { type: 'string' },
+          describes: { type: 'array', items: { type: 'string' } },
+          facetTypes: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+    recentNotifications: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          type: { type: 'string' },
+          resource: { type: 'string' },
+          timestamp: { type: 'string' },
+        },
+      },
+    },
+  },
+});
+
+const ANALYZE_QUESTION_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'Cognitive-strategy recommendation from the affordance engine.',
+  properties: {
+    questionType: { type: 'string', description: 'Detected question type (temporal / multi-session / preference / direct / …)' },
+    strategy: {
+      type: 'string',
+      enum: ['direct', 'temporal-twopass', 'multi-session-aggregate', 'preference-meta', 'abstain'],
+      description: 'Recommended strategy. abstain when question entities not present in session_content.',
+    },
+    requiresComputation: { type: 'boolean' },
+    computationType: { type: 'string' },
+    entities: {
+      type: 'object',
+      properties: {
+        contentWords: { type: 'array', items: { type: 'string' } },
+        nounPhrases: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
+    abstention: {
+      type: 'object',
+      description: 'Populated when session_content was supplied',
+      properties: {
+        abstain: { type: 'boolean' },
+        missingEntities: { type: 'array', items: { type: 'string' } },
+        matchRatio: { type: 'number' },
+      },
+    },
+  },
+  required: ['strategy'],
+});
+
+const STUB_REDIRECT_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'Stub-handler response on the remote OAuth relay: tool is meaningful only on the local stdio surface.',
+  properties: {
+    skipped: { type: 'boolean', const: true },
+    reason: { type: 'string', description: 'e.g. already-identified-via-oauth' },
+    message: { type: 'string', description: 'Human-readable redirect explanation' },
+  },
+  required: ['skipped', 'reason', 'message'],
+});
 
 const TOOL_SCHEMAS = [
   {
@@ -1337,6 +1627,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['graph_iri', 'graph_content'],
     },
+    outputSchema: PUBLISH_CONTEXT_OUTPUT,
   },
   {
     name: 'discover_context',
@@ -1352,6 +1643,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['pod_url'],
     },
+    outputSchema: DISCOVER_CONTEXT_OUTPUT,
   },
   {
     name: 'get_descriptor',
@@ -1363,6 +1655,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['url'],
     },
+    outputSchema: GET_DESCRIPTOR_OUTPUT,
   },
   {
     name: 'get_pod_status',
@@ -1373,6 +1666,7 @@ const TOOL_SCHEMAS = [
         pod_url: { type: 'string', description: 'Pod URL (default: home pod for authenticated user)' },
       },
     },
+    outputSchema: GET_POD_STATUS_OUTPUT,
   },
   {
     name: 'subscribe_to_pod',
@@ -1384,6 +1678,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['pod_url'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'register_agent',
@@ -1400,6 +1695,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['agent_id'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'revoke_agent',
@@ -1412,6 +1708,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['agent_id'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'verify_agent',
@@ -1424,6 +1721,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['agent_id', 'pod_url'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'discover_all',
@@ -1434,11 +1732,13 @@ const TOOL_SCHEMAS = [
         facet_type: { type: 'string', enum: ['Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation'], description: 'Filter by facet type' },
       },
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'list_known_pods',
     description: 'List pods in the relay\'s in-memory federation registry (home pod, manually added, directory-discovered, WebFinger-resolved).',
     inputSchema: { type: 'object', properties: {} },
+    outputSchema: LIST_KNOWN_PODS_OUTPUT,
   },
   {
     name: 'add_pod',
@@ -1452,6 +1752,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['pod_url'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'remove_pod',
@@ -1463,6 +1764,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['pod_url'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'discover_directory',
@@ -1474,6 +1776,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['directory_url'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'publish_directory',
@@ -1485,6 +1788,7 @@ const TOOL_SCHEMAS = [
         directory_id: { type: 'string', description: 'Optional directory IRI' },
       },
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'resolve_webfinger',
@@ -1496,6 +1800,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['resource'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'unsubscribe_from_pod',
@@ -1507,11 +1812,13 @@ const TOOL_SCHEMAS = [
       },
       required: ['pod_url'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'subscribe_all',
     description: 'Subscribe to WebSocket notifications from ALL pods currently in the relay\'s federation registry. Use add_pod / discover_directory first to populate.',
     inputSchema: { type: 'object', properties: {} },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'setup_identity',
@@ -1524,6 +1831,7 @@ const TOOL_SCHEMAS = [
         agent_name: { type: 'string', description: 'Label for the agent (e.g. "Claude Code (Sarah)")' },
       },
     },
+    outputSchema: STUB_REDIRECT_OUTPUT,
   },
   {
     name: 'link_wallet',
@@ -1536,6 +1844,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['wallet_address'],
     },
+    outputSchema: STUB_REDIRECT_OUTPUT,
   },
   {
     name: 'check_balance',
@@ -1546,6 +1855,7 @@ const TOOL_SCHEMAS = [
         address: { type: 'string', description: 'Wallet address to check (default: the relay\'s compliance wallet)' },
       },
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'analyze_question',
@@ -1558,6 +1868,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['question'],
     },
+    outputSchema: ANALYZE_QUESTION_OUTPUT,
   },
   {
     name: 'pgsl_ingest',
@@ -1570,6 +1881,7 @@ const TOOL_SCHEMAS = [
       },
       required: ['content'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'pgsl_resolve',
@@ -1581,11 +1893,13 @@ const TOOL_SCHEMAS = [
       },
       required: ['uri'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'pgsl_lattice_status',
     description: 'Show the current state of the PGSL lattice — atom count, fragment count, levels, total nodes.',
     inputSchema: { type: 'object', properties: {} },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'pgsl_meet',
@@ -1598,11 +1912,13 @@ const TOOL_SCHEMAS = [
       },
       required: ['uri_a', 'uri_b'],
     },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
   {
     name: 'pgsl_to_turtle',
     description: 'Serialize the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance — all as typed RDF resources with the pgsl: vocabulary.',
     inputSchema: { type: 'object', properties: {} },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
   },
 ] as const;
 

@@ -1985,6 +1985,293 @@ const mcpServer = new Server(
 
 // ── Tool Definitions ────────────────────────────────────────
 
+// ── MCP outputSchema helpers ────────────────────────────────
+//
+// MCP tools return wire-level `{ content: [{ type: 'text', text: <result> }] }`
+// shaped responses. Most handlers JSON.stringify their result into the
+// single `text` field; a few (publish_context, discover_context,
+// get_pod_status) format human-readable strings with embedded URLs.
+//
+// We declare an outputSchema on every tool so OpenAI Apps / Claude
+// clients see a structured response-shape hint and stop reporting the
+// schema as missing. The top-level shape is the wire envelope (per the
+// MCP spec it MUST be `type: 'object'`); the inner `text` payload schema
+// (when known) is attached as an `x-payload-schema` JSON-Schema extension
+// for downstream tools that introspect tool catalogs. Generic tools get
+// a permissive object. This is metadata only — handler behavior is
+// untouched.
+
+function mcpOutputSchema(
+  textPayloadSchema?: Record<string, unknown>,
+): Record<string, unknown> {
+  const textProp: Record<string, unknown> = {
+    type: 'string',
+    description: textPayloadSchema && typeof textPayloadSchema.description === 'string'
+      ? textPayloadSchema.description
+      : 'JSON-encoded result payload (or human-readable summary with embedded URLs).',
+  };
+  if (textPayloadSchema) {
+    textProp['x-payload-schema'] = textPayloadSchema;
+  }
+  return {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', const: 'text' },
+            text: textProp,
+          },
+          required: ['type', 'text'],
+        },
+      },
+      isError: { type: 'boolean' },
+    },
+    required: ['content'],
+  };
+}
+
+const GENERIC_OUTPUT_SCHEMA = mcpOutputSchema({
+  type: 'object',
+  additionalProperties: true,
+  description: "Tool returned a JSON object (or human-readable text) embedded in the MCP content[0].text field. See the tool's source for the exact shape.",
+});
+
+// ── Tier-1 outputSchema payloads (accurate per-tool shape) ──
+
+const PUBLISH_CONTEXT_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'publish_context returns a human-readable multi-line summary embedding the fields below; the relay variant returns the same fields as a JSON object.',
+  properties: {
+    published: { type: 'boolean' },
+    owner: { type: 'string', description: 'Pod owner WebID' },
+    agent: { type: 'string', description: 'Acting agent IRI' },
+    pod: { type: 'string', description: 'Pod URL the descriptor was written to' },
+    descriptorUrl: { type: 'string', description: 'URL of the published descriptor .ttl' },
+    graphUrl: { type: 'string', description: 'URL of the graph payload (.trig or .envelope.jose.json)' },
+    encrypted: { type: 'boolean', description: 'True when the graph was wrapped in a JOSE envelope' },
+    recipients: { type: 'integer', description: 'Number of envelope recipients (includes self)' },
+    manifestUrl: { type: 'string', description: 'URL of the pod manifest entry for this descriptor' },
+    sharedWith: {
+      type: 'array',
+      description: 'When share_with was supplied: per-handle resolution outcome',
+      items: {
+        type: 'object',
+        properties: {
+          handle: { type: 'string' },
+          podUrl: { type: 'string' },
+          agentCount: { type: 'integer' },
+        },
+      },
+    },
+    supersedesPriorVersions: {
+      type: 'array',
+      description: 'When auto_supersede_prior was active: prior descriptor URLs marked superseded',
+      items: { type: 'string' },
+    },
+    ipfs: {
+      type: 'object',
+      description: 'IPFS pin result (or local CID when no provider configured)',
+      properties: {
+        cid: { type: 'string' },
+        url: { type: 'string' },
+        provider: { type: 'string', description: 'local | pinata | web3-storage | …' },
+      },
+    },
+    anchorUrl: { type: 'string', description: 'Pod-anchored receipt URL (zero-copy metadata)' },
+    sensitivityPreflight: {
+      type: 'string',
+      description: 'Privacy-hygiene warning if HIGH-severity content detected (was allowed via allow_sensitive_content) or LOW/MEDIUM flagged content',
+    },
+    complianceCheck: {
+      type: 'object',
+      description: 'When compliance: true — framework conformance report',
+      properties: {
+        compliant: { type: 'boolean' },
+        framework: { type: 'string' },
+        violations: { type: 'array', items: { type: 'string' } },
+        upgradedFacets: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    signature: {
+      type: 'object',
+      description: 'When compliance: true — ECDSA signature record sibling .sig.json',
+      properties: {
+        url: { type: 'string' },
+        signer: { type: 'string', description: 'Ethereum address of signer' },
+        signedAt: { type: 'string', description: 'ISO 8601 signing timestamp' },
+        ipfsCid: { type: 'string' },
+        error: { type: 'string' },
+      },
+    },
+  },
+});
+
+const DISCOVER_CONTEXT_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'Aggregated discovery result: array of ManifestEntry plus optional registry info when verify_delegation was true.',
+  properties: {
+    entries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        description: 'ManifestEntry — one row per descriptor known to the pod manifest',
+        properties: {
+          descriptorUrl: { type: 'string' },
+          describes: { type: 'array', items: { type: 'string' }, description: 'Graph IRIs the descriptor describes' },
+          conformsTo: { type: 'array', items: { type: 'string' } },
+          facetTypes: { type: 'array', items: { type: 'string' }, description: 'Facet type names (Temporal, Provenance, …)' },
+          modalStatus: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'] },
+          trustLevel: { type: 'string' },
+          validFrom: { type: 'string' },
+          validUntil: { type: 'string' },
+        },
+        required: ['descriptorUrl'],
+      },
+    },
+    registry: {
+      type: 'object',
+      description: 'When verify_delegation: true — owner + authorized agents snapshot',
+      properties: {
+        owner: { type: 'string' },
+        name: { type: 'string' },
+        agents: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              scope: { type: 'string' },
+              label: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
+  },
+});
+
+const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: "Descriptor Turtle plus optional decrypted graph payload reached via the descriptor's cg:hasDistribution link.",
+  properties: {
+    url: { type: 'string', description: 'Echo of the descriptor URL requested' },
+    turtle: { type: 'string', description: 'Full Turtle of the descriptor (when the URL is a .ttl)' },
+    encrypted: { type: 'boolean', description: 'For .envelope.jose.json / .trig URLs: was the payload encrypted' },
+    mediaType: { type: 'string' },
+    content: { type: 'string', description: 'Resolved graph payload (decrypted when this agent is a recipient)' },
+    graph: {
+      type: 'object',
+      description: 'Distribution-followed graph payload (when descriptor has cg:hasDistribution and content was reachable)',
+      properties: {
+        url: { type: 'string' },
+        mediaType: { type: 'string' },
+        encrypted: { type: 'boolean' },
+        content: { type: 'string' },
+      },
+    },
+    error: { type: 'string', description: 'HTTP error from the pod when the fetch failed' },
+  },
+});
+
+const LIST_KNOWN_PODS_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'Federation pod registry snapshot. The stdio server returns a human-readable list; the relay returns the array directly under `pods`/at the top level.',
+  properties: {
+    pods: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          url: { type: 'string' },
+          label: { type: 'string' },
+          owner: { type: 'string', description: 'Owner WebID when known' },
+          via: { type: 'string', description: 'How the pod entered the registry (manual / directory / webfinger / home)' },
+          isHome: { type: 'boolean' },
+          lastSeen: { type: 'string' },
+          subscribed: { type: 'boolean' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+});
+
+const GET_POD_STATUS_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'Pod liveness + registry summary + descriptor count + recent notifications.',
+  properties: {
+    pod: { type: 'string' },
+    css: { type: 'string', description: 'CSS / pod-host base URL' },
+    registry: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string' },
+        name: { type: 'string' },
+        agents: { type: 'integer', description: 'Active (non-revoked) authorized agent count' },
+      },
+    },
+    descriptors: { type: 'integer', description: 'Number of descriptors currently in the manifest' },
+    entries: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          descriptorUrl: { type: 'string' },
+          describes: { type: 'array', items: { type: 'string' } },
+          facetTypes: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+    recentNotifications: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          type: { type: 'string' },
+          resource: { type: 'string' },
+          timestamp: { type: 'string' },
+        },
+      },
+    },
+  },
+});
+
+const ANALYZE_QUESTION_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'Cognitive-strategy recommendation from the affordance engine.',
+  properties: {
+    questionType: { type: 'string', description: 'Detected question type (temporal / multi-session / preference / direct / …)' },
+    strategy: {
+      type: 'string',
+      enum: ['direct', 'temporal-twopass', 'multi-session-aggregate', 'preference-meta', 'abstain'],
+      description: 'Recommended strategy. abstain when question entities not present in session_content.',
+    },
+    requiresComputation: { type: 'boolean' },
+    computationType: { type: 'string' },
+    entities: {
+      type: 'object',
+      properties: {
+        contentWords: { type: 'array', items: { type: 'string' } },
+        nounPhrases: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    confidence: { type: 'number', minimum: 0, maximum: 1 },
+    abstention: {
+      type: 'object',
+      description: 'Populated when session_content was supplied',
+      properties: {
+        abstain: { type: 'boolean' },
+        missingEntities: { type: 'array', items: { type: 'string' } },
+        matchRatio: { type: 'number' },
+      },
+    },
+  },
+  required: ['strategy'],
+});
+
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: ([
     // ── Core tools ──
@@ -2024,6 +2311,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['graph_iri', 'graph_content'],
       },
+      outputSchema: PUBLISH_CONTEXT_OUTPUT,
     },
     {
       name: 'discover_context',
@@ -2040,6 +2328,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['pod_url'],
       },
+      outputSchema: DISCOVER_CONTEXT_OUTPUT,
     },
     {
       name: 'get_descriptor',
@@ -2051,6 +2340,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['url'],
       },
+      outputSchema: GET_DESCRIPTOR_OUTPUT,
     },
     {
       name: 'subscribe_to_pod',
@@ -2062,6 +2352,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['pod_url'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'unsubscribe_from_pod',
@@ -2073,6 +2364,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['pod_url'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'get_pod_status',
@@ -2083,6 +2375,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           pod_url: { type: 'string', description: 'Pod URL (default: home pod)' },
         },
       },
+      outputSchema: GET_POD_STATUS_OUTPUT,
     },
     // ── Delegation tools ──
     {
@@ -2099,6 +2392,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['agent_id'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'revoke_agent',
@@ -2111,6 +2405,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['agent_id'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'verify_agent',
@@ -2123,6 +2418,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['agent_id', 'pod_url'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     // ── Multi-pod federation tools ──
     {
@@ -2136,16 +2432,19 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           valid_until: { type: 'string', description: 'Filter: valid at or before this datetime' },
         },
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'subscribe_all',
       description: 'Subscribe to WebSocket notifications from ALL known pods.',
       inputSchema: { type: 'object' as const, properties: {} },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'list_known_pods',
       description: 'List all pods in the federation registry — home pod, configured pods, directory-discovered pods, WebFinger-resolved pods.',
       inputSchema: { type: 'object' as const, properties: {} },
+      outputSchema: LIST_KNOWN_PODS_OUTPUT,
     },
     {
       name: 'add_pod',
@@ -2159,6 +2458,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['pod_url'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'remove_pod',
@@ -2170,6 +2470,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['pod_url'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'discover_directory',
@@ -2181,6 +2482,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['directory_url'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'publish_directory',
@@ -2191,6 +2493,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           directory_id: { type: 'string', description: 'IRI for the directory (default: auto-generated)' },
         },
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'resolve_webfinger',
@@ -2202,6 +2505,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['resource'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     // ── Onboarding ──
     {
@@ -2216,6 +2520,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['name'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'link_wallet',
@@ -2228,6 +2533,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['wallet_address'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'check_balance',
@@ -2238,6 +2544,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
           address: { type: 'string', description: 'Wallet address to check (default: your wallet)' },
         },
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     // ── Comprehension tools ──
     {
@@ -2251,6 +2558,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['question'],
       },
+      outputSchema: ANALYZE_QUESTION_OUTPUT,
     },
     // ── PGSL tools ──
     {
@@ -2264,6 +2572,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['content'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'pgsl_resolve',
@@ -2275,11 +2584,13 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['uri'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'pgsl_lattice_status',
       description: 'Show the current state of the PGSL lattice — atom count, fragment count, levels, total nodes.',
       inputSchema: { type: 'object' as const, properties: {} },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'pgsl_meet',
@@ -2292,13 +2603,15 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ['uri_a', 'uri_b'],
       },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
     {
       name: 'pgsl_to_turtle',
       description: 'Serialize the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance — all as typed RDF resources with the pgsl: vocabulary.',
       inputSchema: { type: 'object' as const, properties: {} },
+      outputSchema: GENERIC_OUTPUT_SCHEMA,
     },
-  ] as Array<{name: string; description: string; inputSchema: object}>).filter(t => isToolEnabled(t.name)),
+  ] as Array<{name: string; description: string; inputSchema: object; outputSchema?: object}>).filter(t => isToolEnabled(t.name)),
 }));
 
 // ── Tool Dispatch ───────────────────────────────────────────
