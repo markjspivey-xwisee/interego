@@ -1684,17 +1684,17 @@ async function toolCheckBalance(args: { address?: string }): Promise<string> {
   // Falling through to MY_DID will produce an "invalid address"
   // surface from checkBalance for any real chain mode; that's the
   // correct failure mode (operator should configure a wallet).
-  let address = args.address;
-  if (!address) {
-    if (_complianceWallet) {
-      address = _complianceWallet.wallet.address;
-    } else {
-      try {
-        const cw = await ensureComplianceWallet();
-        address = cw.wallet.address;
-      } catch {
-        address = MY_DID;
-      }
+  // ensureComplianceWallet() is memoized via _complianceWalletPromise,
+  // so calling it on every check_balance invocation is free after the
+  // first one. MY_DID is the last-resort label if no wallet is loadable.
+  let address: string = args.address ?? MY_DID;
+  if (!args.address) {
+    try {
+      const cw = await ensureComplianceWallet();
+      address = cw.wallet.address;
+    } catch {
+      // Keep MY_DID; checkBalance will surface "invalid address" for
+      // any real chain mode, which is the correct failure surface.
     }
   }
   const balance = await checkBalance(address);
