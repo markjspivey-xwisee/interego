@@ -1000,7 +1000,11 @@ export function buildAttestedHomomorphicSum(args: {
   // Compose audit fields: when threshold reveal is in use, trueBlinding
   // is NEVER published; the verifier reconstructs it from shares.
   // trueSum stays available (the noisySum already pins it modulo noise).
-  const auditFields: Partial<Pick<AttestedHomomorphicSumResult, 'trueSum' | 'trueBlinding'>> = {};
+  // Local staging type drops the interface's readonly so we can populate
+  // conditionally before spreading into the final immutable result; the
+  // public AttestedHomomorphicSumResult contract stays readonly for consumers
+  // (verifyAttestedHomomorphicSum / verifyContributorRangeProofs / persisters).
+  const auditFields: { trueSum?: bigint; trueBlinding?: bigint } = {};
   if (args.includeAuditFields) {
     auditFields.trueSum = trueSum;
     if (!thresholdShares) auditFields.trueBlinding = trueBlinding;
@@ -1796,7 +1800,8 @@ export class EpsilonBudget {
 // is a plain typed object that can be serialized into a normal
 // ContextDescriptor's graph content.
 
-import { signMessageRaw, recoverMessageSigner, type Wallet } from '../../../src/crypto/wallet.js';
+import { signMessageRaw, recoverMessageSigner } from '../../../src/crypto/wallet.js';
+import type { Wallet } from '../../../src/crypto/types.js';
 
 /**
  * Canonical serialization of an EpsilonBudget for signing. Stable

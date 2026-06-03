@@ -22,6 +22,7 @@
     "../../_shared/affordance-mcp/**/*.ts",
     "../../_shared/vertical-bridge/**/*.ts",
     "../../_shared/aggregate-privacy/**/*.ts",
+    "../../_shared/vc-jwt/**/*.ts",
     "../../../src/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
