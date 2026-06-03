@@ -54,13 +54,15 @@ COPY deploy/mcp-relay/package.json ./package.json.template
 # Rewrite the relay's package.json so @interego/* deps point at the
 # tarballs we just packed instead of workspace specifiers. The
 # workspace symlinks don't carry across image boundaries.
-RUN sed -e 's|"@interego/core": "[^"]*"|"@interego/core": "file:/tarballs/interego-core-0.2.0.tgz"|g' \
-        -e 's|"file:../../"|"file:/tarballs/interego-core-0.2.0.tgz"|g' \
-        package.json.template > package.json && rm package.json.template && \
-    npm install --no-audit --no-fund && \
-    # Install vertical tarballs as well so any transitive imports through
-    # @interego/core's compat re-exports resolve at runtime.
-    npm install --no-audit --no-fund --no-save \
+#
+# Strategy: drop @interego/core from package.json (the second
+# tarball-install will add it + all 13 verticals back as file: deps,
+# replacing the workspace `*` specifier so npm doesn't try to fetch
+# @interego/abac etc. from the registry).
+RUN node -e "const p=require('./package.json.template');delete p.dependencies['@interego/core'];require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2));" && \
+    rm package.json.template && \
+    npm install --no-audit --no-fund \
+      /tarballs/interego-core-0.2.0.tgz \
       /tarballs/interego-abac-0.2.0.tgz \
       /tarballs/interego-compliance-0.2.0.tgz \
       /tarballs/interego-connectors-0.2.0.tgz \
