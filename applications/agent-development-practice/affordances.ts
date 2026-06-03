@@ -25,6 +25,15 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'operator_did', type: 'string', required: false, description: 'Operator DID.' },
     ],
+    outputs: {
+      description: 'DefineCapabilityResult — IRI of the new adp:Capability + the descriptor/graph URLs.',
+      properties: {
+        capabilityIri: { type: 'string', description: 'IRI of the new adp:Capability.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload (also contains the adp:RubricCriterion entries).' },
+      },
+      required: ['capabilityIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
   {
     action: 'urn:cg:action:adp:record-probe' as IRI,
@@ -43,6 +52,15 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'operator_did', type: 'string', required: false, description: 'Operator DID.' },
     ],
+    outputs: {
+      description: 'RecordProbeResult — IRI of the new adp:Probe (always Hypothetical) + the descriptor/graph URLs.',
+      properties: {
+        probeIri: { type: 'string', description: 'IRI of the new adp:Probe.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['probeIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
   {
     action: 'urn:cg:action:adp:record-narrative-fragment' as IRI,
@@ -59,6 +77,15 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'operator_did', type: 'string', required: false, description: 'Operator DID.' },
     ],
+    outputs: {
+      description: 'RecordNarrativeFragmentResult — IRI of the new adp:NarrativeFragment + the descriptor/graph URLs.',
+      properties: {
+        fragmentIri: { type: 'string', description: 'IRI of the new adp:NarrativeFragment.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['fragmentIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
   {
     action: 'urn:cg:action:adp:emerge-synthesis' as IRI,
@@ -75,6 +102,15 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'operator_did', type: 'string', required: false, description: 'Operator DID.' },
     ],
+    outputs: {
+      description: 'EmergeSynthesisResult — IRI of the new adp:Synthesis + the descriptor/graph URLs.',
+      properties: {
+        synthesisIri: { type: 'string', description: 'IRI of the new adp:Synthesis.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['synthesisIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
   {
     action: 'urn:cg:action:adp:record-evolution-step' as IRI,
@@ -92,6 +128,15 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'operator_did', type: 'string', required: false, description: 'Operator DID.' },
     ],
+    outputs: {
+      description: 'RecordEvolutionStepResult — IRI of the new adp:EvolutionStep (Asserted) + the descriptor/graph URLs.',
+      properties: {
+        evolutionIri: { type: 'string', description: 'IRI of the new adp:EvolutionStep.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['evolutionIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
   {
     action: 'urn:cg:action:adp:refine-constraint' as IRI,
@@ -109,6 +154,15 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'operator_did', type: 'string', required: false, description: 'Operator DID.' },
     ],
+    outputs: {
+      description: 'RefineConstraintResult — IRI of the new adp:Constraint + the descriptor/graph URLs.',
+      properties: {
+        constraintIri: { type: 'string', description: 'IRI of the new adp:Constraint.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['constraintIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
   {
     action: 'urn:cg:action:adp:recognize-capability-evolution' as IRI,
@@ -126,6 +180,15 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'operator_did', type: 'string', required: false, description: 'Operator DID.' },
     ],
+    outputs: {
+      description: 'RecognizeCapabilityEvolutionResult — IRI of the new adp:CapabilityEvolution (also a passport:LifeEvent) + the descriptor/graph URLs.',
+      properties: {
+        capabilityEvolutionIri: { type: 'string', description: 'IRI of the new adp:CapabilityEvolution / passport:LifeEvent.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['capabilityEvolutionIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
   {
     action: 'urn:cg:action:adp:list-cycle' as IRI,
@@ -138,6 +201,20 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'operator_did', type: 'string', required: false, description: 'Operator DID.' },
     ],
+    outputs: {
+      description: 'ProbeCycleState — operator\'s full probe cycle snapshot loaded from the pod: CapabilityRecord[], ProbeRecord[], NarrativeFragmentRecord[], SynthesisRecord[], EvolutionStepRecord[], ConstraintRecord[], CapabilityEvolutionRecord[].',
+      properties: {
+        operatorDid: { type: 'string', description: 'DID of the operator the snapshot is loaded for.' },
+        capabilities: { type: 'array', description: 'Declared adp:Capability records (iri, name, cynefinDomain, rubricCriterionCount).', items: { type: 'object', additionalProperties: true } },
+        probes: { type: 'array', description: 'adp:Probe records (iri, capabilityIri?, variant, hypothesis, amplificationTrigger, dampeningTrigger, timeBound, modalStatus).', items: { type: 'object', additionalProperties: true } },
+        fragments: { type: 'array', description: 'adp:NarrativeFragment records (iri, probeIri?, contextSignifiers, response, emergentSignifier, modalStatus).', items: { type: 'object', additionalProperties: true } },
+        syntheses: { type: 'array', description: 'adp:Synthesis records (iri, probeIri?, fragmentsConsidered, emergentPattern, coherentNarratives, modalStatus).', items: { type: 'object', additionalProperties: true } },
+        evolutionSteps: { type: 'array', description: 'adp:EvolutionStep records (iri, synthesisIri?, amplifyProbeIris, dampenProbeIris, explicitDecisionNotMade, nextRevisitAt, modalStatus).', items: { type: 'object', additionalProperties: true } },
+        constraints: { type: 'array', description: 'adp:Constraint records (iri, capabilityIri?, emergedFromIris, boundary, exitsConstraint, modalStatus).', items: { type: 'object', additionalProperties: true } },
+        capabilityEvolutions: { type: 'array', description: 'adp:CapabilityEvolution records (iri, capabilityIri?, evolutionType, olkeStage, emergedFromIris, explicitDecisionNotMade, modalStatus).', items: { type: 'object', additionalProperties: true } },
+      },
+      required: ['operatorDid', 'capabilities', 'probes', 'fragments', 'syntheses', 'evolutionSteps', 'constraints', 'capabilityEvolutions'],
+    },
   },
 ];
 

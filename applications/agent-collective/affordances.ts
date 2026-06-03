@@ -26,6 +26,16 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'authoring_agent_did', type: 'string', required: false, description: 'Authoring agent DID.' },
     ],
+    outputs: {
+      description: 'AuthorToolResult — IRIs of the new ac:AgentTool + its content-addressed pgsl:Atom source + the descriptor/graph URLs the tool was published to.',
+      properties: {
+        toolIri: { type: 'string', description: 'IRI of the new ac:AgentTool (Hypothetical until promoted).' },
+        atomIri: { type: 'string', description: 'IRI of the content-addressed pgsl:Atom holding the source code.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['toolIri', 'atomIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
   {
     action: 'urn:cg:action:ac:attest-tool' as IRI,
@@ -43,6 +53,15 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'authoring_agent_did', type: 'string', required: false, description: 'Attesting agent DID.' },
     ],
+    outputs: {
+      description: 'AttestToolResult — IRI of the recorded amta:Attestation + the descriptor/graph URLs.',
+      properties: {
+        attestationIri: { type: 'string', description: 'IRI of the new amta:Attestation.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['attestationIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
   {
     action: 'urn:cg:action:ac:promote-tool' as IRI,
@@ -63,6 +82,20 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'authoring_agent_did', type: 'string', required: false, description: 'Promoting agent DID.' },
     ],
+    outputs: {
+      description: 'PromoteToolResult — IRI of the new Asserted successor (with cg:supersedes back to the Hypothetical original) + the descriptor/graph URLs + which active PromotionConstraints were enforced (empty unless enforce_constitutional_constraints was true).',
+      properties: {
+        promotedToolIri: { type: 'string', description: 'IRI of the Asserted successor tool.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+        constraintsApplied: {
+          type: 'array',
+          description: 'IRIs of active cgh:PromotionConstraint descriptors that were enforced. Empty when enforce_constitutional_constraints was false.',
+          items: { type: 'string' },
+        },
+      },
+      required: ['promotedToolIri', 'descriptorUrl', 'graphUrl', 'constraintsApplied'],
+    },
   },
   {
     action: 'urn:cg:action:ac:bundle-teaching-package' as IRI,
@@ -81,6 +114,15 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'authoring_agent_did', type: 'string', required: false, description: 'Authoring agent DID.' },
     ],
+    outputs: {
+      description: 'BundleTeachingPackageResult — IRI of the new ac:TeachingPackage + the descriptor/graph URLs.',
+      properties: {
+        teachingIri: { type: 'string', description: 'IRI of the new ac:TeachingPackage.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['teachingIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
   {
     action: 'urn:cg:action:ac:record-cross-agent-audit' as IRI,
@@ -97,6 +139,15 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'authoring_agent_did', type: 'string', required: false, description: 'Authoring agent DID.' },
     ],
+    outputs: {
+      description: 'RecordCrossAgentAuditResult — IRI of the new ac:CrossAgentAuditEntry written into the human owner\'s pod + the descriptor/graph URLs.',
+      properties: {
+        auditIri: { type: 'string', description: 'IRI of the new ac:CrossAgentAuditEntry.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor (in the human owner\'s pod).' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload (in the human owner\'s pod).' },
+      },
+      required: ['auditIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
 ];
 

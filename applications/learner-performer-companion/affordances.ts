@@ -30,6 +30,17 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL (default: authenticated user\'s pod).' },
       { name: 'user_did', type: 'string', required: false, description: 'User DID (default: derived from authentication).' },
     ],
+    outputs: {
+      description: 'IngestTrainingContentResult — IRI of the new lpc:TrainingContent + the descriptor/graph URLs + the count + IRIs of content-addressed pgsl:Atoms minted from launchable lessons.',
+      properties: {
+        trainingContentIri: { type: 'string', description: 'IRI of the new lpc:TrainingContent.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload (contains the atoms + lpc:LearningObjective entries).' },
+        atomCount: { type: 'integer', description: 'Number of pgsl:Atoms minted (one per launchable lesson).' },
+        atomIris: { type: 'array', description: 'IRIs of the minted atoms.', items: { type: 'string' } },
+      },
+      required: ['trainingContentIri', 'descriptorUrl', 'graphUrl', 'atomCount', 'atomIris'],
+    },
   },
 
   {
@@ -46,6 +57,18 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
+    outputs: {
+      description: 'ImportCredentialResult — IRI of the published lpc:Credential + the descriptor/graph URLs + verification metadata. Throws (no result) when VC verification fails — bad credentials never land in the pod.',
+      properties: {
+        credentialIri: { type: 'string', description: 'IRI of the new lpc:Credential.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+        verified: { type: 'boolean', description: 'Always true on a successful return (failed VCs throw and never reach the pod).' },
+        issuerDid: { type: 'string', description: 'DID of the credential issuer extracted from the verified VC.' },
+        achievementName: { type: 'string', description: 'Achievement name read from credentialSubject.achievement.name (or "unnamed credential" when absent).' },
+      },
+      required: ['credentialIri', 'descriptorUrl', 'graphUrl', 'verified', 'issuerDid', 'achievementName'],
+    },
   },
 
   {
@@ -64,6 +87,15 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
+    outputs: {
+      description: 'RecordPerformanceReviewResult — IRI of the new lpc:PerformanceRecord (attributed to the manager via cg:ProvenanceFacet) + the descriptor/graph URLs.',
+      properties: {
+        recordIri: { type: 'string', description: 'IRI of the new lpc:PerformanceRecord.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['recordIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
 
   {
@@ -81,6 +113,15 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
+    outputs: {
+      description: 'RecordLearningExperienceResult — IRI of the new lpc:LearningExperience (cross-linked to the training content + optional credential earned) + the descriptor/graph URLs.',
+      properties: {
+        experienceIri: { type: 'string', description: 'IRI of the new lpc:LearningExperience.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+      },
+      required: ['experienceIri', 'descriptorUrl', 'graphUrl'],
+    },
   },
 
   {
@@ -97,6 +138,44 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
+    outputs: {
+      description: 'Grounded answer envelope. When the wallet grounds nothing related to the question, returns ok=true + answer=null + reason="no-data" + walletSummary counts (honest no-data, never confabulation). Otherwise returns the CitedAnswer (verbatim citations from training-content atoms, performance records, credentials, plus a displayText composition) and optionally the audit-record IRI/URLs when persistResponse was true.',
+      properties: {
+        ok: { type: 'boolean' },
+        reason: { type: 'string', description: 'Set to "no-data" when answer is null.' },
+        answer: {
+          type: 'object',
+          description: 'CitedAnswer — null when nothing in the wallet grounds the question.',
+          properties: {
+            question: { type: 'string' },
+            citations: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'Verbatim grounding-fragment citations (atomIri + verbatimQuote + cross-links to training content / credential).' },
+            performanceCitations: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            credentialCitations: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            displayText: { type: 'string', description: 'Composed display text — never paraphrases atom content.' },
+          },
+        },
+        walletSummary: {
+          type: 'object',
+          description: 'Wallet-size counts (returned only with the no-data envelope).',
+          properties: {
+            trainingContent: { type: 'integer' },
+            credentials: { type: 'integer' },
+            performanceRecords: { type: 'integer' },
+            learningExperiences: { type: 'integer' },
+          },
+        },
+        auditRecord: {
+          type: 'object',
+          description: 'PublishCitedResponseResult — IRI + descriptor/graph URLs of the persisted lpc:CitedResponse audit (omitted when persist_response was false).',
+          properties: {
+            responseIri: { type: 'string' },
+            descriptorUrl: { type: 'string' },
+            graphUrl: { type: 'string' },
+          },
+        },
+      },
+      required: ['ok'],
+    },
   },
 
   {
@@ -110,6 +189,17 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
+    outputs: {
+      description: 'Wallet summary loaded from the user\'s pod — IRIs + display fields for training content (with atom counts), credentials, performance records, and learning experiences.',
+      properties: {
+        userDid: { type: 'string' },
+        trainingContent: { type: 'array', description: 'Training-content entries (iri, name, atomCount).', items: { type: 'object', additionalProperties: true } },
+        credentials: { type: 'array', description: 'Credential entries (iri, achievementName, issuer, issuedAt).', items: { type: 'object', additionalProperties: true } },
+        performanceRecords: { type: 'array', description: 'Performance-record entries (iri, attributedTo, recordedAt).', items: { type: 'object', additionalProperties: true } },
+        learningExperiences: { type: 'array', description: 'Learning-experience entries (iri, forContent, earnedCredential, completedAt).', items: { type: 'object', additionalProperties: true } },
+      },
+      required: ['userDid', 'trainingContent', 'credentials', 'performanceRecords', 'learningExperiences'],
+    },
   },
 
   {
@@ -125,6 +215,18 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Learner pod URL.' },
       { name: 'user_did', type: 'string', required: false, description: 'Learner DID.' },
     ],
+    outputs: {
+      description: 'CohortParticipationResult — IRI + descriptor/graph URLs of the signed agg:CohortParticipation declaration on the learner\'s pod, plus the cohort/participant/validFrom echo. Revoke by re-publishing the same IRI as Counterfactual (auto-supersedes).',
+      properties: {
+        iri: { type: 'string', description: 'IRI of the published agg:CohortParticipation descriptor.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+        cohortIri: { type: 'string', description: 'Cohort the learner opted into.' },
+        participantDid: { type: 'string', description: 'Learner DID echoed back from the input.' },
+        validFrom: { type: 'string', description: 'ISO 8601 timestamp the participation took effect.' },
+      },
+      required: ['iri', 'descriptorUrl', 'graphUrl', 'cohortIri', 'participantDid', 'validFrom'],
+    },
   },
 ];
 
@@ -173,6 +275,17 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'issuer_did', type: 'string', required: true, description: 'DID of the institution\'s authoritative-content signing key.' },
       { name: 'tla_lap_metadata', type: 'object', required: false, description: 'Optional ADL TLA Learning Activity Provider metadata for catalog discoverability.' },
     ],
+    outputs: {
+      description: 'PublishAuthoritativeContentResult — IRI of the institution-side lpc:TrainingContent + descriptor/graph URLs + issuer DID + minted learning-objective IRIs.',
+      properties: {
+        contentIri: { type: 'string', description: 'IRI of the published lpc:TrainingContent (matches the caller-supplied content_iri).' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor on the institution\'s pod.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+        issuerDid: { type: 'string', description: 'Institution issuer DID echoed back.' },
+        objectiveIris: { type: 'array', description: 'IRIs of the lpc:LearningObjective entries minted from the learning_objectives list.', items: { type: 'string' } },
+      },
+      required: ['contentIri', 'descriptorUrl', 'graphUrl', 'issuerDid', 'objectiveIris'],
+    },
   },
 
   {
@@ -189,6 +302,18 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'issuer_did', type: 'string', required: true, description: 'DID of the credential-signing institution.' },
       { name: 'institution_pod_url', type: 'string', required: true, description: 'Pod URL where the template is published.' },
     ],
+    outputs: {
+      description: 'IssueCohortCredentialTemplateResult — IRI of the new lpc:CredentialTemplate descriptor + the descriptor/graph URLs + cohort + format + issuer echo. Content-stable (same cohort + same template yields the same IRI; re-publishing supersedes the prior version).',
+      properties: {
+        templateIri: { type: 'string', description: 'IRI of the lpc:CredentialTemplate (content-addressed from cohort + format + canonicalized subject template).' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+        cohortIri: { type: 'string', description: 'Cohort IRI echoed back.' },
+        credentialFormat: { type: 'string', description: 'Credential format (open-badges-3.0 | ims-clr-2.0 | ieee-lers).' },
+        issuerDid: { type: 'string', description: 'Issuer DID echoed back.' },
+      },
+      required: ['templateIri', 'descriptorUrl', 'graphUrl', 'cohortIri', 'credentialFormat', 'issuerDid'],
+    },
   },
 
   {
@@ -212,6 +337,19 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'threshold_reveal_n', type: 'number', required: false, description: 'v4-partial+VSS: total number of pseudo-aggregators in the threshold-reveal committee. When set with privacy_mode=zk-aggregate, the trueBlinding is Shamir-split into n shares AND Feldman VSS coefficient commitments are emitted alongside (every recipient verifies their share against `coefficientCommitments` before reconstruction, so a tampered share is caught BEFORE Lagrange poisons the result). The trueBlinding is omitted from audit fields (no single party including the auditor knows it). Trusted-dealer caveat: the aggregator running the query knows the polynomial during the split; full DKG is the remaining v4 piece.' },
       { name: 'threshold_reveal_t', type: 'number', required: false, description: 'v4-partial+VSS: threshold for reconstruction. Any t-of-n committee can reconstruct trueBlinding via reconstructThresholdRevealAndVerify (which filters shares against the bundle\'s coefficientCommitments BEFORE Lagrange); any t-1 shares reveal nothing. Required when threshold_reveal_n is supplied. Chain-of-custody: after a successful reconstruction, the committee signs a CommitteeReconstructionAttestation via signCommitteeReconstruction + publishCommitteeReconstructionAttestation so the regulator can see who participated.' },
     ],
+    outputs: {
+      description: 'AggregateCohortQueryResult — privacy-preserving aggregate metric over consenting learners, with mode-specific proof bundles (Merkle inclusion proofs for v2; homomorphic Pedersen sum + DP-Laplace noise + optional threshold-reveal VSS bundle for v3+).',
+      properties: {
+        cohortIri: { type: 'string' },
+        metric: { type: 'string', enum: ['completion-count', 'score-distribution', 'competency-threshold-met', 'credential-coverage'] },
+        value: { type: 'object', description: 'Number (for count-shaped metrics) or { [bucket: string]: number } (for score-distribution). v3 zk-aggregate returns the DP-noised sum here.', additionalProperties: true },
+        sampleSize: { type: 'integer', description: 'Number of distinct consenting learner pods that contributed.' },
+        privacyMode: { type: 'string', enum: ['abac', 'merkle-attested-opt-in', 'zk-aggregate'], description: 'Which privacy path was actually taken.' },
+        attestation: { type: 'object', additionalProperties: true, description: 'v2 AttestedAggregateResult — Merkle root + per-pod inclusion proofs over the opted-in cohort participants. Only present for privacyMode=merkle-attested-opt-in (or zk-aggregate, which is built on top of v2).' },
+        homomorphic: { type: 'object', additionalProperties: true, description: 'v3 AttestedHomomorphicSumResult — Pedersen commitment sum + noisySum (DP-Laplace) + optional signed-bounds attestations + optional threshold-reveal VSS bundle (coefficientCommitments + n-of-t share metadata). Only present for privacyMode=zk-aggregate.' },
+      },
+      required: ['cohortIri', 'metric', 'value', 'sampleSize', 'privacyMode'],
+    },
   },
 
   {
@@ -227,6 +365,20 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'lrs_auth_header', type: 'string', required: true, description: 'Authorization header for the LRS (typically Basic).' },
       { name: 'learner_consent_descriptor_iri', type: 'string', required: true, description: 'IRI of the per-graph share_with policy descriptor on the learner\'s pod authorizing this projection.' },
     ],
+    outputs: {
+      description: 'ProjectToLrsResult — outcome of projecting a learner-side lpc:LearningExperience descriptor outbound to an LRS as an xAPI Statement, honoring the learner\'s consent descriptor. xAPI is structurally lossy for modal status / supersedes chains; the adapter records what was lost.',
+      properties: {
+        descriptorIri: { type: 'string', description: 'Echo of the source lpc:LearningExperience descriptor IRI.' },
+        skipped: { type: 'boolean', description: 'True when projection was skipped (Counterfactual, or Hypothetical without opt-in, or consent descriptor missing).' },
+        skipReason: { type: 'string', description: 'Human-readable skip reason (only set when skipped=true).' },
+        statementId: { type: 'string', description: 'UUID of the xAPI Statement POSTed to the LRS (only set when skipped=false).' },
+        lossy: { type: 'boolean', description: 'True when information was dropped during projection (audit-loud markers in lossNotes).' },
+        lossNotes: { type: 'array', description: 'Per-row notes recording exactly what was dropped or downgraded.', items: { type: 'string' } },
+        xapiVersion: { type: 'string', description: 'xAPI version negotiated with the LRS.' },
+        consentDescriptor: { type: 'string', description: 'IRI of the consent descriptor that was honored to authorize the projection.' },
+      },
+      required: ['descriptorIri', 'skipped', 'lossy', 'lossNotes', 'xapiVersion', 'consentDescriptor'],
+    },
   },
 ];
 

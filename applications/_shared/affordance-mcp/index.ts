@@ -67,6 +67,47 @@ export interface AffordanceScope {
   readonly modalStatus?: readonly string[];
 }
 
+/**
+ * Optional output-payload description for an affordance. When supplied,
+ * the bridge's tool-schema derivation wraps it into a wire-shape MCP
+ * `outputSchema` (`{ content: [{ type: 'text', text: <stringified payload> }] }`)
+ * and attaches the supplied properties as an `x-payload-schema`
+ * JSON-Schema extension on the `text` field — so OpenAI Apps / Claude
+ * clients see a structured response-shape hint and stop reporting
+ * "output schema missing". Mirrors the pattern shipped on the main MCP
+ * servers (mcp-server/server.ts + deploy/mcp-relay/server.ts, commit
+ * f31f64b). Omit `outputs` to fall back to a permissive generic object
+ * schema.
+ */
+export interface AffordanceOutput {
+  /** Free-text description of what the handler returns; surfaces in the
+   *  derived outputSchema's `text` field description. */
+  readonly description?: string;
+  /** JSON-Schema properties describing the result payload (the JSON the
+   *  handler returns — NOT the MCP wire envelope). */
+  readonly properties?: Record<string, OutputSchemaProperty>;
+  /** Names of properties that are always present in the result payload. */
+  readonly required?: readonly string[];
+}
+
+/** JSON-Schema property fragment used inside AffordanceOutput. Looser
+ *  than the affordance input schema so verticals can describe nested
+ *  objects + arrays of objects without minting new type machinery here. */
+export interface OutputSchemaProperty {
+  readonly type: JsonType;
+  readonly description?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly items?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly properties?: Record<string, any>;
+  readonly required?: readonly string[];
+  readonly additionalProperties?: boolean;
+  readonly enum?: readonly string[];
+  readonly minimum?: number;
+  readonly maximum?: number;
+  readonly format?: string;
+}
+
 /** A capability the vertical exposes. */
 export interface Affordance {
   /** Canonical action IRI (urn:cg:action:<vertical>:<verb>). */
@@ -85,6 +126,10 @@ export interface Affordance {
   readonly targetTemplate: string;
   /** Input parameters. */
   readonly inputs: ReadonlyArray<AffordanceInput>;
+  /** Optional description of the handler's return payload — translated
+   *  into an MCP `outputSchema` by affordanceToMcpToolSchema. Omit for a
+   *  permissive generic object schema. */
+  readonly outputs?: AffordanceOutput;
   /** Optional return-type IRI (hydra:returns). */
   readonly returns?: IRI;
   /** Optional MIME type the endpoint emits. */
@@ -156,6 +201,14 @@ export interface McpToolSchema {
     properties: Record<string, JsonSchemaProperty>;
     required: string[];
   };
+  /** MCP wire-shape response envelope schema. Always present so OpenAI
+   *  Apps / Claude clients stop reporting "output schema missing" on
+   *  vertical-bridge tools. When the affordance carries `outputs`, the
+   *  inner `text` field gets an `x-payload-schema` JSON-Schema extension
+   *  describing the JSON payload the handler returns; otherwise the
+   *  field is a permissive generic object. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  readonly outputSchema: Record<string, any>;
 }
 
 interface JsonSchemaProperty {
@@ -169,9 +222,72 @@ interface JsonSchemaProperty {
 }
 
 /**
- * Derive an MCP tool schema (JSON Schema-compliant inputSchema) from an
- * Affordance. The MCP server / per-vertical bridge calls this for every
- * affordance to get its tool schema; never hand-writes one.
+ * Derive an MCP `outputSchema` describing the wire envelope MCP tools
+ * actually return: `{ content: [{ type: 'text', text: <string> }] }`.
+ * When `payload` is supplied, it's attached to the `text` field as an
+ * `x-payload-schema` JSON-Schema extension so downstream tools that
+ * introspect tool catalogues can see what's IN the stringified text.
+ *
+ * This is the per-bridge equivalent of the helper used in the main MCP
+ * servers (mcp-server/server.ts + deploy/mcp-relay/server.ts, commit
+ * f31f64b — `mcpOutputSchema`).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildMcpOutputSchema(outputs?: AffordanceOutput): Record<string, any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const textProp: Record<string, any> = {
+    type: 'string',
+    description: outputs?.description
+      ?? 'JSON-encoded result payload returned by the affordance handler.',
+  };
+  if (outputs && (outputs.properties || outputs.required || outputs.description)) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const payload: Record<string, any> = { type: 'object' };
+    if (outputs.description) payload['description'] = outputs.description;
+    if (outputs.properties) {
+      payload['properties'] = outputs.properties;
+    } else {
+      // Description-only outputs stay permissive on the property bag so a
+      // richer schema can be added later without breaking callers.
+      payload['additionalProperties'] = true;
+    }
+    if (outputs.required && outputs.required.length > 0) payload['required'] = outputs.required;
+    textProp['x-payload-schema'] = payload;
+  } else {
+    // Generic permissive payload — used when the affordance didn't
+    // declare an `outputs` shape at all. Matches GENERIC_OUTPUT_SCHEMA
+    // from the main MCP servers.
+    textProp['x-payload-schema'] = {
+      type: 'object',
+      additionalProperties: true,
+      description: "Tool returned a JSON object (or human-readable text) embedded in the MCP content[0].text field. See the affordance handler's source for the exact shape.",
+    };
+  }
+  return {
+    type: 'object',
+    properties: {
+      content: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', const: 'text' },
+            text: textProp,
+          },
+          required: ['type', 'text'],
+        },
+      },
+      isError: { type: 'boolean' },
+    },
+    required: ['content'],
+  };
+}
+
+/**
+ * Derive an MCP tool schema (JSON Schema-compliant inputSchema + a wire
+ * `outputSchema` envelope) from an Affordance. The MCP server /
+ * per-vertical bridge calls this for every affordance to get its tool
+ * schema; never hand-writes one.
  */
 export function affordanceToMcpToolSchema(affordance: Affordance): McpToolSchema {
   const properties: Record<string, JsonSchemaProperty> = {};
@@ -198,6 +314,7 @@ export function affordanceToMcpToolSchema(affordance: Affordance): McpToolSchema
     name: affordance.toolName,
     description: affordance.description,
     inputSchema: { type: 'object', properties, required },
+    outputSchema: buildMcpOutputSchema(affordance.outputs),
   };
 }
 

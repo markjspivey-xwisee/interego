@@ -59,6 +59,17 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'notes', type: 'string', required: false, description: 'Free-form notes.' },
       { name: 'pod_url', type: 'string', required: false, description: 'Org pod URL (defaults from env).' },
     ],
+    outputs: {
+      description: 'PublishResult — IRI of the new/updated owm:Person + descriptor/graph URLs + the modalStatus the descriptor was published with + IRIs of any prior descriptors superseded by this upsert (cg:supersedes chain).',
+      properties: {
+        iri: { type: 'string', description: 'Stable owm:Person IRI (content-derived from name + organization).' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+        modalStatus: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'] },
+        supersedes: { type: 'array', description: 'Prior descriptor URLs this upsert supersedes (empty on first publish).', items: { type: 'string' } },
+      },
+      required: ['iri', 'descriptorUrl', 'graphUrl', 'modalStatus', 'supersedes'],
+    },
   },
   {
     action: 'urn:cg:action:owm:upsert-project' as IRI,
@@ -75,6 +86,17 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'status', type: 'string', required: false, description: 'Free-text status note.' },
       { name: 'pod_url', type: 'string', required: false, description: 'Org pod URL.' },
     ],
+    outputs: {
+      description: 'PublishResult — IRI of the new/updated owm:Project + descriptor/graph URLs + modalStatus + IRIs of prior descriptors superseded.',
+      properties: {
+        iri: { type: 'string', description: 'Stable owm:Project IRI (content-derived from name).' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+        modalStatus: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'] },
+        supersedes: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['iri', 'descriptorUrl', 'graphUrl', 'modalStatus', 'supersedes'],
+    },
   },
   {
     action: 'urn:cg:action:owm:record-decision' as IRI,
@@ -92,6 +114,17 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'supersedes', type: 'array', required: false, description: 'Prior decision IRIs this one supersedes.', itemType: 'string' },
       { name: 'pod_url', type: 'string', required: false, description: 'Org pod URL.' },
     ],
+    outputs: {
+      description: 'PublishResult — IRI of the new owm:Decision + descriptor/graph URLs + modalStatus (defaults Hypothetical until promoted) + the cg:supersedes chain (from caller-supplied prior decision IRIs + auto-supersedes of any earlier descriptor at the same IRI).',
+      properties: {
+        iri: { type: 'string', description: 'owm:Decision IRI.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published .ttl descriptor.' },
+        graphUrl: { type: 'string', description: 'URL of the published .trig graph payload.' },
+        modalStatus: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'] },
+        supersedes: { type: 'array', description: 'Prior IRIs this decision supersedes (caller-supplied + auto-detected).', items: { type: 'string' } },
+      },
+      required: ['iri', 'descriptorUrl', 'graphUrl', 'modalStatus', 'supersedes'],
+    },
   },
   {
     action: 'urn:cg:action:owm:queue-followup' as IRI,
@@ -107,6 +140,17 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'watcher_did', type: 'string', required: false, description: 'DID of the agent or person responsible for the follow-up.' },
       { name: 'pod_url', type: 'string', required: false, description: 'Org pod URL.' },
     ],
+    outputs: {
+      description: 'PublishResult — IRI of the new owm:FollowUp + descriptor/graph URLs + modalStatus + supersedes chain.',
+      properties: {
+        iri: { type: 'string', description: 'owm:FollowUp IRI.' },
+        descriptorUrl: { type: 'string' },
+        graphUrl: { type: 'string' },
+        modalStatus: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'] },
+        supersedes: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['iri', 'descriptorUrl', 'graphUrl', 'modalStatus', 'supersedes'],
+    },
   },
   {
     action: 'urn:cg:action:owm:record-note' as IRI,
@@ -121,6 +165,17 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'tags', type: 'array', required: false, description: 'Free-text tags.', itemType: 'string' },
       { name: 'pod_url', type: 'string', required: false, description: 'Org pod URL.' },
     ],
+    outputs: {
+      description: 'PublishResult — IRI of the content-addressed owm:Note (re-publishing the same verbatim text returns the same IRI) + descriptor/graph URLs + modalStatus + supersedes.',
+      properties: {
+        iri: { type: 'string', description: 'owm:Note IRI (content-addressed from the note text + pgsl:Atom hash).' },
+        descriptorUrl: { type: 'string' },
+        graphUrl: { type: 'string' },
+        modalStatus: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'] },
+        supersedes: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['iri', 'descriptorUrl', 'graphUrl', 'modalStatus', 'supersedes'],
+    },
   },
   {
     action: 'urn:cg:action:owm:list-overdue-followups' as IRI,
@@ -134,6 +189,25 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'limit', type: 'integer', required: false, description: 'Maximum items to return (default 50).', minimum: 1, maximum: 500 },
       { name: 'pod_url', type: 'string', required: false, description: 'Org pod URL.' },
     ],
+    outputs: {
+      description: 'Array of OverdueFollowupSummary — owm:FollowUp entries whose due_at is on or before the evaluation moment, sorted due-soonest first. Handler returns the array directly; this property documents the entry shape.',
+      properties: {
+        results: {
+          type: 'array',
+          description: 'OverdueFollowupSummary entries (iri, descriptorUrl, due_at, topic).',
+          items: {
+            type: 'object',
+            properties: {
+              iri: { type: 'string' },
+              descriptorUrl: { type: 'string' },
+              due_at: { type: 'string', description: 'ISO 8601 datetime — when the follow-up was queued to surface.' },
+              topic: { type: 'string', description: 'Human-readable follow-up topic; may be null when the underlying descriptor omitted it.' },
+            },
+            required: ['iri', 'descriptorUrl'],
+          },
+        },
+      },
+    },
   },
   {
     action: 'urn:cg:action:owm:discover-subgraph' as IRI,
@@ -147,6 +221,28 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'depth', type: 'integer', required: false, description: 'How many hops to traverse (default 1).', minimum: 1, maximum: 4 },
       { name: 'pod_url', type: 'string', required: false, description: 'Org pod URL.' },
     ],
+    outputs: {
+      description: 'Subject + per-edge metadata for descriptors related to the queried subject IRI on the org pod (descriptor URLs + facet types + modal status + supersedes chain head). Caller can follow up with get_descriptor on URLs of interest.',
+      properties: {
+        subject: { type: 'string', description: 'Echo of the queried subject IRI.' },
+        edges: {
+          type: 'array',
+          description: 'SubgraphEdge entries — one per related descriptor at depth-1.',
+          items: {
+            type: 'object',
+            properties: {
+              descriptor_url: { type: 'string' },
+              describes: { type: 'array', items: { type: 'string' } },
+              facet_types: { type: 'array', items: { type: 'string' } },
+              modal_status: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'] },
+              supersedes: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['descriptor_url', 'describes', 'facet_types', 'supersedes'],
+          },
+        },
+      },
+      required: ['subject', 'edges'],
+    },
   },
 
   // ── Navigation surface (per-source isolation) ──────────────
@@ -163,6 +259,9 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'verb', type: 'string', required: true, description: 'Navigation verb.', enum: ['ls', 'cat', 'grep', 'recent'] },
       { name: 'args', type: 'object', required: true, description: 'Verb-specific arguments. cat: { uri }. grep: { pattern, scope? }. ls: { path? }. recent: { window_minutes? }.' },
     ],
+    outputs: {
+      description: 'Source-specific navigation result shaped by the underlying sub-handler (web / drive / slack / github / …). Common ls payload: { entries: [{ uri, name, type, modified? }] }. Common cat payload: { uri, mediaType, body }. Common grep payload: { hits: [{ uri, snippet, score? }] }. Common recent payload: { entries: [{ uri, name, modified, summary? }] }. Each adapter is free to add adapter-specific fields.',
+    },
   },
   {
     action: 'urn:cg:action:owm:update-source' as IRI,
@@ -176,6 +275,9 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'action', type: 'string', required: true, description: 'Source-specific action (post, append, comment, ...).' },
       { name: 'args', type: 'object', required: true, description: 'Action-specific arguments.' },
     ],
+    outputs: {
+      description: 'Source-specific write-action receipt shaped by the underlying sub-handler (web / drive / slack / github / …). Common shape: { ok, uri?, externalId?, error? }. Each adapter is free to add adapter-specific fields (e.g., slack timestamp + permalink, github PR comment id).',
+    },
   },
   {
     action: 'urn:cg:action:owm:list-sources' as IRI,
@@ -185,6 +287,26 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     method: 'POST',
     targetTemplate: '{base}/owm/list_sources',
     inputs: [],
+    outputs: {
+      description: 'List of currently-wired source adapters: each entry carries the source key, the verbs it supports, and an optional short description of what kind of source it is.',
+      properties: {
+        sources: {
+          type: 'array',
+          description: 'Per-source adapter entries.',
+          items: {
+            type: 'object',
+            properties: {
+              source: { type: 'string', description: 'Source key passed to navigate_source / update_source (e.g., "web", "drive", "slack").' },
+              verbs: { type: 'array', description: 'Navigation verbs the adapter supports (subset of ls / cat / grep / recent).', items: { type: 'string' } },
+              actions: { type: 'array', description: 'Write actions supported by update_source.', items: { type: 'string' } },
+              description: { type: 'string' },
+            },
+            required: ['source', 'verbs'],
+          },
+        },
+      },
+      required: ['sources'],
+    },
   },
 ];
 
@@ -240,6 +362,20 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'threshold_reveal_n', type: 'number', required: false, description: 'v4-partial+VSS: total pseudo-aggregators in the threshold-reveal committee for trueBlinding. When set with privacy_mode=zk-aggregate, the aggregator emits Shamir shares + Feldman VSS `coefficientCommitments` (tampered shares caught BEFORE Lagrange reconstruction) + omits trueBlinding from audit fields.' },
       { name: 'threshold_reveal_t', type: 'number', required: false, description: 'v4-partial+VSS: threshold for reconstruction. Required when threshold_reveal_n is supplied. After a successful t-of-n reconstruction, the committee signs a CommitteeReconstructionAttestation (chain-of-custody) via signCommitteeReconstruction + publishCommitteeReconstructionAttestation.' },
     ],
+    outputs: {
+      description: 'AggregateDecisionsQueryResult — privacy-preserving aggregate over owm:Decision descriptors in the requested period and scope, with mode-specific proof bundles (Merkle inclusion proofs for v2; homomorphic Pedersen sum + DP-Laplace noise + optional threshold-reveal VSS bundle for v3+).',
+      properties: {
+        metric: { type: 'string', enum: ['decision-count', 'mean-revision-count', 'supersession-distribution', 'contributor-breadth'] },
+        period: { type: 'object', description: 'Echo of the queried { from, to } window.', additionalProperties: true },
+        scope: { type: 'string', description: 'Optional scope IRI echo when scope_iri was supplied.' },
+        value: { type: 'object', description: 'Number (for count-shaped metrics) or { [bucket: string]: number } (for distribution-shaped metrics). v3 zk-aggregate returns the DP-noised sum here.', additionalProperties: true },
+        sampleSize: { type: 'integer', description: 'Number of distinct contributing descriptors that satisfied the filter.' },
+        privacyMode: { type: 'string', enum: ['abac', 'merkle-attested-opt-in', 'zk-aggregate'] },
+        attestation: { type: 'object', additionalProperties: true, description: 'v2 AttestedAggregateResult — Merkle root + per-leaf inclusion proofs over the contributing descriptor URLs.' },
+        homomorphic: { type: 'object', additionalProperties: true, description: 'v3 AttestedHomomorphicSumResult — Pedersen commitment sum + noisySum (DP-Laplace) + optional signed-bounds attestations + optional threshold-reveal VSS bundle.' },
+      },
+      required: ['metric', 'period', 'value', 'sampleSize', 'privacyMode'],
+    },
   },
   {
     action: 'urn:cg:action:owm:project-health-summary' as IRI,
@@ -252,6 +388,21 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'project_iri', type: 'string', required: true, description: 'IRI of the owm:Project being summarized.' },
       { name: 'window_days', type: 'number', required: false, description: 'Recency window in days for "stale" thresholds. Default 30.' },
     ],
+    outputs: {
+      description: 'ProjectHealthSummaryResult — aggregate-shaped rollup over a single owm:Project (decision counts + recency + follow-up open/closed + note count + supersession churn). Individual descriptors only contribute when the contributor has issued share_with on them; privacyMode reports which boundary was used.',
+      properties: {
+        projectIri: { type: 'string' },
+        windowDays: { type: 'integer' },
+        decisionCount: { type: 'integer', description: 'Distinct owm:Decision IRIs in scope.' },
+        recentDecisionCount: { type: 'integer', description: 'Distinct decisions with cg:validFrom inside the window.' },
+        followUpCount: { type: 'integer', description: 'Distinct owm:FollowUp IRIs in scope.' },
+        openFollowUpCount: { type: 'integer', description: 'Follow-ups not superseded by a closure / Counterfactual descriptor.' },
+        noteCount: { type: 'integer', description: 'Distinct owm:Note descriptors in scope.' },
+        supersessionChurn: { type: 'number', description: 'Mean revisions per decision (supersedes-chain depth).' },
+        privacyMode: { type: 'string', enum: ['abac', 'zk-aggregate'] },
+      },
+      required: ['projectIri', 'windowDays', 'decisionCount', 'recentDecisionCount', 'followUpCount', 'openFollowUpCount', 'noteCount', 'supersessionChurn', 'privacyMode'],
+    },
   },
   {
     action: 'urn:cg:action:owm:publish-org-policy' as IRI,
@@ -266,6 +417,16 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'authority_did', type: 'string', required: true, description: 'DID of the org-authority signing key.' },
       { name: 'org_pod_url', type: 'string', required: true, description: 'Pod URL of the publishing org.' },
     ],
+    outputs: {
+      description: 'PublishOrgPolicyResult — content-stable IRI of the org-policy descriptor (re-publishing the same body under the same type yields the same IRI and supersedes the prior version) + descriptor/graph URLs + authority DID echo.',
+      properties: {
+        policyIri: { type: 'string', description: 'urn:owm:policy:<policy_type>:<sha16(canonicalized body)>.' },
+        descriptorUrl: { type: 'string' },
+        graphUrl: { type: 'string' },
+        authorityDid: { type: 'string' },
+      },
+      required: ['policyIri', 'descriptorUrl', 'graphUrl', 'authorityDid'],
+    },
   },
   {
     action: 'urn:cg:action:owm:publish-compliance-evidence' as IRI,
@@ -281,6 +442,18 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'cited_controls', type: 'array', required: true, description: 'Array of control IRIs being evidenced (e.g., ["soc2:CC6.1"]).' },
       { name: 'org_pod_url', type: 'string', required: true, description: 'Pod URL of the publishing org.' },
     ],
+    outputs: {
+      description: 'PublishComplianceEvidenceResult — IRI of the compliance-grade evidence descriptor (compliance: true; ECDSA-signed; cites the supplied framework controls via dct:conformsTo) + descriptor/graph URLs + framework + control echo + final modal status.',
+      properties: {
+        evidenceIri: { type: 'string' },
+        descriptorUrl: { type: 'string' },
+        graphUrl: { type: 'string' },
+        framework: { type: 'string', enum: ['soc2', 'eu-ai-act', 'nist-rmf'] },
+        controls: { type: 'array', description: 'Cited control IRIs echoed back.', items: { type: 'string' } },
+        modalStatus: { type: 'string', enum: ['Asserted', 'Counterfactual'] },
+      },
+      required: ['evidenceIri', 'descriptorUrl', 'graphUrl', 'framework', 'controls', 'modalStatus'],
+    },
   },
 ];
 

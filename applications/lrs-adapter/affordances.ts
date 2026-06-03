@@ -27,6 +27,17 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
+    outputs: {
+      description: 'IngestStatementResult — IRIs + URLs of the published cg:ContextDescriptor (Asserted lrs:StatementIngestion projection of the xAPI Statement) and the separate ingestion audit-row descriptor, plus the xAPI version that was negotiated with the LRS.',
+      properties: {
+        statementDescriptorIri: { type: 'string', description: 'IRI of the descriptor projecting the xAPI Statement (urn:cg:lrs-statement:<id>).' },
+        ingestionAuditIri: { type: 'string', description: 'IRI of the separate lrs:StatementIngestion audit descriptor recording the ingestion event itself.' },
+        descriptorUrl: { type: 'string', description: 'URL of the published statement-descriptor .ttl.' },
+        auditUrl: { type: 'string', description: 'URL of the published audit-row .ttl.' },
+        xapiVersion: { type: 'string', description: 'xAPI version negotiated with the LRS (2.0.0 or 1.0.3).' },
+      },
+      required: ['statementDescriptorIri', 'ingestionAuditIri', 'descriptorUrl', 'auditUrl', 'xapiVersion'],
+    },
   },
   {
     action: 'urn:cg:action:lrs:ingest-statement-batch' as IRI,
@@ -49,6 +60,26 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
+    outputs: {
+      description: 'Array of IngestStatementResult — one entry per Statement ingested from the LRS filter window (sequential ingestion to avoid pod-manifest races).',
+      properties: {
+        results: {
+          type: 'array',
+          description: 'IngestStatementResult entries (statementDescriptorIri, ingestionAuditIri, descriptorUrl, auditUrl, xapiVersion). The handler returns the array itself as the top-level value; this property documents the entry shape.',
+          items: {
+            type: 'object',
+            properties: {
+              statementDescriptorIri: { type: 'string' },
+              ingestionAuditIri: { type: 'string' },
+              descriptorUrl: { type: 'string' },
+              auditUrl: { type: 'string' },
+              xapiVersion: { type: 'string' },
+            },
+            required: ['statementDescriptorIri', 'ingestionAuditIri', 'descriptorUrl', 'auditUrl', 'xapiVersion'],
+          },
+        },
+      },
+    },
   },
   {
     action: 'urn:cg:action:lrs:project-descriptor' as IRI,
@@ -74,6 +105,20 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
     ],
+    outputs: {
+      description: 'ProjectDescriptorResult — outcome of projecting an Asserted descriptor to an xAPI Statement against the LRS. Counterfactual descriptors are ALWAYS skipped; Hypothetical descriptors are skipped unless allow_hypothetical=true. Multi-narrative descriptors produce a lossy projection with audit-loud lossNote rows.',
+      properties: {
+        skipped: { type: 'boolean', description: 'True when the descriptor was not projected (e.g. Counterfactual, or Hypothetical without opt-in).' },
+        skipReason: { type: 'string', description: 'Human-readable reason the projection was skipped (only set when skipped=true).' },
+        statementId: { type: 'string', description: 'UUID of the Statement that was POSTed to the LRS (only set when skipped=false).' },
+        lossy: { type: 'boolean', description: 'True when information was dropped or marked lossy (multi-narrative, allowed-Hypothetical, etc.).' },
+        lossNotes: { type: 'array', description: 'Audit-loud per-row notes describing exactly what was lost or downgraded.', items: { type: 'string' } },
+        xapiVersion: { type: 'string', description: 'xAPI version negotiated with the LRS (2.0.0 or 1.0.3).' },
+        projectionAuditIri: { type: 'string', description: 'IRI of the lrs:Projection audit descriptor (when projection succeeded).' },
+        auditUrl: { type: 'string', description: 'URL of the projection-audit .ttl on the pod (when projection succeeded).' },
+      },
+      required: ['skipped', 'lossy', 'lossNotes', 'xapiVersion'],
+    },
   },
   {
     action: 'urn:cg:action:lrs:lrs-about' as IRI,
@@ -88,6 +133,14 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
       { name: 'lrs_password', type: 'string', required: true, description: 'LRS Basic auth password.' },
       { name: 'lrs_preferred_version', type: 'string', required: false, description: 'Preferred xAPI version.', enum: ['2.0.0', '1.0.3'] },
     ],
+    outputs: {
+      description: 'AboutResponse — the /xapi/about probe result: which xAPI versions the LRS reports it supports, plus any vendor-specific extensions.',
+      properties: {
+        version: { type: 'array', description: 'xAPI versions the LRS advertises (e.g. ["2.0.0"], ["1.0.3"], or ["2.0.0", "1.0.3"]).', items: { type: 'string' } },
+        extensions: { type: 'object', description: 'Vendor-specific /about extensions block. Shape varies by LRS implementation.', additionalProperties: true },
+      },
+      required: ['version'],
+    },
   },
 ];
 

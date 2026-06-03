@@ -34,6 +34,16 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     ],
     // Learner-facing: meaningful on a learner profile resource.
     appliesTo: { collections: ['profiles'] },
+    outputs: {
+      description: 'Discovered assignment list for the learner — required + suggested courses with due-by dates derived from policy triggers — plus an ABAC accessDecision trace. Returns { error, accessDecision } when the caller is not authorised to query this learner.',
+      properties: {
+        learnerWebId: { type: 'string', description: 'Echo of the queried learner DID/WebID.' },
+        assignments: { type: 'array', description: 'Per-course assignment entries (courseIri, courseTitle, requirementType (required|recommended), trigger, dueAt, sourcePolicyIri).', items: { type: 'object', additionalProperties: true } },
+        audienceTagsUsed: { type: 'array', description: 'Audience tags actually used to compute the membership (caller override OR resolved from the learner record).', items: { type: 'string' } },
+        accessDecision: { type: 'object', description: 'ABAC trace: caller role + applied policies + allow/deny.', additionalProperties: true },
+        error: { type: 'string', description: 'Set when the caller cannot query this learner (forbidden); accessDecision carries the deny trace.' },
+      },
+    },
   },
 
   {
@@ -51,6 +61,9 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     ],
     // Acts on a specific course; also surfaced on the learner profile.
     appliesTo: { collections: ['courses', 'profiles'] },
+    outputs: {
+      description: 'Lesson-consumption outcome — { consumed, descriptors emitted for each slide advanced, xAPI statementIds (when lrs_endpoint was supplied), modalStatus = Hypothetical when partial / Asserted on full completion }. Current bridge build returns a stub note flag until the streaming consumption handler is wired.',
+    },
   },
 
   {
@@ -67,6 +80,16 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       { name: 'course_content', type: 'object', required: true, description: 'The course\'s narration transcripts + extracted concepts. In a real deployment the bridge fetches this from the tenant pod via the published fxs/fxk descriptors; for the in-process invocation supply the shape from the parser\'s dashboard_data + transcripts payloads.' },
     ],
     appliesTo: { collections: ['courses'] },
+    outputs: {
+      description: 'Grounded course-Q&A result — verbatim transcript citations + concept-card snippets that overlap the question. Honest null when nothing in the course grounds the question. Also persists an lpc:CitedResponse-shape audit descriptor.',
+      properties: {
+        question: { type: 'string', description: 'Echo of the asked question.' },
+        citations: { type: 'array', description: 'Per-citation entries: { slideId, slideTitle?, verbatimQuote, transcriptOffsetMs?, conceptIds }.', items: { type: 'object', additionalProperties: true } },
+        conceptCards: { type: 'array', description: 'Concept-card snippets that overlap the question (id, label, definition).', items: { type: 'object', additionalProperties: true } },
+        displayText: { type: 'string', description: 'Composed display text wrapping the citations — never paraphrases the cited atoms.' },
+        nullReason: { type: 'string', description: 'When no atom in the course overlaps the question, set to a human-readable reason ("no-data").' },
+      },
+    },
   },
 
   {
@@ -86,6 +109,20 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       { name: 'llm_api_key', type: 'string', required: false, description: 'BYOK: per-request Anthropic API key. Used transiently for the one LLM call; bridge does not store/log. Takes precedence over the server-side FOXXI_LLM_API_KEY / ANTHROPIC_API_KEY env. Caller is responsible for transport security (TLS to the bridge).' },
     ],
     appliesTo: { collections: ['courses'] },
+    outputs: {
+      description: 'Agentic-RAG result: federated retrieval scaffold + LLM-synthesised answer + full descriptor trace (fxa:LearnerQuestionEvent Asserted → fxa:RetrievalActivity Hypothetical → fxa:LlmCompletion Hypothetical → fxa:CitedAnswer Asserted, with cg:supersedes chains). When no LLM key is configured, returns the retrieval scaffold + trace only (use foxxi.retrieve_course_context for the explicit no-LLM path). Surfaces a rate-limit error when bridge-env key is used and per-IP rate cap is hit.',
+      properties: {
+        answer: { type: 'string', description: 'LLM-synthesised answer composed over the structured retrieval context. Omitted when no LLM key was available.' },
+        citations: { type: 'array', description: 'Cited slide entries with verbatim transcript snippets, allocated round-robin across primary + federation peers.', items: { type: 'object', additionalProperties: true } },
+        seedConcepts: { type: 'array', description: 'Concept-graph seeds chosen by the agentic retrieval step (primary + cross-course matches).', items: { type: 'object', additionalProperties: true } },
+        expandedConcepts: { type: 'array', description: 'Concepts reached via prereq + modifier-of edge expansion from the seeds.', items: { type: 'object', additionalProperties: true } },
+        trace: { type: 'array', description: 'Ordered Interego descriptor trace; one entry per agent step (event type + descriptor IRI + modal status + cg:supersedes).', items: { type: 'object', additionalProperties: true } },
+        llmKeySource: { type: 'string', enum: ['per-request-byok', 'bridge-env'], description: 'Which LLM-key source was used (BYOK takes precedence over the bridge env key).' },
+        llmModel: { type: 'string', description: 'Anthropic model id actually invoked.' },
+        error: { type: 'string', description: 'Set on rate-limit or auth failure.' },
+        retryAfterSeconds: { type: 'integer', description: 'Set when error is a rate-limit refusal.' },
+      },
+    },
   },
 
   {
@@ -102,6 +139,15 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       { name: 'federation', type: 'array', required: false, description: 'Optional federation peer payloads.' },
     ],
     appliesTo: { collections: ['courses'] },
+    outputs: {
+      description: 'Retrieval-only Q&A scaffold for MCP-client-as-LLM: seed concepts + expanded neighborhood + cited slides with verbatim transcripts + a 2-step Interego trace (fxa:LearnerQuestionEvent Asserted + fxa:RetrievalActivity Hypothetical). The calling agent synthesises the answer in its OWN context using the scaffold as grounding. No API key required — the user\'s MCP-client subscription pays for synthesis.',
+      properties: {
+        seedConcepts: { type: 'array', description: 'Concept-graph seeds matched against the question.', items: { type: 'object', additionalProperties: true } },
+        expandedConcepts: { type: 'array', description: 'Concepts reached via prereq + modifier-of expansion.', items: { type: 'object', additionalProperties: true } },
+        citations: { type: 'array', description: 'Cited slide entries with verbatim transcripts the calling agent can ground on.', items: { type: 'object', additionalProperties: true } },
+        trace: { type: 'array', description: 'Two-step Interego descriptor trace (question event + retrieval activity).', items: { type: 'object', additionalProperties: true } },
+      },
+    },
   },
 
   {
@@ -138,6 +184,20 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
       { name: 'course_id', type: 'string', required: false, description: 'Stable catalog course_id (default: derived from manifest identifier).' },
       { name: 'lms_source', type: 'string', required: false, description: 'Originating LMS connector ID (default: "Direct upload").' },
     ],
+    outputs: {
+      description: 'Result of parsing + publishing a SCORM/cmi5/xAPI content package. Emits three-stratum descriptors (fxs structural, fxk knowledge, fxa activity-schema) on the tenant pod and reports SHACL violations under parseStatus.',
+      properties: {
+        courseIri: { type: 'string', description: 'IRI of the new fxa:CoursePackageBundle.' },
+        catalogIri: { type: 'string', description: 'IRI of the catalog entry updated for this course.' },
+        parseStatus: { type: 'string', enum: ['clean', 'violations'], description: 'clean = SHACL-valid; violations = catalog flagged with shape violations.' },
+        descriptorUrls: { type: 'object', description: 'Per-stratum descriptor URLs: { structural[], knowledge[], activity[] }.', additionalProperties: true },
+        concepts: { type: 'integer', description: 'Number of concepts extracted.' },
+        slides: { type: 'integer', description: 'Number of slides parsed.' },
+        prereqEdges: { type: 'integer', description: 'Number of prerequisite edges inferred.' },
+        violations: { type: 'array', description: 'SHACL violation entries (only when parseStatus=violations).', items: { type: 'object', additionalProperties: true } },
+        note: { type: 'string', description: 'Stub note when the Python parser has not yet been run and parsed payload is absent.' },
+      },
+    },
   },
 
   {
