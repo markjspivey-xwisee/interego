@@ -108,6 +108,8 @@ import {
   // Wallet — used by check_balance
   checkBalance,
   getChainConfig,
+  // Generic affordance follower (Path A — reach any vertical via descriptors)
+  followAffordance,
   type NodeProvenance,
   type PGSLInstance,
 } from '@interego/core';
@@ -1278,6 +1280,29 @@ async function handlePgslToTurtle(_args: ToolArgs): Promise<string> {
   return JSON.stringify({ turtle: pgslToTurtle(pgslInstance) });
 }
 
+// ── Generic affordance follower ─────────────────────────────
+//
+// Proxies a `cg:Affordance` invocation through the MCP layer so a single
+// Interego connector reaches any vertical's affordances (Foxxi, LRS, OWM,
+// ADP, AC, LPC, ...) without installing the per-vertical bridge. Discover
+// available actions via `discover_context` + `get_descriptor`; this handler
+// performs the descriptor fetch + match + HTTP POST in one shot.
+async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
+  const descriptorUrl = args.descriptor_url as string;
+  const actionIri = args.action_iri as string;
+  const payload = (args.payload ?? {}) as Record<string, unknown>;
+  const authorization = args.authorization as string | undefined;
+  if (!descriptorUrl) throw new Error('invoke_affordance: descriptor_url is required');
+  if (!actionIri) throw new Error('invoke_affordance: action_iri is required');
+  const result = await followAffordance(
+    descriptorUrl,
+    actionIri,
+    payload,
+    authorization ? { authorization } : undefined,
+  );
+  return JSON.stringify(result);
+}
+
 // ── Tool Registry ───────────────────────────────────────────
 
 const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => Promise<string> }> = {
@@ -1313,6 +1338,8 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   pgsl_lattice_status: { description: 'Report PGSL lattice statistics', handler: handlePgslLatticeStatus },
   pgsl_meet: { description: 'Compute the lattice meet of two PGSL fragments', handler: handlePgslMeet },
   pgsl_to_turtle: { description: 'Serialize the PGSL lattice as RDF Turtle', handler: handlePgslToTurtle },
+  // Generic affordance follower (Path A — reach any vertical without per-vertical bridge)
+  invoke_affordance: { description: 'Invoke a vertical affordance by descriptor URL + cg:action IRI', handler: handleInvokeAffordance },
 };
 
 // ── MCP Tool Schemas ────────────────────────────────────────
@@ -1608,6 +1635,29 @@ const STUB_REDIRECT_OUTPUT = mcpOutputSchema({
     message: { type: 'string', description: 'Human-readable redirect explanation' },
   },
   required: ['skipped', 'reason', 'message'],
+});
+
+const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
+  type: 'object',
+  description: 'Result of a cg:Affordance invocation — echo of the resolved affordance metadata plus the raw HTTP response from the target. Parse body based on contentType; 4xx is informative (e.g. forbidden / validation), 5xx is retried internally before surfacing.',
+  properties: {
+    status: { type: 'integer', description: 'HTTP status from the target' },
+    statusText: { type: 'string' },
+    contentType: { type: 'string', description: 'Content-Type header from the target (null when absent)' },
+    body: { type: 'string', description: 'Raw response body — JSON-parse when contentType is application/json' },
+    affordance: {
+      type: 'object',
+      description: 'Resolved affordance metadata from the descriptor',
+      properties: {
+        action: { type: 'string', description: 'cg:action IRI selected by the caller' },
+        target: { type: 'string', description: 'hydra:target URL invoked' },
+        method: { type: 'string', description: 'hydra:method (default POST when absent on the descriptor)' },
+        mediaType: { type: 'string', description: 'dcat:mediaType when present' },
+      },
+      required: ['action', 'target', 'method'],
+    },
+  },
+  required: ['status', 'statusText', 'contentType', 'body', 'affordance'],
 });
 
 const TOOL_SCHEMAS = [
@@ -1964,6 +2014,23 @@ const TOOL_SCHEMAS = [
     inputSchema: { type: 'object', properties: {} },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Serialize PGSL as Turtle', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  // ── Generic affordance follower (Path A — reach any vertical) ──
+  {
+    name: 'invoke_affordance',
+    description: 'Generic affordance follower. Given a descriptor URL and a cg:action IRI, this fetches the descriptor, finds the matching cg:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        descriptor_url: { type: 'string', description: 'URL of the Context Descriptor containing the affordance (e.g., a Foxxi course descriptor URL).' },
+        action_iri: { type: 'string', description: 'The cg:action IRI of the affordance to invoke (e.g., urn:cg:action:foxxi:discover-assigned-courses). Discover available actions via discover_context + get_descriptor.' },
+        payload: { type: 'object', additionalProperties: true, description: 'Arguments to POST to the affordance target. Shape depends on the specific affordance — read the descriptor or the affordance\'s inputs metadata to learn what fields are required.' },
+        authorization: { type: 'string', description: 'Optional Authorization header value to forward (e.g., Bearer <token>). Use when the target requires auth. The relay caller\'s own bearer token is NOT auto-forwarded — supply it explicitly if needed.' },
+      },
+      required: ['descriptor_url', 'action_iri', 'payload'],
+    },
+    outputSchema: INVOKE_AFFORDANCE_OUTPUT,
+    annotations: { title: 'Invoke a vertical affordance', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
 ] as const;
 

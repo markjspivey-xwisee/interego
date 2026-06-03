@@ -346,10 +346,18 @@ export {
   // Transient-network retry (substrate plumbing for fetch wrappers)
   withTransientRetry,
   isTransientNetworkError,
+  // Generic affordance follower (Path A reach-anywhere primitive)
+  followAffordance,
+  DescriptorNotFoundError,
+  AffordanceNotFoundError,
 } from './solid/index.js';
 
 export type {
   TransientRetryOptions,
+  FollowAffordanceOptions,
+  FollowAffordanceResult,
+  ResolvedAffordance,
+  AffordanceMethod,
   FetchFn,
   FetchResponse,
   WebSocketLike,

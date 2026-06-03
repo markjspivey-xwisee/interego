@@ -92,6 +92,19 @@ export {
 } from './retry.js';
 export type { TransientRetryOptions } from './retry.js';
 
+// ── Generic affordance follower (Path A reach-anywhere primitive) ──
+export {
+  followAffordance,
+  DescriptorNotFoundError,
+  AffordanceNotFoundError,
+} from './affordance.js';
+export type {
+  FollowAffordanceOptions,
+  FollowAffordanceResult,
+  ResolvedAffordance,
+  AffordanceMethod,
+} from './affordance.js';
+
 export type {
   IpfsAnchorReceipt,
   SignatureAnchorReceipt,
