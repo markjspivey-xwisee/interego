@@ -484,7 +484,11 @@ export async function publishComplianceEvidence(
     .generatedBy(ctx.authorityDid, { onBehalfOf: ctx.authorityDid, endedAt: nowIso() })
     .temporal({ validFrom: nowIso() });
   if (event.modal_status === 'Counterfactual') {
-    builder.counterfactual(0.95);
+    // counterfactual() is a Pearl-rung-3 causal helper (query +
+    // parentObservation + parentIntervention + scmOrIri), NOT a
+    // modal-status setter. Use the semiotic facet directly, matching
+    // the pattern in pod-publisher.ts.
+    builder.semiotic({ modalStatus: 'Counterfactual', groundTruth: false, epistemicConfidence: 0.95 });
   } else {
     builder.asserted(0.95);
   }
