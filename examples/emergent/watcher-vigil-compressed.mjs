@@ -64,7 +64,7 @@ import {
   temporalAnnotations,
   effectiveModal,
   topologicalSort,
-} from '../../dist/index.js';
+} from '../../packages/core/dist/index.js';
 // The heartbeat helpers are re-exported from the passport submodule
 // (not from the package root). Import from the passport facade so the
 // emergent harness stays substrate-pure.

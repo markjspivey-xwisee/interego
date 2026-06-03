@@ -82,7 +82,7 @@ import {
   communityModal,
   DEFAULT_RULES,
   ModalAlgebra,
-} from '../../dist/index.js';
+} from '../../packages/core/dist/index.js';
 
 // ── Configuration ─────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE

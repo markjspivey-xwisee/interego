@@ -51,7 +51,7 @@ import {
   restriction,
   override,
   ModalAlgebra,
-} from '../../dist/index.js';
+} from '../../packages/core/dist/index.js';
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE

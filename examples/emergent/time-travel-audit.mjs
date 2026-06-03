@@ -66,7 +66,7 @@ import {
   fetchGraphContent,
   withTransientRetry,
   loadAgentKeypair,
-} from '../../dist/index.js';
+} from '../../packages/core/dist/index.js';
 
 // ── configuration ────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
