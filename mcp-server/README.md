@@ -1,6 +1,10 @@
 # @interego/mcp
 
-**MCP server for [Interego](https://github.com/markjspivey-xwisee/interego)** — exposes 27 tools for publishing, discovering, composing, reasoning over, and dynamically invoking typed knowledge graphs through Solid pods. Compatible with Claude Code, Claude Desktop, Cursor, Windsurf, Cline, and any other MCP client.
+**MCP server for [Interego](https://github.com/markjspivey-xwisee/interego)** — exposes the substrate's **eight categorical kernel verbs** (`mint`, `dereference`, `compose`, `act`, `restrict`, `extend`, `promote`, `decompose`) as first-class MCP tools, plus 27 named compatibility shims (`publish_context`, `discover_context`, `register_agent`, `pgsl_*`, `invoke_affordance`, …) for existing connectors.
+
+The kernel is the substrate's primitive set — see [`docs/ARCHITECTURAL-FOUNDATIONS.md`](../docs/ARCHITECTURAL-FOUNDATIONS.md) §11. New clients should call the kernel verbs directly. Existing connectors keep working because every named tool's wire format (input + output) is unchanged — each is internally composed from kernel verbs, with `Compatibility shim` tagged in its description.
+
+Compatible with Claude Code, Claude Desktop, Cursor, Windsurf, Cline, and any other MCP client.
 
 ## Install
 

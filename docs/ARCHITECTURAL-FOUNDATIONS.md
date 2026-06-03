@@ -213,7 +213,32 @@ The four invariants in §5 govern static structure: identity-by-reference, level
 
 This is the operational answer to the deepest question the substrate raises: *can a community of agents construct, ratify, and live under their own protocol-and-app stack without any external coordinator?* On the evidence of Demo 20, yes. The substrate is sufficient.
 
-## 11. Related work
+## 11. The kernel module — primitives as a first-class API
+
+§3–§5 give the categorical structure: PGSL as a Grothendieck fibration over the level chain, HELA as a topos with composition as colimit, restriction and extension as an adjunction, and the four invariants that hold across the lot. Those constructions are realized in code today (the appendix file-path index lists where), but they are spread across the substrate modules and intermingled with verticals' particular compositions of them.
+
+[`src/kernel/`](../src/kernel/) is the operational realization of §3–§5 as a single coherent surface — the eight verbs every higher-layer operation is built from:
+
+| Verb | Categorical role | Delegates to |
+|---|---|---|
+| `mint(content)` | Identity-by-reference (Invariant 1) | `mintAtom` / content-addressed hashing |
+| `dereference(iri)` | Peircean Secondness — brute resolution | `fetchGraphContent`, `parseManifest`, affordance extraction |
+| `compose(holons, op)` | Operadic composition over typed-hyperedge category (the four operators) | `union` / `intersection` / `restriction` / `override` in `src/model/composition.ts` |
+| `act(affordance, payload)` | Peircean Thirdness made operational | `followAffordance` in `src/solid/affordance.ts` |
+| `restrict(holon, sub)` | Restriction half of the adjunction (Invariant 3) | `restriction` |
+| `extend(part, whole)` | Extension half of the adjunction | `union` + witness-preserving `cg:supersedes` back-link |
+| `promote(atoms[])` | PGSL fibration vertical movement (level k → k+1) | `ingest` + `pullbackSquare` |
+| `decompose(fragment)` | PGSL fibration vertical movement (level k → k-1) | `pullbackSquare` |
+
+The kernel introduces **no new ontology terms** and **no new persistence**. It is code-level surface that names what the substrate already does. Three properties matter:
+
+1. **Categorical structure made visible.** Reading `mint` / `dereference` / `compose` / `act` next to each other recovers the §3 fibration + §5 invariants as one picture, instead of as a list of file paths a reader has to triangulate.
+2. **Non-leaky abstraction.** Verticals (foxxi, lpc, adp, ...) and higher-layer operations (publish_context, register_agent, ...) compose the kernel verbs; they no longer reach past it into the substrate's interior. This is what the user-facing principle — "Interego = primitives + composition mechanics for emergence, not a fixed feature set" — looks like in code.
+3. **MCP surface re-expressed in kernel terms.** The 27 named MCP tools (publish_context / discover_context / register_agent / pgsl_* / invoke_affordance / ...) are exposed as **compatibility shims** with their descriptions prefixed `Compatibility shim — internally composes kernel(...)`. The wire format of every existing tool is unchanged so existing connectors keep working. The kernel verbs are exposed as additional first-class MCP tools (`mint`, `dereference`, `compose`, `act`, `restrict`, `extend`, `promote`, `decompose`) so new clients can call the substrate directly.
+
+The kernel does not replace the higher-layer surface — it is the surface those layers compose. A vertical that wants pod-grounded action publishes a `cg:Affordance` block; a consumer reaches it by `dereference(podManifest) → find entry → dereference(entry.descriptorUrl) → act(affordance, payload)`. The route through the kernel is the substrate's natural HATEOAS shape (§6), made executable.
+
+## 12. Related work
 
 The construction draws on (without depending on):
 
@@ -232,6 +257,7 @@ The constructions named in this document live at these paths:
 
 | Concept | File |
 |---|---|
+| Kernel module (the eight categorical verbs as one surface) | [`src/kernel/`](../src/kernel/) `mint`, `dereference`, `compose`, `act`, `restrict`, `extend`, `promote`, `decompose` |
 | Atom minting (content-addressed identity) | [`src/pgsl/lattice.ts`](../src/pgsl/lattice.ts) `mintAtom`, `mintEncryptedAtom`, `resolveAtomValue` |
 | Pullback square (categorical pullback at level k) | [`src/pgsl/category.ts`](../src/pgsl/category.ts) `pullbackSquare` |
 | Composition operators (union/intersection/restriction/override) | [`src/model/derivation.ts`](../src/model/derivation.ts) |

@@ -20,6 +20,18 @@ TypeScript library (ESM, Node 20+):
 
 ```
 src/
+  kernel/       The categorical kernel — the substrate's primitives as a
+                first-class API. Eight verbs (mint / dereference / compose /
+                act / restrict / extend / promote / decompose) that delegate
+                to existing primitives across model/, pgsl/, solid/. The
+                operational realization of docs/ARCHITECTURAL-FOUNDATIONS.md
+                §3–§5; see §11 there for the surface itself. Higher-layer
+                operations (publish_context, register_agent, ...) compose
+                these — they no longer reach past the kernel into substrate
+                interior. The 27 named MCP tools are compatibility shims
+                tagged in their descriptions; new clients can call the
+                kernel verbs directly via the `mint` / `dereference` / ...
+                MCP tools (both stdio and the relay).
   model/        Core data model: types, ContextDescriptor builder, composition operators
   rdf/          Namespaces, Turtle serializer, JSON-LD serializer/parser
   validation/   Programmatic SHACL-equivalent validator, SHACL shapes as Turtle export
@@ -64,19 +76,29 @@ src/
 Plus surrounding infrastructure:
 
 ```
-mcp-server/    Stdio MCP server — 27 tools including publish_context + share_with;
+mcp-server/    Stdio MCP server — surface = 8 kernel verbs (mint / dereference /
+               compose / act / restrict / extend / promote / decompose) AS
+               first-class tools + 27 compatibility-shim named tools
+               (publish_context / discover_context / register_agent / pgsl_* /
+               invoke_affordance / ...). Each shim's description is tagged
+               `Compatibility shim — internally composes kernel(...)`. The
+               wire format of every shim is unchanged so existing connectors
+               keep working. New clients should call the kernel verbs
+               directly.
                subscriptions capped at CG_MAX_SUBSCRIPTIONS (default 32);
                unsubscribe_from_pod tool releases a slot.
                invoke_affordance is the universal Path A entry point —
                any vertical's affordances reachable via discover_context
                + get_descriptor + invoke_affordance without a per-vertical
-               MCP install. Per-vertical bridges still ship their own
-               native MCP surfaces (Path B ergonomics) alongside.
+               MCP install (it is internally `act({descriptorUrl, actionIri},
+               payload)`). Per-vertical bridges still ship their own native
+               MCP surfaces (Path B ergonomics) alongside.
 deploy/
   identity/    Stateless DID resolver + signature verifier;
                auth-methods live in each user's pod (auth-methods.jsonld)
   mcp-relay/   HTTP/SSE OAuth-gated MCP proxy for claude.ai connectors;
-               per-surface agent minting; cross-pod sharing
+               per-surface agent minting; cross-pod sharing. Same surface as
+               mcp-server: 8 kernel verbs + 27 compatibility-shim named tools.
 integrations/
   openclaw-memory/      Path 2 — OpenClaw memory-engine plugin backed by
                         Interego pods. Substrate-pure bridge.ts +

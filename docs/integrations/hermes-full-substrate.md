@@ -24,10 +24,16 @@ you don't actually need two installs to get "the whole thing."
 
 ## The bloat problem
 
-Both Interego's relay and the local MCP server expose 27 tools
-(`publish_context`, `discover_context`, `register_agent`,
-`verify_agent`, `discover_all`, `subscribe_to_pod`, the 5 PGSL
-primitives, ...). Surface them flat and every one costs context
+Both Interego's relay and the local MCP server expose the same set of
+tools: **8 kernel verbs** (`mint`, `dereference`, `compose`, `act`,
+`restrict`, `extend`, `promote`, `decompose` — the substrate's
+categorical primitives, see [`docs/ARCHITECTURAL-FOUNDATIONS.md`](../ARCHITECTURAL-FOUNDATIONS.md)
+§11) plus **27 named compatibility shims** (`publish_context`,
+`discover_context`, `register_agent`, `verify_agent`, `discover_all`,
+`subscribe_to_pod`, the 5 PGSL primitives, ...). The shims wrap the
+kernel verbs with named-tool ergonomics; their wire format is
+unchanged for backward compatibility. Surface them all flat and every
+one costs context
 budget on every turn, forever — whether or not the agent ever uses
 it. The agent's working memory gets crowded out by an API reference
 it mostly ignores.

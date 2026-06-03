@@ -52,6 +52,8 @@ If a client only supports the older SSE-style endpoint, swap `/mcp` for `/sse` o
 
 The MCP surface above is a thin ergonomic wrapper on three pillars over one cryptographic root: **typed context** (Context Descriptors with seven facets, a composition algebra, modal status, `cg:supersedes` chains, the PGSL content-addressed lattice — the L1 protocol is [Context Graphs 1.0](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)), **verifiable identity** (wallet-rooted DIDs, capability passports that survive infrastructure migration, attribute-based access control), and **coordination** (multi-axis attestation, federated saga transactions, Nostr-style p2p relays). Wrapped in NaCl envelopes, secp256k1 signatures, ZK commitments, IPFS anchoring. Federated across Solid pods by default.
 
+The underlying surface is a small categorical kernel — eight verbs: `mint`, `dereference`, `compose`, `act`, `restrict`, `extend`, `promote`, `decompose` — exposed both as a TypeScript module ([`src/kernel/`](src/kernel/)) and as first-class MCP tools alongside the 27 named compatibility shims (`publish_context`, `register_agent`, `pgsl_*`, `invoke_affordance`, …). The named tools' wire format is unchanged so existing connectors keep working; new clients can call the kernel verbs directly. See [`docs/ARCHITECTURAL-FOUNDATIONS.md`](docs/ARCHITECTURAL-FOUNDATIONS.md) §11 for the categorical structure realized by the kernel.
+
 </details>
 
 ---
