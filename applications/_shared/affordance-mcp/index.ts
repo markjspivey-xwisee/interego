@@ -90,6 +90,31 @@ export interface AffordanceOutput {
   readonly required?: readonly string[];
 }
 
+/**
+ * MCP `annotations` object on a tool definition (MCP spec 2025-06-18).
+ * Conveys behavioural hints to clients like ChatGPT / Claude so they can
+ * surface accurate read/write + reversibility + idempotency + external-
+ * world chips on the tool card. When absent, clients default to worst-
+ * case (WRITE + DESTRUCTIVE + OPEN WORLD).
+ *
+ * All fields optional per spec; per Foxxi convention all four hints
+ * SHOULD be set explicitly so the worst-case fallback never fires.
+ */
+export interface McpToolAnnotations {
+  /** Short human-readable name (1-5 words) for the tool card. */
+  readonly title?: string;
+  /** True when the tool performs no observable state change. */
+  readonly readOnlyHint?: boolean;
+  /** True when (the non-read-only) tool performs an irreversible change. */
+  readonly destructiveHint?: boolean;
+  /** True when repeating the call with the same args produces the same
+   *  end-state. */
+  readonly idempotentHint?: boolean;
+  /** True when the tool interacts with external entities (other pods,
+   *  blockchain, web). False when it's purely local computation/config. */
+  readonly openWorldHint?: boolean;
+}
+
 /** JSON-Schema property fragment used inside AffordanceOutput. Looser
  *  than the affordance input schema so verticals can describe nested
  *  objects + arrays of objects without minting new type machinery here. */
@@ -138,6 +163,11 @@ export interface Affordance {
    *  advertised on resources whose context matches (see affordancesFor).
    *  Absent ⇒ unscoped ⇒ advertised everywhere. */
   readonly appliesTo?: AffordanceScope;
+  /** Optional MCP-spec-2025-06-18 `annotations` object passed through to
+   *  the derived MCP tool schema. When absent, MCP clients (ChatGPT,
+   *  Claude) default to worst-case hints (WRITE + DESTRUCTIVE + OPEN
+   *  WORLD). Verticals SHOULD set all four hints + title explicitly. */
+  readonly annotations?: McpToolAnnotations;
 }
 
 /** The state of the resource a bridge is currently rendering, used to
@@ -209,6 +239,11 @@ export interface McpToolSchema {
    *  field is a permissive generic object. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly outputSchema: Record<string, any>;
+  /** MCP-spec-2025-06-18 `annotations` object. Always present when the
+   *  source affordance declared one, so MCP clients (ChatGPT, Claude)
+   *  stop falling back to worst-case WRITE/DESTRUCTIVE/OPEN-WORLD chips
+   *  on every vertical-bridge tool. */
+  readonly annotations?: McpToolAnnotations;
 }
 
 interface JsonSchemaProperty {
@@ -310,12 +345,14 @@ export function affordanceToMcpToolSchema(affordance: Affordance): McpToolSchema
     if (input.required) required.push(input.name);
   }
 
-  return {
+  const schema: McpToolSchema = {
     name: affordance.toolName,
     description: affordance.description,
     inputSchema: { type: 'object', properties, required },
     outputSchema: buildMcpOutputSchema(affordance.outputs),
+    ...(affordance.annotations ? { annotations: affordance.annotations } : {}),
   };
+  return schema;
 }
 
 // ── Derive: Turtle (cg:Affordance / hydra:Operation) ────────────────

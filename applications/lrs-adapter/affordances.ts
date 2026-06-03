@@ -18,6 +18,7 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Fetch a single xAPI Statement from an LRS by ID, project as cg:ContextDescriptor in the user\'s pod with lrs:StatementIngestion audit. Auto-negotiates xAPI version (2.0.0 preferred; falls back to 1.0.3 for legacy LRSes like SCORM Cloud).',
     method: 'POST',
     targetTemplate: '{base}/lrs/ingest_statement',
+    annotations: { title: 'Ingest one xAPI Statement', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'statement_id', type: 'string', required: true, description: 'xAPI Statement UUID.' },
       { name: 'lrs_endpoint', type: 'string', required: true, description: 'LRS xAPI endpoint URL.' },
@@ -46,6 +47,7 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Fetch a batch of xAPI Statements from an LRS by filter (verb / activity / agent / since / until / limit) and publish each as cg:ContextDescriptor in the user\'s pod.',
     method: 'POST',
     targetTemplate: '{base}/lrs/ingest_statement_batch',
+    annotations: { title: 'Ingest a batch of xAPI Statements', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'lrs_endpoint', type: 'string', required: true, description: 'LRS xAPI endpoint URL.' },
       { name: 'lrs_username', type: 'string', required: true, description: 'LRS Basic auth username.' },
@@ -88,6 +90,7 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Read an Asserted descriptor from the pod and project to xAPI Statement, POST to the LRS. Counterfactual ALWAYS skipped; Hypothetical skipped without opt-in; multi-narrative descriptors lossy with audit-loud lossNote rows.',
     method: 'POST',
     targetTemplate: '{base}/lrs/project_descriptor',
+    annotations: { title: 'Project a descriptor to an LRS', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'descriptor_iri', type: 'string', required: true, description: 'IRI of the descriptor to project.' },
       { name: 'actor', type: 'object', required: true, description: 'xAPI Agent shape for the Statement actor.' },
@@ -127,6 +130,7 @@ const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Probe the LRS\'s /xapi/about endpoint to discover supported xAPI versions. Useful diagnostic for understanding which Statement projection target is appropriate.',
     method: 'POST',
     targetTemplate: '{base}/lrs/lrs_about',
+    annotations: { title: 'Probe LRS supported xAPI versions', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'lrs_endpoint', type: 'string', required: true, description: 'LRS xAPI endpoint URL.' },
       { name: 'lrs_username', type: 'string', required: true, description: 'LRS Basic auth username.' },

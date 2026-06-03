@@ -17,6 +17,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Declare a capability SPACE (not target) with rubric criteria as guides (not gates) and a Cynefin domain. Publishes adp:Capability + adp:RubricCriterion entries.',
     method: 'POST',
     targetTemplate: '{base}/adp/define_capability',
+    annotations: { title: 'Declare a capability space', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'name', type: 'string', required: true, description: 'Capability name.' },
       { name: 'cynefin_domain', type: 'string', required: true, description: 'Which Cynefin domain the capability lives in.', enum: ['Clear', 'Complicated', 'Complex', 'Chaotic', 'Confused'] },
@@ -42,6 +43,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Record a safe-to-fail probe. Always Hypothetical. REQUIRES amplification + dampening triggers stated up-front (prevents retconning).',
     method: 'POST',
     targetTemplate: '{base}/adp/record_probe',
+    annotations: { title: 'Record a safe-to-fail probe', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'capability_iri', type: 'string', required: true, description: 'IRI of the adp:Capability this probe explores.' },
       { name: 'variant', type: 'string', required: true, description: 'Variant name (e.g., "explicit-acknowledgment").' },
@@ -69,6 +71,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Record a narrative observation against a probe. Always Hypothetical (observation, not causation claim). Carries situation signifiers + agent response + emergent signifier.',
     method: 'POST',
     targetTemplate: '{base}/adp/record_narrative_fragment',
+    annotations: { title: 'Record a narrative fragment', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'probe_iri', type: 'string', required: true, description: 'IRI of the adp:Probe this fragment observes.' },
       { name: 'context_signifiers', type: 'array', required: true, description: 'SenseMaker-style descriptive tags for the situation.', itemType: 'string', minItems: 1 },
@@ -94,6 +97,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Compose multiple narrative fragments into a synthesis. Always Hypothetical. REQUIRES ≥2 coherent narratives — silent-collapse prevention.',
     method: 'POST',
     targetTemplate: '{base}/adp/emerge_synthesis',
+    annotations: { title: 'Emerge a synthesis from fragments', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'probe_iri', type: 'string', required: true, description: 'IRI of the adp:Probe being synthesized.' },
       { name: 'fragment_iris', type: 'array', required: true, description: 'IRIs of fragments to compose.', itemType: 'string', minItems: 1 },
@@ -119,6 +123,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Operator amplify/dampen decision. Asserted (operator commits) BUT REQUIRES explicit_decision_not_made — counter-cultural; forces writing down what is NOT being claimed.',
     method: 'POST',
     targetTemplate: '{base}/adp/record_evolution_step',
+    annotations: { title: 'Record an amplify/dampen evolution decision', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'synthesis_iri', type: 'string', required: true, description: 'IRI of the synthesis the decision is based on.' },
       { name: 'amplify_probe_iris', type: 'array', required: false, description: 'IRIs of probes being amplified.', itemType: 'string' },
@@ -145,6 +150,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Refine a constraint emerged from synthesis cycles. Boundary (what NOT to do) + exits (when relaxed). REQUIRES emergedFrom — constraints emerge from sensemaking, not from declaration.',
     method: 'POST',
     targetTemplate: '{base}/adp/refine_constraint',
+    annotations: { title: 'Refine an emerged constraint', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'capability_iri', type: 'string', required: true, description: 'Capability the constraint applies to.' },
       { name: 'emerged_from_synthesis_iris', type: 'array', required: true, description: 'Synthesis IRIs the constraint emerged from. ≥1 required.', itemType: 'string', minItems: 1 },
@@ -171,6 +177,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Record a passport:LifeEvent biographical record for an emergent capability. REQUIRES explicit_decision_not_made — humility-forward clauses travel with the agent across deployments.',
     method: 'POST',
     targetTemplate: '{base}/adp/recognize_capability_evolution',
+    annotations: { title: 'Recognize a capability evolution', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'capability_iri', type: 'string', required: true, description: 'Capability being recognized.' },
       { name: 'evolution_type', type: 'string', required: true, description: 'Kind of evolution event.', enum: ['EmergentRecognition', 'ConstraintRefinement', 'VariantAmplified', 'VariantDampened'] },
@@ -197,6 +204,7 @@ const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Load the operator\'s probe cycle state from the pod: capabilities, probes, fragments, syntheses, evolution steps, constraints, capability evolution events.',
     method: 'POST',
     targetTemplate: '{base}/adp/list_cycle',
+    annotations: { title: 'List probe cycle state', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'operator_did', type: 'string', required: false, description: 'Operator DID.' },

@@ -27,6 +27,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     description: 'Walk the L&D admin\'s policy descriptors + the learner\'s audience-tag membership, returning the courses currently assigned to this learner (required + suggested) with due-by dates derived from policy triggers.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/discover_assigned_courses',
+    annotations: { title: 'Discover assigned courses', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Learner DID (web_id pattern from the tenant identity service).' },
       { name: 'tenant_pod_url', type: 'string', required: true, description: 'Pod URL of the L&D tenant where policy descriptors live.' },
@@ -53,6 +54,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     description: 'Stream-load a Foxxi-parsed lesson\'s structural stratum (slides, audio, transcripts) for consumption, and emit an fxa:ConsumptionEvent descriptor + an xAPI Statement (via the lrs-adapter) for each slide the learner advances past. Composes with the cg:TemporalFacet so consumption is timeboxed; composes with cg:TrustFacet so partial completion is recorded as Hypothetical, full as Asserted.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/consume_lesson',
+    annotations: { title: 'Consume a lesson', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'course_iri', type: 'string', required: true, description: 'IRI of the course (federation_iri_base/course_id).' },
       { name: 'learner_did', type: 'string', required: true, description: 'Consuming learner DID.' },
@@ -73,6 +75,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     description: 'Grounded Q&A over a course\'s narration transcripts + extracted concepts. The learner asks "what is handicap?" and the substrate returns verbatim-cited transcript segments + concept snippets that overlap the question. Composes the existing learner-performer-companion grounded-answer machinery (same honesty discipline: tamper-detected atoms, IRI citations, honest null when no atom overlaps the question). Lexical retrieval only — use foxxi.ask_course_question_agentic for graph-aware retrieval + LLM synthesis.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/ask_course_question',
+    annotations: { title: 'Ask a question about a course', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'course_iri', type: 'string', required: true, description: 'IRI of the course (matches federation_iri_base#package emitted by ingest_content_package).' },
       { name: 'learner_did', type: 'string', required: true, description: 'Asking learner DID. Recorded on the response descriptor for audit.' },
@@ -99,6 +102,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     description: 'Multi-step agentic retrieval + LLM synthesis: (1) federated concept-graph search across the primary course + any loaded federation peers, (2) prereq + modifier-of edge expansion within each concept\'s home course, (3) round-robin slide allocation so peer-course slides survive the citation cap, (4) LLM synthesis with the substrate-assembled structured context as the system prompt. Each step of the agent loop emits an Interego descriptor (fxa:LearnerQuestionEvent Asserted → fxa:RetrievalActivity Hypothetical → fxa:LlmCompletion Hypothetical → fxa:CitedAnswer Asserted with cg:supersedes back through the trace). LLM key precedence: per-request llm_api_key (BYOK from the caller) > server-side FOXXI_LLM_API_KEY / ANTHROPIC_API_KEY env. The trace records which key source was used (bridge-env vs per-request-byok). Without any key, returns retrieval scaffold + descriptor trace alone (use foxxi.retrieve_course_context for the explicit no-LLM path).',
     method: 'POST',
     targetTemplate: '{base}/foxxi/ask_course_question_agentic',
+    annotations: { title: 'Agentic RAG course Q&A', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Asking learner DID. Recorded on the fxa:LearnerQuestionEvent descriptor.' },
       { name: 'question', type: 'string', required: true, description: 'Natural-language question.' },
@@ -132,6 +136,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     description: 'Pure retrieval, no LLM call. Designed for MCP clients where the AGENT itself (Claude.ai connector / Claude Desktop / Claude Code / Cursor / Codex) is the LLM and uses the user\'s existing subscription. Returns the same federated concept-graph retrieval scaffold (seed concepts + expanded neighborhood + cited slides with verbatim transcripts) as foxxi.ask_course_question_agentic, plus a 2-step Interego trace (fxa:LearnerQuestionEvent Asserted + fxa:RetrievalActivity Hypothetical). The calling agent synthesises the answer in its own context using the cited transcripts as grounding, and optionally closes the trace by publishing its own fxa:CitedAnswer descriptor back to the tenant pod. NO API key required anywhere — user\'s subscription pays via the MCP client.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/retrieve_course_context',
+    annotations: { title: 'Retrieve course context (no LLM)', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Asking learner DID.' },
       { name: 'question', type: 'string', required: true, description: 'Natural-language question.' },
@@ -157,6 +162,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     description: 'Fetch the fxk: knowledge-stratum descriptors (concepts, prerequisite edges, modifier-of relations, Peircean Sign/Object/Interpretant tags) for a course. Returns a navigation graph: pick any concept, follow prerequisite edges up/down, see the slides that taught it.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/explore_concept_map',
+    annotations: { title: 'Explore the concept map', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'course_iri', type: 'string', required: true, description: 'Course IRI.' },
       { name: 'focus_concept_id', type: 'string', required: false, description: 'Optional concept to center the navigation graph on; default returns the full graph.' },
@@ -177,6 +183,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Unwrap a SCORM 1.2 / SCORM 2004 / cmi5 zip package, run the Foxxi storyline parser (deterministic structural rendering + Whisper-transcribed audio + concept extraction with morphology + prerequisite-edge inference), and emit three-stratum descriptors (fxs structural, fxk knowledge, fxa activity-schema) to the tenant pod. SHACL-validates against the Foxxi vocab; non-clean packages are flagged in the catalog with parse_status="violations".',
     method: 'POST',
     targetTemplate: '{base}/foxxi/ingest_content_package',
+    annotations: { title: 'Ingest a content package', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'zip_base64', type: 'string', required: true, description: 'Content package as base64-encoded zip.' },
       { name: 'tenant_pod_url', type: 'string', required: true, description: 'Tenant pod URL where the parsed descriptors land.' },
@@ -207,6 +214,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Declare which authoring tools (Articulate Storyline, Adobe Captivate, Camtasia, etc.) and which package standards (SCORM 1.2, SCORM 2004, cmi5, xAPI) are accepted into the catalog. Reuses the abac policy descriptor pattern; ingestion rejects packages outside the accepted set.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/publish_authoring_policy',
+    annotations: { title: 'Publish an authoring policy', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tenant_pod_url', type: 'string', required: true, description: 'Tenant pod URL.' },
       { name: 'accepted_tools', type: 'array', required: true, description: 'Array of accepted authoring tool labels.' },
@@ -224,6 +232,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Register an external LMS (Cornerstone OnDemand, Workday Learning, SAP SuccessFactors, etc.) as a content source. Composes with src/connectors/ — uses the existing OAuth 2.0 / Basic-auth / SCORM-Cloud-API flows where supported. The connector\'s sync schedule is recorded as a foxxi:LmsConnection descriptor on the tenant pod with the connector\'s auth_warning surfaced if the credentials need rotation.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/connect_lms',
+    annotations: { title: 'Register an external LMS connector', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tenant_pod_url', type: 'string', required: true, description: 'Tenant pod URL.' },
       { name: 'connector_id', type: 'string', required: true, description: 'Stable connector ID (e.g., "cornerstone-prod").' },
@@ -242,6 +251,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Bind a course to an audience group (by audience_tag) via a Foxxi assignment policy descriptor. Trigger options: on-hire, on-role-change, on-cycle (annually), manual. Due-by relative days control when the assignment expires.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/assign_audience',
+    annotations: { title: 'Assign a course to an audience', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tenant_pod_url', type: 'string', required: true, description: 'Tenant pod URL.' },
       { name: 'course_iri', type: 'string', required: true, description: 'IRI of the course (must already be ingested).' },
@@ -260,6 +270,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Privacy-respecting coverage query: across the catalog, which concepts are taught vs only mentioned, by which courses, in which categories. Defaults to v2 merkle-attested-opt-in (count of courses per concept); v3 zk-distribution mode returns a histogram of coverage shape (concepts taught in 1 course / 2-5 / 6-10 / 10+) with per-bucket DP noise. Composes with the existing applications/_shared/aggregate-privacy/ ladder.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/coverage_query',
+    annotations: { title: 'Query concept coverage', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tenant_pod_url', type: 'string', required: true, description: 'Tenant pod URL.' },
       { name: 'category_filter', type: 'string', required: false, description: 'Optional category filter (e.g., "Power Systems / Technical").' },
@@ -280,6 +291,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Publish the fxk: knowledge-stratum graph for a course as a federated pod artifact (using the federation_iri_base pattern from federation_payload.json). Lets peer tenants discover + cite concept nodes by IRI without re-ingesting the course content.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/publish_concept_map',
+    annotations: { title: 'Publish a concept map', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tenant_pod_url', type: 'string', required: true, description: 'Tenant pod URL.' },
       { name: 'course_iri', type: 'string', required: true, description: 'Course IRI.' },
@@ -295,6 +307,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Emit an ops event (assignment/completion/exception/audit) wrapped via compliance-overlay so the L&D activity becomes a framework-cited descriptor. Composes integrations/compliance-overlay/ + src/ops/ — same path the substrate uses for its own SOC 2 evidence.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/publish_compliance_evidence',
+    annotations: { title: 'Publish compliance evidence', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tenant_pod_url', type: 'string', required: true, description: 'Tenant pod URL.' },
       { name: 'event_type', type: 'string', required: true, description: 'One of: assignment-created | completion | exception | audit-action.' },
@@ -313,6 +326,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Mint a W3C Verifiable Credential (Open Badges 3.0-shaped) for a learner who completed a course, sign it with the tenant\'s deterministic Ed25519 issuer key (eddsa-jcs-2022 DataIntegrityProof), and publish it to the learner\'s pod in the foxxi-wallet/ container as a fxa:CourseCompletionCredential descriptor. The signed VC verifies independently with any W3C VC verifier; the descriptor is discoverable via cg:discover() filtered on dct:conformsTo.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/issue_completion_credential',
+    annotations: { title: 'Issue a completion credential', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Learner\'s WebID / DID — becomes credentialSubject.id on the VC.' },
       { name: 'learner_pod_url', type: 'string', required: true, description: 'Learner\'s pod where the credential is published (typically same as tenant_pod_url for tenant-hosted wallets).' },
@@ -333,6 +347,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Walk the learner\'s pod via cg:discover(), aggregate every fxa:CourseCompletionCredential + fxa:CompetencyAssertion the pod holds, verify each embedded W3C VC\'s DataIntegrityProof, and return a 1EdTech CLR 2.0-shaped envelope wrapping all verified entries. Each entry preserves its own proof so downstream verifiers can re-check any single credential without trusting the envelope.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/export_clr',
+    annotations: { title: 'Export a Comprehensive Learner Record', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Learner\'s WebID/DID — also cross-checked against each credential\'s credentialSubject.id.' },
       { name: 'learner_pod_url', type: 'string', required: true, description: 'Pod root to walk.' },
@@ -346,6 +361,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Compose an IEEE P2997 Enterprise Learner Record — the unified, provenance-pointed aggregate of a subject\'s path. Pulls learning EXPERIENCES + on-the-job PERFORMANCE records from Foxxi-as-LRS xAPI statements, CREDENTIALS from the subject\'s pod wallet (reusing the verified CLR composer), and COMPETENCIES ranked across three bases: performance-verified (Asserted — proven by successful production work, supersedes weaker evidence), credentialed (Asserted), and inferred (Hypothetical — predicted from a passed/completed experience alone; cg:modalStatus keeps the prediction honest). Actor-agnostic: the subject may be a human learner/performer OR an AI agent learning + exercising tools — set actor_kind accordingly. Every entry carries a raw-data-location pointer per the P2997 data-ownership requirement. Pure read; non-admins may assemble their own human record, and any caller may assemble an agent capability record (agent capabilities are discoverable, like the agent registry).',
     method: 'POST',
     targetTemplate: '{base}/foxxi/assemble_learner_record',
+    annotations: { title: 'Assemble an Enterprise Learner Record', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Subject\'s WebID/DID — the ELR subject; cross-checked against credential subjects.' },
       { name: 'learner_pod_url', type: 'string', required: false, description: 'Subject\'s pod root to walk for wallet credentials (defaults to the tenant pod).' },
@@ -362,6 +378,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Record one unit of on-the-job production work as an xAPI `performed` statement — the IEEE P2997 employment-history leg, kept distinct from training experiences. The performer (actor_did) may be a human exercising a workplace task OR an AI agent exercising a tool; the authenticated caller is the attesting observer, recorded in provenance. Performance records feed the ELR competency engine: successful production work yields a performance-verified (Asserted) competency that SUPERSEDES a training-only inference for the same competency — closing the data-informed loop.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/record_performance',
+    annotations: { title: 'Record a performance event', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'actor_did', type: 'string', required: true, description: 'Performer\'s DID — a human learner/performer or an AI agent. Defaults to the caller.' },
       { name: 'task_name', type: 'string', required: true, description: 'Human-readable task or tool name (e.g. "Resolve a tier-2 support ticket", "Use the web-search tool"). Becomes the xAPI Activity name + the competency label.' },
@@ -382,6 +399,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Record an agent run in the AGENTIC-NATIVE form — not as flat xAPI statements but as a trajectory of Context Descriptors emergent from Interego L1: each step is MODAL (Hypothetical = an intention/plan, Asserted = executed, Counterfactual = a rejected branch — with cg:supersedes chains), POLY-GRANULAR (task ▸ subtask ▸ tool-call, the PGSL principle), and COMPOSABLE (trajectories merge via the L1 union/restriction algebra). The native trajectory is the source of truth; the bridge projects only the Asserted tool-call steps down to xAPI `performed` statements (which the IEEE P2997 ELR then reads). Intentions, counterfactuals, and the task hierarchy are retained ONLY in the native trajectory — xAPI structurally cannot hold them, and the projection reports exactly what it dropped.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/record_agent_trajectory',
+    annotations: { title: 'Record an agentic-native trajectory', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'agent_did', type: 'string', required: true, description: 'The agent whose run this trajectory records.' },
       { name: 'agent_name', type: 'string', required: false, description: 'Optional agent display name.' },
@@ -397,6 +415,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Return an agent\'s full agentic-native trajectory — every step at every modal status (including the Hypothetical intentions + Counterfactual branches xAPI cannot represent) and every granularity. Includes a projection summary: how many steps reach xAPI vs. how many are retained only in the native form. Agent trajectories are discoverable, like the agent capability registry.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/get_agent_trajectory',
+    annotations: { title: 'Get an agent\'s native trajectory', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'agent_did', type: 'string', required: true, description: 'The agent whose trajectory to retrieve.' },
     ],
@@ -410,6 +429,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Read a team of agents\' DISPOSITION from their trajectories — deliberately NOT a gap analysis. There is no ideal future state and no score-vs-exemplary; the gap model only fits knowable work, and a team of agents is a complex, adaptive system. Returns the modal balance (deliberation / exploration / plan-revision propensities), named dispositions, a WORK-REGIME placement of the team\'s behaviour with the decision stance it calls for, and a VECTOR of drift from the present — not a destination. If a safe-to-fail probe has been run on this team, also returns the causal read (the interventional + counterfactual effect).',
     method: 'POST',
     targetTemplate: '{base}/foxxi/assess_agent_disposition',
+    annotations: { title: 'Assess an agent team disposition', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'agent_dids', type: 'array', itemType: 'string', required: true, description: 'The DIDs of the agents forming the team to assess.' },
     ],
@@ -423,6 +443,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Record a safe-to-fail probe on an agent team — the disposition-based intervention. A probe nudges a CONSTRAINT (an affordance scope, a delegation bound, a connecting constraint), never an outcome: manage constraints, not targets. It is a deliberate, reversible change: the handler snapshots the team\'s disposition before the change as the causal baseline. The probe declares its safe-to-fail portfolio role (coherent / oblique / contradictory) and its weak signals — what would tell the consultant to amplify vs. dampen it. Re-assess the team afterward (assess_agent_disposition) to get the interventional + counterfactual causal read.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/run_performance_probe',
+    annotations: { title: 'Run a safe-to-fail probe', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'agent_dids', type: 'array', itemType: 'string', required: true, description: 'The agent team the probe is run on.' },
       { name: 'constraint_target', type: 'string', required: true, description: 'The constraint being nudged — e.g. "delegation-scope", "web-search-affordance", "connecting-constraint:researcher-summariser". Never an outcome.' },
@@ -442,6 +463,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Open a named, shared evaluation — the place where several teams\' competing agents or harnesses are compared head-to-head. Carries the decision the cohort exists to inform (e.g. "should we standardise on one agentic harness, or fund several?") and an optional shared task set so the comparison is apples-to-apples. The motivating case: an enterprise where multiple teams independently build agents/harnesses and cannot agree how to evaluate one against another. Candidates enrol via foxxi.request_evaluation_enrollment; runs are recorded via foxxi.record_external_agent_run; the portfolio read is foxxi.compare_agent_evaluation.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/open_agent_evaluation',
+    annotations: { title: 'Open an agent evaluation cohort', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'name', type: 'string', required: true, description: 'Human-readable name for the evaluation cohort.' },
       { name: 'decision_question', type: 'string', required: true, description: 'The decision this cohort exists to inform — e.g. "Which coding-agent harness should the platform team adopt — or should we keep more than one?".' },
@@ -457,6 +479,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'A team requests that its agent / harness join an evaluation cohort as a candidate. The candidate agent is identified by its own DID — which may live on a different team\'s pod — so enrolling it is a cross-pod delegation: the request starts as `requested` and does not enter the comparison until the evaluation owner accepts it (foxxi.decide_evaluation_candidate). This request → accept handshake is the delegation grant. Records the team, and the harness/runtime the agent is built on, so the portfolio read can attribute behaviour to the harness.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/request_evaluation_enrollment',
+    annotations: { title: 'Request evaluation enrollment', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'evaluation_id', type: 'string', required: true, description: 'The evaluation cohort to enrol into.' },
       { name: 'agent_did', type: 'string', required: true, description: 'The candidate agent\'s DID — may resolve to another team\'s pod.' },
@@ -475,6 +498,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'The evaluation owner accepts or declines a requested candidate. Accepting it IS the cross-pod delegation grant — the candidate agent (whose DID may belong to another team / pod) becomes a managed member of the cohort and may record runs into it. This closes the gap where Interego could register an agent on your own pod but had no turnkey flow to authorise an external agent into a shared, managed evaluation.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/decide_evaluation_candidate',
+    annotations: { title: 'Decide a candidate agent', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'evaluation_id', type: 'string', required: true, description: 'The evaluation cohort.' },
       { name: 'candidate_id', type: 'string', required: true, description: 'The candidate to decide on (from request_evaluation_enrollment).' },
@@ -490,6 +514,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'The one-call adapter for an EXTERNAL agent — one that does its work outside Foxxi (a Codex doing real coding, an OpenClaw or Hermes agent, a custom enterprise agent) and is therefore invisible to the trajectory layer and the ELR. Emit a single completed RUN and the bridge normalises it into a genuine agentic-native trajectory AND xAPI `performed` statements, so the run becomes visible to disposition assessment, the IEEE P2997 ELR, and — if bound to an evaluation — the portfolio read. Two input shapes: `tool_calls` (a flat list — an un-instrumented agent wires this in ~10 lines) or `steps` (the full modal / poly-granular trajectory, for an agent that already tracks intentions + counterfactual branches). Bind the run to a cohort with evaluation_id (+ optionally candidate_id).',
     method: 'POST',
     targetTemplate: '{base}/foxxi/record_external_agent_run',
+    annotations: { title: 'Record an external agent run', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'agent_did', type: 'string', required: true, description: 'The external agent\'s DID.' },
       { name: 'agent_name', type: 'string', required: false, description: 'Display name for the agent.' },
@@ -516,6 +541,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Return an evaluation cohort: the decision question, the shared task set, and every candidate with its team, harness, enrollment status (requested / accepted / declined) and run count. The read view for tracking who is in the bake-off and how much evidence each candidate has accumulated.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/get_agent_evaluation',
+    annotations: { title: 'Get an evaluation cohort', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'evaluation_id', type: 'string', required: true, description: 'The evaluation cohort to read.' },
     ],
@@ -529,6 +555,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Produce the comparative read for an evaluation cohort — deliberately NOT a benchmark leaderboard and it emits no overall score. A leaderboard assumes the choice is knowable (a single best, found by measurement); whether to standardise on one agentic harness is usually an Emergent-regime decision where premature convergence is the ideal-future-state trap. So this returns a PORTFOLIO READ: the work regime of the WORK itself (pooled across all candidates\' runs), each candidate\'s disposition + how well it COHERES with that work, a diagnosis of what KIND of decision the executives face, and a direct answer to "should we develop only one harness?" — converge (Evident/Knowable work: analysis can name a direction), parallel (Emergent work: the competing teams ARE the correct safe-to-fail probe portfolio — keep them), recombine (complementary dispositions: compose the harnesses via the substrate\'s union operator rather than pick), or gather-evidence (thin run history). Retrospective coherence, not prediction.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/compare_agent_evaluation',
+    annotations: { title: 'Compare an evaluation cohort', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'evaluation_id', type: 'string', required: true, description: 'The evaluation cohort to compare.' },
     ],
@@ -542,6 +569,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Project the tenant\'s fxk:SkillFramework + fxk:Skill (+ rcd:CompetencyDefinition for skills that have RDCEO proficiency levels) into a 1EdTech CASE 1.0 CFDocument JSON-LD payload. The CASE document is consumable by any CASE-compliant tool (CASE Network, CaSS, downstream LMSes) without re-implementing the Foxxi vocab.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/export_case_framework',
+    annotations: { title: 'Export a CASE framework', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'framework_id', type: 'string', required: true, description: 'Framework IRI to export (must already be published as a fxk:SkillFramework descriptor on the tenant pod).' },
     ],
@@ -556,6 +584,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Build the full cmi5 statement trace (launched + initialized + completed + passed/failed + terminated, plus optional satisfied if moveOn rule fires) for a learner\'s AU session. Each statement carries the cmi5 context category, session ID, and registration UUID per IEEE 9274.2.1. Caller can either fan-out to a connected LRS via the lrs-adapter or persist directly to the pod as fxa:LearningExperience descriptors.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/emit_cmi5_session',
+    annotations: { title: 'Emit a cmi5 xAPI session trace', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Learner WebID — becomes the xAPI actor (mbox or account).' },
       { name: 'course_id', type: 'string', required: true, description: 'Course ID (becomes parent contextActivities).' },
@@ -575,6 +604,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Composes the substrate\'s DID resolver. For did:key, decodes the embedded Ed25519 public key. For did:web, fetches .well-known/did.json over HTTPS and returns the parsed document. For did:ethr, derives the verification method from the Ethereum address.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/resolve_did',
+    annotations: { title: 'Resolve a W3C DID', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'did', type: 'string', required: true, description: 'DID to resolve (did:key:* | did:web:* | did:ethr:*).' },
     ],
@@ -587,6 +617,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Implements the read side of the ADL Total Learning Architecture Experience Index. Given a filter (actor / verb / activity / since / until / registration), queries every configured LRS endpoint in parallel, deduplicates statements by id, and returns a unified result with per-LRS attribution.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/query_experience_index',
+    annotations: { title: 'Federated xAPI Experience Index query', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'endpoints', type: 'array', required: true, description: 'Array of { label, endpoint, username, password } LRS configs.' },
       { name: 'filter', type: 'object', required: false, description: 'Filter object: { agent?, verb?, activity?, since?, until?, registration?, limit? }.' },
@@ -600,6 +631,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'POST the tenant\'s CASE 1.0 CFDocument (from foxxi.export_case_framework) to a CaSS server\'s /api/framework endpoint. Downstream CaSS-integrated tooling can then query learner competencies without re-implementing Foxxi semantics.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/push_to_cass',
+    annotations: { title: 'Push framework to a CaSS server', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'cass_endpoint', type: 'string', required: true, description: 'CaSS server base URL.' },
       { name: 'cass_bearer', type: 'string', required: false, description: 'Optional bearer token for authenticated push.' },
@@ -614,6 +646,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Project the learner\'s pod credentials into the legacy 1EdTech CLR 1.0 shape for institutional consumers still on the pre-VC format. The 1.0 payload is plaintext JSON — institutional signing is the operator\'s responsibility.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/export_clr_v1',
+    annotations: { title: 'Export legacy CLR 1.0', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Learner WebID.' },
       { name: 'learner_pod_url', type: 'string', required: true, description: 'Pod to walk.' },
@@ -629,6 +662,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Build an OB3-shaped W3C VC, sign it with the tenant\'s BBS+ key over a flattened message list. The full credential goes to the holder; the holder later derives a zero-knowledge proof revealing only the claims they choose. Verifier learns nothing about un-revealed claims.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/issue_bbs_credential',
+    annotations: { title: 'Issue a BBS+ credential', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Learner subject.' },
       { name: 'course_id', type: 'string', required: true, description: 'Course identifier.' },
@@ -646,6 +680,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Holder-side. Given a BBS+-issued credential + a list of which claim paths to reveal, produce a zero-knowledge BBS+ proof + the revealed claims for the verifier. The full credential never leaves the holder.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/derive_bbs_presentation',
+    annotations: { title: 'Derive a BBS+ presentation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
       { name: 'issued', type: 'object', required: true, description: 'The BBS+ credential returned by foxxi.issue_bbs_credential.' },
       { name: 'reveal_paths', type: 'array', required: true, description: 'Array of claim paths to reveal (e.g. ["achievement.name", "achievement.proficiencyLevel"]).' },
@@ -660,6 +695,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Verifier-side. Takes a presentation produced by foxxi.derive_bbs_presentation; returns whether the issuer signed a credential containing the disclosed claims at the disclosed positions. Verifier learns ONLY the revealed claims.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/verify_bbs_presentation',
+    annotations: { title: 'Verify a BBS+ presentation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
       { name: 'presentation', type: 'object', required: true, description: 'The presentation returned by foxxi.derive_bbs_presentation.' },
     ],
@@ -672,6 +708,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Holder-facing competency proof. Composes the three BBS+ steps — issue (the bridge as tenant issuer signs a multi-claim credential), derive (disclose only a minimal privacy-preserving subset), verify — into ONE operation a learner can trigger for their own record. Proves "I hold this competency at this proficiency, issued by this tenant" to a verifier while keeping score, name, dates, and credential id behind a zero-knowledge proof. This is the IEEE P2997 LER privacy story a flat wallet cannot give. Non-admins may only prove their own competencies.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/prove_competency',
+    annotations: { title: 'Prove a competency (BBS+)', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Learner whose competency is being proved. Non-admin callers must pass their own DID.' },
       { name: 'competency_name', type: 'string', required: true, description: 'The competency / course title to prove (becomes Achievement.name on the BBS+ credential).' },
@@ -692,6 +729,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Compose: walk the learner\'s pod for a credential satisfying the declared prereq (verify Data Integrity Proof, check achievement IRI + proficiency level + expiry + accepted issuers); if satisfied, emit the cmi5 launched + initialized statements; else return a structured prereq-failure report.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/launch_au_with_prereq_check',
+    annotations: { title: 'Launch cmi5 AU with prereq check', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Learner identity.' },
       { name: 'learner_pod_url', type: 'string', required: true, description: 'Pod to walk for credentials.' },
@@ -711,6 +749,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'AI agent reviews evidence (cited slide IDs, Q&A traces, performance results) and signs a CompetencyAssertion VC with its own did:key. Modal status: Hypothetical until a human countersigns via foxxi.countersign_assessment.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/ai_assess_competency',
+    annotations: { title: 'AI mentor assesses competency', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Learner subject.' },
       { name: 'mentor_seed', type: 'string', required: true, description: 'Mentor\'s seed for deterministic did:key.' },
@@ -727,6 +766,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Human admin reviews + countersigns the AI mentor\'s Hypothetical CompetencyAssertion. Result: a dual-issuer credential whose modal status is Asserted (= OB3-eligible). Both signatures are preserved on the descriptor for auditability.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/countersign_assessment',
+    annotations: { title: 'Countersign an AI assessment', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'assessment', type: 'object', required: true, description: 'The CompetencyAssessment returned by foxxi.ai_assess_competency.' },
       { name: 'human_seed', type: 'string', required: true, description: 'Human admin\'s seed for deterministic countersign key.' },
@@ -740,6 +780,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Walk the learner\'s pod, pull every descriptor with a Provenance facet or dct:conformsTo tag in the time window, return them ordered as a chain. Each step carries its framework citations so the auditor sees which controls every hop references.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/audit_compliance_trail',
+    annotations: { title: 'Compose a compliance audit trail', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'Learner identity.' },
       { name: 'learner_pod_url', type: 'string', required: true, description: 'Pod to walk.' },
@@ -755,6 +796,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Publishes a fxa:CASEAlignment descriptor binding one of this tenant\'s fxk:Skill / rcd:CompetencyDefinition items to an item in a foreign tenant\'s framework. The alignment becomes a substrate-discoverable artifact + lifts into the next CASE 1.0 export as a CFAssociation.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/declare_framework_alignment',
+    annotations: { title: 'Declare framework alignment', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'own_item_iri', type: 'string', required: true, description: 'This tenant\'s competency IRI.' },
       { name: 'own_item_label', type: 'string', required: true, description: 'Display label.' },
@@ -773,6 +815,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Given the held credential\'s competency IRI + a required competency IRI + the alignment graph, BFS over isAlignedTo / isEquivalentTo edges. Returns the alignment chain (could be 0 hops for direct match, N hops for transitive) so the verifier sees how the held credential satisfied the requirement.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/resolve_aligned_competency',
+    annotations: { title: 'Resolve aligned competency', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
       { name: 'held_competency_iri', type: 'string', required: true, description: 'Competency the credential attests.' },
       { name: 'required_competency_iri', type: 'string', required: true, description: 'Competency the verifier requires.' },
@@ -787,6 +830,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Walk a list of learner pods, pull every fxa:LearnerQuestionEvent in the time window, compute concept overlap across the cohort: which concepts >= 50% of learners asked about (reinforcement signal). Real PGSL composition with lighter set-intersection for this affordance; full PGSL meet at substrate level for atom-grain analysis.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/cohort_concept_intelligence',
+    annotations: { title: 'Cohort concept-overlap analytics', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_pod_urls', type: 'array', required: true, description: 'Array of learner pod root URLs.' },
       { name: 'window_from', type: 'string', required: false, description: 'ISO 8601 lower bound.' },
@@ -801,6 +845,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Take a caller\'s did:key + their pod URL + a display name; publish a fxa:SelfSovereignLearner descriptor on their pod marking them as a Foxxi learner (no employer mediation). After registration, the same caller can use foxxi.discover_assigned_courses / foxxi.retrieve_course_context / etc. against any tenant.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/register_self_sovereign_learner',
+    annotations: { title: 'Register a self-sovereign learner', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: 'The caller\'s own DID (did:key / did:web / did:ethr).' },
       { name: 'learner_pod_url', type: 'string', required: true, description: 'Pod URL where credentials will land.' },
@@ -818,6 +863,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Publish tenant-metadata + emit env-var configuration so the bridge can switch over to a new tenant. Wizard backend.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/bootstrap_tenant',
+    annotations: { title: 'Bootstrap a Foxxi tenant', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tenant_slug', type: 'string', required: true, description: 'URL-safe slug (e.g. partnerco-training).' },
       { name: 'tenant_did', type: 'string', required: true, description: 'DID for the new tenant (typically did:web:<domain>).' },
@@ -834,6 +880,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Use SCORM Cloud Application API v2 to list courses + project them as fxs:CourseCatalog stub entries on the tenant pod. Requires FOXXI_SCORM_CLOUD_APP_ID + FOXXI_SCORM_CLOUD_SECRET_KEY env on the bridge.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/scorm_cloud_pull',
+    annotations: { title: 'Pull SCORM Cloud catalog', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'publish_to_pod', type: 'boolean', required: false, description: 'If true, also publish the projected catalog entries as a fxs:CourseCatalog descriptor on the tenant pod (default false: return-only).' },
     ],
@@ -845,6 +892,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'POST to /registrations on SCORM Cloud; the returned registration ID becomes the cmi5 sessionId.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/scorm_cloud_register',
+    annotations: { title: 'Create a SCORM Cloud registration', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'registration_id', type: 'string', required: true, description: 'Caller-chosen UUID for this learner+course attempt.' },
       { name: 'course_id', type: 'string', required: true, description: 'SCORM Cloud course ID.' },
@@ -861,6 +909,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Queue a SCORM .zip for the Python parser. Publishes a fxs:PackageUpload descriptor with modalStatus:Hypothetical; the separate parser-runner picks it up, parses, then publishes the resulting fxs:Package via cg:supersedes.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/upload_scorm_package',
+    annotations: { title: 'Upload a SCORM zip package', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'zip_base64', type: 'string', required: true, description: 'base64-encoded SCORM zip.' },
       { name: 'hinted_title', type: 'string', required: false, description: 'Display name for the upload while parsing is pending.' },
@@ -873,6 +922,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Takes the output of foxxi.cohort_concept_intelligence + emits a fxa:AdaptiveSequencingPolicy that downstream learners can be gated on.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/derive_adaptive_policy',
+    annotations: { title: 'Derive an adaptive-sequencing policy', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'cohort_intel', type: 'object', required: true, description: 'CohortIntelligence object from foxxi.cohort_concept_intelligence.' },
       { name: 'threshold_pct', type: 'number', required: false, description: 'Concepts above this cohort-coverage % become reinforcement gates (default 50).' },
@@ -885,6 +935,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Ebbinghaus 1/7/30-day intervals, with early-week reminders for concepts other concepts depend on (foundation signal).',
     method: 'POST',
     targetTemplate: '{base}/foxxi/schedule_spaced_repetition',
+    annotations: { title: 'Schedule spaced-repetition reminders', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: '' },
       { name: 'completed_concepts', type: 'array', required: true, description: 'Array of { conceptId, completedAt }.' },
@@ -898,6 +949,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Walk N pod URLs, return every fxs:CourseCatalog / fxs:SkillFramework / fxa:CASEAlignment descriptor — the public-registry pattern without a central registry.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/discover_framework_registry',
+    annotations: { title: 'Discover competency frameworks', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'pod_urls', type: 'array', required: true, description: 'Array of pod root URLs to walk.' },
     ],
@@ -909,6 +961,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Publishes a fxa:TutorAgentProfile descriptor on the agent\'s own pod describing specialties + contact endpoint. Discoverable via foxxi.find_tutor_for_competency.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/register_tutor_agent',
+    annotations: { title: 'Register a tutor agent', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'agent_did', type: 'string', required: true, description: 'The tutor\'s DID.' },
       { name: 'display_name', type: 'string', required: true, description: '' },
@@ -925,6 +978,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Rank-search tutor candidates by competency match + number of independent human-countersigned competency assertions they\'ve signed (a proxy for teaching quality).',
     method: 'POST',
     targetTemplate: '{base}/foxxi/find_tutor_for_competency',
+    annotations: { title: 'Find a tutor for a competency', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
       { name: 'required_competency_iri', type: 'string', required: true, description: '' },
       { name: 'required_level', type: 'string', required: false, description: 'Novice | Beginner | Intermediate | Advanced | Expert' },
@@ -939,6 +993,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Wraps foxxi.audit_compliance_trail. Returns a structured DPIA with summary stats, framework controls cited, data-category breakdown, risk-rated findings + suggested mitigations (GDPR Art. 35 + EU AI Act § 13 shape).',
     method: 'POST',
     targetTemplate: '{base}/foxxi/generate_dpia',
+    annotations: { title: 'Generate a DPIA', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'learner_did', type: 'string', required: true, description: '' },
       { name: 'learner_pod_url', type: 'string', required: true, description: '' },
@@ -953,6 +1008,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Walk each report\'s pod, aggregate credentials, return per-report breakdown + team skill coverage roll-up.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/manager_team_view',
+    annotations: { title: 'Build a manager team view', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'manager_web_id', type: 'string', required: true, description: '' },
       { name: 'report_pods', type: 'array', required: true, description: 'Array of { webId, name?, podUrl }.' },
@@ -965,6 +1021,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Returns the DID document JSON the operator uploads to https://<tenant-domain>/.well-known/did.json so verifiers can resolve tenant credentials.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/build_did_web_document',
+    annotations: { title: 'Build a did:web document', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
       { name: 'tenant_did', type: 'string', required: true, description: 'e.g. did:web:tenant.example' },
       { name: 'issuer_public_key_multibase', type: 'string', required: true, description: 'Tenant\'s Ed25519 issuer public key in multibase form.' },
@@ -978,6 +1035,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Pulls the manifest + every descriptor + every reachable graph into one JSON object. Encrypted graphs come back as ciphertext.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/backup_tenant_pod',
+    annotations: { title: 'Backup tenant pod', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [],
   },
 
@@ -990,6 +1048,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Power-analysis + analysis plan for an instructional A/B. Returns required sample size per arm, recommended statistical test for the primary metric, and (if perWeekEnrolment is supplied) an estimated duration. Pre-registration prevents p-hacking.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/le_design_ab_experiment',
+    annotations: { title: 'Design an A/B experiment', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
       { name: 'variant_a', type: 'object', required: true, description: '{ courseId, courseTitle? }' },
       { name: 'variant_b', type: 'object', required: true, description: '{ courseId, courseTitle? }' },
@@ -1008,6 +1067,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Composes prereq-graph topology + cohort question-frequency to produce a per-concept difficulty score (0..1). Foundational concepts (≥3 dependents) flagged. The right-shape proxy for IRT until per-learner response data is available.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/le_estimate_concept_difficulty',
+    annotations: { title: 'Estimate concept difficulty', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
       { name: 'course_id', type: 'string', required: true, description: 'Course whose concept graph to analyze (e.g. golf-explained).' },
       { name: 'cohort_intel', type: 'object', required: false, description: 'Output of foxxi.cohort_concept_intelligence (optional but improves accuracy).' },
@@ -1020,6 +1080,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Plots mastery-rate-per-attempt + detects plateaus (3 consecutive attempts with <1pp improvement). Returns diagnosis (rising / plateau-low / plateau-high / insufficient-data) + an actionable recommendation.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/le_analyze_learning_curve',
+    annotations: { title: 'Analyze a learning curve', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
       { name: 'concept_id', type: 'string', required: true, description: '' },
       { name: 'concept_label', type: 'string', required: false, description: '' },
@@ -1033,6 +1094,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Find the score threshold that maximizes Youden\'s J (sensitivity + specificity − 1) against downstream prereq-dependent performance. Returns ROC curve + recommended threshold.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/le_calibrate_mastery_threshold',
+    annotations: { title: 'Calibrate mastery threshold', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
       { name: 'records', type: 'array', required: true, description: 'Per-learner outcomes: array of { scoreScaled, downstreamSuccess }.' },
       { name: 'threshold_grid', type: 'array', required: false, description: 'Optional thresholds to evaluate (default 0..1 step 0.05).' },
@@ -1045,6 +1107,7 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     description: 'Finds (a) competencies in the framework with no taught concept (assessments can\'t be grounded) and (b) taught concepts not aligned to any competency (credentials can\'t reference the framework). Returns coverage % + per-direction gap lists.',
     method: 'POST',
     targetTemplate: '{base}/foxxi/le_framework_gap_analysis',
+    annotations: { title: 'Framework gap analysis', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
       { name: 'framework_skills', type: 'array', required: true, description: 'Array of { id, label? } competency definitions.' },
       { name: 'course_concepts', type: 'array', required: true, description: 'Array of CourseConcept from a published course.' },

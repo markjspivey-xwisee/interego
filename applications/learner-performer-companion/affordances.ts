@@ -24,6 +24,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Unwrap a SCORM 1.2 / SCORM 2004 / cmi5 zip package, extract launchable lesson content, mint content-addressed PGSL atoms, and publish lpc:TrainingContent + lpc:LearningObjective descriptors to the user\'s pod.',
     method: 'POST',
     targetTemplate: '{base}/lpc/ingest_training_content',
+    annotations: { title: 'Ingest training content', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'zip_base64', type: 'string', required: true, description: 'SCORM zip package, base64-encoded.' },
       { name: 'authoritative_source', type: 'string', required: true, description: 'DID of the training content publisher (e.g., did:web:acme-training.example).' },
@@ -50,6 +51,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Verify a W3C Verifiable Credential (vc-jwt or DataIntegrityProof JSON-LD) and publish as lpc:Credential to the user\'s pod. Verification failures throw — bad VCs never land in the pod under credential IRIs.',
     method: 'POST',
     targetTemplate: '{base}/lpc/import_credential',
+    annotations: { title: 'Import a verifiable credential', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'vc_jwt', type: 'string', required: false, description: 'Compact JWS encoding of the VC (use this OR vc_jsonld).' },
       { name: 'vc_jsonld', type: 'object', required: false, description: 'JSON-LD VC with embedded DataIntegrityProof (use this OR vc_jwt).' },
@@ -78,6 +80,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Publish a performance review with cg:ProvenanceFacet attributing it to the manager (NOT the user). Stays in the user\'s pod portably.',
     method: 'POST',
     targetTemplate: '{base}/lpc/record_performance_review',
+    annotations: { title: 'Record a performance review', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'content', type: 'string', required: true, description: 'Review text.' },
       { name: 'manager_did', type: 'string', required: true, description: 'DID of the reviewing manager.' },
@@ -105,6 +108,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Ingest an xAPI Statement (any version 1.0.x or 2.0.x) as an lpc:LearningExperience descriptor in the user\'s pod, cross-linked to training content and credential earned.',
     method: 'POST',
     targetTemplate: '{base}/lpc/record_learning_experience',
+    annotations: { title: 'Record a learning experience', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'statement', type: 'object', required: true, description: 'xAPI Statement object.' },
       { name: 'for_content', type: 'string', required: true, description: 'IRI of the related lpc:TrainingContent.' },
@@ -131,6 +135,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Answer a natural-language question by retrieving from the user\'s pod with verbatim citation. Returns null when nothing in the wallet grounds the question — honest no-data, no confabulation. Persists an lpc:CitedResponse audit record.',
     method: 'POST',
     targetTemplate: '{base}/lpc/grounded_answer',
+    annotations: { title: 'Answer a grounded chat question', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'question', type: 'string', required: true, description: 'The user\'s question.' },
       { name: 'persist_response', type: 'boolean', required: false, description: 'Whether to persist the response as audit. Default true.' },
@@ -185,6 +190,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Return a summary of training content, credentials, performance records, and learning experiences in the user\'s pod-backed wallet.',
     method: 'POST',
     targetTemplate: '{base}/lpc/list_wallet',
+    annotations: { title: 'Summarize the user\'s wallet', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'pod_url', type: 'string', required: false, description: 'Pod URL.' },
       { name: 'user_did', type: 'string', required: false, description: 'User DID.' },
@@ -209,6 +215,7 @@ const LPC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Learner-side: publish a SIGNED agg:CohortParticipation descriptor on the learner\'s pod, declaring willingness to be counted in an institutional aggregate-cohort-query for the named cohort_iri. The institution\'s lpc.aggregate_cohort_query with privacy_mode = merkle-attested-opt-in will include this learner\'s pod in the count and emit a Merkle inclusion proof. Revoke by re-publishing the same descriptor with modal status Counterfactual (auto-supersedes the prior Asserted one). The substrate\'s consent boundary — the institution cannot include a learner who has not opted in.',
     method: 'POST',
     targetTemplate: '{base}/lpc/opt_into_cohort',
+    annotations: { title: 'Opt into an institutional cohort', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'cohort_iri', type: 'string', required: true, description: 'IRI of the institutional cohort the learner is opting into.' },
       { name: 'policy_iri', type: 'string', required: false, description: 'IRI of the cohort-aggregation policy descriptor (on the institution\'s pod) the learner is consenting to.' },
@@ -269,6 +276,7 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Institution-side: unwrap a SCORM 1.2 / SCORM 2004 / cmi5 / TLA-LAP-catalog-entry package, mint atoms, and publish lpc:TrainingContent + lpc:LearningObjective descriptors to the INSTITUTION\'s own pod (NOT the learner\'s). Learners\' agents discover via federated discovery and pull selectively into their own wallets per their own consent. The institution is a peer, not a hub.',
     method: 'POST',
     targetTemplate: '{base}/lpc/publish_authoritative_content',
+    annotations: { title: 'Publish authoritative training content', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'zip_base64', type: 'string', required: true, description: 'Content package (SCORM / cmi5 / TLA LAP entry), base64-encoded.' },
       { name: 'institution_pod_url', type: 'string', required: true, description: 'Pod URL of the publishing institution.' },
@@ -295,6 +303,7 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Institution-side: publish a SIGNED credential TEMPLATE (the rubric for what is earned) to the institution\'s pod. Eligible learners\' agents discover, verify the issuer\'s signature, and call lpc.import_credential to accept the issuance into their own wallet. Conforms to Open Badges 3.0 / IMS CLR 2.0 / IEEE LERS shapes per the `credential_format` parameter. The institution issues; the learner consents to acceptance.',
     method: 'POST',
     targetTemplate: '{base}/lpc/issue_cohort_credential_template',
+    annotations: { title: 'Issue a cohort credential template', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'cohort_iri', type: 'string', required: true, description: 'IRI naming the cohort the template applies to (e.g., a course-completion cohort).' },
       { name: 'credential_format', type: 'string', required: true, description: 'One of: open-badges-3.0 | ims-clr-2.0 | ieee-lers.' },
@@ -323,6 +332,7 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Institution-side: query aggregate metrics over consenting learners\' pods — completion counts, score distributions, competency-coverage thresholds — without seeing individuals. Five privacy modes layered on the same surface: v1 abac (default) | v2 merkle-attested-opt-in (verifiable count + Merkle inclusion proofs) | v3 zk-aggregate (homomorphic Pedersen sum + DP-Laplace noise) | v3.1 + require_signed_bounds (regulator-grade attribution) | v3.2 + epsilon_budget_max (cumulative ε discipline). See applications/_shared/aggregate-privacy/. Refuses any query that would expose an individual record under the chosen mode.',
     method: 'POST',
     targetTemplate: '{base}/lpc/aggregate_cohort_query',
+    annotations: { title: 'Aggregate-privacy cohort query', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'cohort_iri', type: 'string', required: true, description: 'IRI of the cohort being queried.' },
       { name: 'metric', type: 'string', required: true, description: 'One of: completion-count | score-distribution | competency-threshold-met | credential-coverage.' },
@@ -359,6 +369,7 @@ const LPC_ENTERPRISE_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Institution-side: with the learner\'s per-graph consent, translate lpc:LearningExperience descriptors from the learner\'s pod into xAPI 2.0 Statements and POST to a target LRS (Watershed / Veracity / SCORM Cloud / Yet Analytics / Learning Locker). Wraps the boundary translator in ../lrs-adapter/. The result is lossy by definition (xAPI cannot express modal status / supersedes chains); the adapter records this lossiness in result.extensions.',
     method: 'POST',
     targetTemplate: '{base}/lpc/project_to_lrs',
+    annotations: { title: 'Project learning experience to LRS', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'descriptor_iri', type: 'string', required: true, description: 'IRI of the lpc:LearningExperience descriptor to project.' },
       { name: 'target_lrs_url', type: 'string', required: true, description: 'Statements endpoint of the target LRS.' },

@@ -18,6 +18,7 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Author a new agent tool. Published Hypothetical (cg:modalStatus = Hypothetical) — fresh tools are not trusted yet. Source code stored as content-addressed pgsl:Atom.',
     method: 'POST',
     targetTemplate: '{base}/ac/author_tool',
+    annotations: { title: 'Author a new agent tool', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tool_name', type: 'string', required: true, description: 'Tool name.' },
       { name: 'source_code', type: 'string', required: true, description: 'Source code string. Stored as content-addressed atom.' },
@@ -44,6 +45,7 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Record an amta:Attestation against a tool. Direction is Self (the tool author attests to their own tool) or Peer (another agent attests after using). Multiple axes possible.',
     method: 'POST',
     targetTemplate: '{base}/ac/attest_tool',
+    annotations: { title: 'Record an attestation against a tool', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tool_iri', type: 'string', required: true, description: 'IRI of the ac:AgentTool being attested.' },
       { name: 'axis', type: 'string', required: true, description: 'amta: axis being attested.', enum: ['correctness', 'efficiency', 'safety', 'generality'] },
@@ -70,6 +72,7 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Promote Hypothetical tool to Asserted. REFUSES unless attestation threshold is met (default: ≥5 self + ≥2 peer + ≥2 axes covered). Publishes successor with cg:supersedes.',
     method: 'POST',
     targetTemplate: '{base}/ac/promote_tool',
+    annotations: { title: 'Promote a Hypothetical tool to Asserted', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tool_iri', type: 'string', required: true, description: 'IRI of the Hypothetical ac:AgentTool to promote.' },
       { name: 'self_attestations', type: 'integer', required: true, description: 'Verified self-attestation count.' },
@@ -104,6 +107,7 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Bundle a tool with the practice context (narratives + synthesis + constraint + capability-evolution) into an ac:TeachingPackage another agent can fetch. REFUSES if no narrative fragments — partial teaching transfers artifact without practice context.',
     method: 'POST',
     targetTemplate: '{base}/ac/bundle_teaching_package',
+    annotations: { title: 'Bundle a teaching package', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'tool_iri', type: 'string', required: true, description: 'IRI of the ac:AgentTool being taught.' },
       { name: 'narrative_fragment_iris', type: 'array', required: true, description: 'IRIs of narrative fragments. ≥1 required.', itemType: 'string', minItems: 1 },
@@ -131,6 +135,7 @@ const AC_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Record an ac:CrossAgentAuditEntry for a chime-in / response / check-in exchange. The audit lives in the HUMAN OWNER\'s pod (not the agent\'s) so the human can audit what their agent said + received.',
     method: 'POST',
     targetTemplate: '{base}/ac/record_cross_agent_audit',
+    annotations: { title: 'Record a cross-agent audit entry', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'exchange_iri', type: 'string', required: true, description: 'IRI of the AgentRequest / AgentResponse / ChimeIn / CheckIn.' },
       { name: 'audited_agent_did', type: 'string', required: true, description: 'DID of the agent whose action is being audited.' },

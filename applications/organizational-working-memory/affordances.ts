@@ -50,6 +50,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Upsert an owm:Person descriptor on the org pod. Person IRIs are stable across sessions; subsequent calls supersede prior versions via cg:supersedes. Handles humans (no DID) and agent-people (with DID + capability passport).',
     method: 'POST',
     targetTemplate: '{base}/owm/upsert_person',
+    annotations: { title: 'Create or update a person', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'name', type: 'string', required: true, description: 'Display name.' },
       { name: 'role', type: 'string', required: false, description: 'Free-text role / title.' },
@@ -78,6 +79,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Upsert an owm:Project descriptor. Projects are owm:WorkingScope subclasses — composable with olke: knowledge-state vocabulary (Tacit / Articulate / Collective / Institutional). Subsequent upserts supersede.',
     method: 'POST',
     targetTemplate: '{base}/owm/upsert_project',
+    annotations: { title: 'Create or update a project', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'name', type: 'string', required: true, description: 'Project name.' },
       { name: 'objective', type: 'string', required: false, description: 'One-sentence objective.' },
@@ -105,6 +107,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Record an owm:Decision descriptor. Modal status defaults to Hypothetical (decision pending). Use Asserted for committed decisions. To reverse a decision, call again with modal_status=Counterfactual and supersedes=[<prior decision IRI>].',
     method: 'POST',
     targetTemplate: '{base}/owm/record_decision',
+    annotations: { title: 'Record a decision', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'topic', type: 'string', required: true, description: 'Short topic / what is being decided.' },
       { name: 'rationale', type: 'string', required: true, description: 'The argument or evidence behind the decision.' },
@@ -133,6 +136,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Queue an owm:FollowUp with a due-date (ISO 8601). The bridge\'s list_overdue_followups affordance surfaces items whose due_at has passed, so a cron or interactive query closes the observe-and-revise loop.',
     method: 'POST',
     targetTemplate: '{base}/owm/queue_followup',
+    annotations: { title: 'Queue a follow-up', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'topic', type: 'string', required: true, description: 'What needs follow-up.' },
       { name: 'due_at', type: 'string', required: true, description: 'ISO 8601 datetime when this should surface.' },
@@ -159,6 +163,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Capture a free-form insight as a content-addressed pgsl:Atom + descriptor. Two observers minting the same verbatim text mint the same atom IRI — duplicate notes collapse structurally.',
     method: 'POST',
     targetTemplate: '{base}/owm/record_note',
+    annotations: { title: 'Record a content-addressed note', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'text', type: 'string', required: true, description: 'The note content. Stored as a content-addressed atom.' },
       { name: 'subject_iris', type: 'array', required: false, description: 'IRIs the note is about (people, projects, decisions).', itemType: 'string' },
@@ -184,6 +189,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Return follow-ups whose due_at is on or before now (or `now` arg). Used by cron schedulers and by interactive agents that want to surface pending work at session start.',
     method: 'POST',
     targetTemplate: '{base}/owm/list_overdue_followups',
+    annotations: { title: 'List overdue follow-ups', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'now', type: 'string', required: false, description: 'Optional ISO 8601 datetime to evaluate against (default: server clock).' },
       { name: 'limit', type: 'integer', required: false, description: 'Maximum items to return (default 50).', minimum: 1, maximum: 500 },
@@ -216,6 +222,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Affordance-walk the org pod for descriptors related to a subject IRI. Returns the manifest entries (descriptor URLs + facet summary + supersedes chain head). Caller can then get_descriptor on URLs of interest.',
     method: 'POST',
     targetTemplate: '{base}/owm/discover_subgraph',
+    annotations: { title: 'Walk the org subgraph', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'subject_iri', type: 'string', required: true, description: 'IRI of the entity to walk from (person/project/decision).' },
       { name: 'depth', type: 'integer', required: false, description: 'How many hops to traverse (default 1).', minimum: 1, maximum: 4 },
@@ -254,6 +261,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Read an external information source (web, drive, slack, github, ...) using uniform verbs (ls / cat / grep / recent). Each source runs as an isolated sub-handler inside the bridge so the main agent\'s context is never polluted by source-specific tool noise. The source\'s native quirks (auth, pagination, content-type) are handled inside the sub-handler.',
     method: 'POST',
     targetTemplate: '{base}/owm/navigate_source',
+    annotations: { title: 'Read from an external source', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'source', type: 'string', required: true, description: 'Source key (e.g., "web", "drive", "slack"). Use list_sources to enumerate currently-loaded adapters.' },
       { name: 'verb', type: 'string', required: true, description: 'Navigation verb.', enum: ['ls', 'cat', 'grep', 'recent'] },
@@ -270,6 +278,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Write back to an external source (post Slack message, append note to drive doc, comment on PR). Uniform write surface; per-source sub-handler owns the protocol.',
     method: 'POST',
     targetTemplate: '{base}/owm/update_source',
+    annotations: { title: 'Write to an external source', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'source', type: 'string', required: true, description: 'Source key.' },
       { name: 'action', type: 'string', required: true, description: 'Source-specific action (post, append, comment, ...).' },
@@ -286,6 +295,7 @@ const OWM_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Return the source keys + supported verbs the bridge currently has loaded. Useful before asking the main agent to navigate.',
     method: 'POST',
     targetTemplate: '{base}/owm/list_sources',
+    annotations: { title: 'List wired source adapters', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [],
     outputs: {
       description: 'List of currently-wired source adapters: each entry carries the source key, the verbs it supports, and an optional short description of what kind of source it is.',
@@ -349,6 +359,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Org-operator-side: return counts / thresholds / lineage summaries over owm:Decision descriptors. Five privacy modes layered on the same surface: v1 abac (default) | v2 merkle-attested-opt-in (verifiable count + Merkle inclusion proofs over contributing descriptor URLs) | v3 zk-aggregate (homomorphic Pedersen sum + DP-Laplace noise) | v3.1 + require_signed_bounds (regulator-grade attribution) | v3.2 + epsilon_budget_max (cumulative ε discipline). Distribution-shaped metrics (mean-revision / supersession-distribution / contributor-breadth) work under v1/v2; v3 supports decision-count only. Returns the underlying count + the chosen mode\'s attestation bundle.',
     method: 'POST',
     targetTemplate: '{base}/owm/aggregate_decisions_query',
+    annotations: { title: 'Aggregate-privacy decision query', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'period_from', type: 'string', required: true, description: 'ISO 8601 lower bound on cg:TemporalFacet.validFrom.' },
       { name: 'period_to', type: 'string', required: true, description: 'ISO 8601 upper bound.' },
@@ -384,6 +395,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Org-operator-side: aggregate-shaped rollup over a project — follow-up open/closed counts, decision recency, contributor breadth, supersession churn. Individual descriptors only surface where the contributor has explicitly issued share_with on them. Composes the existing owm:Project + owm:Decision + owm:FollowUp shapes.',
     method: 'POST',
     targetTemplate: '{base}/owm/project_health_summary',
+    annotations: { title: 'Per-project health summary', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'project_iri', type: 'string', required: true, description: 'IRI of the owm:Project being summarized.' },
       { name: 'window_days', type: 'number', required: false, description: 'Recency window in days for "stale" thresholds. Default 30.' },
@@ -411,6 +423,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Org-operator-side: publish a SIGNED org-policy descriptor to the org pod — retention windows, decision-promotion thresholds, framework-compliance attestations, source-adapter governance rules. Authored by an org-authority signing key (NOT a contributor key). Contributors discover via federated read; per-graph share_with is the boundary that determines who sees what.',
     method: 'POST',
     targetTemplate: '{base}/owm/publish_org_policy',
+    annotations: { title: 'Publish an org-level policy', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'policy_type', type: 'string', required: true, description: 'One of: retention | decision-promotion | compliance-attestation | source-governance.' },
       { name: 'policy_body', type: 'object', required: true, description: 'Policy content as typed descriptor data (shape depends on policy_type).' },
@@ -435,6 +448,7 @@ const OWM_OPERATOR_AFFORDANCES: ReadonlyArray<Affordance> = [
     description: 'Org-operator-side: wrap an org-level operational event (deploy, access change, key rotation, incident, quarterly review) as a compliance: true descriptor citing the relevant control IRIs (soc2:CC6.1, eu-ai-act:Article15, nist-rmf:MG-1.1, etc.). Composes src/ops/ for the event shape and integrations/compliance-overlay/ for the framework citation. The same code path that records the ops event becomes board-facing audit evidence; no parallel pipeline.',
     method: 'POST',
     targetTemplate: '{base}/owm/publish_compliance_evidence',
+    annotations: { title: 'Publish compliance evidence', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'event_kind', type: 'string', required: true, description: 'One of: deploy | access-change | key-rotation | incident | quarterly-review.' },
       { name: 'event_payload', type: 'object', required: true, description: 'Payload matching the src/ops/ buildXEvent signature for the chosen kind.' },
