@@ -6,7 +6,7 @@ import {
   buildWalletRotationEvent,
   buildIncidentEvent,
   buildQuarterlyReviewEvent,
-} from '../src/ops/index.js';
+} from '@interego/core';
 
 const OP = 'did:web:identity.example#operator';
 

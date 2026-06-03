@@ -10,16 +10,16 @@
  * connector, an LMS adapter) can confirm persistence and link to it.
  */
 
-import { ContextDescriptor, publish, toTurtle } from '../../../src/index.js';
+import { ContextDescriptor, publish, toTurtle } from '@interego/core';
 import { unwrapScormPackage, launchableLessons } from '../../_shared/scorm/index.js';
-import { extract } from '../../../src/index.js';
+import { extract } from '@interego/core';
 import { verifyVcJwt } from '../../_shared/vc-jwt/index.js';
 import {
   verifyDataIntegrityProof,
   type VerifiableCredentialJson,
 } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 import { createHash, randomUUID } from 'node:crypto';
-import type { IRI } from '../../../src/index.js';
+import type { IRI } from '@interego/core';
 
 // ── Common config + helpers ──────────────────────────────────────────
 

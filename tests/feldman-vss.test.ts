@@ -23,8 +23,8 @@ import {
   verifyShare,
   filterVerifiedShares,
   secretCommitment,
-} from '../src/crypto/feldman-vss.js';
-import { reconstructSecret } from '../src/crypto/shamir.js';
+} from '@interego/core';
+import { reconstructSecret } from '@interego/core';
 import { ristretto255 } from '@noble/curves/ed25519.js';
 
 const L = 7237005577332262213973186563042994240857116359379907606001950938285454250989n;

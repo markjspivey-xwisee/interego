@@ -10,12 +10,15 @@ import {
   observe,
   orient,
   decide,
-  act,
+  // OODA's `act` is exported as `oodaAct` from @interego/core — the
+  // bare `act` name is reserved for the kernel's Peircean-Thirdness
+  // substrate verb. See docs/ARCHITECTURAL-FOUNDATIONS.md §11.
+  oodaAct as act,
   evaluateSurprise,
   createStigmergicField,
   updateStigmergicField,
-} from '../src/index.js';
-import type { IRI, AgentProfile, Desire } from '../src/index.js';
+} from '@interego/core';
+import type { IRI, AgentProfile, Desire } from '@interego/core';
 
 // ── Test helpers ─────────────────────────────────────────────
 

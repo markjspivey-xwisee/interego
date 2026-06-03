@@ -11,7 +11,7 @@ import {
   type PodDirectoryData,
   type OwnerProfileData,
   type IRI,
-} from '../src/index.js';
+} from '@interego/core';
 import { PodRegistry } from '../mcp-server/pod-registry.js';
 
 // ── PodDirectory tests ──────────────────────────────────────

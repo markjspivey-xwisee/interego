@@ -25,8 +25,8 @@
 
 import {
   ContextDescriptor, publish, discover,
-} from '../../../src/index.js';
-import type { IRI } from '../../../src/index.js';
+} from '@interego/core';
+import type { IRI } from '@interego/core';
 import { projectDescriptorToLrs } from '../../lrs-adapter/src/pod-publisher.js';
 import {
   gatherParticipations, buildAttestedAggregateResult,

@@ -35,7 +35,7 @@ import {
   extract,
   createPGSL,
   mintAtom,
-} from '../../../src/index.js';
+} from '@interego/core';
 
 // ── Real SCORM 1.2-flavored HTML lesson content ──────────────────────
 //

@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { IRI } from '../src/model/types.js';
+import type { IRI } from '@interego/core';
 import {
   createRegistry,
   registerAgent,
@@ -21,7 +21,7 @@ import {
   registryToDescriptor,
   DEFAULT_AGGREGATION_POLICY,
   type AttestationInput,
-} from '../src/registry/index.js';
+} from '@interego/core';
 
 const NOW = '2026-04-24T12:00:00Z';
 

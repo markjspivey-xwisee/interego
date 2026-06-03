@@ -46,8 +46,8 @@ import {
   type CommitteeReconstructionAttestation,
   type NumericBucketingScheme,
 } from '../../../applications/_shared/aggregate-privacy/index.js';
-import { createWallet } from '../../../src/index.js';
-import type { IRI } from '../../../src/index.js';
+import { createWallet } from '@interego/core';
+import type { IRI } from '@interego/core';
 
 const COHORT = 'urn:test:cohort:bridge' as IRI;
 const AGGREGATOR = 'did:web:operator.example' as IRI;

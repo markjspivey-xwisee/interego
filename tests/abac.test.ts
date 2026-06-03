@@ -18,7 +18,11 @@ import type {
   AccessControlPolicyData,
   ContextDescriptorData,
   ContextFacetData,
-} from '../src/model/types.js';
+} from '@interego/core';
+// ABAC primitives now live in `@interego/abac`; importing directly
+// keeps the unprefixed names (`evaluate`, `PolicyContext`) in scope
+// without colliding with the PGSL agent-framework's same-named
+// exports that `@interego/core` surfaces.
 import {
   evaluate,
   evaluateSingle,
@@ -30,7 +34,7 @@ import {
   type PolicyContext,
   type PolicyPredicateShape,
   type AttributeGraph,
-} from '../src/abac/index.js';
+} from '@interego/abac';
 
 // ── Fixtures ─────────────────────────────────────────────────
 

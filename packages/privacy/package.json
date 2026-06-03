@@ -1,0 +1,24 @@
+{
+  "name": "@interego/privacy",
+  "version": "0.2.0",
+  "description": "Pre-publish sensitivity screening — flags API keys, JWTs, private keys, PII patterns before content reaches a pod. Particular hygiene composition; substrate-agnostic content scan.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist/", "src/", "README.md"],
+  "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
+  "engines": { "node": ">=20.0.0" },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

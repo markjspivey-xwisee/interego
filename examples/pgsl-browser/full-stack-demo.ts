@@ -46,7 +46,7 @@ import {
 import {
   computeAffordances as computeDecisionAffordances,
   decide as decideFromObservations,
-} from '../../src/pgsl/decision-functor.js';
+} from '@interego/core';
 
 import type { IRI, PGSLInstance } from '@interego/core';
 

@@ -51,13 +51,13 @@ import {
   sha256Hex,
   createWallet,
   exportPrivateKey,
-} from '../src/index.js';
+} from '@interego/core';
 import type {
   IRI,
   AuthorizedAgentData,
   OwnerProfileData,
   FetchFn,
-} from '../src/index.js';
+} from '@interego/core';
 
 // ── shared helpers ───────────────────────────────────────────
 

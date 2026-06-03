@@ -28,8 +28,8 @@ import {
   ContextDescriptor,
   toTurtle,
   validate,
-} from '../../../src/index.js';
-import type { IRI } from '../../../src/index.js';
+} from '@interego/core';
+import type { IRI } from '@interego/core';
 
 // ── DIDs / IRIs used across the cycle ────────────────────────────────
 

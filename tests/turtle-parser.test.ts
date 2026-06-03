@@ -14,8 +14,8 @@ import {
   readStringValues,
   readIntegerValue,
   readIriValue,
-} from '../src/rdf/turtle-parser.js';
-import type { IRI } from '../src/index.js';
+} from '@interego/core';
+import type { IRI } from '@interego/core';
 
 const CGH = (l: string) => `https://markjspivey-xwisee.github.io/interego/ns/harness#${l}` as IRI;
 

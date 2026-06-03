@@ -1,0 +1,29 @@
+{
+  "name": "@interego/p2p",
+  "version": "0.2.0",
+  "description": "Nostr-style relay-mediated p2p federation transport for @interego/core descriptors. Dual ECDSA + Schnorr signing; in-memory / file-backed / WebSocket-mirror relays. Particular federation composition.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist/", "src/", "README.md"],
+  "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@interego/core": "*",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.7.0"
+  }
+}

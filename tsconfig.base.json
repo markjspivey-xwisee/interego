@@ -1,0 +1,32 @@
+// Shared TypeScript base config for every workspace package.
+// Individual packages extend this and set rootDir/outDir to ./src and ./dist.
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    // exactOptionalPropertyTypes: false
+    //   When true, `{ x?: number }` rejects `{ x: undefined }`. Many
+    //   builder patterns in this codebase pass-through optional fields
+    //   from caller args (which can be undefined) into typed objects,
+    //   and the strict variant turns each such pass-through into a
+    //   non-trivial guard. The relaxation is intentional, not an
+    //   oversight; revisit once those builders are refactored to
+    //   conditional spread (`...(x !== undefined ? { x } : {})`)
+    //   throughout.
+    "exactOptionalPropertyTypes": false,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true
+  }
+}

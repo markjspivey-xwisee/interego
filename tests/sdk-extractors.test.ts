@@ -3,7 +3,7 @@ import {
   extract,
   detectFormat,
   ContextGraphsSDK,
-} from '../src/index.js';
+} from '@interego/core';
 
 // ═════════════════════════════════════════════════════════════
 //  Format Detection

@@ -41,27 +41,27 @@
  * Cleanly composes existing primitives — no new ontology terms.
  */
 
-import { buildMerkleTree, generateMerkleProof, verifyMerkleProof, type MerkleProof } from '../../../src/crypto/zk/index.js';
-import { sha256 } from '../../../src/crypto/ipfs.js';
+import { buildMerkleTree, generateMerkleProof, verifyMerkleProof, type MerkleProof } from '@interego/core';
+import { sha256 } from '@interego/core';
 import {
-  commit, addCommitments, verifyHomomorphicSum, sampleLaplaceInt,
+  pedersenCommit as commit, addCommitments, verifyHomomorphicSum, sampleLaplaceInt,
   deriveBlinding, randomBlinding,
   type PedersenCommitment,
-} from '../../../src/crypto/pedersen.js';
+} from '@interego/core';
 import {
   reconstructSecret,
   type ShamirShare,
-} from '../../../src/crypto/shamir.js';
+} from '@interego/core';
 import {
   splitSecretWithCommitments, filterVerifiedShares,
   type FeldmanCommitments, type VerifiableShamirShare,
-} from '../../../src/crypto/feldman-vss.js';
+} from '@interego/core';
 import {
   proveRange, verifyRange,
-  type RangeProof,
-} from '../../../src/crypto/range-proof.js';
-import { ContextDescriptor, publish, discover } from '../../../src/index.js';
-import type { IRI, ManifestEntry } from '../../../src/index.js';
+  type PedersenRangeProof as RangeProof,
+} from '@interego/core';
+import { ContextDescriptor, publish, discover } from '@interego/core';
+import type { IRI, ManifestEntry } from '@interego/core';
 import { verifyMessage } from 'ethers';
 import { ristretto255 } from '@noble/curves/ed25519.js';
 
@@ -1437,7 +1437,7 @@ export function verifyCommitteeMatchesAuthorization(args: {
 import {
   createEncryptedEnvelope, openEncryptedEnvelope,
   type EncryptedEnvelope, type EncryptionKeyPair,
-} from '../../../src/crypto/encryption.js';
+} from '@interego/core';
 
 export interface EncryptedShareDistribution {
   /** Recipient pseudo-aggregator DID. */
@@ -1800,8 +1800,8 @@ export class EpsilonBudget {
 // is a plain typed object that can be serialized into a normal
 // ContextDescriptor's graph content.
 
-import { signMessageRaw, recoverMessageSigner } from '../../../src/crypto/wallet.js';
-import type { Wallet } from '../../../src/crypto/types.js';
+import { signMessageRaw, recoverMessageSigner } from '@interego/core';
+import type { Wallet } from '@interego/core';
 
 /**
  * Canonical serialization of an EpsilonBudget for signing. Stable

@@ -39,7 +39,7 @@ import {
   extract,
   createPGSL,
   mintAtom,
-} from '../../../src/index.js';
+} from '@interego/core';
 
 // ── Fixtures: build real SCORM zips in-memory ────────────────────────
 

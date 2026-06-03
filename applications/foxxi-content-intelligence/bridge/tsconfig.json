@@ -1,3 +1,7 @@
+// Workspace bridge tsconfig — resolves @interego/core via the
+// workspace symlink in node_modules. The old `paths` override pointed
+// at the legacy `src/` monolith (now packages/core/src) and is no
+// longer needed.
 {
   "compilerOptions": {
     "target": "ES2022",
@@ -12,12 +16,7 @@
     "allowImportingTsExtensions": false,
     "baseUrl": ".",
     "jsx": "react-jsx",
-    "typeRoots": ["./node_modules/@types"],
-    "paths": {
-      "@interego/core": ["../../../src/index.ts"],
-      "react": ["./node_modules/@types/react"],
-      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime.d.ts"]
-    }
+    "typeRoots": ["./node_modules/@types"]
   },
   "include": [
     "server.ts",
@@ -26,8 +25,7 @@
     "../../_shared/affordance-mcp/**/*.ts",
     "../../_shared/vertical-bridge/**/*.ts",
     "../../_shared/aggregate-privacy/**/*.ts",
-    "../../_shared/vc-jwt/**/*.ts",
-    "../../../src/**/*.ts"
+    "../../_shared/vc-jwt/**/*.ts"
   ],
   "exclude": ["node_modules", "dist", "../dashboard-app"]
 }

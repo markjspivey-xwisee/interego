@@ -13,8 +13,10 @@ import {
   reEncryptForRecipients,
   envelopeToJson,
   envelopeFromJson,
-  // ZK Proofs
-  commit,
+  // ZK Proofs — the bare `commit` from @interego/core now resolves
+  // to the Pedersen 2-arg commitment; this test wants the zk
+  // chain-hash variant explicitly.
+  zkCommit as commit,
   verifyCommitment,
   proveConfidenceAboveThreshold,
   verifyConfidenceProof,
@@ -29,8 +31,8 @@ import {
   proveFragmentMembership,
   verifyFragmentMembership,
   createSelectiveDisclosure,
-} from '../src/index.js';
-import { sha256 } from '../src/crypto/ipfs.js';
+} from '@interego/core';
+import { sha256 } from '@interego/core';
 
 // ═════════════════════════════════════════════════════════════
 //  E2E Encryption (NaCl / tweetnacl)

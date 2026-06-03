@@ -1,65 +1,38 @@
 {
-  "name": "@interego/core",
+  "name": "@interego/workspace",
   "version": "0.2.0",
-  "description": "Reference implementation of Interego — verifiable, federated substrate for AI-agent context, identity, and coordination. L1 protocol = Context Graphs 1.0 (typed descriptors over RDF 1.2 Named Graphs); on top: capability passports, attestation registries, ABAC, constitutional layer, federated saga transactions, p2p, ZK proofs, and vertical bridges.",
+  "description": "Interego monorepo — substrate kernel (@interego/core) + per-vertical packages composing it. Primitives + composition mechanics for emergent agent-to-agent context.",
   "author": "Mark Spivey",
   "license": "MIT",
+  "private": true,
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
-    },
-    "./model": {
-      "import": "./dist/model/index.js",
-      "types": "./dist/model/index.d.ts"
-    },
-    "./rdf": {
-      "import": "./dist/rdf/index.js",
-      "types": "./dist/rdf/index.d.ts"
-    },
-    "./validation": {
-      "import": "./dist/validation/index.js",
-      "types": "./dist/validation/index.d.ts"
-    },
-    "./sparql": {
-      "import": "./dist/sparql/index.js",
-      "types": "./dist/sparql/index.d.ts"
-    },
-    "./solid": {
-      "import": "./dist/solid/index.js",
-      "types": "./dist/solid/index.d.ts"
-    },
-    "./pgsl": {
-      "import": "./dist/pgsl/index.js",
-      "types": "./dist/pgsl/index.d.ts"
-    }
-  },
-  "files": [
-    "dist/",
-    "src/",
-    "docs/ns/",
-    "README.md",
-    "LICENSE"
+  "workspaces": [
+    "packages/*",
+    "mcp-server",
+    "deploy/mcp-relay",
+    "deploy/identity",
+    "deploy/validator",
+    "applications/foxxi-content-intelligence/bridge",
+    "applications/learner-performer-companion/bridge",
+    "applications/agent-collective/bridge",
+    "applications/agent-development-practice/bridge",
+    "applications/organizational-working-memory/bridge",
+    "applications/lrs-adapter/bridge"
   ],
   "scripts": {
-    "build": "tsc",
-    "watch": "tsc --watch",
+    "build": "npm run build:core && npm run build:leaves && npm run build:core:compat",
+    "build:core": "npm run build --workspace @interego/core",
+    "build:core:compat": "npm run build:compat --workspace @interego/core",
+    "build:leaves": "npm run build --workspace @interego/abac && npm run build --workspace @interego/compliance && npm run build --workspace @interego/constitutional && npm run build --workspace @interego/extractors && npm run build --workspace @interego/connectors && npm run build --workspace @interego/ops && npm run build --workspace @interego/p2p && npm run build --workspace @interego/passport && npm run build --workspace @interego/privacy && npm run build --workspace @interego/registry && npm run build --workspace @interego/security-txt && npm run build --workspace @interego/skills && npm run build --workspace @interego/transactions",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src/ tests/",
+    "lint": "eslint packages/*/src/ tests/",
     "lint:ontology": "node tools/ontology-lint.mjs",
     "lint:derivation": "node tools/derivation-lint.mjs",
     "lint:security-txt": "node tools/security-txt-expiry-check.mjs",
     "lint:all": "npm run lint:ontology && npm run lint:derivation && npm run lint:security-txt",
-    "clean": "rm -rf dist/",
-    "prepublishOnly": "npm run clean && npm run build && npm run test"
+    "clean": "rm -rf packages/*/dist/"
   },
   "keywords": [
     "rdf",
@@ -76,7 +49,9 @@
     "semantic-web",
     "category-theory",
     "composition",
-    "federation"
+    "federation",
+    "monorepo",
+    "interego"
   ],
   "repository": {
     "type": "git",

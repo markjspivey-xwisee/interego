@@ -28,7 +28,7 @@ import {
   projectDescriptorToLrs,
 } from '../src/pod-publisher.js';
 import { LrsClient } from '../src/lrs-client.js';
-import type { IRI } from '../../../src/index.js';
+import type { IRI } from '@interego/core';
 
 // ── Config ────────────────────────────────────────────────────────────
 

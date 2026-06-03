@@ -6,8 +6,8 @@
  * evolution steps, constraints, capability evolution events.
  */
 
-import { discover, withTransientRetry } from '../../../src/index.js';
-import type { IRI } from '../../../src/index.js';
+import { discover, withTransientRetry } from '@interego/core';
+import type { IRI } from '@interego/core';
 
 // ── Typed records ────────────────────────────────────────────────────
 

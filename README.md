@@ -216,60 +216,59 @@ Two agents can then **compose** their descriptors via set-theoretic operators (u
 
 ## Architecture
 
+The repo is an npm workspaces monorepo. The substrate kernel ships as
+`@interego/core`. Anything that is a *particular composition* of
+substrate primitives — Solid binding, PGSL realization (currently still
+in core), affordance engine (currently still in core), ABAC, registry,
+passport, compliance, ops, transactions, constitutional layer, p2p,
+connectors, extractors, skills, privacy, security.txt — lives in its
+own sibling `@interego/*` package. See `docs/ARCHITECTURAL-FOUNDATIONS.md
+§12` for the substrate-vs-vertical line that motivates the split.
+
 ```
-@interego/core
-├── src/
-│   ├── model/        Core types, ContextDescriptor builder, composition operators,
-│   │                 delegation, category theory (presheaf, naturality, lattice laws),
-│   │                 semiotic formalization (Sign functor, adjunction, field functor),
-│   │                 open facet registry with merge strategies
-│   ├── rdf/          Namespaces (23+), Turtle/JSON-LD/TriG serializers,
-│   │                 RDF 1.2 triple annotation support, system ontology (OWL),
-│   │                 virtualized RDF layer, SPARQL Protocol, Hydra API descriptions,
-│   │                 DCAT/DPROD federation catalog
-│   ├── validation/   Programmatic SHACL-equivalent validator, SHACL shapes export
-│   ├── sparql/       Parameterized SPARQL 1.2 query pattern builders
-│   ├── solid/        publish(), discover(), subscribe(), directory, WebFinger,
-│   │                 DID resolution, IPFS anchoring
-│   ├── pgsl/         Poly-Granular Sequence Lattice — content-addressed substrate,
-│   │                 in-memory SPARQL engine, three-layer SHACL validation,
-│   │                 LLM tool interface, ingestion profiles (xAPI, LERS, RDF),
-│   │                 entity/relation extraction, fact extraction, computation
-│   │                 (date arithmetic, counting, aggregation, abstention detection),
-│   │                 coherence verification, decision functor (OODA), paradigm constraints,
-│   │                 progressive persistence (5-tier), lazy lattice construction
-│   ├── affordance/   Affordance engine integrating 8 frameworks:
-│   │                 Gibson, Norman, Pearl, Boyd (OODA), Endsley (SA),
-│   │                 Bratman (BDI), Friston (active inference), stigmergy
-│   ├── crypto/       Real cryptography — ethers.js ECDSA, NaCl E2E encryption,
-│   │                 ZK proofs (Merkle, range, temporal), SIWE (ERC-4361),
-│   │                 ERC-8004 agent identity, IPFS CID computation, Pinata pinning,
-│   │                 progressive persistence tier system
-│   └── causality     Pearl's SCM: do-calculus, d-separation, backdoor/front-door
-│                     criteria, counterfactual evaluation
-│   │                 coherence verification (usage-based, certificates, coverage),
-│   │                 decision functor (OODA: observe→orient→decide→act),
-│   │                 paradigm constraints (5 set operations, emergent typing),
-│   │                 progressive persistence (memory→local→pod→IPFS→chain),
-│   │                 lazy lattice construction (deferred chains, level capping)
-├── src/abac/         Attribute-Based Access Control evaluator —
-│                     evaluate(), filterAttributeGraph (sybil-resistant),
-│                     resolveAttributes (federated), createDecisionCache
-├── src/registry/     Public agent attestation registry —
-│                     createRegistry, registerAgent, refreshReputation,
-│                     federateLookup, aggregateReputation
-├── src/passport/     Capability passport (persistent agent biography) —
-│                     migrateInfrastructure, recordLifeEvent, stateValue,
-│                     passportToDescriptor, passportSummary
-├── src/transactions/ Federated saga-pattern transactions —
-│                     createTransaction, executeTransaction (with
-│                     reverse-compensation on failure)
-├── src/constitutional/ Self-amending policies — proposeAmendment, vote,
-│                     tryRatify (tier-aware), forkConstitution
-├── src/skills/      agentskills.io SKILL.md ↔ cg:Affordance translator —
-│                     skillBundleToDescriptor, descriptorGraphToSkillBundle,
-│                     parseSkillMd, emitSkillMd. Composes existing affordance
-│                     + amta: + supersedes + PromotionConstraint primitives.
+packages/
+├── core/                      @interego/core — the substrate kernel
+│   └── src/
+│       ├── model/             Typed ContextDescriptor + 7 facets +
+│       │                      composition algebra (HELA's typed-
+│       │                      hyperedge category + the 4 limit/
+│       │                      colimit operators).
+│       ├── kernel/            The 8 categorical verbs (mint /
+│       │                      dereference / compose / act / restrict /
+│       │                      extend / promote / decompose).
+│       ├── rdf/               Turtle / TriG / JSON-LD serialization,
+│       │                      RDF 1.2 helpers, parseTrig subject-
+│       │                      extraction parser, virtualized RDF layer.
+│       ├── validation/        Shape conformance / SHACL primitives.
+│       ├── sparql/            Standards-compliant SPARQL pattern
+│       │                      builders.
+│       ├── crypto/            Abstract signing/verification + ZK
+│       │                      primitives. Ethers/nacl-backed wallet
+│       │                      impls ship here for now.
+│       ├── naming/            L2 attestation-based naming.
+│       ├── affordance/        cg:Affordance shape + OODA/BDI/Active-
+│       │                      Inference runtime (slated for split
+│       │                      into @interego/affordance-engine).
+│       ├── solid/             Solid+LDP binding (slated for split
+│       │                      into @interego/solid).
+│       ├── pgsl/              Grothendieck-fibration realization
+│       │                      (slated for split into @interego/pgsl).
+│       └── compat.ts          Back-compat re-exports from sibling
+│                              @interego/* packages.
+├── abac/                      Attribute-Based Access Control
+├── compliance/                EU AI Act / NIST RMF / SOC 2 framework
+│                              reports + ECDSA-signed lineage walks
+├── connectors/                Notion / Slack / Web source connectors
+├── constitutional/            Self-amending policies
+├── extractors/                PDF / JSON / CSV / HTML extractors
+├── ops/                       SOC 2 operational evidence builders
+├── p2p/                       Nostr-style relay-mediated federation
+├── passport/                  Capability-passport biography
+├── privacy/                   Pre-publish sensitivity screening
+├── registry/                  Public agent attestation registry
+├── security-txt/              RFC 9116 body builder
+├── skills/                    agentskills.io ↔ cg:Affordance bridge
+└── transactions/              Federated saga-style transactions
 ├── mcp-server/       Stdio MCP server — substrate tools (publish_context,
 │                     discover_context, get_descriptor, subscribe_to_pod,
 │                     register_agent, pgsl_*, federation, identity, …).

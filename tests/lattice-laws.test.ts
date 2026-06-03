@@ -24,8 +24,8 @@ import {
   type ContextDescriptorData,
   type IRI,
   type ContextFacetData,
-} from '../src/index.js';
-import { resetComposedIdCounter } from '../src/model/composition.js';
+} from '@interego/core';
+import { resetComposedIdCounter } from '@interego/core';
 
 function buildDescriptor(
   id: string,

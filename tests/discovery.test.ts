@@ -9,9 +9,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createPGSL, ingest, latticeStats } from '../src/pgsl/lattice.js';
-import type { PGSLInstance } from '../src/pgsl/types.js';
-import type { DataSource, MarketplaceListing } from '../src/pgsl/discovery.js';
+import { createPGSL, ingest, latticeStats } from '@interego/core';
+import type { PGSLInstance } from '@interego/core';
+import type { DataSource, MarketplaceListing } from '@interego/core';
 import {
   introspectJson,
   introspectCsv,
@@ -35,7 +35,7 @@ import {
   refreshListing,
   marketplaceToHydra,
   marketplaceStats,
-} from '../src/pgsl/discovery.js';
+} from '@interego/core';
 
 // ── Shared fixtures ──────────────────────────────────────────
 

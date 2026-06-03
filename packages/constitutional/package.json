@@ -1,0 +1,27 @@
+{
+  "name": "@interego/constitutional",
+  "version": "0.2.0",
+  "description": "Self-amending constitutional policy layer over @interego/core. Particular governance composition — amendments, votes, ratification rules — built from typed descriptors + modal algebra.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist/", "src/", "README.md"],
+  "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@interego/core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

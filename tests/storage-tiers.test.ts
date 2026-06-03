@@ -32,8 +32,8 @@ import {
   cryptoComputeCid,
   union,
   intersection,
-} from '../src/index.js';
-import type { IRI } from '../src/model/types.js';
+} from '@interego/core';
+import type { IRI } from '@interego/core';
 
 // ── In-memory pod backed by a real-ish fetch handler ─────────
 //

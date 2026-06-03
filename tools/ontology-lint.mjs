@@ -57,7 +57,8 @@ const EXTERNAL_PREFIXES = new Set([
 ]);
 
 const SCAN_PATHS = [
-  'src',
+  // Substrate kernel + every per-vertical @interego/* package.
+  'packages',
   'deploy/identity',
   'deploy/mcp-relay',
   'mcp-server',

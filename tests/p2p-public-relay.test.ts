@@ -33,7 +33,7 @@ import {
   importWallet,
   generateKeyPair,
   KIND_DESCRIPTOR,
-} from '../src/index.js';
+} from '@interego/core';
 
 const RELAY_URL = process.env['RUN_PUBLIC_RELAY'];
 const TEST_WALLET_KEY = process.env['PUBLIC_RELAY_TEST_KEY']

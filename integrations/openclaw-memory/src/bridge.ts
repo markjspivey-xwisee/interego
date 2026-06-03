@@ -32,7 +32,7 @@ import {
   readIriValue,
   sha256,
   type IRI,
-} from '../../../src/index.js';
+} from '@interego/core';
 
 // ── Types ────────────────────────────────────────────────────────────
 

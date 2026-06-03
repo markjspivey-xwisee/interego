@@ -13,8 +13,8 @@ import {
   resolveRecipients,
   createOwnerProfile,
   ownerProfileToTurtle,
-} from '../src/index.js';
-import type { IRI, AuthorizedAgentData, OwnerProfileData, FetchFn } from '../src/index.js';
+} from '@interego/core';
+import type { IRI, AuthorizedAgentData, OwnerProfileData, FetchFn } from '@interego/core';
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
 

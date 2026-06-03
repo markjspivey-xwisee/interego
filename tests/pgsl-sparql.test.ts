@@ -12,10 +12,10 @@ import {
   sparqlPullbackOf,
   sparqlNeighbors,
   sparqlLatticeStats,
-} from '../src/index.js';
-import { matchPattern } from '../src/pgsl/sparql-engine.js';
-import type { PGSLInstance } from '../src/index.js';
-import type { IRI } from '../src/model/types.js';
+} from '@interego/core';
+import { matchPattern } from '@interego/core';
+import type { PGSLInstance } from '@interego/core';
+import type { IRI } from '@interego/core';
 
 describe('PGSL SPARQL Engine', () => {
   let pgsl: PGSLInstance;

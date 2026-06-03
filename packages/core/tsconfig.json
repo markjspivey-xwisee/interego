@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  // src/compat.ts re-exports from sibling @interego/* packages and is
+  // compiled in a second tsc pass after the leaves build. See
+  // `scripts.build` in package.json — `tsc && tsc -p tsconfig.compat.json`.
+  "exclude": ["node_modules", "dist", "src/compat.ts"]
+}

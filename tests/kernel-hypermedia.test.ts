@@ -27,8 +27,8 @@ import {
   KERNEL_JSONLD_CONTEXT,
   KERNEL_RESULT_SHAPES,
   ContextDescriptor,
-} from '../src/index.js';
-import type { ContextDescriptorData, IRI } from '../src/index.js';
+} from '@interego/core';
+import type { ContextDescriptorData, IRI } from '@interego/core';
 
 const HYDRA = 'http://www.w3.org/ns/hydra/core#';
 const CG = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';

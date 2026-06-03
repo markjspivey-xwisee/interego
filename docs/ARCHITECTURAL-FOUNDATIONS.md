@@ -238,7 +238,71 @@ The kernel introduces **no new ontology terms** and **no new persistence**. It i
 
 The kernel does not replace the higher-layer surface — it is the surface those layers compose. A vertical that wants pod-grounded action publishes a `cg:Affordance` block; a consumer reaches it by `dereference(podManifest) → find entry → dereference(entry.descriptorUrl) → act(affordance, payload)`. The route through the kernel is the substrate's natural HATEOAS shape (§6), made executable.
 
-## 12. Related work
+## 12. The substrate-vs-vertical line — package layout
+
+The principle that motivates the kernel surface (§11) also draws a
+visible line through the source tree. Interego = primitives +
+composition mechanics for emergence. Anything that CAN be composed
+from the substrate primitives is itself a particular composition, not
+substrate. The repo realizes that distinction as a package split.
+
+What stays in `@interego/core`:
+
+| Stays in core | Why |
+|---|---|
+| `model/` | The typed Context Descriptor + the 7 facets + the composition algebra (HELA's typed-hyperedge category + the 4 limit/colimit operators). This is the substrate's SHAPE. |
+| `kernel/` | The 8 categorical verbs (mint / dereference / compose / act / restrict / extend / promote / decompose). This is the substrate's API. |
+| `affordance/` shape + runtime | The `cg:Affordance` pattern made operational (Peircean Thirdness). The shape is substrate. The runtime that *computes* per-agent affordance sets (OODA + BDI + Active Inference) currently ships from core too; its planned destination is `@interego/affordance-engine`. |
+| `rdf/` | Turtle / TriG / JSON-LD serialization + RDF 1.2 helpers + the TriG subject-extraction parser. The substrate's wire format. |
+| `validation/` | Shape conformance / SHACL primitives — substrate algebra over the descriptor model. |
+| `sparql/` | SPARQL pattern builders — standards-compliant substrate query layer. |
+| `crypto/` primitives | Abstract signing/verification + ZK primitives. The concrete ethers/nacl-backed wallet impls ship here for now; a follow-up `@interego/crypto-impls` split is planned once the abstract surface stabilizes. |
+| `naming/` | Naming conventions (URN minting + L2 attestation-based naming). |
+| `solid/`, `pgsl/` | Currently still inside core. The kernel composes against both, and `rdf/system-ontology` + `rdf/virtualized-layer` back-reference PGSL. Splitting these into `@interego/solid` and `@interego/pgsl` requires lifting those back-references through dependency-injection points; the split is on the roadmap. |
+
+What's a vertical now lives in its own package:
+
+| Package | What it composes |
+|---|---|
+| `@interego/abac` | Attribute-Based Access Control over substrate descriptors |
+| `@interego/compliance` | EU AI Act / NIST RMF / SOC 2 framework reports + ECDSA-signed lineage walks |
+| `@interego/connectors` | Notion / Slack / Web source connectors (composes `@interego/extractors`) |
+| `@interego/constitutional` | Self-amending policies via substrate modal algebra |
+| `@interego/extractors` | Multi-format content extractors (PDF / JSON / CSV / HTML / plain text) |
+| `@interego/ops` | SOC 2 operational evidence event builders (uses `@interego/compliance`) |
+| `@interego/p2p` | Nostr-style relay-mediated federation (dual ECDSA + Schnorr signing) |
+| `@interego/passport` | Capability-passport biography over substrate descriptors |
+| `@interego/privacy` | Pre-publish sensitivity screening (no substrate coupling) |
+| `@interego/registry` | Public agent attestation registry (federated reputation) |
+| `@interego/security-txt` | RFC 9116 security.txt body builder shared by every service |
+| `@interego/skills` | agentskills.io ↔ cg:Affordance bidirectional translator |
+| `@interego/transactions` | Federated saga-style transactions over substrate descriptors |
+
+Three properties matter:
+
+1. **The substrate stays minimal.** Every vertical is now visible as a
+   particular composition of substrate primitives, in its own package
+   with its own `package.json`. The principle ("don't hardcode what
+   can be composed") is enforced at the boundary, not just intended.
+2. **The kernel verbs work the same.** Wire-level behavior of every
+   MCP tool, relay HTTP endpoint, and substrate function is unchanged.
+   The package split is purely structural — imports change, behavior
+   doesn't. Back-compat re-exports of the moved-out vertical APIs
+   ship from `@interego/core/compat` (built in a second tsc pass after
+   the leaves compile) so existing callers keep resolving.
+3. **The line is now contestable.** When a new feature gets proposed,
+   the question is no longer "where does it go in `src/`?" but "is it
+   substrate or is it a composition?" — and if it's a composition, it
+   becomes a new `@interego/<name>` package. Substrate-vs-vertical is
+   the actual boundary, not informal labeling inside one source tree.
+
+The workspace is realized via npm workspaces. The root `package.json`
+declares `packages/*`, `mcp-server`, every `deploy/*` service, and
+every `applications/*/bridge` as workspaces. Cross-package deps use
+the npm-classic `*` selector so iteration is local; nothing is
+published until the architectural line is independently stabilized.
+
+## 13. Related work
 
 The construction draws on (without depending on):
 

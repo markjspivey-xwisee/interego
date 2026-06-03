@@ -22,8 +22,8 @@
  * `privacyMode: 'abac'` so callers can see the v1 → v2 upgrade path.
  */
 
-import { ContextDescriptor, publish, discover, buildDeployEvent, buildAccessChangeEvent, buildWalletRotationEvent, buildIncidentEvent, buildQuarterlyReviewEvent } from '../../../src/index.js';
-import type { IRI, ContextDescriptorData, ManifestEntry, ComplianceFramework } from '../../../src/index.js';
+import { ContextDescriptor, publish, discover, buildDeployEvent, buildAccessChangeEvent, buildWalletRotationEvent, buildIncidentEvent, buildQuarterlyReviewEvent } from '@interego/core';
+import type { IRI, ContextDescriptorData, ManifestEntry, ComplianceFramework } from '@interego/core';
 import {
   buildAttestedAggregateResult,
   buildAttestedHomomorphicSum, buildCommittedContribution,

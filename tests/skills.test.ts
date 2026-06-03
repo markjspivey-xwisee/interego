@@ -15,9 +15,9 @@ import {
   descriptorGraphToSkillBundle,
   descriptorGraphToSkillMd,
   type SkillBundle,
-} from '../src/index.js';
-import type { IRI } from '../src/index.js';
-import { parseTrig, findSubjectsOfType, readStringValue } from '../src/rdf/turtle-parser.js';
+} from '@interego/core';
+import type { IRI } from '@interego/core';
+import { parseTrig, findSubjectsOfType, readStringValue } from '@interego/core';
 
 const AUTHOR = 'did:web:alice.example' as IRI;
 

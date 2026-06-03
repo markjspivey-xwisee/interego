@@ -32,7 +32,7 @@ import {
   deriveBlinding, randomBlinding,
   sampleLaplaceFloat, sampleLaplaceInt,
   H_GENERATOR_LABEL,
-} from '../src/crypto/pedersen.js';
+} from '@interego/core';
 import { ristretto255, ristretto255_hasher } from '@noble/curves/ed25519.js';
 
 describe('pedersen: opening + hiding + binding', () => {

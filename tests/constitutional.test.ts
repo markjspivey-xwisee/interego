@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { IRI } from '../src/model/types.js';
+import type { IRI } from '@interego/core';
 import {
   proposeAmendment,
   vote,
@@ -11,7 +11,7 @@ import {
   communityModal,
   forkConstitution,
   DEFAULT_RULES,
-} from '../src/constitutional/index.js';
+} from '@interego/core';
 
 const ALICE = 'urn:agent:alice' as IRI;
 

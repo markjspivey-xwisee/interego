@@ -11,10 +11,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createPGSL, mintAtom, ingest, latticeStats,
   resolve as pgslResolve,
-} from '../src/pgsl/lattice.js';
-import { verifyCoherence, computeCoverage, getCertificates } from '../src/pgsl/coherence.js';
-import type { IRI } from '../src/model/types.js';
-import type { PGSLInstance } from '../src/pgsl/types.js';
+} from '@interego/core';
+import { verifyCoherence, computeCoverage, getCertificates } from '@interego/core';
+import type { IRI } from '@interego/core';
+import type { PGSLInstance } from '@interego/core';
 
 // Agent framework
 import {
@@ -24,10 +24,10 @@ import {
   createTraceStore, recordTrace, getTraces,
   createPersonalBroker, startConversation, addMessage, getMemoryStats,
   createAATDecorator,
-} from '../src/pgsl/agent-framework.js';
+} from '@interego/core';
 import type {
   PolicyRule, TraceStore, ProvTrace, PersonalBroker,
-} from '../src/pgsl/agent-framework.js';
+} from '@interego/core';
 
 // Infrastructure
 import {
@@ -35,7 +35,7 @@ import {
   mergeEnclave, enclaveStats,
   createCheckpointStore, createCheckpoint, restoreCheckpoint, diffCheckpoints,
   createCRDTState, incrementClock, createOp, applyOp, getPendingOps, markSynced,
-} from '../src/pgsl/infrastructure.js';
+} from '@interego/core';
 
 // Discovery
 import {
@@ -43,22 +43,25 @@ import {
   createMarketplace, registerListing, discoverByCapability,
   generateMetagraph, ingestMetagraph, validateMetagraph, queryMetagraph,
   createIntrospectionAgent,
-} from '../src/pgsl/discovery.js';
+} from '@interego/core';
 
-// Decision functor
+// Decision functor — the bare `decide` from @interego/core is the
+// affordance OODA-loop decide (cycle args). The pgsl decision-functor
+// `decide` is exported separately as `decideFromObservations` to
+// avoid that collision.
 import {
   extractObservations,
   computeAffordances as computeDecisionAffordances,
   selectStrategy,
-  decide as decideFromObservations,
-} from '../src/pgsl/decision-functor.js';
+  decideFromObservations,
+} from '@interego/core';
 
 // Decorators
 import {
   createDefaultRegistry, decorateNode, registerDecorator,
   coreSystemDecorator,
-} from '../src/pgsl/affordance-decorators.js';
-import type { DecoratorContext, DecoratedAffordance } from '../src/pgsl/affordance-decorators.js';
+} from '@interego/core';
+import type { DecoratorContext, DecoratedAffordance } from '@interego/core';
 
 // ── Helpers ──────────────────────────────────────────────────
 

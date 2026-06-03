@@ -7,7 +7,7 @@ import {
   screenForSensitiveContent,
   formatSensitivityWarning,
   shouldBlockOnSensitivity,
-} from '../src/privacy/index.js';
+} from '@interego/core';
 
 // Test fixtures are built via runtime concatenation so the literal strings
 // in source don't trip GitHub's secret-scanner push protection. The

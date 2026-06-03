@@ -28,11 +28,11 @@ import {
   computeAffordances as computeDecisionAffordances,
   selectStrategy,
   decide as decideFromObservations,
-} from '../../src/pgsl/decision-functor.js';
+} from '@interego/core';
 
 import {
   generateMetagraph, ingestMetagraph,
-} from '../../src/pgsl/discovery.js';
+} from '@interego/core';
 
 import type { IRI, PGSLInstance } from '@interego/core';
 import { readdirSync, readFileSync } from 'node:fs';

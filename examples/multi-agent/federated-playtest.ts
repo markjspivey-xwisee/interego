@@ -36,25 +36,25 @@ import {
   createTraceStore, recordTrace, getTraces, traceToTurtle,
   createPersonalBroker, startConversation, addMessage, getMemoryStats,
   createAATDecorator,
-} from '../../src/pgsl/agent-framework.js';
+} from '@interego/core';
 
 import {
   createEnclaveRegistry, createEnclave, freezeEnclave, mergeEnclave,
   createCheckpointStore, createCheckpoint, diffCheckpoints,
   createCRDTState, createOp, applyOp, getPendingOps, markSynced, crdtStats,
-} from '../../src/pgsl/infrastructure.js';
+} from '@interego/core';
 
 import {
   createMarketplace, registerListing, discoverByCapability, marketplaceStats,
   generateMetagraph, ingestMetagraph,
-} from '../../src/pgsl/discovery.js';
+} from '@interego/core';
 
 import {
   extractObservations,
   computeAffordances as computeDecisionAffordances,
   selectStrategy,
   decide as decideFromObservations,
-} from '../../src/pgsl/decision-functor.js';
+} from '@interego/core';
 
 import type { IRI, PGSLInstance, FetchFn } from '@interego/core';
 

@@ -4,7 +4,7 @@ import {
   createNotionConnector,
   createSlackConnector,
   createWebConnector,
-} from '../src/connectors/index.js';
+} from '@interego/core';
 
 afterEach(() => {
   vi.restoreAllMocks();

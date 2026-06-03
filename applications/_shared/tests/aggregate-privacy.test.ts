@@ -80,8 +80,8 @@ import {
   type ParticipationHit,
   type CommittedContribution,
 } from '../aggregate-privacy/index.js';
-import { createWallet, signMessageRaw } from '../../../src/index.js';
-import type { IRI } from '../../../src/index.js';
+import { createWallet, signMessageRaw } from '@interego/core';
+import type { IRI } from '@interego/core';
 import { Wallet } from 'ethers';
 
 const COHORT = 'urn:lpc:cohort:aws-saa-q2-2026' as IRI;
@@ -1433,7 +1433,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
   it('encrypts a single share for a recipient + decrypts round-trip preserves the share', async () => {
     // Use generateKeyPair from the encryption module via dynamic import
     // — keeps the test file's static imports focused on the public surface.
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const bundle = mkBundle();
     const recipient = generateKeyPair();
     const sender = generateKeyPair();
@@ -1455,7 +1455,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
   });
 
   it('REFUSES to decrypt for a non-recipient keypair (no wrapped key for them)', async () => {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const bundle = mkBundle();
     const intended = generateKeyPair();
     const outsider = generateKeyPair();
@@ -1472,7 +1472,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
   });
 
   it('encryptSharesForCommittee distributes shares 1:1 to recipients in order', async () => {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const bundle = mkBundle();
     const sender = generateKeyPair();
     const recipients = bundle.thresholdShares!.map((_, i) => ({
@@ -1498,7 +1498,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
   });
 
   it('THROWS when shares.length != recipients.length', async () => {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const bundle = mkBundle();
     const sender = generateKeyPair();
     expect(() => encryptSharesForCommittee({
@@ -1509,7 +1509,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
   });
 
   it('end-to-end: encrypt → distribute → decrypt → reconstruct → committee attestation', async () => {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const bundle = mkBundle();
     const sender = generateKeyPair();
 
@@ -1740,7 +1740,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
   });
 
   it('publish + fetch + decrypt: encrypted share survives the Turtle ↔ JSON escape boundary', async () => {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const bundle = mkBundle();
     const recipient = generateKeyPair();
     const sender = generateKeyPair();
@@ -1796,7 +1796,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
   });
 
   it('verifyShareDistributionsMatchAuthorization: honest 1:1 distribution accepts', async () => {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const bundle = mkBundle();
     const operatorWallet = await createWallet('agent', 'op-dist-match');
     const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
@@ -1822,7 +1822,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
   });
 
   it('REJECTS when an EncryptedShareDistribution targets a DID outside the authorization', async () => {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const bundle = mkBundle();
     const operatorWallet = await createWallet('agent', 'op-sock');
     const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
@@ -1851,7 +1851,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
   });
 
   it('REJECTS when distributions.length differs from authorization.threshold.n', async () => {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const bundle = mkBundle();
     const operatorWallet = await createWallet('agent', 'op-count-mismatch');
     const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
@@ -1879,7 +1879,7 @@ describe('aggregate-privacy v4-partial: encrypted share distribution', () => {
   });
 
   it('REJECTS when an authorized recipient has no matching distribution (silently dropped)', async () => {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const bundle = mkBundle();
     const operatorWallet = await createWallet('agent', 'op-drop');
     const operatorDid = `did:ethr:${operatorWallet.address.toLowerCase()}` as IRI;
@@ -2318,7 +2318,7 @@ describe('aggregate-privacy v5: contributor-distributed blinding sharing (no tru
   const L_V5 = 7237005577332262213973186563042994240857116359379907606001950938285454250989n;
 
   async function mkCommittee(n: number) {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const members = [];
     for (let j = 1; j <= n; j++) {
       members.push({
@@ -2331,7 +2331,7 @@ describe('aggregate-privacy v5: contributor-distributed blinding sharing (no tru
   }
 
   async function mkCohort(values: bigint[], committee: Awaited<ReturnType<typeof mkCommittee>>, t: number) {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     const contributions: DistributedContribution[] = values.map((v, i) =>
       buildDistributedContribution({
         contributorPodUrl: `https://v5-contributor-${i}/`,
@@ -2376,7 +2376,7 @@ describe('aggregate-privacy v5: contributor-distributed blinding sharing (no tru
       includeAuditFields: true, threshold: { n: 5, t: 3 },
     });
     // Use the standalone Feldman verifier via the published combined commitments.
-    const { verifyShare } = await import('../../../src/crypto/feldman-vss.js');
+    const { verifyShare } = await import('@interego/core');
     expect(verifyShare({ share: s1, commitments: bundle.combinedBlindingCommitments })).toBe(true);
   });
 
@@ -2539,7 +2539,7 @@ describe('aggregate-privacy v6: operator never sees individual values OR blindin
   const bounds = { min: 0n, max: 100n };
 
   async function mkCommittee(n: number) {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     return Array.from({ length: n }, (_, k) => ({
       index: k + 1,
       recipientDid: `did:test:v6-${k + 1}` as IRI,
@@ -2548,7 +2548,7 @@ describe('aggregate-privacy v6: operator never sees individual values OR blindin
   }
 
   async function mkCohortV6(values: bigint[], committee: Awaited<ReturnType<typeof mkCommittee>>, t: number) {
-    const { generateKeyPair } = await import('../../../src/crypto/encryption.js');
+    const { generateKeyPair } = await import('@interego/core');
     return values.map((v, i) => buildDistributedContributionV6({
       contributorPodUrl: `https://v6-contrib-${i}/`,
       value: v, bounds,

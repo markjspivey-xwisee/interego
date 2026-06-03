@@ -56,9 +56,9 @@ import {
   decryptShareForRecipient,
   type CommitteeReconstructionAttestation,
 } from '../applications/_shared/aggregate-privacy/index.js';
-import { createWallet } from '../src/index.js';
-import { generateKeyPair } from '../src/crypto/encryption.js';
-import type { IRI } from '../src/index.js';
+import { createWallet } from '@interego/core';
+import { generateKeyPair } from '@interego/core';
+import type { IRI } from '@interego/core';
 import type { Wallet } from 'ethers';
 
 const COHORT = 'urn:demo:cohort:v4-walkthrough' as IRI;

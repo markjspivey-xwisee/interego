@@ -30,15 +30,15 @@ import {
   CGProp,
   CG,
   PROV,
-} from '../src/index.js';
-import { resetComposedIdCounter } from '../src/model/composition.js';
+} from '@interego/core';
+import { resetComposedIdCounter } from '@interego/core';
 
 import type {
   IRI,
   ContextDescriptorData,
   TemporalFacetData,
   SemioticFacetData,
-} from '../src/index.js';
+} from '@interego/core';
 
 // ── Helpers ──────────────────────────────────────────────────
 

@@ -10,9 +10,9 @@ import {
   PGSL_NS,
   PGSLClass,
   PGSLProp,
-} from '../src/index.js';
-import type { PGSLInstance, ShaclShapeDefinition } from '../src/index.js';
-import type { IRI } from '../src/model/types.js';
+} from '@interego/core';
+import type { PGSLInstance, ShaclShapeDefinition } from '@interego/core';
+import type { IRI } from '@interego/core';
 
 describe('PGSL SHACL Validation', () => {
   let pgsl: PGSLInstance;

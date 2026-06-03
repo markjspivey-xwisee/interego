@@ -39,8 +39,8 @@ import {
   verifyProvenanceNaturality,
   countUniquePGSL,
   ContextDescriptor,
-} from '../src/index.js';
-import type { IRI, PGSLInstance, NodeProvenance } from '../src/index.js';
+} from '@interego/core';
+import type { IRI, PGSLInstance, NodeProvenance } from '@interego/core';
 
 const TEST_PROV: NodeProvenance = {
   wasAttributedTo: 'did:web:test.example' as IRI,

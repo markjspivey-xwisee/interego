@@ -7,7 +7,7 @@
  */
 
 import type { Affordance } from '../_shared/affordance-mcp/index.js';
-import type { IRI } from '../../src/index.js';
+import type { IRI } from '@interego/core';
 
 const ADP_AFFORDANCES: ReadonlyArray<Affordance> = [
   {

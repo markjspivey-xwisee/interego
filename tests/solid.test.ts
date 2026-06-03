@@ -11,9 +11,9 @@ import {
   discover,
   subscribe,
   parseManifest,
-} from '../src/index.js';
+} from '@interego/core';
 
-import type { IRI, ManifestEntry, ContextChangeEvent } from '../src/index.js';
+import type { IRI, ManifestEntry, ContextChangeEvent } from '@interego/core';
 
 // ── Mock helpers ────────────────────────────────────────────
 

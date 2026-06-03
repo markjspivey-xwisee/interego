@@ -1,0 +1,27 @@
+{
+  "name": "@interego/passport",
+  "version": "0.2.0",
+  "description": "Capability-passport biography over @interego/core — agent identity, life-event log, demonstrated capabilities, stated values + drift detection. Particular agent-persona composition.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist/", "src/", "README.md"],
+  "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@interego/core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

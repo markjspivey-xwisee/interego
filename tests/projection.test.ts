@@ -10,8 +10,8 @@ import {
   toTripleAnnotationTurtle,
   toTripleAnnotationDocument,
   validate,
-} from '../src/index.js';
-import type { IRI, TripleContextAnnotation } from '../src/index.js';
+} from '@interego/core';
+import type { IRI, TripleContextAnnotation } from '@interego/core';
 
 // ═════════════════════════════════════════════════════════════
 //  Projection Facet Builder

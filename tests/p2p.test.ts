@@ -34,7 +34,7 @@ import {
   KIND_DESCRIPTOR,
   KIND_ENCRYPTED_SHARE,
   type DescriptorAnnouncement,
-} from '../src/index.js';
+} from '@interego/core';
 
 // Two well-known test keys (NEVER use for production — these are
 // the Hardhat default mnemonic's first two derived keys, public

@@ -36,15 +36,15 @@ import {
   createAATDecorator,
   // PGSL
   createPGSL,
-} from '../src/pgsl/index.js';
+} from '@interego/core';
 import type {
   AbstractAgentType,
   PolicyRule,
   PolicyContext,
   ProvTrace,
   DecoratedAffordance,
-} from '../src/pgsl/index.js';
-import type { IRI } from '../src/model/types.js';
+} from '@interego/core';
+import type { IRI } from '@interego/core';
 
 // ── Test helpers ──────────────────────────────────────────────
 

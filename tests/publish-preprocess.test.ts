@@ -12,7 +12,7 @@ import {
   normalizePublishInputs,
   extractRevocationConditions,
   stripStringsAndComments,
-} from '../src/model/publish-preprocess.js';
+} from '@interego/core';
 
 describe('stripStringsAndComments', () => {
   it('preserves total length (indices remain valid)', () => {

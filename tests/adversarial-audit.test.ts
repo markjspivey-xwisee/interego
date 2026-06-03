@@ -60,8 +60,8 @@ import {
   verifyMerkleProof,
   importWallet,
   type SignedDescriptor,
-} from '../src/index.js';
-import type { IRI } from '../src/model/types.js';
+} from '@interego/core';
+import type { IRI } from '@interego/core';
 
 // ── Pretty printing — make the test output read like a story ──
 

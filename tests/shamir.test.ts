@@ -26,7 +26,7 @@ import {
   reconstructSecret,
   evaluateAt,
   type ShamirShare,
-} from '../src/crypto/shamir.js';
+} from '@interego/core';
 
 const L = 7237005577332262213973186563042994240857116359379907606001950938285454250989n;
 

@@ -1,0 +1,24 @@
+{
+  "name": "@interego/security-txt",
+  "version": "0.2.0",
+  "description": "RFC 9116 security.txt body builder shared by every deployed Interego service. Pure-string composition; no substrate coupling.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist/", "src/", "README.md"],
+  "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
+  "engines": { "node": ">=20.0.0" },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

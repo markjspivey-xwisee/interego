@@ -24,8 +24,8 @@ import {
   materializeTriples,
   sparqlMatchPattern as matchPattern,
   validateAllPGSL,
-} from '../src/index.js';
-import type { IRI, PGSLInstance, XapiStatement } from '../src/index.js';
+} from '@interego/core';
+import type { IRI, PGSLInstance, XapiStatement } from '@interego/core';
 
 // ── Test Data ─────────────────────────────────────────────
 

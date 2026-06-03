@@ -16,61 +16,90 @@ Verticals (LPC, ADP, LRS, AC, OWM) and quickstart deployments compose the substr
 
 ## Architecture
 
-TypeScript library (ESM, Node 20+):
+TypeScript monorepo (npm workspaces; ESM, Node 20+). The repo is split
+into a substrate kernel package and one package per particular
+composition over that substrate — the operational reification of the
+substrate-vs-vertical line documented in
+`docs/ARCHITECTURAL-FOUNDATIONS.md §12`.
 
 ```
-src/
-  kernel/       The categorical kernel — the substrate's primitives as a
-                first-class API. Eight verbs (mint / dereference / compose /
-                act / restrict / extend / promote / decompose) that delegate
-                to existing primitives across model/, pgsl/, solid/. The
-                operational realization of docs/ARCHITECTURAL-FOUNDATIONS.md
-                §3–§5; see §11 there for the surface itself. Higher-layer
-                operations (publish_context, register_agent, ...) compose
-                these — they no longer reach past the kernel into substrate
-                interior. The 27 named MCP tools are compatibility shims
-                tagged in their descriptions; new clients can call the
-                kernel verbs directly via the `mint` / `dereference` / ...
-                MCP tools (both stdio and the relay).
-  model/        Core data model: types, ContextDescriptor builder, composition operators
-  rdf/          Namespaces, Turtle serializer, JSON-LD serializer/parser
-  validation/   Programmatic SHACL-equivalent validator, SHACL shapes as Turtle export
-  sparql/       Parameterized SPARQL 1.2 query pattern builders
-  solid/        publish(), discover(), subscribe(), DID resolution, WebFinger,
-                cross-pod sharing (resolveRecipients), hypermedia distribution
-                link serialization (buildDistributionBlock + parseDistribution…)
-  pgsl/         Poly-Granular Sequence Lattice — atoms, fragments, pullbacks,
-                mintAtom / mintEncryptedAtom / resolveAtomValue
-  crypto/       Real cryptography — nacl/tweetnacl E2EE envelopes
-                (createEncryptedEnvelope, openEncryptedEnvelope), field-level
-                encryption (encryptFacetValue / decryptFacetValue), ethers.js
-                ECDSA / SIWE, BIP-340 Schnorr (@noble/curves) for public-Nostr
-                interop, ZK proofs (Merkle / range / temporal), IPFS CID,
-                Pinata pinning
-  affordance/   Affordance engine — cgh:Affordance generation at runtime
-  abac/         Attribute-Based Access Control (L2): policies as descriptors,
-                cross-pod attribute resolution, sybil resistance
-  registry/     Public agent attestation registry (L2): federated NPM-for-AI
-  passport/     Capability passport (L2): persistent agent biographical identity
-  compliance/   Compliance-grade publish (L4): ECDSA signing, framework reports,
-                wallet rotation w/ history, lineage walking
-  ops/          SOC 2 evidence builders: deploy / access change / wallet rotation /
-                incident / quarterly review events ready for publish_context
-  privacy/      Pre-publish sensitivity screening (API keys, JWTs, PII patterns)
-  security-txt/ RFC 9116 body builder (single source of truth across 5 servers)
-  p2p/          Tier 5 transport: Nostr-style relay-mediated, ECDSA + Schnorr
-                dual signing, 1:N encrypted share via KIND_ENCRYPTED_SHARE.
-                Mobile + desktop interop with no central server.
-  transactions/ Federated saga transactions (cross-pod atomic writes)
-  constitutional/ Self-amending policies (amendments, voting, ratification)
-  connectors/   Source connectors: Notion / Slack / Web (extensible)
-  extractors/   Content extraction: PDF / JSON / CSV / HTML
-  rdf/          RDF 1.2 serializer + parser (parseTrig: subject-extraction
-                TriG/Turtle parser, no runtime deps; replaces regex-based
-                extraction in pod-publishers and similar places)
-  skills/       agentskills.io SKILL.md ↔ cg:Affordance translator —
-                composes existing affordance + amta: + supersedes +
-                PromotionConstraint primitives; no new ontology terms
+packages/
+  core/          @interego/core — the substrate kernel.
+    src/kernel/       The categorical kernel — the substrate's primitives
+                      as a first-class API. Eight verbs (mint / dereference
+                      / compose / act / restrict / extend / promote /
+                      decompose) backed by intra-substrate composition of
+                      model/, rdf/, pgsl/, solid/. The operational
+                      realization of docs/ARCHITECTURAL-FOUNDATIONS.md
+                      §3–§5; see §11 there for the surface itself.
+    src/model/        Typed Context Descriptor + 7 facets + composition
+                      algebra (HELA's typed-hyperedge category + the 4
+                      limit/colimit operators: union, intersection,
+                      restriction, override). The substrate's SHAPE.
+    src/rdf/          Turtle / TriG / JSON-LD serialization, RDF 1.2
+                      helpers, parseTrig subject-extraction parser,
+                      virtualized RDF layer + system ontology.
+    src/validation/   Shape conformance / SHACL primitives.
+    src/sparql/       Standards-compliant SPARQL pattern builders.
+    src/crypto/       Abstract signing/verification + ZK primitives.
+                      Ethers/nacl-backed wallet impls live here for now;
+                      a follow-up `@interego/crypto-impls` split is on
+                      the roadmap once the abstract surface stabilizes.
+    src/naming/       Naming conventions (L2 attestation-based naming).
+    src/affordance/   cg:Affordance shape + OODA/BDI/Active-Inference
+                      runtime. The runtime is slated for extraction
+                      into @interego/affordance-engine once its PGSL
+                      cross-cuts are decoupled.
+    src/solid/        Solid+LDP binding (publish/discover/subscribe,
+                      anchors, DID resolution, WebFinger, sharing).
+                      Currently inside core because the kernel composes
+                      against it; planned split to @interego/solid.
+    src/pgsl/         Grothendieck-fibration realization (atoms,
+                      fragments, pullbacks, agent framework, decision
+                      functor, SPARQL engine, SHACL, ontology loaders).
+                      Currently inside core because rdf/system-ontology
+                      + rdf/virtualized-layer back-reference PGSL;
+                      planned split to @interego/pgsl.
+    src/compat.ts     Back-compat re-exports from the per-vertical
+                      @interego/* packages so existing consumers that
+                      imported them from @interego/core keep working
+                      during the transition. Built in a second tsc pass
+                      (tsconfig.compat.json) after the leaves compile.
+
+  abac/          @interego/abac — Attribute-Based Access Control over
+                 substrate descriptors (evaluator + attribute resolver +
+                 decision cache + SHACL-shape policy validation).
+  compliance/    @interego/compliance — EU AI Act / NIST RMF / SOC 2
+                 framework reports + ECDSA-signed lineage walks.
+  connectors/    @interego/connectors — Notion / Slack / Web source
+                 connectors. Composes @interego/extractors.
+  constitutional/ @interego/constitutional — self-amending policies
+                 (amendments, votes, ratification, forking, community
+                 modal). Built on substrate modal algebra.
+  extractors/    @interego/extractors — multi-format content extractors
+                 (PDF / JSON / CSV / HTML / plain text) that hash +
+                 chunk source content for substrate ingestion.
+  ops/           @interego/ops — SOC 2 operational evidence event
+                 builders (deploys, access changes, wallet rotations,
+                 incidents, quarterly reviews). Uses @interego/compliance.
+  p2p/           @interego/p2p — Nostr-style relay-mediated federation.
+                 Dual ECDSA + Schnorr signing; in-memory / file-backed /
+                 WebSocket-mirror relays.
+  passport/      @interego/passport — capability-passport biography
+                 (life-event log, demonstrated capabilities, stated
+                 values + drift detection, agent keypair loader).
+  privacy/       @interego/privacy — pre-publish sensitivity screening
+                 (API keys, JWTs, private keys, PII patterns).
+  registry/      @interego/registry — public agent attestation registry
+                 (register / refresh reputation / federate lookup /
+                 aggregate cross-pod reputation).
+  security-txt/  @interego/security-txt — RFC 9116 body builder shared
+                 by every deployed Interego service.
+  skills/        @interego/skills — agentskills.io ↔ cg:Affordance
+                 bidirectional translator (parses + emits skill.md
+                 frontmatter; maps to descriptor bundles).
+  transactions/  @interego/transactions — federated saga-style
+                 transactions over substrate descriptors.
 ```
 
 Plus surrounding infrastructure:

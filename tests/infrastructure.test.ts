@@ -15,9 +15,9 @@ import {
   pgslResolve,
   latticeStats,
   embedInPGSL,
-} from '../src/index.js';
-import type { IRI } from '../src/model/types.js';
-import type { PGSLInstance, NodeProvenance } from '../src/pgsl/types.js';
+} from '@interego/core';
+import type { IRI } from '@interego/core';
+import type { PGSLInstance, NodeProvenance } from '@interego/core';
 import {
   // Enclave
   createEnclaveRegistry,
@@ -47,13 +47,13 @@ import {
   getPendingOps,
   markSynced,
   crdtStats,
-} from '../src/pgsl/infrastructure.js';
+} from '@interego/core';
 import type {
   EnclaveRegistry,
   CheckpointStore,
   CRDTState,
   VectorClock,
-} from '../src/pgsl/infrastructure.js';
+} from '@interego/core';
 
 const TEST_PROV: NodeProvenance = {
   wasAttributedTo: 'did:web:test.example' as IRI,

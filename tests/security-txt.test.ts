@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildSecurityTxt, buildSecurityTxtFromEnv } from '../src/security-txt/index.js';
+import { buildSecurityTxt, buildSecurityTxtFromEnv } from '@interego/core';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');

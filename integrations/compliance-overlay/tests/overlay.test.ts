@@ -15,7 +15,7 @@ import {
   findSubjectsOfType,
   readStringValue,
   type IRI,
-} from '../../../src/index.js';
+} from '@interego/core';
 
 const AGENT = 'did:web:agent.example' as IRI;
 const OWNER = 'did:web:owner.example' as IRI;

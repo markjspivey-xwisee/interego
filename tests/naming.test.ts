@@ -18,8 +18,8 @@ import {
   directoryNameIndex,
   podDirectoryToTurtle,
   parsePodDirectory,
-} from '../src/index.js';
-import type { IRI, NamingConfig, NameCandidate, FetchFn, PodDirectoryData } from '../src/index.js';
+} from '@interego/core';
+import type { IRI, NamingConfig, NameCandidate, FetchFn, PodDirectoryData } from '@interego/core';
 
 const FOAF_NICK = 'http://xmlns.com/foaf/0.1/nick';
 const ALICE_DID = 'did:web:pod.example:users:alice' as IRI;

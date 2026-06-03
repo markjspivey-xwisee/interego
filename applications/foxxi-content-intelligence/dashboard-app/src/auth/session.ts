@@ -15,7 +15,7 @@
  */
 
 import { SAMPLE_ADMIN_PAYLOAD } from '../sample/data.js';
-import { mintSessionToken } from '../../../src/auth.js';
+import { mintSessionToken } from '@interego/core';
 
 export type SessionRole = 'learner' | 'admin';
 

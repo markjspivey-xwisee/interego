@@ -7,12 +7,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { IRI, ContextDescriptorData } from '../src/model/types.js';
+import type { IRI, ContextDescriptorData } from '@interego/core';
 import {
   effectiveModal,
   temporalAnnotations,
   temporalNow,
-} from '../src/model/derivation.js';
+} from '@interego/core';
 
 const SUBJECT = 'urn:agent:alice' as IRI;
 

@@ -37,7 +37,7 @@ import {
   publishCitedResponse,
 } from '../src/pod-publisher.js';
 import { groundedAnswer } from '../src/grounded-answer.js';
-import type { IRI } from '../../../src/index.js';
+import type { IRI } from '@interego/core';
 
 // ── Config ────────────────────────────────────────────────────────────
 

@@ -15,8 +15,8 @@ import {
   createDelegationCredential,
   delegationCredentialToJsonLd,
   verifyDelegation,
-} from '../src/index.js';
-import type { IRI, AuthorizedAgentData, OwnerProfileData } from '../src/index.js';
+} from '@interego/core';
+import type { IRI, AuthorizedAgentData, OwnerProfileData } from '@interego/core';
 
 const OWNER = 'https://pod.example/alice/profile#me' as IRI;
 const POD = 'https://pod.example/alice/' as IRI;

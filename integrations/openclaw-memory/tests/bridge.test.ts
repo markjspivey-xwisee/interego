@@ -9,8 +9,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { buildMemoryDescriptor, affordancesFor } from '../src/bridge.js';
-import type { IRI } from '../../../src/index.js';
-import { parseTrig, findSubjectsOfType, readStringValue, readStringValues } from '../../../src/index.js';
+import type { IRI } from '@interego/core';
+import { parseTrig, findSubjectsOfType, readStringValue, readStringValues } from '@interego/core';
 
 const CONFIG = {
   podUrl: 'https://pod.example/alice/',

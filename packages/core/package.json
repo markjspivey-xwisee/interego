@@ -1,0 +1,108 @@
+{
+  "name": "@interego/core",
+  "version": "0.2.0",
+  "description": "Interego substrate kernel — typed Context Descriptors + 7 facets + composition algebra + categorical kernel verbs (mint, dereference, compose, act, restrict, extend, promote, decompose) + RDF/SPARQL/SHACL + crypto primitives. The shape and API of the substrate; per-vertical compositions live in sibling @interego/* packages.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./model": {
+      "import": "./dist/model/index.js",
+      "types": "./dist/model/index.d.ts"
+    },
+    "./rdf": {
+      "import": "./dist/rdf/index.js",
+      "types": "./dist/rdf/index.d.ts"
+    },
+    "./validation": {
+      "import": "./dist/validation/index.js",
+      "types": "./dist/validation/index.d.ts"
+    },
+    "./sparql": {
+      "import": "./dist/sparql/index.js",
+      "types": "./dist/sparql/index.d.ts"
+    },
+    "./solid": {
+      "import": "./dist/solid/index.js",
+      "types": "./dist/solid/index.d.ts"
+    },
+    "./pgsl": {
+      "import": "./dist/pgsl/index.js",
+      "types": "./dist/pgsl/index.d.ts"
+    },
+    "./crypto": {
+      "import": "./dist/crypto/index.js",
+      "types": "./dist/crypto/index.d.ts"
+    },
+    "./naming": {
+      "import": "./dist/naming/index.js",
+      "types": "./dist/naming/index.d.ts"
+    },
+    "./kernel": {
+      "import": "./dist/kernel/index.js",
+      "types": "./dist/kernel/index.d.ts"
+    },
+    "./affordance": {
+      "import": "./dist/affordance/index.js",
+      "types": "./dist/affordance/index.d.ts"
+    },
+    "./compat": {
+      "import": "./dist/compat.js",
+      "types": "./dist/compat.d.ts"
+    }
+  },
+  "files": [
+    "dist/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "build:compat": "tsc -p tsconfig.compat.json && node ../../scripts/append-compat-reexport.mjs",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist/"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@comunica/query-sparql": "^5.1.3",
+    "@digitalbazaar/bbs-signatures": "^1.2.0",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.0.1",
+    "@types/ws": "^8.18.1",
+    "ethers": "^6.16.0",
+    "jsonld": "^8.3.3",
+    "multiformats": "^13.4.2",
+    "rdf-canonize": "^4.0.1",
+    "siwe": "^3.0.0",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
+    "ws": "^8.20.0",
+    "@interego/abac": "*",
+    "@interego/compliance": "*",
+    "@interego/connectors": "*",
+    "@interego/constitutional": "*",
+    "@interego/extractors": "*",
+    "@interego/ops": "*",
+    "@interego/p2p": "*",
+    "@interego/passport": "*",
+    "@interego/privacy": "*",
+    "@interego/registry": "*",
+    "@interego/security-txt": "*",
+    "@interego/skills": "*",
+    "@interego/transactions": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

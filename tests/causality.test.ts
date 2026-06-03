@@ -35,9 +35,9 @@ import {
   validate,
   union,
   intersection,
-} from '../src/index.js';
-import { resetComposedIdCounter } from '../src/model/composition.js';
-import type { IRI, CausalVariable, CausalEdge, StructuralCausalModel } from '../src/index.js';
+} from '@interego/core';
+import { resetComposedIdCounter } from '@interego/core';
+import type { IRI, CausalVariable, CausalEdge, StructuralCausalModel } from '@interego/core';
 
 // ── Helper: Classic confounded SCM ──────────────────────────
 // X ← U → Y, X → Y (U is an unobserved confounder)

@@ -9,9 +9,9 @@ import {
   formatToolPrompt,
   formatToolResult,
   runToolLoop,
-} from '../src/index.js';
-import type { PGSLInstance, ToolContext, ToolCall } from '../src/index.js';
-import type { IRI } from '../src/model/types.js';
+} from '@interego/core';
+import type { PGSLInstance, ToolContext, ToolCall } from '@interego/core';
+import type { IRI } from '@interego/core';
 
 describe('PGSL LLM Tools', () => {
   let pgsl: PGSLInstance;

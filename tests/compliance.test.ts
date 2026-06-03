@@ -7,7 +7,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { unlinkSync, existsSync } from 'node:fs';
-import type { IRI } from '../src/model/types.js';
+import type { IRI } from '@interego/core';
 import {
   checkComplianceInputs,
   generateFrameworkReport,
@@ -18,7 +18,7 @@ import {
   importComplianceWallet,
   listValidSignerAddresses,
   type AuditableDescriptor,
-} from '../src/compliance/index.js';
+} from '@interego/core';
 
 describe('checkComplianceInputs', () => {
   it('passes when all requirements met', () => {

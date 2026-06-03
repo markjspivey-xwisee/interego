@@ -11,7 +11,7 @@ import {
   withRdf12VersionDirective,
   detectRdf12Features,
   RDF12_VERSION_DIRECTIVE,
-} from '../src/rdf/rdf12.js';
+} from '@interego/core';
 
 describe('RDF 1.2 — directional language-tagged strings', () => {
   it('formats plain language tag', () => {

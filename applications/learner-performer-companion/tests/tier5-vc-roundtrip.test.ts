@@ -40,8 +40,8 @@ import {
   signDescriptor,
   verifyDescriptorSignature,
   importWallet,
-} from '../../../src/index.js';
-import type { IRI } from '../../../src/index.js';
+} from '@interego/core';
+import type { IRI } from '@interego/core';
 
 // ── Stable test wallets ──────────────────────────────────────────────
 

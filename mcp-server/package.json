@@ -26,7 +26,7 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "@interego/core": "file:../interego-core-0.2.0.tgz",
+    "@interego/core": "*",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "ws": "^8.19.0",
     "zod": "^3.23.0"

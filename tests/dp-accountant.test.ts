@@ -20,7 +20,7 @@ import {
   AdvancedCompositionAccountant,
   RenyiAccountant,
   sweepRenyiBestEpsilon,
-} from '../src/crypto/dp-accountant.js';
+} from '@interego/core';
 
 describe('AdvancedCompositionAccountant', () => {
   it('tracks naive sum + throws on overflow', () => {

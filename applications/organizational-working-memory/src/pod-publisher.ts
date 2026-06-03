@@ -13,8 +13,8 @@
  * don't reinvent it here.
  */
 
-import { ContextDescriptor, publish, discover } from '../../../src/index.js';
-import type { IRI, ContextDescriptorData } from '../../../src/index.js';
+import { ContextDescriptor, publish, discover } from '@interego/core';
+import type { IRI, ContextDescriptorData } from '@interego/core';
 import { createHash } from 'node:crypto';
 
 const OWM_NS = 'https://markjspivey-xwisee.github.io/interego/applications/organizational-working-memory/owm#';

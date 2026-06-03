@@ -24,8 +24,8 @@ import {
   verifySiweSignature,
   ContextDescriptor,
   toTurtle,
-} from '../src/index.js';
-import type { IRI, IpfsConfig } from '../src/index.js';
+} from '@interego/core';
+import type { IRI, IpfsConfig } from '@interego/core';
 
 const localIpfsConfig: IpfsConfig = { provider: 'local' };
 

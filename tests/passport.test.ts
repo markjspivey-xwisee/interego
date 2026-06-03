@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { IRI } from '../src/model/types.js';
+import type { IRI } from '@interego/core';
 import {
   createPassport,
   recordLifeEvent,
@@ -16,7 +16,7 @@ import {
   passportToDescriptor,
   passportSummary,
   type LifeEvent,
-} from '../src/passport/index.js';
+} from '@interego/core';
 
 const ALICE = 'urn:agent:alice' as IRI;
 const POD = 'https://pod.example/alice/';

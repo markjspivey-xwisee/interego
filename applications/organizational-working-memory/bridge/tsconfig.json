@@ -4,7 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "outDir": "./dist",
-    "rootDir": "../../..",
+    "rootDir": "../..",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -18,7 +18,6 @@
     "../source-adapters/**/*.ts",
     "../../_shared/affordance-mcp/**/*.ts",
     "../../_shared/vertical-bridge/**/*.ts",
-    "../../../src/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }

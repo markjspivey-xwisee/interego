@@ -37,7 +37,7 @@ import {
   formatSensitivityWarning,
   type IRI,
   type ComplianceFramework,
-} from '../../../src/index.js';
+} from '@interego/core';
 
 // ── Public types ─────────────────────────────────────────────────────
 
@@ -78,7 +78,7 @@ export interface ComplianceCitation {
 }
 
 export interface BuildEventResult {
-  readonly descriptor: import('../../../src/index.js').ContextDescriptorData;
+  readonly descriptor: import('@interego/core').ContextDescriptorData;
   readonly graphIri: IRI;
   readonly graphContent: string;
   readonly eventIri: IRI;
@@ -93,7 +93,7 @@ export interface BuildEventResult {
    * With `onSensitiveArgs: 'block'` (the default), construction
    * throws on HIGH flags rather than returning them here.
    */
-  readonly sensitivityFlags?: readonly import('../../../src/index.js').SensitivityFlag[];
+  readonly sensitivityFlags?: readonly import('@interego/core').SensitivityFlag[];
 }
 
 export interface OverlayConfig {
@@ -190,7 +190,7 @@ export function buildAgentActionDescriptor(
   // messages) — these are the most common shapes for a secrets-in-
   // audit-log leak.
   // Screening is unconditional — compliance evidence cannot opt out.
-  let sensitivityFlags: readonly import('../../../src/index.js').SensitivityFlag[] = [];
+  let sensitivityFlags: readonly import('@interego/core').SensitivityFlag[] = [];
   const screenInput = [
     recordArgs ? argsCanonical : '',
     event.resultSummary ?? '',

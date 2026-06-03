@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { computeCid } from '../src/crypto/ipfs.js';
+import { computeCid } from '@interego/core';
 
 describe('computeCid — real CIDv1 raw + sha2-256', () => {
   it('starts with multibase prefix b + raw-codec marker afkrei', () => {

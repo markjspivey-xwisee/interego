@@ -20,8 +20,8 @@ import {
   findFirstAfter,
   whichCameFirst,
   shouldAbstain,
-} from '../src/index.js';
-import type { TemporalFact } from '../src/index.js';
+} from '@interego/core';
+import type { TemporalFact } from '@interego/core';
 
 describe('parseDate', () => {
   it('parses ISO dates', () => {

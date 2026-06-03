@@ -26,7 +26,7 @@ import {
   type PodView,
   type IRI,
   type ModalValue,
-} from '../src/index.js';
+} from '@interego/core';
 
 // ── Ω (subobject classifier) ──────────────────────────────
 

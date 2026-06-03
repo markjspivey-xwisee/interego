@@ -31,8 +31,8 @@ import {
   verifyAttestedHomomorphicSumV6,
   type DistributedContributionV6,
 } from '../applications/_shared/aggregate-privacy/index.js';
-import { generateKeyPair } from '../src/crypto/encryption.js';
-import type { IRI } from '../src/index.js';
+import { generateKeyPair } from '@interego/core';
+import type { IRI } from '@interego/core';
 
 const COHORT = 'urn:demo:cohort:v6-walkthrough' as IRI;
 const AGGREGATOR = 'did:web:operator.v6-demo' as IRI;

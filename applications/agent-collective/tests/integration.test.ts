@@ -31,8 +31,8 @@ import {
   InMemoryRelay,
   importWallet,
   generateKeyPair,
-} from '../../../src/index.js';
-import type { IRI } from '../../../src/index.js';
+} from '@interego/core';
+import type { IRI } from '@interego/core';
 
 // ── Stable test wallets (repeatable signatures across runs) ──────────
 

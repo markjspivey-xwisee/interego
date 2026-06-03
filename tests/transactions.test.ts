@@ -3,12 +3,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { IRI } from '../src/model/types.js';
+import type { IRI } from '@interego/core';
 import {
   createTransaction,
   executeTransaction,
   transactionStatus,
-} from '../src/transactions/index.js';
+} from '@interego/core';
 
 const COORDINATOR = 'urn:agent:alice' as IRI;
 

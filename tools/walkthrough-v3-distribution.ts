@@ -32,7 +32,7 @@ import {
   verifyAttestedHomomorphicDistribution,
   type NumericBucketingScheme,
 } from '../applications/_shared/aggregate-privacy/index.js';
-import type { IRI } from '../src/index.js';
+import type { IRI } from '@interego/core';
 
 const COHORT = 'urn:demo:cohort:v3-distribution' as IRI;
 const AGGREGATOR = 'did:web:operator.demo' as IRI;
