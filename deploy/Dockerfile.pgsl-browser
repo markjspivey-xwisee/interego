@@ -13,7 +13,7 @@ COPY scripts/ ./scripts/
 COPY packages/ ./packages/
 
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
-RUN npm run -ws --if-present build
+RUN npm run build
 
 RUN mkdir -p /tarballs && \
     cd packages/core && npm pack --pack-destination /tarballs && cd /workspace && \

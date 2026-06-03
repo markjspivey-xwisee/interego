@@ -21,7 +21,7 @@ COPY packages/ ./packages/
 RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
 
 # Build every @interego/* workspace package (core + 13 verticals).
-RUN npm run -ws --if-present build
+RUN npm run build
 
 # Pack each workspace package into /tarballs/*.tgz so the relay's
 # install stage can install them directly without depending on the
