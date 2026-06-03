@@ -989,6 +989,65 @@ export type {
   DescriptorBundle as SkillDescriptorBundle,
 } from './skills/index.js';
 
+// ── Kernel (the substrate's primitives as a first-class API) ────────
+//
+// Interego = primitives + composition mechanics for emergence. The
+// kernel surfaces the six-to-eight verbs that already exist in the
+// codebase (mint, dereference, compose, act, restrict, extend,
+// promote, decompose) as a coherent first-class API. Higher-layer
+// operations (publish_context, register_agent, ...) compose these.
+// See docs/ARCHITECTURAL-FOUNDATIONS.md §11.
+export * as kernel from './kernel/index.js';
+// Spread the kernel verbs at the top level for ergonomic imports.
+// Note: the kernel's `act` verb collides with the OODA loop's `act`
+// (cognitive-loop phase, not a substrate primitive). To preserve
+// backward compatibility with existing OODA callers, the kernel
+// substrate verb is re-exported as `kernelAct` at top level. Use
+// `kernel.act` for the structural form, or import `kernelAct`.
+export {
+  mint,
+  dereference,
+  compose,
+  act as kernelAct,
+  restrict,
+  extend,
+  promote,
+  decompose,
+  extractAffordancesFromTurtle,
+  resetKernelState,
+  decorateKernelResult,
+  decorateShim,
+  hydraAffordance,
+  hydraEntryPoint,
+  KERNEL_JSONLD_CONTEXT,
+  KERNEL_RESULT_SHAPES,
+} from './kernel/index.js';
+export type {
+  Holon,
+  Affordance as KernelAffordance,
+  KernelCompositionOperator,
+  MintOptions,
+  MintResult,
+  DereferenceOptions,
+  DereferenceResult,
+  DereferencedManifestEntry,
+  ComposeOptions,
+  ComposeResult,
+  ActOptions,
+  ActAffordance,
+  ActResult,
+  RestrictSelector,
+  RestrictResult,
+  ExtendOptions,
+  ExtendResult,
+  PromoteOptions,
+  PromoteResult,
+  DecomposeResult,
+  HypermediaAffordance,
+  HypermediaEnvelope,
+  KernelResultKind,
+} from './kernel/index.js';
+
 // ── Name service (L2 — attestation-based naming) ───────────────────
 // A name is a verifiable attestation (`<did> foaf:nick "alice"`), not a
 // claimed registration. Forward + reverse resolution by federated

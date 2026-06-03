@@ -1274,3 +1274,94 @@ cg:revokedIf a owl:ObjectProperty ;
     rdfs:range cg:RevocationCondition ;
     vs:term_status "testing" ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+# ─── Hypermedia + SHACL discipline on kernel + shim responses ──
+#
+# Every kernel-verb / shim response carries a JSON-LD envelope that
+# references one of the shapes below via cg:conformsToShape, so SHACL
+# validators can verify the wire shape without out-of-band schema.
+# These shapes describe the *response envelope* — the underlying
+# domain types (ContextDescriptor, ContextFacet, ...) are shaped
+# above.
+
+cg:Holon a owl:Class ;
+    rdfs:label "Holon" ;
+    rdfs:comment "A dereferenceable IRI together with its level + kind in the substrate (atom / fragment / descriptor / manifest / opaque). The atomic unit kernel verbs operate on." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:HolonShape a sh:NodeShape ;
+    rdfs:label "Holon SHACL shape" ;
+    sh:targetClass cg:Holon ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:KernelResultShape a sh:NodeShape ;
+    rdfs:label "Kernel result envelope SHACL shape" ;
+    rdfs:comment "Base shape every kernel-verb / shim response satisfies — requires JSON-LD typing + at least one cg:Affordance hint for next-step navigation." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:ToolResultShape a sh:NodeShape ;
+    rdfs:label "Tool result envelope SHACL shape" ;
+    rdfs:comment "Base shape every named-tool shim response satisfies — same envelope discipline as kernel verbs." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:RelayEntryPointShape a sh:NodeShape ;
+    rdfs:label "Relay entry point SHACL shape" ;
+    rdfs:comment "Hypermedia entry point document for an HTTP relay's surface — every operation listed MUST be a hydra:Operation." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:AffordanceShape a sh:NodeShape ;
+    rdfs:label "Affordance SHACL shape" ;
+    sh:targetClass cg:Affordance ;
+    rdfs:comment "A cg:Affordance MUST also be a hydra:Operation with cg:action + hydra:target + hydra:method." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:DereferenceResultShape a sh:NodeShape ;
+    rdfs:label "Dereference result SHACL shape" ;
+    rdfs:comment "Result envelope of kernel.dereference — carries the fetched representation + extracted affordances." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:ComposeResultShape a sh:NodeShape ;
+    rdfs:label "Compose result SHACL shape" ;
+    rdfs:comment "Result envelope of kernel.compose — emits a ComposedDescriptor witness." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:ActResultShape a sh:NodeShape ;
+    rdfs:label "Act result SHACL shape" ;
+    rdfs:comment "Result envelope of kernel.act — wraps an HTTP response and echoes the followed affordance." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:PromoteResultShape a sh:NodeShape ;
+    rdfs:label "Promote result SHACL shape" ;
+    rdfs:comment "Result envelope of kernel.promote — apex IRI + lattice level + optional pullback square." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:DecomposeResultShape a sh:NodeShape ;
+    rdfs:label "Decompose result SHACL shape" ;
+    rdfs:comment "Result envelope of kernel.decompose — pullback square (apex + left + right + overlap)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:ManifestShape a sh:NodeShape ;
+    rdfs:label "Manifest SHACL shape" ;
+    rdfs:comment "A pod's .well-known/context-graphs manifest is a hydra:Collection of cg:ContextDescriptor entries." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:conformsToShape a owl:ObjectProperty ;
+    rdfs:label "conforms to shape" ;
+    rdfs:comment "Links a response envelope to the SHACL node shape it satisfies. Spiritual sibling of dct:conformsTo, specialised for sh:NodeShape targets." ;
+    rdfs:range sh:NodeShape ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:iri a owl:DatatypeProperty ;
+    rdfs:label "iri" ;
+    rdfs:comment "The dereferenceable IRI of a holon or response envelope. Wire-level shortcut used in kernel result documents." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:status a owl:DatatypeProperty ;
+    rdfs:label "status" ;
+    rdfs:comment "Substrate-level status code on a kernel-verb response (ok / encrypted-no-key / not-found / error)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:apex a owl:ObjectProperty ;
+    rdfs:label "apex" ;
+    rdfs:comment "The apex fragment IRI of a PGSL pullback square. Used by promote and decompose result envelopes." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
