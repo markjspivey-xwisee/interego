@@ -590,7 +590,11 @@ export {
   observe,
   orient,
   decide,
-  act,
+  // The OODA-loop `act` is the cognitive-loop phase (Boyd), not a
+  // substrate primitive. Re-exported as oodaAct so the bare `act`
+  // name is reserved for the kernel's Peircean-Thirdness substrate
+  // verb. Substrate is the principled owner of the unqualified verb.
+  act as oodaAct,
   evaluateSurprise,
   createStigmergicField,
   updateStigmergicField,
@@ -999,15 +1003,18 @@ export type {
 // See docs/ARCHITECTURAL-FOUNDATIONS.md §11.
 export * as kernel from './kernel/index.js';
 // Spread the kernel verbs at the top level for ergonomic imports.
-// Note: the kernel's `act` verb collides with the OODA loop's `act`
-// (cognitive-loop phase, not a substrate primitive). To preserve
-// backward compatibility with existing OODA callers, the kernel
-// substrate verb is re-exported as `kernelAct` at top level. Use
-// `kernel.act` for the structural form, or import `kernelAct`.
+// The kernel's `act` claims the bare `act` name at top level — it is
+// the substrate's irreducible Peircean-Thirdness verb (act on an
+// affordance). The OODA-loop `act` (cognitive-loop phase, not a
+// substrate primitive) is re-exported as `oodaAct` above. The
+// principled name belongs to the substrate. `kernelAct` is also
+// exported as an explicit alias for back-compat with callers that
+// adopted the name during the transition.
 export {
   mint,
   dereference,
   compose,
+  act,
   act as kernelAct,
   restrict,
   extend,

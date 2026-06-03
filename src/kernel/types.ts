@@ -142,11 +142,27 @@ export interface DereferenceResult {
    * on the entry too.
    */
   readonly manifestEntries?: readonly DereferencedManifestEntry[];
-  /** Lightweight provenance read from the representation. */
+  /**
+   * Structured provenance read from the representation. Parsed via the
+   * substrate's `parseTrig` so every prov:* / cg:supersedes / dct:* triple
+   * is recovered, including multi-value lists and across all subjects in
+   * the document (descriptor IRI + named graph IRI + any blank-node
+   * provenance constructs). When the body is unparseable, `provenance`
+   * is omitted (we don't surface partial garbage as substrate truth).
+   */
   readonly provenance?: {
+    /** prov:wasDerivedFrom — IRIs of prior holons this one depends on. */
     readonly wasDerivedFrom?: readonly string[];
+    /** prov:wasGeneratedBy — the generating activity's IRI. */
     readonly wasGeneratedBy?: string;
+    /** prov:wasAttributedTo — the responsible agent(s) IRI. */
+    readonly wasAttributedTo?: readonly string[];
+    /** prov:generatedAtTime — when the holon came into being. */
+    readonly generatedAtTime?: string;
+    /** cg:supersedes — IRIs of holons this one replaces in a chain. */
     readonly supersedes?: readonly string[];
+    /** dct:conformsTo — SHACL shapes / ontology terms this conforms to. */
+    readonly conformsTo?: readonly string[];
   };
   /** Numeric HTTP status from the underlying fetch (when applicable). */
   readonly httpStatus?: number;

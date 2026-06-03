@@ -57,6 +57,7 @@ import {
   AffordanceNotFoundError,
 } from '../solid/affordance.js';
 import { fetchGraphContent, parseManifest } from '../solid/client.js';
+import { parseTrig } from '../rdf/turtle-parser.js';
 import { getDefaultFetch } from '../solid/client.js';
 import { withTransientRetry } from '../solid/retry.js';
 import type { FetchFn } from '../solid/types.js';
@@ -303,7 +304,7 @@ export async function dereference(iri: string, options?: DereferenceOptions): Pr
     }
     const representation = r.content ?? '';
     const affordances = extractAffordancesFromTurtle(representation, iri);
-    const provenance = readLightweightProvenance(representation);
+    const provenance = readProvenance(representation);
     const result: Mutable<DereferenceResult> = {
       iri,
       status: 'ok',
@@ -411,28 +412,95 @@ async function dereferenceManifest(
 }
 
 /**
- * Scan a Turtle/TriG body for the substrate's standard provenance
- * predicates without a full RDF parse — cheap, best-effort, and
- * tolerant of partial/malformed bodies.
+ * Walk a Turtle/TriG body via the substrate's structured RDF parser
+ * (`parseTrig`) to recover full provenance: every prov:* and cg:supersedes
+ * and dct:conformsTo across every subject in the document — both the
+ * descriptor's own subject IRI and any nested named-graph subjects.
+ *
+ * The lightweight regex pass this replaces missed (a) multi-line
+ * triples broken across whitespace, (b) provenance attached to nested
+ * blank-node activity records, (c) supersedes lists with multiple IRIs
+ * in the same triple. `parseTrig` is the substrate's structured parser
+ * with no runtime deps and is already used by federation-loader +
+ * affordance-extraction tests; reusing it here keeps the substrate
+ * coherent.
+ *
+ * On parse failure (malformed body), returns `undefined` rather than
+ * surfacing partial garbage — substrate truth lives at one level above
+ * "we got some bytes". Callers who want the raw representation have it
+ * in `result.representation`.
  */
-function readLightweightProvenance(body: string): DereferenceResult['provenance'] {
+function readProvenance(body: string): DereferenceResult['provenance'] {
   if (!body) return undefined;
-  const out: { wasDerivedFrom?: string[]; wasGeneratedBy?: string; supersedes?: string[] } = {};
 
-  const derivedRe = /prov:wasDerivedFrom\s+<([^>]+)>/g;
-  let m;
-  const derived: string[] = [];
-  while ((m = derivedRe.exec(body)) !== null) derived.push(m[1]!);
-  if (derived.length > 0) out.wasDerivedFrom = derived;
+  // Canonical full-IRI form of each predicate we walk. parseTrig
+  // expands prefixed names to full IRIs, so we match on the full form.
+  const PROV = 'http://www.w3.org/ns/prov#';
+  const CG = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
+  const DCT = 'http://purl.org/dc/terms/';
 
-  const genRe = /prov:wasGeneratedBy\s+<([^>]+)>/;
-  const gen = genRe.exec(body);
-  if (gen) out.wasGeneratedBy = gen[1]!;
+  const derivedFrom = new Set<string>();
+  const supersedes = new Set<string>();
+  const attributedTo = new Set<string>();
+  const conformsTo = new Set<string>();
+  let wasGeneratedBy: string | undefined;
+  let generatedAtTime: string | undefined;
 
-  const supRe = /cg:supersedes\s+<([^>]+)>/g;
-  const sup: string[] = [];
-  while ((m = supRe.exec(body)) !== null) sup.push(m[1]!);
-  if (sup.length > 0) out.supersedes = sup;
+  let parsed;
+  try {
+    parsed = parseTrig(body);
+  } catch {
+    return undefined;
+  }
+
+  for (const subject of parsed.subjects) {
+    // Walk every property the parser recovered. We don't filter by
+    // subject — provenance attached to a descriptor's named graph
+    // subject (urn:graph:...) is just as real as provenance attached to
+    // the descriptor IRI itself.
+    for (const [predicate, terms] of subject.properties) {
+      const inProv = predicate.startsWith(PROV);
+      const inCg = predicate.startsWith(CG);
+      const inDct = predicate.startsWith(DCT);
+      if (!inProv && !inCg && !inDct) continue;
+
+      const local = predicate.slice((inProv ? PROV : inCg ? CG : DCT).length);
+
+      for (const term of terms) {
+        if (term.kind === 'iri') {
+          switch (local) {
+            case 'wasDerivedFrom':
+              derivedFrom.add(term.iri); break;
+            case 'wasGeneratedBy':
+              if (!wasGeneratedBy) wasGeneratedBy = term.iri; break;
+            case 'wasAttributedTo':
+              attributedTo.add(term.iri); break;
+            case 'supersedes':
+              if (inCg) supersedes.add(term.iri); break;
+            case 'conformsTo':
+              if (inDct) conformsTo.add(term.iri); break;
+          }
+        } else if (term.kind === 'literal' && local === 'generatedAtTime' && !generatedAtTime) {
+          generatedAtTime = term.value;
+        }
+      }
+    }
+  }
+
+  const out: {
+    wasDerivedFrom?: readonly string[];
+    wasGeneratedBy?: string;
+    wasAttributedTo?: readonly string[];
+    generatedAtTime?: string;
+    supersedes?: readonly string[];
+    conformsTo?: readonly string[];
+  } = {};
+  if (derivedFrom.size > 0) out.wasDerivedFrom = [...derivedFrom];
+  if (wasGeneratedBy) out.wasGeneratedBy = wasGeneratedBy;
+  if (attributedTo.size > 0) out.wasAttributedTo = [...attributedTo];
+  if (generatedAtTime) out.generatedAtTime = generatedAtTime;
+  if (supersedes.size > 0) out.supersedes = [...supersedes];
+  if (conformsTo.size > 0) out.conformsTo = [...conformsTo];
 
   return Object.keys(out).length > 0 ? out : undefined;
 }
