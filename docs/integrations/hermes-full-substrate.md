@@ -24,12 +24,13 @@ you don't actually need two installs to get "the whole thing."
 
 ## The bloat problem
 
-Interego's relay exposes ~15 tools; the full MCP server exposes ~60
+Both Interego's relay and the local MCP server expose 26 tools
 (`publish_context`, `discover_context`, `register_agent`,
-`verify_agent`, `discover_all`, `compose_contexts`, `subscribe_to_pod`,
-…). Surface them flat and every one costs context budget on every turn,
-forever — whether or not the agent ever uses it. The agent's working
-memory gets crowded out by an API reference it mostly ignores.
+`verify_agent`, `discover_all`, `subscribe_to_pod`, the 5 PGSL
+primitives, ...). Surface them flat and every one costs context
+budget on every turn, forever — whether or not the agent ever uses
+it. The agent's working memory gets crowded out by an API reference
+it mostly ignores.
 
 That is the wrong shape. The fix is not "curate a smaller flat list" —
 any fixed list is either too big or too limiting. The fix is to stop
