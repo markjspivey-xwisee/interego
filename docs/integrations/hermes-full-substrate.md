@@ -24,7 +24,7 @@ you don't actually need two installs to get "the whole thing."
 
 ## The bloat problem
 
-Both Interego's relay and the local MCP server expose 26 tools
+Both Interego's relay and the local MCP server expose 27 tools
 (`publish_context`, `discover_context`, `register_agent`,
 `verify_agent`, `discover_all`, `subscribe_to_pod`, the 5 PGSL
 primitives, ...). Surface them flat and every one costs context

@@ -1,6 +1,6 @@
 # @interego/mcp
 
-**MCP server for [Interego](https://github.com/markjspivey-xwisee/interego)** — exposes 26 tools for publishing, discovering, composing, and reasoning over typed knowledge graphs through Solid pods. Compatible with Claude Code, Claude Desktop, Cursor, Windsurf, Cline, and any other MCP client.
+**MCP server for [Interego](https://github.com/markjspivey-xwisee/interego)** — exposes 27 tools for publishing, discovering, composing, reasoning over, and dynamically invoking typed knowledge graphs through Solid pods. Compatible with Claude Code, Claude Desktop, Cursor, Windsurf, Cline, and any other MCP client.
 
 ## Install
 
@@ -82,7 +82,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ## What you get
 
-Once configured, your AI agent has these 26 tools available:
+Once configured, your AI agent has these 27 tools available:
 
 | Category | Tools |
 |---|---|
@@ -93,6 +93,7 @@ Once configured, your AI agent has these 26 tools available:
 | **PGSL substrate** | `pgsl_ingest`, `pgsl_resolve`, `pgsl_lattice_status`, `pgsl_meet`, `pgsl_to_turtle` |
 | **Reasoning** | `analyze_question` |
 | **Wallet** | `check_balance` |
+| **Generic vertical access** | `invoke_affordance` — discover any vertical's affordance via `discover_context` + `get_descriptor`, then invoke it through this one tool. One Interego connector reaches Foxxi / LRS / OWM / ADP / AC / LPC dynamically; no per-vertical MCP install required. |
 
 ### What `publish_context` actually does
 
@@ -169,7 +170,7 @@ node dist/server.js
 
 The stdio server in this package is for desktop clients that can spawn a subprocess. For **claude.ai mobile / web custom connectors, ChatGPT custom connectors, Cursor remote MCP**, and any other OAuth-authenticated remote MCP client, use the cloud-hosted `interego-relay` instead.
 
-**Tool surface parity:** the relay exposes the same 26 tools as this stdio server, with two carve-outs that fit the remote OAuth model: `setup_identity` and `link_wallet` are present in the relay's tool list but return a redirect message ("you're already identified via OAuth; use the local stdio for wallet management"), since the user's wallet keys live on their device, not on the relay server. `check_balance` is a real read-only call against the relay's compliance wallet.
+**Tool surface parity:** the relay exposes the same 27 tools as this stdio server, with two carve-outs that fit the remote OAuth model: `setup_identity` and `link_wallet` are present in the relay's tool list but return a redirect message ("you're already identified via OAuth; use the local stdio for wallet management"), since the user's wallet keys live on their device, not on the relay server. `check_balance` is a real read-only call against the relay's compliance wallet.
 
 - **Connector URL:** your deployment's relay, e.g. `https://interego-relay.<your-env>.azurecontainerapps.io/mcp`
 - **Authentication:** OAuth 2.1 + PKCE + Dynamic Client Registration. The relay's `/authorize` page offers three passwordless sign-in methods: **passkey** (WebAuthn), **Ethereum wallet** (SIWE), and **did:key** (Ed25519 signature). No shared secrets anywhere, no user-claimable identifiers — the userId is derived from your first credential (`u-pk-<hash>` / `u-eth-<addr>` / `u-did-<hash>`), so an attacker can't bind their passkey to your display alias.

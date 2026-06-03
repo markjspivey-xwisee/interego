@@ -64,9 +64,14 @@ src/
 Plus surrounding infrastructure:
 
 ```
-mcp-server/    Stdio MCP server — 26 tools including publish_context + share_with;
+mcp-server/    Stdio MCP server — 27 tools including publish_context + share_with;
                subscriptions capped at CG_MAX_SUBSCRIPTIONS (default 32);
-               unsubscribe_from_pod tool releases a slot
+               unsubscribe_from_pod tool releases a slot.
+               invoke_affordance is the universal Path A entry point —
+               any vertical's affordances reachable via discover_context
+               + get_descriptor + invoke_affordance without a per-vertical
+               MCP install. Per-vertical bridges still ship their own
+               native MCP surfaces (Path B ergonomics) alongside.
 deploy/
   identity/    Stateless DID resolver + signature verifier;
                auth-methods live in each user's pod (auth-methods.jsonld)
@@ -134,7 +139,7 @@ See [`spec/LAYERS.md`](spec/LAYERS.md). Every artifact in this repository sits o
 - **Layer 1 — Protocol** (normative): `cg:`, `cgh:`, `pgsl:`, `ie:`, `align:`; `spec/architecture.md`; `spec/conformance/**`. RFC 2119 language.
 - **Layer 2 — Architecture** (informative patterns): `hyprcat:`, `hypragent:`, `abac:`, `registry:`, `passport:`; applicability notes; `docs/e2ee.md` architecture sections.
 - **Layer 3 — Implementation & Domain** (non-normative): `hela:`, `sat:`, `cts:`, `olke:`, `amta:`; everything under `src/`, `deploy/`, `examples/`; any future domain vocabulary (`code:`, `med:`, `learning:`, ...).
-- **Vertical applications** (non-normative, application-over-L3): [`applications/`](applications/) holds vertical use cases that COMPOSE the protocol without extending it. Each has its own scoped namespace OUTSIDE the protocol IRI space (e.g., `lpc:`, `adp:`, `lrs:`, `ac:`, `owm:`). Verticals MUST NOT propose changes to L1/L2/L3 ontologies. Current example verticals: `learner-performer-companion/`, `agent-development-practice/`, `lrs-adapter/`, `agent-collective/`, `organizational-working-memory/`. See [`applications/README.md`](applications/README.md) for layering discipline. **Verticals are NEVER bundled into the generic Interego deployments** (mcp-server, examples/personal-bridge, deploy/mcp-relay). Each vertical declares capabilities as `cg:Affordance` descriptors in `<vertical>/affordances.ts` (single source of truth) and exposes them two ways: (Path A) generic protocol-level discovery via the standard `discover_context` flow + standard HTTP POST to `hydra:target`, (Path B) optional per-vertical MCP bridge under `<vertical>/bridge/` that derives MCP tool schemas from the affordances. Path A is primary; Path B is ergonomic only.
+- **Vertical applications** (non-normative, application-over-L3): [`applications/`](applications/) holds vertical use cases that COMPOSE the protocol without extending it. Each has its own scoped namespace OUTSIDE the protocol IRI space (e.g., `lpc:`, `adp:`, `lrs:`, `ac:`, `owm:`). Verticals MUST NOT propose changes to L1/L2/L3 ontologies. Current example verticals: `learner-performer-companion/`, `agent-development-practice/`, `lrs-adapter/`, `agent-collective/`, `organizational-working-memory/`. See [`applications/README.md`](applications/README.md) for layering discipline. **Verticals are NEVER bundled into the generic Interego deployments** (mcp-server, examples/personal-bridge, deploy/mcp-relay). Each vertical declares capabilities as `cg:Affordance` descriptors in `<vertical>/affordances.ts` (single source of truth) and exposes them two ways: (Path A) generic protocol-level discovery via the standard `discover_context` flow, then invocation through the substrate's `invoke_affordance` tool — which proxies the HTTP POST to `hydra:target` so MCP clients without raw-HTTP access can still follow the link, (Path B) optional per-vertical MCP bridge under `<vertical>/bridge/` that derives MCP tool schemas from the affordances. Path A is primary and the only path needed for full access; Path B remains useful as ergonomic native tool surface AND as the mandatory handler runtime for verticals with complex domain logic (PDF/SCORM/BBS+/cmi5 etc.) — even when an MCP client uses Path A to invoke, the handler still executes on the per-vertical bridge process behind `hydra:target`.
 
 **Five drift triggers — STOP and flag before proceeding if any appears:**
 
