@@ -115,6 +115,26 @@ import {
   type SignedDescriptor,
   // Generic affordance follower (Path A — reach any vertical via descriptors)
   followAffordance,
+  // ── Kernel (the substrate's primitives as first-class verbs) ──
+  // Compatibility shims below re-route through these where natural.
+  // See docs/ARCHITECTURAL-FOUNDATIONS.md §11. The kernel's `act`
+  // verb is exported as `kernelAct` at the top level (the bare `act`
+  // export is the OODA cognitive-loop phase, preserved for backward
+  // compatibility).
+  mint as kernelMint,
+  dereference as kernelDereference,
+  compose as kernelCompose,
+  kernelAct,
+  restrict as kernelRestrict,
+  extend as kernelExtend,
+  promote as kernelPromote,
+  decompose as kernelDecompose,
+  extractAffordancesFromTurtle,
+  decorateKernelResult,
+  decorateShim,
+  hydraEntryPoint,
+  KERNEL_JSONLD_CONTEXT,
+  KERNEL_RESULT_SHAPES,
 } from '@interego/core';
 
 import type {
@@ -1906,12 +1926,20 @@ async function toolInvokeAffordance(args: {
   payload: Record<string, unknown>;
   authorization?: string;
 }): Promise<string> {
-  const result = await followAffordance(
-    args.descriptor_url,
-    args.action_iri,
+  // Compatibility shim — internally a kernel `act` call. The wire
+  // shape of input + output is unchanged so existing connectors keep
+  // working. The legacy `followAffordance` return shape is preserved
+  // by serializing what `act` returns (kernel `act` is a thin wrapper
+  // around `followAffordance` with the pre-resolved-affordance form
+  // added).
+  const result = await kernelAct(
+    { descriptorUrl: args.descriptor_url, actionIri: args.action_iri },
     args.payload,
-    args.authorization ? { authorization: args.authorization } : undefined,
+    args.authorization ? { authorization: args.authorization, fetch: solidFetch } : { fetch: solidFetch },
   );
+  // Legacy shape: the existing handler returned `followAffordance`'s
+  // result directly. Kernel `act` returns the same fields plus echoes
+  // the affordance — so callers see the same structure.
   return JSON.stringify(result);
 }
 
@@ -2321,10 +2349,138 @@ const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
 
 mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: ([
-    // ── Core tools ──
+    // ═══════════════════════════════════════════════════════════
+    //  Kernel verbs — the substrate's primitives as first-class
+    //  tools. The 27 named tools below are compatibility shims
+    //  internally composed from these. See
+    //  docs/ARCHITECTURAL-FOUNDATIONS.md §11.
+    // ═══════════════════════════════════════════════════════════
+    {
+      name: 'mint',
+      description: 'Kernel verb — content-addressed holon construction. Same content always yields the same IRI (Identity-by-reference, Invariant 1). Kinds: atom (default; PGSL leaf), fragment (sequence of atoms / IRIs), descriptor (a ContextDescriptorData), opaque (any value, hashed). Idempotent: calling mint twice returns the same holon.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          content: { description: 'The value (atom), list of atoms / IRIs (fragment), descriptor JSON (descriptor), or any value (opaque) to mint.' },
+          kind: { type: 'string', enum: ['atom', 'fragment', 'descriptor', 'opaque'], description: 'Substrate kind (default: atom).' },
+        },
+        required: ['content'],
+      },
+      annotations: { title: 'Mint a holon', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: 'dereference',
+      description: 'Kernel verb — Peircean Secondness: the brute act of resolving an IRI to its current representation, embedded affordances, and lightweight provenance. When the IRI is a pod manifest (.well-known/context-graphs), returns the entry list decorated with per-entry affordances. Handles encrypted envelopes (status: encrypted-no-key when no key supplied).',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          iri: { type: 'string', description: 'IRI to resolve (descriptor URL, graph URL, manifest URL, etc.).' },
+          decorate_manifest: { type: 'boolean', description: 'When the IRI is a manifest, also fetch each entry\'s descriptor and decorate it with affordances. Default true.' },
+        },
+        required: ['iri'],
+      },
+      annotations: { title: 'Dereference an IRI', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    {
+      name: 'compose',
+      description: 'Kernel verb — operadic composition over the typed-hyperedge category. Applies one of the four protocol operators (§3.4) to a list of descriptors: union (lattice join), intersection (lattice meet), restriction (project to facet-type subset), override (left-biased replacement). Bounded-lattice laws (identity, associativity, absorption) hold.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          descriptors: { type: 'array', items: { type: 'object', additionalProperties: true }, description: 'List of ContextDescriptorData operands.' },
+          operator: { type: 'string', enum: ['union', 'intersection', 'restriction', 'override'], description: 'Composition operator.' },
+          types: { type: 'array', items: { type: 'string' }, description: 'Required when operator=restriction: facet types to project onto.' },
+        },
+        required: ['descriptors', 'operator'],
+      },
+      annotations: { title: 'Compose descriptors', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: 'act',
+      description: 'Kernel verb — Peircean Thirdness made operational. Follows an affordance carried on a descriptor. Two forms: (a) {descriptor_url, action_iri} resolves and follows; (b) {target, action, method} invokes a pre-resolved affordance (the shape dereference returns).',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          descriptor_url: { type: 'string', description: 'Descriptor URL when resolving an affordance.' },
+          action_iri: { type: 'string', description: 'The cg:action IRI to select from the descriptor.' },
+          target: { type: 'string', description: 'Direct invocation: hydra:target URL.' },
+          action: { type: 'string', description: 'Direct invocation: cg:action IRI (echo).' },
+          method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], description: 'Direct invocation: HTTP method.' },
+          media_type: { type: 'string', description: 'Direct invocation: dcat:mediaType.' },
+          payload: { description: 'Payload to send (JSON-serialized).' },
+          authorization: { type: 'string', description: 'Optional Authorization header value.' },
+        },
+      },
+      annotations: { title: 'Act on an affordance', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    {
+      name: 'restrict',
+      description: 'Kernel verb — adjunction left half (whole → part). Projects a descriptor to a sub-hyperedge specification. Selector kinds: facet-types (project to the named facet types).',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          descriptor: { type: 'object', additionalProperties: true, description: 'Holon to restrict.' },
+          selector: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['facet-types'] },
+              types: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['kind'],
+          },
+        },
+        required: ['descriptor', 'selector'],
+      },
+      annotations: { title: 'Restrict a holon', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: 'extend',
+      description: 'Kernel verb — adjunction right half (part → whole). Inverse of restrict: produces a descriptor whose facets are the whole\'s with the part\'s restriction witness preserved via cg:supersedes.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          part: { type: 'object', additionalProperties: true, description: 'The restricted descriptor (the part).' },
+          whole: { type: 'object', additionalProperties: true, description: 'The containing whole.' },
+          preserve_witness: { type: 'boolean', description: 'Back-link via cg:supersedes (default true).' },
+        },
+        required: ['part', 'whole'],
+      },
+      annotations: { title: 'Extend a part to a whole', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: 'promote',
+      description: 'Kernel verb — PGSL fibration vertical movement upward (level k → k+1). Builds the lattice from atoms up to the apex fragment; returns the apex IRI and the pullback square structure when level ≥ 2.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          atoms: { type: 'array', items: {}, description: 'Sequence of values or PGSL atom IRIs to promote.' },
+        },
+        required: ['atoms'],
+      },
+      annotations: { title: 'Promote atoms to an apex', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    {
+      name: 'decompose',
+      description: 'Kernel verb — PGSL fibration vertical movement downward (level k → k-1). Returns the left/right constituents and overlap for a fragment of level ≥ 2 via the pullback square. Returns null for atoms and level-1 fragments.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          iri: { type: 'string', description: 'PGSL fragment IRI to decompose.' },
+        },
+        required: ['iri'],
+      },
+      annotations: { title: 'Decompose a fragment', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    // ═══════════════════════════════════════════════════════════
+    //  Compatibility shims — the 27 named tools.
+    //  Each one is internally composed from kernel verbs; their
+    //  input / output schemas are unchanged for connector
+    //  compatibility. For pure substrate access use the kernel
+    //  verbs above.
+    // ═══════════════════════════════════════════════════════════
     {
       name: 'publish_context',
-      description: 'Publish a context-annotated knowledge graph to your Solid pod on behalf of the pod owner. The descriptor includes owner attribution (wasAttributedTo → owner, wasAssociatedWith → agent), semiotic frame, trust with delegation credential, and federation metadata.',
+      description: 'Compatibility shim — internally composes kernel(compose+act) over a publish affordance plus E2EE / anchoring / compliance plumbing. For pure substrate access, use the kernel verbs (mint, compose, act) directly. Publishes a context-annotated knowledge graph to your Solid pod on behalf of the pod owner. The descriptor includes owner attribution (wasAttributedTo → owner, wasAssociatedWith → agent), semiotic frame, trust with delegation credential, and federation metadata.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2363,7 +2519,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'discover_context',
-      description: 'Discover context descriptors on a specific Solid pod. Optionally verify the agent delegation chain.',
+      description: 'Compatibility shim — internally `dereference(podUrl + "/.well-known/context-graphs")` plus filter post-processing. For pure substrate access, use the kernel verb `dereference` directly. Discovers context descriptors on a specific Solid pod. Optionally verify the agent delegation chain.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2381,7 +2537,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'get_descriptor',
-      description: 'Fetch the full Turtle content of a specific context descriptor.',
+      description: 'Compatibility shim — internally `dereference(descriptorUrl)`, with envelope decryption handled by the kernel verb. For pure substrate access, use `dereference` directly. Fetches the full Turtle content of a specific context descriptor.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2394,7 +2550,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'subscribe_to_pod',
-      description: 'Subscribe to live WebSocket notifications from a Solid pod. Capped at CG_MAX_SUBSCRIPTIONS (default 32) per process; call unsubscribe_from_pod to release a slot.',
+      description: 'Compatibility shim — composes a notify-channel affordance plus a long-lived listener. The notify channel itself is dereference-discoverable; this shim wraps the WebSocket plumbing. Subscribes to live WebSocket notifications from a Solid pod. Capped at CG_MAX_SUBSCRIPTIONS (default 32) per process; call unsubscribe_from_pod to release a slot.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2407,7 +2563,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'unsubscribe_from_pod',
-      description: 'Close an active WebSocket subscription on a Solid pod. Releases a slot toward the CG_MAX_SUBSCRIPTIONS cap. No-op if not subscribed.',
+      description: 'Compatibility shim — paired with subscribe_to_pod; closes the WebSocket plumbing. Closes an active WebSocket subscription on a Solid pod. Releases a slot toward the CG_MAX_SUBSCRIPTIONS cap. No-op if not subscribed.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2420,7 +2576,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'get_pod_status',
-      description: 'Check a Solid pod — owner, agents, descriptors, notifications.',
+      description: 'Compatibility shim — composes `dereference(pod + agent-registry)` + `dereference(pod + manifest)`. For pure substrate access, use `dereference` directly. Checks a Solid pod — owner, agents, descriptors, notifications.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2433,7 +2589,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── Delegation tools ──
     {
       name: 'register_agent',
-      description: 'Register an AI agent as authorized to act on behalf of the pod owner.',
+      description: 'Compatibility shim — internally `dereference(pod) → find register affordance → act(affordance, {agentId, scope, validUntil})`. For pure substrate access, use the kernel verbs (`dereference`, `act`) directly. Registers an AI agent as authorized to act on behalf of the pod owner.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2450,7 +2606,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'revoke_agent',
-      description: "Revoke an agent's delegation.",
+      description: "Compatibility shim — internally `dereference(pod) → find revoke affordance → act(affordance, {agentId})`. For pure substrate access, use the kernel verbs directly. Revokes an agent's delegation.",
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2464,7 +2620,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'verify_agent',
-      description: "Verify an agent is authorized on a pod by checking the agent registry.",
+      description: "Compatibility shim — internally `dereference(pod + agent-registry)` and inspects the resulting graph. For pure substrate access, use `dereference` directly. Verifies an agent is authorized on a pod by checking the agent registry.",
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2479,7 +2635,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── Multi-pod federation tools ──
     {
       name: 'discover_all',
-      description: 'Fan out discovery across ALL known pods in the registry. Returns aggregated results from every pod.',
+      description: 'Compatibility shim — internally `Promise.all(knownPods.map(p => dereference(p + manifest)))` + result merge. For pure substrate access, use `dereference` per pod. Fans out discovery across ALL known pods in the registry. Returns aggregated results from every pod.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2493,21 +2649,21 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'subscribe_all',
-      description: 'Subscribe to WebSocket notifications from ALL known pods.',
+      description: 'Compatibility shim — internally `knownPods.forEach(subscribe_to_pod)`. Subscribes to WebSocket notifications from ALL known pods.',
       inputSchema: { type: 'object' as const, properties: {} },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
       annotations: { title: 'Subscribe to all known pods', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'list_known_pods',
-      description: 'List all pods in the federation registry — home pod, configured pods, directory-discovered pods, WebFinger-resolved pods.',
+      description: 'Compatibility shim — local registry view; the underlying entries are dereferenceable IRIs. Lists all pods in the federation registry — home pod, configured pods, directory-discovered pods, WebFinger-resolved pods.',
       inputSchema: { type: 'object' as const, properties: {} },
       outputSchema: LIST_KNOWN_PODS_OUTPUT,
       annotations: { title: 'List pods in federation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'add_pod',
-      description: 'Manually add a Solid pod URL to the federation registry.',
+      description: 'Compatibility shim — updates the local pod registry; the pod itself remains a dereferenceable IRI. Manually adds a Solid pod URL to the federation registry.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2522,7 +2678,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'remove_pod',
-      description: 'Remove a pod from the federation registry (cannot remove home pod).',
+      description: 'Compatibility shim — updates the local pod registry only. Removes a pod from the federation registry (cannot remove home pod).',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2535,7 +2691,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'discover_directory',
-      description: 'Fetch a PodDirectory graph from a URL and import all listed pods into the registry. Directories are RDF graphs listing known pods.',
+      description: 'Compatibility shim — internally `dereference(directoryUrl)` then registers the listed pods locally. Fetches a PodDirectory graph from a URL and imports all listed pods into the registry. Directories are RDF graphs listing known pods.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2548,7 +2704,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'publish_directory',
-      description: 'Publish the current pod registry as a PodDirectory graph on your home pod. Other agents can fetch this to discover your known pods.',
+      description: 'Compatibility shim — composes `mint(directoryGraph) → act(homePod.publishAffordance, directoryGraph)`. Publishes the current pod registry as a PodDirectory graph on your home pod. Other agents can fetch this to discover your known pods.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2560,7 +2716,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'resolve_webfinger',
-      description: 'Resolve a WebFinger identifier (acct:user@domain or WebID URL) to discover a Solid pod URL via RFC 7033. Adds the discovered pod to the registry.',
+      description: 'Compatibility shim — internally `dereference(host + .well-known/webfinger)` with RFC 7033 parsing. Resolves a WebFinger identifier (acct:user@domain or WebID URL) to discover a Solid pod URL via RFC 7033. Adds the discovered pod to the registry.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2574,7 +2730,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── Onboarding ──
     {
       name: 'setup_identity',
-      description: 'First-time onboarding: creates your identity (WebID, DID, Ed25519 keys), provisions your Solid pod, registers your agent with delegation credentials, and returns a bearer token. Run this once when setting up a new human user.',
+      description: 'Compatibility shim — composes identity-server setup-affordance + agent-registry mint + delegation-credential publish. For pure substrate access, dereference the identity server and follow its affordances directly. First-time onboarding: creates your identity (WebID, DID, Ed25519 keys), provisions your Solid pod, registers your agent with delegation credentials, and returns a bearer token. Run this once when setting up a new human user.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2589,7 +2745,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'link_wallet',
-      description: 'Link an existing Ethereum wallet to your identity. Generates a SIWE message for you to sign offline (with cast, ethers CLI, or MetaMask). Alternatively, open the web connect page at the identity server to sign in browser.',
+      description: 'Compatibility shim — composes SIWE message-construction + identity-server link-wallet affordance. Links an existing Ethereum wallet to your identity. Generates a SIWE message for you to sign offline (with cast, ethers CLI, or MetaMask). Alternatively, open the web connect page at the identity server to sign in browser.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2603,7 +2759,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'check_balance',
-      description: 'Check the ETH balance of a wallet on the active chain. Returns balance, funding status, and instructions if unfunded.',
+      description: 'Compatibility shim — calls the active chain\'s RPC; not a substrate-level operation (no IRIs to dereference here). Checks the ETH balance of a wallet on the active chain. Returns balance, funding status, and instructions if unfunded.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2616,7 +2772,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── Comprehension tools ──
     {
       name: 'analyze_question',
-      description: 'Analyze a question using the affordance engine to determine the optimal cognitive strategy. Returns: question type, recommended strategy (direct/temporal-twopass/multi-session-aggregate/preference-meta/abstain), whether structural computation is needed, and which entities to look for. Use this BEFORE answering a question to select the right approach.',
+      description: 'Compatibility shim — composes the affordance engine\'s cognitive-strategy primitive over a question + observation set. Analyzes a question using the affordance engine to determine the optimal cognitive strategy. Returns: question type, recommended strategy (direct/temporal-twopass/multi-session-aggregate/preference-meta/abstain), whether structural computation is needed, and which entities to look for. Use this BEFORE answering a question to select the right approach.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2631,7 +2787,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── PGSL tools ──
     {
       name: 'pgsl_ingest',
-      description: 'Ingest content into the PGSL lattice. Tokenizes the content, builds the overlapping-pair lattice bottom-up, and returns the top fragment URI. Optionally publishes the lattice as a context descriptor to the pod.',
+      description: 'Compatibility shim — internally `promote(tokens)`. For pure substrate access, use the kernel verb `promote` directly. Ingests content into the PGSL lattice. Tokenizes the content, builds the overlapping-pair lattice bottom-up, and returns the top fragment URI. Optionally publishes the lattice as a context descriptor to the pod.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2645,7 +2801,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'pgsl_resolve',
-      description: 'Resolve a PGSL URI to its content. For atoms: returns the value. For fragments: returns the full reconstructed text. Also shows node metadata (level, constituents, pullback, provenance).',
+      description: 'Compatibility shim — composes `decompose` (for fragments) and the PGSL value-resolution primitive. For pure substrate access, use the kernel verb `decompose` directly. Resolves a PGSL URI to its content. For atoms: returns the value. For fragments: returns the full reconstructed text. Also shows node metadata (level, constituents, pullback, provenance).',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2658,14 +2814,14 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'pgsl_lattice_status',
-      description: 'Show the current state of the PGSL lattice — atom count, fragment count, levels, total nodes.',
+      description: 'Compatibility shim — local view of the PGSL fibration\'s base. Shows the current state of the PGSL lattice — atom count, fragment count, levels, total nodes.',
       inputSchema: { type: 'object' as const, properties: {} },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
       annotations: { title: 'PGSL lattice status', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     {
       name: 'pgsl_meet',
-      description: 'Compute the lattice meet (greatest lower bound) of two fragments — the largest shared sub-sequence. This is the categorical intersection in the presheaf topos.',
+      description: 'Compatibility shim — kernel verb `compose([a,b], "intersection")` realizes the same lattice meet at the descriptor layer; this shim retains the PGSL-fragment-specific view. Computes the lattice meet (greatest lower bound) of two fragments — the largest shared sub-sequence. This is the categorical intersection in the presheaf topos.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2679,7 +2835,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: 'pgsl_to_turtle',
-      description: 'Serialize the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance — all as typed RDF resources with the pgsl: vocabulary.',
+      description: 'Compatibility shim — serializes the kernel\'s shared PGSL instance. Serializes the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance — all as typed RDF resources with the pgsl: vocabulary.',
       inputSchema: { type: 'object' as const, properties: {} },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
       annotations: { title: 'Serialize PGSL as Turtle', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -2687,7 +2843,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
     // ── Generic affordance follower (Path A — reach any vertical) ──
     {
       name: 'invoke_affordance',
-      description: 'Generic affordance follower. Given a descriptor URL and a cg:action IRI, this fetches the descriptor, finds the matching cg:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
+      description: 'Compatibility shim — internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a cg:action IRI, this fetches the descriptor, finds the matching cg:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -2704,13 +2860,369 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
   ] as Array<{name: string; description: string; inputSchema: object; outputSchema?: object; annotations?: object}>).filter(t => isToolEnabled(t.name)),
 }));
 
+// ── Kernel-verb dispatcher ─────────────────────────────────
+//
+// Adapts JSON-shaped MCP arguments to the kernel verbs and
+// stringifies the structured results. The kernel is the
+// substrate surface; this layer is purely an MCP adapter.
+async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): Promise<string> {
+  switch (verb) {
+    case 'mint': {
+      const { content, kind } = args as { content: unknown; kind?: 'atom' | 'fragment' | 'descriptor' | 'opaque' };
+      const r = kernelMint(content, kind ? { kind } : undefined);
+      // Hypermedia decoration: surface the next-step affordances a
+      // caller can follow after minting (dereference + promote +
+      // decompose). The decorator preserves r.holon / r.* fields
+      // verbatim and adds @context / @id / @type / conformsToShape /
+      // affordances.
+      const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
+        kind: 'mint',
+        id: r.holon.iri,
+        nextSteps: [
+          { action: 'urn:cg:action:dereference', target: r.holon.iri, method: 'GET' },
+          { action: 'urn:cg:action:promote',     target: 'urn:cg:tool:promote',     method: 'POST' },
+          { action: 'urn:cg:action:decompose',   target: 'urn:cg:tool:decompose',   method: 'POST' },
+        ],
+      });
+      return JSON.stringify(decorated);
+    }
+    case 'dereference': {
+      const { iri, decorate_manifest } = args as { iri: string; decorate_manifest?: boolean };
+      const r = await kernelDereference(iri, {
+        fetch: solidFetch,
+        ...(decorate_manifest === false ? { decorateManifest: false } : {}),
+      });
+      // The affordances extracted from the representation already live
+      // on r.affordances; decorate echoes them through the Hydra
+      // typing path and adds @context / @id / @type / shape.
+      const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
+        kind: 'dereference',
+        id: iri,
+        existing: r.affordances,
+      });
+      return JSON.stringify(decorated);
+    }
+    case 'compose': {
+      const { descriptors, operator, types } = args as {
+        descriptors: ContextDescriptorData[];
+        operator: 'union' | 'intersection' | 'restriction' | 'override';
+        types?: string[];
+      };
+      const r = kernelCompose(descriptors, operator, types ? { types: types as Parameters<typeof kernelCompose>[2] extends infer T ? T extends { types?: infer U } ? U : never : never } : undefined);
+      const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
+        kind: 'compose',
+        id: r.composed.id,
+        nextSteps: [
+          { action: 'urn:cg:action:restrict',  target: 'urn:cg:tool:restrict',  method: 'POST' },
+          { action: 'urn:cg:action:publish',   target: 'urn:cg:tool:publish_context', method: 'POST' },
+        ],
+      });
+      return JSON.stringify(decorated);
+    }
+    case 'act': {
+      const a = args as {
+        descriptor_url?: string;
+        action_iri?: string;
+        target?: string;
+        action?: string;
+        method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+        media_type?: string;
+        payload?: unknown;
+        authorization?: string;
+      };
+      // Resolve form: { descriptor_url, action_iri } OR pre-resolved affordance.
+      const affordance = a.descriptor_url && a.action_iri
+        ? { descriptorUrl: a.descriptor_url, actionIri: a.action_iri }
+        : {
+            action: a.action ?? a.action_iri ?? '',
+            target: a.target ?? '',
+            method: (a.method ?? 'POST'),
+            ...(a.media_type ? { mediaType: a.media_type } : {}),
+          };
+      const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], a.payload, {
+        fetch: solidFetch,
+        ...(a.authorization ? { authorization: a.authorization } : {}),
+      });
+      const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
+        kind: 'act',
+        id: r.affordance.target,
+        existing: [r.affordance],
+      });
+      return JSON.stringify(decorated);
+    }
+    case 'restrict': {
+      const { descriptor, selector } = args as {
+        descriptor: ContextDescriptorData;
+        selector: { kind: 'facet-types'; types: string[] };
+      };
+      const r = kernelRestrict(descriptor, selector as Parameters<typeof kernelRestrict>[1]);
+      const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
+        kind: 'restrict',
+        id: r.restricted.id,
+        nextSteps: [
+          { action: 'urn:cg:action:extend',  target: 'urn:cg:tool:extend',  method: 'POST' },
+          { action: 'urn:cg:action:publish', target: 'urn:cg:tool:publish_context', method: 'POST' },
+        ],
+      });
+      return JSON.stringify(decorated);
+    }
+    case 'extend': {
+      const { part, whole, preserve_witness } = args as {
+        part: ContextDescriptorData;
+        whole: ContextDescriptorData;
+        preserve_witness?: boolean;
+      };
+      const r = kernelExtend(part, whole, preserve_witness === false ? { preserveWitness: false } : undefined);
+      const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
+        kind: 'extend',
+        id: r.extended.id,
+        nextSteps: [
+          { action: 'urn:cg:action:restrict', target: 'urn:cg:tool:restrict', method: 'POST' },
+          { action: 'urn:cg:action:publish',  target: 'urn:cg:tool:publish_context', method: 'POST' },
+        ],
+      });
+      return JSON.stringify(decorated);
+    }
+    case 'promote': {
+      const { atoms } = args as { atoms: unknown[] };
+      const r = kernelPromote(atoms as Parameters<typeof kernelPromote>[0]);
+      const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
+        kind: 'promote',
+        id: r.apex,
+        nextSteps: [
+          { action: 'urn:cg:action:dereference', target: r.apex, method: 'GET' },
+          { action: 'urn:cg:action:decompose',   target: 'urn:cg:tool:decompose', method: 'POST' },
+        ],
+      });
+      return JSON.stringify(decorated);
+    }
+    case 'decompose': {
+      const { iri } = args as { iri: IRI };
+      const r = kernelDecompose(iri);
+      if (r === null) {
+        const decorated = decorateKernelResult({ result: null, iri }, {
+          kind: 'decompose',
+          id: iri,
+          nextSteps: [
+            { action: 'urn:cg:action:dereference', target: iri, method: 'GET' },
+          ],
+        });
+        return JSON.stringify(decorated);
+      }
+      const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
+        kind: 'decompose',
+        id: r.apex,
+        nextSteps: [
+          { action: 'urn:cg:action:dereference', target: r.left,    method: 'GET' },
+          { action: 'urn:cg:action:dereference', target: r.right,   method: 'GET' },
+          { action: 'urn:cg:action:dereference', target: r.overlap, method: 'GET' },
+        ],
+      });
+      return JSON.stringify(decorated);
+    }
+    default:
+      throw new Error(`Unknown kernel verb: ${verb}`);
+  }
+}
+
 // ── Tool Dispatch ───────────────────────────────────────────
+
+/**
+ * Per-shim hypermedia next-step hints. Decorates the named-tool wire
+ * shape with the `affordances` array a caller follows to keep
+ * navigating without out-of-band knowledge. Each entry returns the
+ * (action, target, method) triples relevant for that tool's outcome.
+ *
+ * The decoration is *additive*: if the existing handler returned a
+ * JSON object we merge `@context` / `@type` / `conformsToShape` /
+ * `affordances` onto it; if it returned plain text we wrap an
+ * affordances-only envelope alongside the original text under
+ * `humanReadable`. Either way the original payload remains reachable
+ * by the existing key, so connector-level callers see no breaking
+ * change.
+ */
+function shimNextSteps(name: string, payload: Record<string, unknown>): ReadonlyArray<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> {
+  const pick = (k: string): string | undefined => {
+    const v = payload[k];
+    return typeof v === 'string' && v.length > 0 ? v : undefined;
+  };
+  switch (name) {
+    case 'publish_context': {
+      const descriptorUrl = pick('descriptorUrl');
+      const graphUrl      = pick('graphUrl');
+      const manifestUrl   = pick('manifestUrl');
+      const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [];
+      if (descriptorUrl) steps.push({ action: 'urn:cg:action:read',      target: descriptorUrl, method: 'GET' });
+      if (descriptorUrl) steps.push({ action: 'urn:cg:action:supersede', target: descriptorUrl, method: 'POST' });
+      if (graphUrl)      steps.push({ action: 'urn:cg:action:fetch-graph', target: graphUrl,    method: 'GET' });
+      if (manifestUrl)   steps.push({ action: 'urn:cg:action:list-manifest', target: manifestUrl, method: 'GET' });
+      return steps;
+    }
+    case 'discover_context':
+    case 'discover_all': {
+      // Follow-up: dereference any entry or refine the search.
+      const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [
+        { action: 'urn:cg:action:refine-search', target: 'urn:cg:tool:discover_context', method: 'POST' },
+      ];
+      const entries = payload['entries'];
+      if (Array.isArray(entries)) {
+        for (const e of entries.slice(0, 5)) {
+          const ent = e as { descriptorUrl?: string };
+          if (typeof ent.descriptorUrl === 'string') {
+            steps.push({ action: 'urn:cg:action:read', target: ent.descriptorUrl, method: 'GET' });
+          }
+        }
+      }
+      return steps;
+    }
+    case 'get_descriptor': {
+      const url = pick('url');
+      const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [];
+      if (url) {
+        steps.push({ action: 'urn:cg:action:dereference', target: url, method: 'GET' });
+        steps.push({ action: 'urn:cg:action:supersede',   target: url, method: 'POST' });
+      }
+      return steps;
+    }
+    case 'register_agent': {
+      const agentIri = pick('agentIri') ?? pick('agentId');
+      const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [
+        { action: 'urn:cg:action:verify-agent', target: 'urn:cg:tool:verify_agent', method: 'POST' },
+      ];
+      if (agentIri) steps.push({ action: 'urn:cg:action:revoke-agent', target: agentIri, method: 'DELETE' });
+      return steps;
+    }
+    case 'revoke_agent':
+      return [
+        { action: 'urn:cg:action:verify-agent', target: 'urn:cg:tool:verify_agent', method: 'POST' },
+        { action: 'urn:cg:action:list-pods',    target: 'urn:cg:tool:list_known_pods', method: 'GET' },
+      ];
+    case 'verify_agent':
+      return [
+        { action: 'urn:cg:action:get-pod-status', target: 'urn:cg:tool:get_pod_status', method: 'GET' },
+      ];
+    case 'subscribe_to_pod':
+    case 'subscribe_all':
+      return [
+        { action: 'urn:cg:action:list-pods', target: 'urn:cg:tool:list_known_pods', method: 'GET' },
+        { action: 'urn:cg:action:discover-all', target: 'urn:cg:tool:discover_all', method: 'POST' },
+      ];
+    case 'unsubscribe_from_pod':
+      return [
+        { action: 'urn:cg:action:list-pods', target: 'urn:cg:tool:list_known_pods', method: 'GET' },
+      ];
+    case 'list_known_pods':
+    case 'add_pod':
+    case 'remove_pod':
+    case 'discover_directory':
+    case 'publish_directory':
+    case 'resolve_webfinger':
+      return [
+        { action: 'urn:cg:action:list-pods',     target: 'urn:cg:tool:list_known_pods', method: 'GET' },
+        { action: 'urn:cg:action:discover-all',  target: 'urn:cg:tool:discover_all',    method: 'POST' },
+      ];
+    case 'get_pod_status': {
+      const pod = pick('pod');
+      const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [];
+      if (pod) {
+        steps.push({ action: 'urn:cg:action:discover-context', target: 'urn:cg:tool:discover_context', method: 'POST' });
+      }
+      return steps;
+    }
+    case 'setup_identity':
+    case 'link_wallet':
+    case 'check_balance':
+      return [
+        { action: 'urn:cg:action:get-pod-status', target: 'urn:cg:tool:get_pod_status', method: 'GET' },
+      ];
+    case 'analyze_question':
+      return [
+        { action: 'urn:cg:action:discover-context', target: 'urn:cg:tool:discover_context', method: 'POST' },
+      ];
+    case 'pgsl_ingest':
+    case 'pgsl_resolve':
+    case 'pgsl_lattice_status':
+    case 'pgsl_meet':
+    case 'pgsl_to_turtle':
+      return [
+        { action: 'urn:cg:action:promote',   target: 'urn:cg:tool:promote',   method: 'POST' },
+        { action: 'urn:cg:action:decompose', target: 'urn:cg:tool:decompose', method: 'POST' },
+      ];
+    case 'invoke_affordance':
+      return [
+        { action: 'urn:cg:action:dereference', target: 'urn:cg:tool:dereference', method: 'POST' },
+      ];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Try to JSON-parse a shim's text result and decorate it with the
+ * hypermedia envelope. When the result is plain text we leave it
+ * verbatim (decorating would break existing line-oriented parsers).
+ *
+ * Returns the decorated JSON string when applicable; otherwise the
+ * original text unchanged.
+ */
+function decorateShimResult(name: string, text: string): string {
+  // Cheap early-out: shim results that start with a multi-line summary
+  // (not JSON) are left verbatim. Hypermedia is best-effort additive
+  // on JSON payloads to keep connector compatibility (the brief is
+  // explicit: removals/renames are not allowed).
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return text;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    // Wrap arrays in an envelope keyed by the tool name so the
+    // hypermedia envelope sits next to the original list.
+    if (Array.isArray(parsed)) {
+      const wrapped = decorateShim({ items: parsed }, {
+        tool: name,
+        shape: KERNEL_RESULT_SHAPES['result']!,
+        nextSteps: shimNextSteps(name, {}),
+      });
+      return JSON.stringify(wrapped);
+    }
+    return text;
+  }
+  const payload = parsed as Record<string, unknown>;
+  const id = typeof payload['descriptorUrl'] === 'string' ? payload['descriptorUrl'] as string
+    : typeof payload['url'] === 'string' ? payload['url'] as string
+    : typeof payload['agentIri'] === 'string' ? payload['agentIri'] as string
+    : typeof payload['pod'] === 'string' ? payload['pod'] as string
+    : undefined;
+  const decorated = decorateShim(payload, {
+    tool: name,
+    ...(id ? { id } : {}),
+    shape: KERNEL_RESULT_SHAPES['result']!,
+    nextSteps: shimNextSteps(name, payload),
+  });
+  return JSON.stringify(decorated);
+}
 
 mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
     let result: string;
+
+    // ── Kernel verbs (first-class substrate access) ──
+    // These delegate straight to the kernel's exported verbs. They are
+    // intentionally thin — the kernel is the protocol surface, so the
+    // MCP wrapper only adapts JSON arguments and stringifies results.
+    if (name === 'mint' || name === 'dereference' || name === 'compose' || name === 'act'
+        || name === 'restrict' || name === 'extend' || name === 'promote' || name === 'decompose') {
+      result = await dispatchKernelVerb(name, args ?? {});
+      return { content: [{ type: 'text', text: result }] };
+    }
 
     switch (name) {
       case 'publish_context':
@@ -2803,7 +3315,12 @@ mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
         result = `Unknown tool: ${name}`;
     }
 
-    return { content: [{ type: 'text', text: result }] };
+    // Hypermedia decoration: JSON-shaped shim results get @context /
+    // @id / @type / cg:conformsToShape / affordances merged on top.
+    // Plain-text results (multi-line human summaries from the
+    // legacy publish/discover/get_pod_status paths) are left
+    // verbatim so existing line-oriented parsers don't break.
+    return { content: [{ type: 'text', text: decorateShimResult(name, result) }] };
   } catch (err) {
     return {
       content: [{ type: 'text', text: `Error: ${(err as Error).message}` }],

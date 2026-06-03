@@ -38,6 +38,11 @@ import {
   affordancesManifestTurtle,
   type Affordance,
 } from '../affordance-mcp/index.js';
+import {
+  decorateShim,
+  KERNEL_JSONLD_CONTEXT,
+  KERNEL_RESULT_SHAPES,
+} from '@interego/core';
 
 export type AffordanceHandler = (args: Record<string, unknown>) => Promise<unknown>;
 
@@ -94,9 +99,41 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
           ? (req.query as Record<string, unknown>)
           : (req.body as Record<string, unknown>);
         const result = await opts.handlers[affordance.toolName]!(args);
-        res.json(result);
+        // Hypermedia decoration: wrap the handler's payload in the
+        // shared JSON-LD envelope so generic clients see @context /
+        // @type / cg:conformsToShape / affordances. The next-step
+        // affordance points back at /affordances so callers can
+        // discover sibling capabilities from this response alone.
+        const payload = (result && typeof result === 'object' && !Array.isArray(result))
+          ? result as Record<string, unknown>
+          : { result };
+        const decorated = decorateShim(payload, {
+          tool: affordance.toolName,
+          shape: KERNEL_RESULT_SHAPES['result']!,
+          types: [affordance.returns ?? `urn:cg:type:${affordance.toolName}-result`],
+          nextSteps: [
+            {
+              action: 'urn:cg:action:discover-affordances',
+              target: `${deploymentUrl}/affordances`,
+              method: 'GET',
+            },
+            // Echo the just-invoked affordance back so callers can
+            // re-invoke or compare prior/next results.
+            {
+              action: affordance.action,
+              target: affordance.targetTemplate.replace('{base}', deploymentUrl),
+              method: affordance.method,
+              ...(affordance.mediaType ? { mediaType: affordance.mediaType } : {}),
+            },
+          ],
+        });
+        res.type('application/ld+json').json(decorated);
       } catch (err) {
-        res.status(400).json({ error: (err as Error).message });
+        res.status(400).type('application/ld+json').json({
+          '@context': KERNEL_JSONLD_CONTEXT,
+          '@type': ['hydra:Status', 'urn:cg:error:AffordanceFailure'],
+          error: (err as Error).message,
+        });
       }
     });
   }
@@ -171,14 +208,26 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
 
   // ── Health + meta ─────────────────────────────────────────────────
   app.get('/', (_req, res) => {
-    res.json({
+    // Bridge entry point — Hydra-typed so generic clients see this as
+    // a `hydra:EntryPoint` document with every affordance reachable
+    // by following the embedded operation list. The original keys
+    // (vertical, affordanceCount, affordances, mcpEndpoint, ...) are
+    // preserved verbatim for backward compat with the readiness probe.
+    res.type('application/ld+json').json({
+      '@context': KERNEL_JSONLD_CONTEXT,
+      '@id': deploymentUrl,
+      '@type': ['hydra:EntryPoint', `urn:cg:vertical:${opts.verticalName}`],
+      conformsToShape: 'urn:cg:shape:VerticalBridgeEntryPoint',
       vertical: opts.verticalName,
       affordanceCount: opts.affordances.length,
       affordances: opts.affordances.map(a => ({
+        '@type': ['cg:Affordance', 'cgh:Affordance', 'hydra:Operation'],
         action: a.action,
         toolName: a.toolName,
         method: a.method,
         target: a.targetTemplate.replace('{base}', deploymentUrl),
+        ...(a.mediaType ? { mediaType: a.mediaType } : {}),
+        ...(a.returns ? { returns: a.returns } : {}),
       })),
       mcpEndpoint: `${deploymentUrl}/mcp`,
       manifestEndpoint: `${deploymentUrl}/affordances`,

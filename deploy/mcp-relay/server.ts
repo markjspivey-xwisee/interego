@@ -110,6 +110,26 @@ import {
   getChainConfig,
   // Generic affordance follower (Path A — reach any vertical via descriptors)
   followAffordance,
+  // ── Kernel (substrate primitives as first-class verbs) ──
+  // The named tools below remain as compatibility shims; new
+  // clients can call the kernel verbs directly. The substrate
+  // `act` verb is exposed as `kernelAct` to avoid colliding with
+  // the OODA cognitive-loop phase (preserved for backward compat).
+  // See docs/ARCHITECTURAL-FOUNDATIONS.md §11.
+  mint as kernelMint,
+  dereference as kernelDereference,
+  compose as kernelCompose,
+  kernelAct,
+  restrict as kernelRestrict,
+  extend as kernelExtend,
+  promote as kernelPromote,
+  decompose as kernelDecompose,
+  decorateKernelResult,
+  decorateShim,
+  hydraEntryPoint,
+  KERNEL_JSONLD_CONTEXT,
+  KERNEL_RESULT_SHAPES,
+  getShaclShapesTurtle,
   type NodeProvenance,
   type PGSLInstance,
 } from '@interego/core';
@@ -1288,25 +1308,169 @@ async function handlePgslToTurtle(_args: ToolArgs): Promise<string> {
 // available actions via `discover_context` + `get_descriptor`; this handler
 // performs the descriptor fetch + match + HTTP POST in one shot.
 async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
+  // Compatibility shim — internally a kernel `act` call. Wire format
+  // unchanged: descriptor_url + action_iri + payload + authorization
+  // map onto the kernel's affordance-resolved form, and the kernel
+  // returns the same fields the legacy followAffordance did.
   const descriptorUrl = args.descriptor_url as string;
   const actionIri = args.action_iri as string;
   const payload = (args.payload ?? {}) as Record<string, unknown>;
   const authorization = args.authorization as string | undefined;
   if (!descriptorUrl) throw new Error('invoke_affordance: descriptor_url is required');
   if (!actionIri) throw new Error('invoke_affordance: action_iri is required');
-  const result = await followAffordance(
-    descriptorUrl,
-    actionIri,
+  const result = await kernelAct(
+    { descriptorUrl, actionIri },
     payload,
-    authorization ? { authorization } : undefined,
+    {
+      fetch: solidFetch,
+      ...(authorization ? { authorization } : {}),
+    },
   );
   return JSON.stringify(result);
 }
 
 // ── Tool Registry ───────────────────────────────────────────
 
+// ── Kernel-verb relay handlers ────────────────────────────────
+//
+// Thin JSON-adapter wrappers around the @interego/core kernel
+// exports. The kernel is the substrate surface; these are MCP-side
+// argument adapters. See docs/ARCHITECTURAL-FOUNDATIONS.md §11.
+async function handleKernelMint(args: ToolArgs): Promise<string> {
+  const content = args['content'];
+  const kind = args['kind'] as ('atom' | 'fragment' | 'descriptor' | 'opaque' | undefined);
+  const r = kernelMint(content, kind ? { kind } : undefined);
+  return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+    kind: 'mint',
+    id: r.holon.iri,
+    nextSteps: [
+      { action: 'urn:cg:action:dereference', target: r.holon.iri, method: 'GET' },
+      { action: 'urn:cg:action:promote',     target: 'urn:cg:tool:promote',     method: 'POST' },
+      { action: 'urn:cg:action:decompose',   target: 'urn:cg:tool:decompose',   method: 'POST' },
+    ],
+  }));
+}
+async function handleKernelDereference(args: ToolArgs): Promise<string> {
+  const iri = String(args['iri'] ?? '');
+  const decorateManifest = args['decorate_manifest'] !== false;
+  const r = await kernelDereference(iri, { fetch: solidFetch, decorateManifest });
+  return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+    kind: 'dereference',
+    id: iri,
+    existing: r.affordances,
+  }));
+}
+async function handleKernelCompose(args: ToolArgs): Promise<string> {
+  const descriptors = (args['descriptors'] as ContextDescriptorData[]) ?? [];
+  const operator = args['operator'] as 'union' | 'intersection' | 'restriction' | 'override';
+  const types = args['types'] as string[] | undefined;
+  const r = kernelCompose(descriptors, operator, types ? ({ types } as Parameters<typeof kernelCompose>[2]) : undefined);
+  return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+    kind: 'compose',
+    id: r.composed.id,
+    nextSteps: [
+      { action: 'urn:cg:action:restrict', target: 'urn:cg:tool:restrict', method: 'POST' },
+      { action: 'urn:cg:action:publish',  target: 'urn:cg:tool:publish_context', method: 'POST' },
+    ],
+  }));
+}
+async function handleKernelAct(args: ToolArgs): Promise<string> {
+  const descriptorUrl = args['descriptor_url'] as string | undefined;
+  const actionIri = args['action_iri'] as string | undefined;
+  const authorization = args['authorization'] as string | undefined;
+  const affordance = descriptorUrl && actionIri
+    ? { descriptorUrl, actionIri }
+    : {
+        action: (args['action'] as string | undefined) ?? actionIri ?? '',
+        target: (args['target'] as string | undefined) ?? '',
+        method: (args['method'] as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | undefined) ?? 'POST',
+        ...(args['media_type'] ? { mediaType: args['media_type'] as string } : {}),
+      };
+  const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], args['payload'], {
+    fetch: solidFetch,
+    ...(authorization ? { authorization } : {}),
+  });
+  return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+    kind: 'act',
+    id: r.affordance.target,
+    existing: [r.affordance],
+  }));
+}
+async function handleKernelRestrict(args: ToolArgs): Promise<string> {
+  const descriptor = args['descriptor'] as ContextDescriptorData;
+  const selector = args['selector'] as Parameters<typeof kernelRestrict>[1];
+  const r = kernelRestrict(descriptor, selector);
+  return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+    kind: 'restrict',
+    id: r.restricted.id,
+    nextSteps: [
+      { action: 'urn:cg:action:extend',  target: 'urn:cg:tool:extend',  method: 'POST' },
+      { action: 'urn:cg:action:publish', target: 'urn:cg:tool:publish_context', method: 'POST' },
+    ],
+  }));
+}
+async function handleKernelExtend(args: ToolArgs): Promise<string> {
+  const part = args['part'] as ContextDescriptorData;
+  const whole = args['whole'] as ContextDescriptorData;
+  const preserveWitness = args['preserve_witness'] !== false;
+  const r = kernelExtend(part, whole, { preserveWitness });
+  return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+    kind: 'extend',
+    id: r.extended.id,
+    nextSteps: [
+      { action: 'urn:cg:action:restrict', target: 'urn:cg:tool:restrict', method: 'POST' },
+      { action: 'urn:cg:action:publish',  target: 'urn:cg:tool:publish_context', method: 'POST' },
+    ],
+  }));
+}
+async function handleKernelPromote(args: ToolArgs): Promise<string> {
+  const atoms = (args['atoms'] ?? []) as Parameters<typeof kernelPromote>[0];
+  const r = kernelPromote(atoms);
+  return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+    kind: 'promote',
+    id: r.apex,
+    nextSteps: [
+      { action: 'urn:cg:action:dereference', target: r.apex, method: 'GET' },
+      { action: 'urn:cg:action:decompose',   target: 'urn:cg:tool:decompose', method: 'POST' },
+    ],
+  }));
+}
+async function handleKernelDecompose(args: ToolArgs): Promise<string> {
+  const iri = String(args['iri'] ?? '') as Parameters<typeof kernelDecompose>[0];
+  const r = kernelDecompose(iri);
+  if (r === null) {
+    return JSON.stringify(decorateKernelResult({ result: null, iri }, {
+      kind: 'decompose',
+      id: iri,
+      nextSteps: [
+        { action: 'urn:cg:action:dereference', target: iri, method: 'GET' },
+      ],
+    }));
+  }
+  return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+    kind: 'decompose',
+    id: r.apex,
+    nextSteps: [
+      { action: 'urn:cg:action:dereference', target: r.left,    method: 'GET' },
+      { action: 'urn:cg:action:dereference', target: r.right,   method: 'GET' },
+      { action: 'urn:cg:action:dereference', target: r.overlap, method: 'GET' },
+    ],
+  }));
+}
+
 const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => Promise<string> }> = {
-  // Core tools
+  // ── Kernel verbs (first-class substrate access) ──
+  // These delegate straight to @interego/core kernel exports. The 27
+  // named tools below remain wire-compatible compatibility shims.
+  mint: { description: 'Kernel verb — mint a holon (content-addressed identity)', handler: handleKernelMint },
+  dereference: { description: 'Kernel verb — resolve an IRI to representation + affordances', handler: handleKernelDereference },
+  compose: { description: 'Kernel verb — operadic composition (union/intersection/restriction/override)', handler: handleKernelCompose },
+  act: { description: 'Kernel verb — follow an affordance (Peircean Thirdness operational)', handler: handleKernelAct },
+  restrict: { description: 'Kernel verb — adjunction left half (whole → part)', handler: handleKernelRestrict },
+  extend: { description: 'Kernel verb — adjunction right half (part → whole)', handler: handleKernelExtend },
+  promote: { description: 'Kernel verb — PGSL fibration vertical movement upward', handler: handleKernelPromote },
+  decompose: { description: 'Kernel verb — PGSL fibration vertical movement downward', handler: handleKernelDecompose },
+  // ── Core tools (compatibility shims; internal implementation routes through kernel where natural) ──
   publish_context: { description: 'Publish a context-annotated knowledge graph', handler: handlePublishContext },
   discover_context: { description: 'Discover descriptors on a pod', handler: handleDiscoverContext },
   get_descriptor: { description: 'Fetch a descriptor\'s Turtle', handler: handleGetDescriptor },
@@ -1661,9 +1825,144 @@ const INVOKE_AFFORDANCE_OUTPUT = mcpOutputSchema({
 });
 
 const TOOL_SCHEMAS = [
+  // ═══════════════════════════════════════════════════════════
+  //  Kernel verbs — the substrate's primitives as first-class
+  //  tools. The named tools below are compatibility shims
+  //  internally composed from these. See
+  //  docs/ARCHITECTURAL-FOUNDATIONS.md §11.
+  // ═══════════════════════════════════════════════════════════
+  {
+    name: 'mint',
+    description: 'Kernel verb — content-addressed holon construction. Same content always yields the same IRI (Identity-by-reference, Invariant 1). Kinds: atom (default), fragment, descriptor, opaque.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        content: { description: 'Value (atom), list (fragment), descriptor JSON, or any value (opaque).' },
+        kind: { type: 'string', enum: ['atom', 'fragment', 'descriptor', 'opaque'], description: 'Substrate kind (default: atom).' },
+      },
+      required: ['content'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Mint a holon', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'dereference',
+    description: 'Kernel verb — Peircean Secondness: resolve an IRI to its representation, affordances, and provenance. Manifests return entry lists decorated with affordances. Encrypted envelopes return status: encrypted-no-key when no key supplied.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        iri: { type: 'string', description: 'IRI to resolve.' },
+        decorate_manifest: { type: 'boolean', description: 'Decorate manifest entries with affordances (default true).' },
+      },
+      required: ['iri'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Dereference an IRI', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: 'compose',
+    description: 'Kernel verb — operadic composition over typed-hyperedge category. Operators: union (join), intersection (meet), restriction (project), override (left-biased).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        descriptors: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        operator: { type: 'string', enum: ['union', 'intersection', 'restriction', 'override'] },
+        types: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['descriptors', 'operator'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Compose descriptors', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'act',
+    description: 'Kernel verb — Peircean Thirdness operational. Follows an affordance via {descriptor_url, action_iri} or via pre-resolved {target, action, method}.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        descriptor_url: { type: 'string' },
+        action_iri: { type: 'string' },
+        target: { type: 'string' },
+        action: { type: 'string' },
+        method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
+        media_type: { type: 'string' },
+        payload: {},
+        authorization: { type: 'string' },
+      },
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Act on an affordance', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: 'restrict',
+    description: 'Kernel verb — adjunction left half (whole → part). Projects a descriptor to a facet-type subset.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        descriptor: { type: 'object', additionalProperties: true },
+        selector: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['facet-types'] },
+            types: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['kind'],
+        },
+      },
+      required: ['descriptor', 'selector'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Restrict a holon', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'extend',
+    description: 'Kernel verb — adjunction right half (part → whole). Inverse of restrict; back-links via cg:supersedes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        part: { type: 'object', additionalProperties: true },
+        whole: { type: 'object', additionalProperties: true },
+        preserve_witness: { type: 'boolean' },
+      },
+      required: ['part', 'whole'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Extend a part to a whole', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'promote',
+    description: 'Kernel verb — PGSL fibration upward (level k → k+1). Builds the lattice and returns the apex + pullback square (when level ≥ 2).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        atoms: { type: 'array', items: {}, description: 'Values or PGSL atom IRIs.' },
+      },
+      required: ['atoms'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Promote atoms', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'decompose',
+    description: 'Kernel verb — PGSL fibration downward (level k → k-1). Returns left/right/overlap for fragment of level ≥ 2.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        iri: { type: 'string' },
+      },
+      required: ['iri'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Decompose a fragment', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  // ═══════════════════════════════════════════════════════════
+  //  Compatibility shims — the 27 named tools. Each remains
+  //  wire-compatible; descriptions tagged with "Compatibility
+  //  shim" + the kernel verb composition that realizes it.
+  // ═══════════════════════════════════════════════════════════
   {
     name: 'publish_context',
-    description: 'Publish a context-annotated knowledge graph (Turtle) to your Solid pod with the full 6-facet descriptor (Temporal, Provenance, Agent, Semiotic, Trust, Federation). Attributes the descriptor to the pod owner and associates it with the calling agent.',
+    description: 'Compatibility shim — internally composes kernel(compose+act) over a publish affordance plus E2EE/anchoring/compliance plumbing. Publishes a context-annotated knowledge graph (Turtle) to your Solid pod with the full 6-facet descriptor (Temporal, Provenance, Agent, Semiotic, Trust, Federation). Attributes the descriptor to the pod owner and associates it with the calling agent.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1701,7 +2000,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'discover_context',
-    description: 'Discover context descriptors on a specific Solid pod. Optionally verify the agent delegation chain.',
+    description: 'Compatibility shim — internally `dereference(podUrl + "/.well-known/context-graphs")` plus filter post-processing. For pure substrate access, use the kernel verb `dereference` directly. Discovers context descriptors on a specific Solid pod. Optionally verify the agent delegation chain.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1718,7 +2017,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'get_descriptor',
-    description: 'Fetch the full Turtle content of a specific context descriptor.',
+    description: 'Compatibility shim — internally `dereference(descriptorUrl)`. For pure substrate access, use `dereference` directly. Fetches the full Turtle content of a specific context descriptor.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1731,7 +2030,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'get_pod_status',
-    description: 'Check a Solid pod — owner, authorized agents, descriptor count, recent notifications.',
+    description: 'Compatibility shim — composes `dereference(pod + agent-registry)` + `dereference(pod + manifest)`. Checks a Solid pod — owner, authorized agents, descriptor count, recent notifications.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1743,7 +2042,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'subscribe_to_pod',
-    description: 'Subscribe to a pod\'s Solid Notifications channel; incoming changes accumulate in the relay\'s notification log.',
+    description: 'Compatibility shim — composes a notify-channel affordance + listener. Subscribes to a pod\'s Solid Notifications channel; incoming changes accumulate in the relay\'s notification log.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1756,7 +2055,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'register_agent',
-    description: 'Register an agent (delegate) on a pod on behalf of an owner. Creates the owner profile if missing, adds the agent with a delegation credential.',
+    description: 'Compatibility shim — composes `dereference(pod) → find register affordance → act(affordance, {agentId})`. Registers an agent (delegate) on a pod on behalf of an owner. Creates the owner profile if missing, adds the agent with a delegation credential.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1774,7 +2073,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'revoke_agent',
-    description: 'Revoke an agent\'s delegation on a pod.',
+    description: 'Compatibility shim — composes `dereference + act` against the pod\'s revoke affordance. Revokes an agent\'s delegation on a pod.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1788,7 +2087,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'verify_agent',
-    description: 'Verify an agent\'s delegation chain on a pod — checks registry, credential, and non-revocation.',
+    description: 'Compatibility shim — `dereference(pod + agent-registry)` + delegation-chain verification. Verifies an agent\'s delegation chain on a pod — checks registry, credential, and non-revocation.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1802,7 +2101,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'discover_all',
-    description: 'Discover context descriptors across all pods currently in the relay\'s federation registry. Use add_pod or discover_directory first to populate.',
+    description: 'Compatibility shim — `Promise.all(knownPods.map(p => dereference(p + manifest)))` + result merge. Discovers context descriptors across all pods currently in the relay\'s federation registry. Use add_pod or discover_directory first to populate.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1814,14 +2113,14 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'list_known_pods',
-    description: 'List pods in the relay\'s in-memory federation registry (home pod, manually added, directory-discovered, WebFinger-resolved).',
+    description: 'Compatibility shim — local registry view; underlying entries are dereferenceable IRIs. Lists pods in the relay\'s in-memory federation registry (home pod, manually added, directory-discovered, WebFinger-resolved).',
     inputSchema: { type: 'object', properties: {} },
     outputSchema: LIST_KNOWN_PODS_OUTPUT,
     annotations: { title: 'List pods in federation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'add_pod',
-    description: 'Manually add a pod to the federation registry.',
+    description: 'Compatibility shim — updates local pod registry. Manually adds a pod to the federation registry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1836,7 +2135,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'remove_pod',
-    description: 'Remove a pod from the federation registry.',
+    description: 'Compatibility shim — updates local pod registry only. Removes a pod from the federation registry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1849,7 +2148,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'discover_directory',
-    description: 'Import a PodDirectory graph and merge its entries into the federation registry.',
+    description: 'Compatibility shim — `dereference(directoryUrl)` then registers listed pods. Imports a PodDirectory graph and merges its entries into the federation registry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1862,7 +2161,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'publish_directory',
-    description: 'Publish the current federation registry as a PodDirectory graph on a pod.',
+    description: 'Compatibility shim — composes `mint(directory) → act(homePod.publishAffordance)`. Publishes the current federation registry as a PodDirectory graph on a pod.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1875,7 +2174,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'resolve_webfinger',
-    description: 'Resolve a WebFinger resource identifier (acct:user@host) to its pod URL. Adds the pod to the registry on success.',
+    description: 'Compatibility shim — `dereference(host + .well-known/webfinger)` with RFC 7033 parsing. Resolves a WebFinger resource identifier (acct:user@host) to its pod URL. Adds the pod to the registry on success.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1888,7 +2187,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'unsubscribe_from_pod',
-    description: 'Close an active WebSocket subscription on a Solid pod. Releases a slot toward the relay-wide subscription cap. No-op if not subscribed.',
+    description: 'Compatibility shim — paired with subscribe_to_pod. Closes an active WebSocket subscription on a Solid pod. Releases a slot toward the relay-wide subscription cap. No-op if not subscribed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1901,14 +2200,14 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'subscribe_all',
-    description: 'Subscribe to WebSocket notifications from ALL pods currently in the relay\'s federation registry. Use add_pod / discover_directory first to populate.',
+    description: 'Compatibility shim — `knownPods.forEach(subscribe_to_pod)`. Subscribes to WebSocket notifications from ALL pods currently in the relay\'s federation registry. Use add_pod / discover_directory first to populate.',
     inputSchema: { type: 'object', properties: {} },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Subscribe to all known pods', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'setup_identity',
-    description: 'First-time onboarding for a human (local stdio surface). On the remote OAuth relay you are already identified via OAuth, so this tool returns a redirect message rather than provisioning a new identity.',
+    description: 'Compatibility shim — composes identity-server setup affordance + agent-registry mint. First-time onboarding for a human (local stdio surface). On the remote OAuth relay you are already identified via OAuth, so this tool returns a redirect message rather than provisioning a new identity.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1922,7 +2221,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'link_wallet',
-    description: 'Link an existing Ethereum wallet to your identity (local stdio surface). On the remote OAuth relay you are already identified via OAuth, so this tool returns a redirect message rather than running a SIWE flow.',
+    description: 'Compatibility shim — composes SIWE-message construction + identity-server link affordance. Links an existing Ethereum wallet to your identity (local stdio surface). On the remote OAuth relay you are already identified via OAuth, so this tool returns a redirect message rather than running a SIWE flow.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1936,7 +2235,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'check_balance',
-    description: 'Check the ETH balance of a wallet on the active chain. Returns balance, funding status, and instructions if unfunded.',
+    description: 'Compatibility shim — calls the active chain\'s RPC; not a substrate-level operation. Checks the ETH balance of a wallet on the active chain. Returns balance, funding status, and instructions if unfunded.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1948,7 +2247,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'analyze_question',
-    description: 'Analyze a question using the affordance engine to determine the optimal cognitive strategy. Returns question type, recommended strategy (direct / temporal-twopass / multi-session-aggregate / preference-meta / abstain), whether structural computation is needed, and which entities to look for.',
+    description: 'Compatibility shim — composes the affordance engine\'s cognitive-strategy primitive. Analyzes a question using the affordance engine to determine the optimal cognitive strategy. Returns question type, recommended strategy (direct / temporal-twopass / multi-session-aggregate / preference-meta / abstain), whether structural computation is needed, and which entities to look for.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1962,7 +2261,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'pgsl_ingest',
-    description: 'Ingest content into the PGSL lattice. Tokenizes the content, builds the overlapping-pair lattice bottom-up, and returns the top fragment URI. Optionally publishes the lattice as a context descriptor to the pod.',
+    description: 'Compatibility shim — internally `promote(tokens)`. For pure substrate access, use the kernel verb `promote` directly. Ingests content into the PGSL lattice. Tokenizes the content, builds the overlapping-pair lattice bottom-up, and returns the top fragment URI. Optionally publishes the lattice as a context descriptor to the pod.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1976,7 +2275,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'pgsl_resolve',
-    description: 'Resolve a PGSL URI to its content. For atoms: returns the value. For fragments: returns the full reconstructed text. Also shows node metadata (level, constituents, pullback, provenance).',
+    description: 'Compatibility shim — composes `decompose` (for fragments) and value-resolution. For pure substrate access, use `decompose`. Resolves a PGSL URI to its content. For atoms: returns the value. For fragments: returns the full reconstructed text. Also shows node metadata (level, constituents, pullback, provenance).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1989,14 +2288,14 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'pgsl_lattice_status',
-    description: 'Show the current state of the PGSL lattice — atom count, fragment count, levels, total nodes.',
+    description: 'Compatibility shim — local view of the PGSL fibration\'s base. Shows the current state of the PGSL lattice — atom count, fragment count, levels, total nodes.',
     inputSchema: { type: 'object', properties: {} },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'PGSL lattice status', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'pgsl_meet',
-    description: 'Compute the lattice meet (greatest lower bound) of two fragments — the largest shared sub-sequence. This is the categorical intersection in the presheaf topos.',
+    description: 'Compatibility shim — kernel `compose([a,b], "intersection")` realizes the same lattice meet at the descriptor layer; this shim retains the PGSL-fragment-specific view. Computes the lattice meet (greatest lower bound) of two fragments — the largest shared sub-sequence. This is the categorical intersection in the presheaf topos.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2010,7 +2309,7 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'pgsl_to_turtle',
-    description: 'Serialize the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance — all as typed RDF resources with the pgsl: vocabulary.',
+    description: 'Compatibility shim — serializes the kernel\'s shared PGSL instance. Serializes the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance — all as typed RDF resources with the pgsl: vocabulary.',
     inputSchema: { type: 'object', properties: {} },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Serialize PGSL as Turtle', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -2018,7 +2317,7 @@ const TOOL_SCHEMAS = [
   // ── Generic affordance follower (Path A — reach any vertical) ──
   {
     name: 'invoke_affordance',
-    description: 'Generic affordance follower. Given a descriptor URL and a cg:action IRI, this fetches the descriptor, finds the matching cg:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
+    description: 'Compatibility shim — internally `act({descriptorUrl, actionIri}, payload)`. For pure substrate access, use the kernel verb `act` directly. Generic affordance follower. Given a descriptor URL and a cg:action IRI, this fetches the descriptor, finds the matching cg:Affordance block, and POSTs your payload to its hydra:target — proxying through the MCP layer so any vertical (Foxxi, LRS, OWM, ADP, AC, LPC, ...) is reachable through the one Interego connector. Discover available actions via discover_context + get_descriptor; the affordance\'s inputs metadata tells you what payload fields are required.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2550,7 +2849,17 @@ const DEFAULT_ISSUER = new URL(PUBLIC_BASE_URL || `http://localhost:${PORT}`);
 const DPOP_SIGNING_ALGS = ['ES256', 'EdDSA'];
 const issuerHref = DEFAULT_ISSUER.href.replace(/\/$/, '');
 app.get('/.well-known/oauth-authorization-server', (_req, res) => {
-  res.json({
+  // RFC 8414 (OAuth Authorization Server Metadata) — the body shape is
+  // dictated by the spec, so we keep the canonical fields verbatim
+  // and add hypermedia (`@context` + `@type` + `affordances`) as
+  // additive linked-data decoration so Hydra-aware clients see the
+  // authorize/token/register endpoints as fully Hydra-typed operations.
+  // application/ld+json content type per JSON-LD 1.1 §5.
+  res.type('application/ld+json').json({
+    '@context': KERNEL_JSONLD_CONTEXT,
+    '@id': `${issuerHref}/.well-known/oauth-authorization-server`,
+    '@type': ['hydra:Resource', 'urn:cg:oauth:AuthorizationServerMetadata'],
+    conformsToShape: 'urn:cg:shape:OAuthAuthorizationServerMetadata',
     issuer: DEFAULT_ISSUER.href,
     authorization_endpoint: `${issuerHref}/authorize`,
     token_endpoint: `${issuerHref}/token`,
@@ -2562,10 +2871,41 @@ app.get('/.well-known/oauth-authorization-server', (_req, res) => {
     scopes_supported: ['mcp'],
     // RFC 9449 §5.1 — advertise DPoP support to clients.
     dpop_signing_alg_values_supported: DPOP_SIGNING_ALGS,
+    // Hydra affordances — every OAuth endpoint as a hydra:Operation so
+    // clients can navigate the auth flow via link traversal.
+    affordances: [
+      {
+        '@type': ['cg:Affordance', 'hydra:Operation'],
+        action: 'urn:cg:action:oauth:authorize',
+        target: `${issuerHref}/authorize`,
+        method: 'GET',
+        returns: 'urn:cg:type:AuthorizationCode',
+      },
+      {
+        '@type': ['cg:Affordance', 'hydra:Operation'],
+        action: 'urn:cg:action:oauth:token',
+        target: `${issuerHref}/token`,
+        method: 'POST',
+        expects: 'urn:cg:type:TokenRequest',
+        returns: 'urn:cg:type:AccessToken',
+      },
+      {
+        '@type': ['cg:Affordance', 'hydra:Operation'],
+        action: 'urn:cg:action:oauth:register',
+        target: `${issuerHref}/register`,
+        method: 'POST',
+        expects: 'urn:cg:type:ClientRegistrationRequest',
+        returns: 'urn:cg:type:ClientRegistration',
+      },
+    ],
   });
 });
 app.get('/.well-known/oauth-protected-resource', (_req, res) => {
-  res.json({
+  res.type('application/ld+json').json({
+    '@context': KERNEL_JSONLD_CONTEXT,
+    '@id': `${issuerHref}/.well-known/oauth-protected-resource`,
+    '@type': ['hydra:Resource', 'urn:cg:oauth:ProtectedResourceMetadata'],
+    conformsToShape: 'urn:cg:shape:OAuthProtectedResourceMetadata',
     resource: issuerHref + '/',
     authorization_servers: [DEFAULT_ISSUER.href],
     scopes_supported: ['mcp'],
@@ -2577,8 +2917,102 @@ app.get('/.well-known/oauth-protected-resource', (_req, res) => {
     // RFC 9728 §3.2 — declare which bearer-token usage methods this
     // resource accepts. "DPoP" is the canonical method name.
     bearer_methods_supported: RELAY_REQUIRE_DPOP ? ['DPoP'] : ['header', 'DPoP'],
+    affordances: [
+      {
+        '@type': ['cg:Affordance', 'hydra:Operation'],
+        action: 'urn:cg:action:oauth:discover-authorization-server',
+        target: `${issuerHref}/.well-known/oauth-authorization-server`,
+        method: 'GET',
+        returns: 'urn:cg:type:AuthorizationServerMetadata',
+      },
+      {
+        '@type': ['cg:Affordance', 'hydra:Operation'],
+        action: 'urn:cg:action:mcp:invoke',
+        target: `${issuerHref}/mcp`,
+        method: 'POST',
+        expects: 'urn:cg:type:McpRequest',
+        returns: 'urn:cg:type:McpResponse',
+      },
+      {
+        '@type': ['cg:Affordance', 'hydra:Operation'],
+        action: 'urn:cg:action:mcp:list-tools',
+        target: `${issuerHref}/tools`,
+        method: 'GET',
+        returns: 'urn:cg:type:HydraCollection',
+      },
+    ],
   });
 });
+
+// ── Shared next-step hint table for relay shim responses ──
+//
+// Mirrors the table on the stdio server but for the relay's HTTP
+// surface. Decorates JSON shim payloads with the affordances callers
+// can follow next — plain-text legacy responses are left untouched.
+function relayShimNextSteps(name: string, payload: Record<string, unknown>): ReadonlyArray<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> {
+  const pick = (k: string): string | undefined => {
+    const v = payload[k];
+    return typeof v === 'string' && v.length > 0 ? v : undefined;
+  };
+  switch (name) {
+    case 'publish_context': {
+      const descriptorUrl = pick('descriptorUrl');
+      const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [];
+      if (descriptorUrl) {
+        steps.push({ action: 'urn:cg:action:read',      target: descriptorUrl, method: 'GET' });
+        steps.push({ action: 'urn:cg:action:supersede', target: descriptorUrl, method: 'POST' });
+      }
+      return steps;
+    }
+    case 'discover_context':
+    case 'discover_all':
+      return [{ action: 'urn:cg:action:refine-search', target: 'urn:cg:tool:discover_context', method: 'POST' }];
+    case 'get_descriptor': {
+      const url = pick('url');
+      return url
+        ? [{ action: 'urn:cg:action:dereference', target: url, method: 'GET' }]
+        : [];
+    }
+    case 'register_agent': {
+      const agentIri = pick('agentIri') ?? pick('agentId');
+      const steps: Array<{ action: string; target: string; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' }> = [
+        { action: 'urn:cg:action:verify-agent', target: 'urn:cg:tool:verify_agent', method: 'POST' },
+      ];
+      if (agentIri) steps.push({ action: 'urn:cg:action:revoke-agent', target: agentIri, method: 'DELETE' });
+      return steps;
+    }
+    default:
+      return [];
+  }
+}
+
+function decorateRelayShimText(name: string, text: string): string {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return text;
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return text; }
+  if (!parsed || typeof parsed !== 'object') return text;
+  if (Array.isArray(parsed)) {
+    return JSON.stringify(decorateShim({ items: parsed }, {
+      tool: name,
+      shape: KERNEL_RESULT_SHAPES['result']!,
+      nextSteps: relayShimNextSteps(name, {}),
+    }));
+  }
+  // Skip if already decorated (idempotent — kernel-verb handlers may
+  // have decorated upstream).
+  const payload = parsed as Record<string, unknown>;
+  if (payload['@context'] && payload['affordances']) return text;
+  const id = typeof payload['descriptorUrl'] === 'string' ? payload['descriptorUrl'] as string
+    : typeof payload['url'] === 'string' ? payload['url'] as string
+    : undefined;
+  return JSON.stringify(decorateShim(payload, {
+    tool: name,
+    ...(id ? { id } : {}),
+    shape: KERNEL_RESULT_SHAPES['result']!,
+    nextSteps: relayShimNextSteps(name, payload),
+  }));
+}
 
 // ── /token DPoP pre-processor ───────────────────────────────
 //
@@ -2879,8 +3313,48 @@ Open-source substrate · <a href="https://github.com/markjspivey-xwisee/interego
 </body>
 </html>`;
 
-app.get('/', (_req, res) => {
-  res.type('text/html').send(RELAY_LANDING_HTML);
+app.get('/', (req, res) => {
+  // Content negotiation: browsers and curl-without-Accept get the
+  // HTML landing page (unchanged behaviour). Hydra-aware / JSON-LD
+  // clients get the hydra:EntryPoint document. This is the canonical
+  // "where do I go from here?" surface every Hydra client expects;
+  // adding it without removing the HTML keeps backward compat.
+  const accept = (req.headers['accept'] ?? '').toString();
+  const wantsJsonLd = accept.includes('application/ld+json') || accept.includes('application/json');
+  if (!wantsJsonLd) {
+    res.type('text/html').send(RELAY_LANDING_HTML);
+    return;
+  }
+  const base = `${req.protocol}://${req.get('host') ?? ''}`;
+  const entry = hydraEntryPoint({
+    base,
+    title: 'Interego MCP relay',
+    description: 'Hypermedia entry point — every operation below is a hydra:Operation and can be followed by URL.',
+    shapesGraph: `${base}/.well-known/shacl-shapes`,
+    operations: [
+      { name: 'list-tools',       target: '/tools',                          method: 'GET',  description: 'Hydra collection of every MCP tool exposed by this relay (kernel verbs + named shims).' },
+      { name: 'invoke-tool',      target: '/tool/{name}',                    method: 'POST', description: 'Invoke a tool by name; body is the tool inputSchema payload.' },
+      { name: 'mcp-rpc',          target: '/mcp',                            method: 'POST', description: 'MCP JSON-RPC endpoint (Bearer + DPoP).' },
+      { name: 'mcp-stream',       target: '/sse',                            method: 'GET',  description: 'Server-sent-events stream for MCP notifications.' },
+      { name: 'audit-frameworks', target: '/audit/frameworks',               method: 'GET',  description: 'List known compliance frameworks + their controls.' },
+      { name: 'audit-events',     target: '/audit/events?pod=<url>',         method: 'GET',  description: 'List recent descriptors on a pod (audit log).' },
+      { name: 'audit-lineage',    target: '/audit/lineage?descriptor=<url>', method: 'GET',  description: 'Walk prov:wasDerivedFrom + cg:supersedes for one descriptor.' },
+      { name: 'audit-compliance', target: '/audit/compliance/{framework}',   method: 'GET',  description: 'Generate a regulatory framework report.' },
+      { name: 'inbox',            target: '/inbox?pod=<url>',                method: 'GET',  description: 'What\'s new on a pod (consumer-friendly framing of /audit/events).' },
+      { name: 'oauth-as-meta',    target: '/.well-known/oauth-authorization-server', method: 'GET', description: 'OAuth 2.0 Authorization Server Metadata (RFC 8414) + Hydra.' },
+      { name: 'oauth-pr-meta',    target: '/.well-known/oauth-protected-resource',    method: 'GET', description: 'OAuth Protected Resource Metadata (RFC 9728) + Hydra.' },
+      { name: 'shacl-shapes',     target: '/.well-known/shacl-shapes',       method: 'GET',  description: 'SHACL shapes graph this relay\'s responses conform to.' },
+      { name: 'health',           target: '/health',                         method: 'GET',  description: 'Relay liveness probe.' },
+    ],
+  });
+  res.type('application/ld+json').json(entry);
+});
+
+// SHACL shapes graph — Turtle export of every shape the relay's
+// responses reference via cg:conformsToShape. Lets validators verify
+// any kernel-verb / shim payload without out-of-band schema lookup.
+app.get('/.well-known/shacl-shapes', (_req, res) => {
+  res.type('text/turtle').send(getShaclShapesTurtle());
 });
 
 // Health check
@@ -3290,7 +3764,7 @@ app.get('/x402/price/:podName', (req, res) => {
 });
 
 // List tools
-app.get('/tools', (_req, res) => {
+app.get('/tools', (req, res) => {
   // Mirror the MCP /mcp tools/list response so HTTP-browseable
   // introspection sees the same schemas + annotations the MCP
   // clients see. Falls back to the legacy {name, description}
@@ -3298,11 +3772,37 @@ app.get('/tools', (_req, res) => {
   const schemaByName = new Map<string, typeof TOOL_SCHEMAS[number]>(
     TOOL_SCHEMAS.map(t => [t.name, t])
   );
-  res.json(Object.entries(TOOLS).map(([name, { description }]) => {
+  const base = `${req.protocol}://${req.get('host') ?? ''}`;
+  const members = Object.entries(TOOLS).map(([name, { description }]) => {
     const schema = schemaByName.get(name);
-    if (schema) return schema;
-    return { name, description };
-  }));
+    const baseSchema = schema ?? { name, description };
+    // Each entry is a hydra:Resource carrying its own affordance
+    // (POST to /tool/:name) so clients can navigate from the
+    // catalog to an individual invocation by following links.
+    return {
+      '@id': `${base}/tool/${name}`,
+      '@type': ['hydra:Resource', 'urn:cg:type:McpTool'],
+      ...baseSchema,
+      affordances: [
+        {
+          '@type': ['cg:Affordance', 'hydra:Operation'],
+          action: `urn:cg:action:invoke:${name}`,
+          target: `${base}/tool/${name}`,
+          method: 'POST',
+          expects: 'urn:cg:type:ToolInput',
+          returns: 'urn:cg:type:ToolResult',
+        },
+      ],
+    };
+  });
+  res.type('application/ld+json').json({
+    '@context': KERNEL_JSONLD_CONTEXT,
+    '@id': `${base}/tools`,
+    '@type': ['hydra:Collection', 'urn:cg:type:McpToolCatalog'],
+    conformsToShape: 'urn:cg:shape:McpToolCatalog',
+    'hydra:totalItems': members.length,
+    'hydra:member': members,
+  });
 });
 
 // Call a tool directly via REST (auth enforced on write operations)
@@ -3310,7 +3810,11 @@ app.post('/tool/:name', async (req, res) => {
   const toolName = req.params.name;
   const tool = TOOLS[toolName];
   if (!tool) {
-    res.status(404).json({ error: `Unknown tool: ${toolName}` });
+    res.status(404).type('application/ld+json').json({
+      '@context': KERNEL_JSONLD_CONTEXT,
+      '@type': ['hydra:Status', 'urn:cg:error:UnknownTool'],
+      error: `Unknown tool: ${toolName}`,
+    });
     return;
   }
 
@@ -3318,10 +3822,20 @@ app.post('/tool/:name', async (req, res) => {
   if (AUTH_REQUIRED_TOOLS.has(toolName)) {
     const auth = await verifyBearerToken(req.headers.authorization);
     if (!auth.authenticated) {
-      res.status(401).json({
+      res.status(401).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:cg:error:Unauthorized'],
         error: 'Authentication required for write operations',
         detail: auth.error,
         hint: `POST ${IDENTITY_URL}/register to create an account and get a token`,
+        affordances: [
+          {
+            '@type': ['cg:Affordance', 'hydra:Operation'],
+            action: 'urn:cg:action:identity:register',
+            target: `${IDENTITY_URL}/register`,
+            method: 'POST',
+          },
+        ],
       });
       return;
     }
@@ -3333,9 +3847,22 @@ app.post('/tool/:name', async (req, res) => {
 
   try {
     const result = await tool.handler({...req.body, _req: req });
-    res.json(JSON.parse(result));
+    // Hypermedia decoration: kernel-verb handlers already return
+    // decorated JSON; named-shim handlers get decorated here.
+    const decorated = decorateRelayShimText(toolName, result);
+    let parsed: unknown;
+    try { parsed = JSON.parse(decorated); } catch { parsed = decorated; }
+    if (parsed && typeof parsed === 'object') {
+      res.type('application/ld+json').json(parsed);
+    } else {
+      res.type('text/plain').send(decorated);
+    }
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    res.status(500).type('application/ld+json').json({
+      '@context': KERNEL_JSONLD_CONTEXT,
+      '@type': ['hydra:Status', 'urn:cg:error:ToolFailure'],
+      error: (err as Error).message,
+    });
   }
 });
 
