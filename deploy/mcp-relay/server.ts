@@ -1647,6 +1647,7 @@ const TOOL_SCHEMAS = [
       required: ['graph_iri', 'graph_content'],
     },
     outputSchema: PUBLISH_CONTEXT_OUTPUT,
+    annotations: { title: 'Publish context graph', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'discover_context',
@@ -1663,6 +1664,7 @@ const TOOL_SCHEMAS = [
       required: ['pod_url'],
     },
     outputSchema: DISCOVER_CONTEXT_OUTPUT,
+    annotations: { title: 'Discover descriptors on a pod', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'get_descriptor',
@@ -1675,6 +1677,7 @@ const TOOL_SCHEMAS = [
       required: ['url'],
     },
     outputSchema: GET_DESCRIPTOR_OUTPUT,
+    annotations: { title: 'Fetch descriptor + payload', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'get_pod_status',
@@ -1686,6 +1689,7 @@ const TOOL_SCHEMAS = [
       },
     },
     outputSchema: GET_POD_STATUS_OUTPUT,
+    annotations: { title: 'Check pod status', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'subscribe_to_pod',
@@ -1698,6 +1702,7 @@ const TOOL_SCHEMAS = [
       required: ['pod_url'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Subscribe to pod notifications', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'register_agent',
@@ -1715,6 +1720,7 @@ const TOOL_SCHEMAS = [
       required: ['agent_id'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Register an agent', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'revoke_agent',
@@ -1728,6 +1734,7 @@ const TOOL_SCHEMAS = [
       required: ['agent_id'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Revoke agent delegation', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'verify_agent',
@@ -1741,6 +1748,7 @@ const TOOL_SCHEMAS = [
       required: ['agent_id', 'pod_url'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Verify agent delegation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'discover_all',
@@ -1752,12 +1760,14 @@ const TOOL_SCHEMAS = [
       },
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Discover across known pods', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'list_known_pods',
     description: 'List pods in the relay\'s in-memory federation registry (home pod, manually added, directory-discovered, WebFinger-resolved).',
     inputSchema: { type: 'object', properties: {} },
     outputSchema: LIST_KNOWN_PODS_OUTPUT,
+    annotations: { title: 'List pods in federation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'add_pod',
@@ -1772,6 +1782,7 @@ const TOOL_SCHEMAS = [
       required: ['pod_url'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Add pod to federation', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'remove_pod',
@@ -1784,6 +1795,7 @@ const TOOL_SCHEMAS = [
       required: ['pod_url'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Remove pod from federation', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'discover_directory',
@@ -1796,6 +1808,7 @@ const TOOL_SCHEMAS = [
       required: ['directory_url'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Discover a directory of pods', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'publish_directory',
@@ -1808,6 +1821,7 @@ const TOOL_SCHEMAS = [
       },
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Publish a directory', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'resolve_webfinger',
@@ -1820,6 +1834,7 @@ const TOOL_SCHEMAS = [
       required: ['resource'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Resolve WebFinger handle', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'unsubscribe_from_pod',
@@ -1832,12 +1847,14 @@ const TOOL_SCHEMAS = [
       required: ['pod_url'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Unsubscribe from pod', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'subscribe_all',
     description: 'Subscribe to WebSocket notifications from ALL pods currently in the relay\'s federation registry. Use add_pod / discover_directory first to populate.',
     inputSchema: { type: 'object', properties: {} },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Subscribe to all known pods', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'setup_identity',
@@ -1851,6 +1868,7 @@ const TOOL_SCHEMAS = [
       },
     },
     outputSchema: STUB_REDIRECT_OUTPUT,
+    annotations: { title: 'Set up an identity', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: 'link_wallet',
@@ -1864,6 +1882,7 @@ const TOOL_SCHEMAS = [
       required: ['wallet_address'],
     },
     outputSchema: STUB_REDIRECT_OUTPUT,
+    annotations: { title: 'Link a wallet to identity', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'check_balance',
@@ -1875,6 +1894,7 @@ const TOOL_SCHEMAS = [
       },
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Check wallet balance', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'analyze_question',
@@ -1888,6 +1908,7 @@ const TOOL_SCHEMAS = [
       required: ['question'],
     },
     outputSchema: ANALYZE_QUESTION_OUTPUT,
+    annotations: { title: 'Analyze a question', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'pgsl_ingest',
@@ -1901,6 +1922,7 @@ const TOOL_SCHEMAS = [
       required: ['content'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Ingest into PGSL lattice', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'pgsl_resolve',
@@ -1913,12 +1935,14 @@ const TOOL_SCHEMAS = [
       required: ['uri'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Resolve a PGSL URI', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'pgsl_lattice_status',
     description: 'Show the current state of the PGSL lattice — atom count, fragment count, levels, total nodes.',
     inputSchema: { type: 'object', properties: {} },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'PGSL lattice status', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'pgsl_meet',
@@ -1932,12 +1956,14 @@ const TOOL_SCHEMAS = [
       required: ['uri_a', 'uri_b'],
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'PGSL lattice meet', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'pgsl_to_turtle',
     description: 'Serialize the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance — all as typed RDF resources with the pgsl: vocabulary.',
     inputSchema: { type: 'object', properties: {} },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Serialize PGSL as Turtle', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 ] as const;
 

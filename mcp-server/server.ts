@@ -2312,6 +2312,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['graph_iri', 'graph_content'],
       },
       outputSchema: PUBLISH_CONTEXT_OUTPUT,
+      annotations: { title: 'Publish context graph', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'discover_context',
@@ -2329,6 +2330,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['pod_url'],
       },
       outputSchema: DISCOVER_CONTEXT_OUTPUT,
+      annotations: { title: 'Discover descriptors on a pod', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'get_descriptor',
@@ -2341,6 +2343,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['url'],
       },
       outputSchema: GET_DESCRIPTOR_OUTPUT,
+      annotations: { title: 'Fetch descriptor + payload', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'subscribe_to_pod',
@@ -2353,6 +2356,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['pod_url'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Subscribe to pod notifications', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'unsubscribe_from_pod',
@@ -2365,6 +2369,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['pod_url'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Unsubscribe from pod', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'get_pod_status',
@@ -2376,6 +2381,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
       outputSchema: GET_POD_STATUS_OUTPUT,
+      annotations: { title: 'Check pod status', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     // ── Delegation tools ──
     {
@@ -2393,6 +2399,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['agent_id'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Register an agent', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'revoke_agent',
@@ -2406,6 +2413,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['agent_id'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Revoke agent delegation', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'verify_agent',
@@ -2419,6 +2427,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['agent_id', 'pod_url'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Verify agent delegation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     // ── Multi-pod federation tools ──
     {
@@ -2433,18 +2442,21 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Discover across known pods', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'subscribe_all',
       description: 'Subscribe to WebSocket notifications from ALL known pods.',
       inputSchema: { type: 'object' as const, properties: {} },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Subscribe to all known pods', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'list_known_pods',
       description: 'List all pods in the federation registry — home pod, configured pods, directory-discovered pods, WebFinger-resolved pods.',
       inputSchema: { type: 'object' as const, properties: {} },
       outputSchema: LIST_KNOWN_PODS_OUTPUT,
+      annotations: { title: 'List pods in federation', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'add_pod',
@@ -2459,6 +2471,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['pod_url'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Add pod to federation', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     {
       name: 'remove_pod',
@@ -2471,6 +2484,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['pod_url'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Remove pod from federation', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     {
       name: 'discover_directory',
@@ -2483,6 +2497,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['directory_url'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Discover a directory of pods', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'publish_directory',
@@ -2494,6 +2509,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Publish a directory', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     {
       name: 'resolve_webfinger',
@@ -2506,6 +2522,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['resource'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Resolve WebFinger handle', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     // ── Onboarding ──
     {
@@ -2521,6 +2538,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['name'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Set up an identity', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     {
       name: 'link_wallet',
@@ -2534,6 +2552,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['wallet_address'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Link a wallet to identity', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     {
       name: 'check_balance',
@@ -2545,6 +2564,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Check wallet balance', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     // ── Comprehension tools ──
     {
@@ -2559,6 +2579,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['question'],
       },
       outputSchema: ANALYZE_QUESTION_OUTPUT,
+      annotations: { title: 'Analyze a question', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     // ── PGSL tools ──
     {
@@ -2573,6 +2594,7 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['content'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Ingest into PGSL lattice', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     {
       name: 'pgsl_resolve',
@@ -2585,12 +2607,14 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['uri'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Resolve a PGSL URI', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     {
       name: 'pgsl_lattice_status',
       description: 'Show the current state of the PGSL lattice — atom count, fragment count, levels, total nodes.',
       inputSchema: { type: 'object' as const, properties: {} },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'PGSL lattice status', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     {
       name: 'pgsl_meet',
@@ -2604,14 +2628,16 @@ mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ['uri_a', 'uri_b'],
       },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'PGSL lattice meet', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     {
       name: 'pgsl_to_turtle',
       description: 'Serialize the entire PGSL lattice as RDF Turtle. Includes atoms, fragments, pullback structures, and provenance — all as typed RDF resources with the pgsl: vocabulary.',
       inputSchema: { type: 'object' as const, properties: {} },
       outputSchema: GENERIC_OUTPUT_SCHEMA,
+      annotations: { title: 'Serialize PGSL as Turtle', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-  ] as Array<{name: string; description: string; inputSchema: object; outputSchema?: object}>).filter(t => isToolEnabled(t.name)),
+  ] as Array<{name: string; description: string; inputSchema: object; outputSchema?: object; annotations?: object}>).filter(t => isToolEnabled(t.name)),
 }));
 
 // ── Tool Dispatch ───────────────────────────────────────────
