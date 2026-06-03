@@ -8,7 +8,7 @@ ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 
 WORKDIR /workspace
 
-COPY package.json package-lock.json tsconfig.base.json tsconfig.compat.json ./
+COPY package.json package-lock.json tsconfig.base.json ./
 COPY scripts/ ./scripts/
 COPY packages/ ./packages/
 
