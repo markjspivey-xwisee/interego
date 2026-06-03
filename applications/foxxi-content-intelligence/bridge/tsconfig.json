@@ -20,6 +20,7 @@
   },
   "include": [
     "server.ts",
+    "vite-env.d.ts",
     "../affordances.ts",
     "../src/**/*.ts",
     "../../_shared/affordance-mcp/**/*.ts",

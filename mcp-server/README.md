@@ -86,11 +86,12 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ## What you get
 
-Once configured, your AI agent has these 27 tools available:
+Once configured, your AI agent has 35 entries available — **8 categorical kernel verbs** (the substrate's first-class primitives) plus **27 compatibility shims** (named tools that internally compose the kernel):
 
 | Category | Tools |
 |---|---|
-| **Identity** | `setup_identity`, `link_wallet`, `register_agent`, `verify_agent`, `revoke_agent` |
+| **Substrate kernel (primitives)** | `mint`, `dereference`, `compose`, `act`, `restrict`, `extend`, `promote`, `decompose` — the 8 categorical verbs realizing PGSL fibration + HELA topos + restriction/extension adjunction + Peircean correspondence per `docs/ARCHITECTURAL-FOUNDATIONS.md` §11 |
+| **Identity** | `setup_identity`, `link_wallet`, `register_agent`, `verify_agent`, `revoke_agent`, `whoami` |
 | **Publishing** | `publish_context` (with optional `share_with`), `publish_directory` |
 | **Discovery** | `discover_context`, `discover_all`, `discover_directory`, `get_descriptor`, `resolve_webfinger`, `list_known_pods`, `get_pod_status` |
 | **Federation** | `add_pod`, `remove_pod`, `subscribe_to_pod`, `unsubscribe_from_pod`, `subscribe_all` |
@@ -174,7 +175,7 @@ node dist/server.js
 
 The stdio server in this package is for desktop clients that can spawn a subprocess. For **claude.ai mobile / web custom connectors, ChatGPT custom connectors, Cursor remote MCP**, and any other OAuth-authenticated remote MCP client, use the cloud-hosted `interego-relay` instead.
 
-**Tool surface parity:** the relay exposes the same 27 tools as this stdio server, with two carve-outs that fit the remote OAuth model: `setup_identity` and `link_wallet` are present in the relay's tool list but return a redirect message ("you're already identified via OAuth; use the local stdio for wallet management"), since the user's wallet keys live on their device, not on the relay server. `check_balance` is a real read-only call against the relay's compliance wallet.
+**Tool surface parity:** the relay exposes the same 8 kernel verbs + 27 compatibility shims (35 entries total) as this stdio server, with two carve-outs that fit the remote OAuth model: `setup_identity` and `link_wallet` are present in the relay's tool list but return a redirect message ("you're already identified via OAuth; use the local stdio for wallet management"), since the user's wallet keys live on their device, not on the relay server. `check_balance` is a real read-only call against the relay's compliance wallet. Every response is JSON-LD with hydra:Operation affordances + a `conformsToShape` pointer to a SHACL shape served from `/.well-known/shacl-shapes`.
 
 - **Connector URL:** your deployment's relay, e.g. `https://interego-relay.<your-env>.azurecontainerapps.io/mcp`
 - **Authentication:** OAuth 2.1 + PKCE + Dynamic Client Registration. The relay's `/authorize` page offers three passwordless sign-in methods: **passkey** (WebAuthn), **Ethereum wallet** (SIWE), and **did:key** (Ed25519 signature). No shared secrets anywhere, no user-claimable identifiers — the userId is derived from your first credential (`u-pk-<hash>` / `u-eth-<addr>` / `u-did-<hash>`), so an attacker can't bind their passkey to your display alias.
