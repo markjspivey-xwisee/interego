@@ -3224,7 +3224,18 @@ app.get('/x402/price/:podName', (req, res) => {
 
 // List tools
 app.get('/tools', (_req, res) => {
-  res.json(Object.entries(TOOLS).map(([name, { description }]) => ({ name, description })));
+  // Mirror the MCP /mcp tools/list response so HTTP-browseable
+  // introspection sees the same schemas + annotations the MCP
+  // clients see. Falls back to the legacy {name, description}
+  // shape for any tool that doesn't appear in TOOL_SCHEMAS.
+  const schemaByName = new Map<string, typeof TOOL_SCHEMAS[number]>(
+    TOOL_SCHEMAS.map(t => [t.name, t])
+  );
+  res.json(Object.entries(TOOLS).map(([name, { description }]) => {
+    const schema = schemaByName.get(name);
+    if (schema) return schema;
+    return { name, description };
+  }));
 });
 
 // Call a tool directly via REST (auth enforced on write operations)
