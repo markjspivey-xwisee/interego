@@ -1,0 +1,168 @@
+{
+  "primary": {
+    "package": {
+      "course_id": "golf-explained",
+      "course_label": "Golf Explained",
+      "title": "Golf Explained",
+      "federation_iri_base": "https://acme-training.example/courses/golf-explained"
+    },
+    "concepts": [
+      {
+        "id": "handicap",
+        "label": "handicap",
+        "tier": 1,
+        "taught_in_slides": ["hcp-overview", "hcp-calc-handi"],
+        "confidence": 0.97,
+        "total_freq": 12,
+        "is_free_standing": true
+      },
+      {
+        "id": "reactive-handicap",
+        "label": "reactive handicap component",
+        "tier": 1,
+        "taught_in_slides": ["hcp-calc-handi"],
+        "confidence": 0.88,
+        "total_freq": 4,
+        "is_free_standing": true
+      },
+      {
+        "id": "score",
+        "label": "score",
+        "tier": 1,
+        "taught_in_slides": ["hcp-overview"],
+        "confidence": 0.95,
+        "total_freq": 10,
+        "is_free_standing": true
+      },
+      {
+        "id": "stroke-index",
+        "label": "stroke index",
+        "tier": 2,
+        "taught_in_slides": ["hcp-overview"],
+        "confidence": 0.8,
+        "total_freq": 5,
+        "is_free_standing": true
+      },
+      {
+        "id": "golf-voltage",
+        "label": "golf voltage regulation",
+        "tier": 1,
+        "taught_in_slides": ["hcp-calc-handi"],
+        "confidence": 0.84,
+        "total_freq": 6,
+        "is_free_standing": true
+      },
+      {
+        "id": "control-output",
+        "label": "control output current",
+        "tier": 1,
+        "taught_in_slides": ["hcp-example"],
+        "confidence": 0.81,
+        "total_freq": 5,
+        "is_free_standing": true
+      }
+    ],
+    "slides": [
+      {
+        "id": "hcp-overview",
+        "title": "Handicap Overview",
+        "sequence_index": 0,
+        "concept_ids": ["handicap", "score", "stroke-index"],
+        "transcript_combined": "A handicap is a numerical measure of a golfer's potential ability. It is calculated from recent scores adjusted by the course's stroke index. Lower handicaps indicate stronger players."
+      },
+      {
+        "id": "hcp-calc-score",
+        "title": "Calculating Your Score",
+        "sequence_index": 1,
+        "concept_ids": ["score"],
+        "transcript_combined": "Your gross score is the total number of strokes taken across the round. Net score subtracts your handicap from the gross score."
+      },
+      {
+        "id": "hcp-calc-handi",
+        "title": "Handicap Calculation",
+        "sequence_index": 2,
+        "concept_ids": ["handicap", "reactive-handicap", "golf-voltage"],
+        "transcript_combined": "Handicap is the component of the golf's output current that contributes to voltage regulation rather than active power transfer. The reactive handicap component is derived from your score differentials over recent rounds."
+      },
+      {
+        "id": "hcp-example",
+        "title": "Worked Example",
+        "sequence_index": 3,
+        "concept_ids": ["handicap", "control-output"],
+        "transcript_combined": "Suppose your last five score differentials are 12, 14, 11, 13, 15. The control output current — your handicap — is the average of the lowest of these adjusted by the course slope."
+      }
+    ],
+    "modifier_pairs": [
+      { "modifier": "reactive", "target": "handicap" },
+      { "modifier": "golf", "target": "voltage" }
+    ],
+    "prereq_edges": [
+      { "from": "score", "to": "handicap", "confidence": 0.95 },
+      { "from": "stroke-index", "to": "handicap", "confidence": 0.82 },
+      { "from": "golf-voltage", "to": "reactive-handicap", "confidence": 0.78 },
+      { "from": "control-output", "to": "handicap", "confidence": 0.7 }
+    ]
+  },
+  "federation": [
+    {
+      "package": {
+        "course_id": "golf-fundamentals",
+        "course_label": "Golf Fundamentals",
+        "title": "Golf Fundamentals",
+        "federation_iri_base": "https://acme-training.example/courses/golf-fundamentals"
+      },
+      "concepts": [
+        {
+          "id": "golf-current-basics",
+          "label": "golf current basics",
+          "tier": 1,
+          "taught_in_slides": ["gf-intro"],
+          "confidence": 0.8,
+          "total_freq": 5,
+          "is_free_standing": true
+        },
+        {
+          "id": "voltage-control",
+          "label": "voltage control fundamentals",
+          "tier": 1,
+          "taught_in_slides": ["gf-control"],
+          "confidence": 0.82,
+          "total_freq": 6,
+          "is_free_standing": true
+        },
+        {
+          "id": "golf-handicap-intro",
+          "label": "golf handicap intro",
+          "tier": 2,
+          "taught_in_slides": ["gf-intro"],
+          "confidence": 0.75,
+          "total_freq": 3,
+          "is_free_standing": true
+        }
+      ],
+      "slides": [
+        {
+          "id": "gf-intro",
+          "title": "Introduction to Golf",
+          "sequence_index": 0,
+          "concept_ids": ["golf-current-basics", "golf-handicap-intro"],
+          "transcript_combined": "Golf is a precision club-and-ball sport. Before discussing handicap, we cover the basics of current play and scoring conventions."
+        },
+        {
+          "id": "gf-control",
+          "title": "Control and Power",
+          "sequence_index": 1,
+          "concept_ids": ["voltage-control"],
+          "transcript_combined": "Voltage control fundamentals in golf swing analysis: how power delivery translates into ball speed via grip and club path."
+        }
+      ],
+      "modifier_pairs": [
+        { "modifier": "golf", "target": "current" }
+      ],
+      "prereq_edges": [
+        { "from": "golf-current-basics", "to": "voltage-control", "confidence": 0.7 },
+        { "from": "golf-current-basics", "to": "golf-handicap-intro", "confidence": 0.65 }
+      ]
+    }
+  ]
+}

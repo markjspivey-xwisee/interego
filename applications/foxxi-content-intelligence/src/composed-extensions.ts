@@ -459,14 +459,14 @@ export async function buildManagerTeamView(args: {
       const competencies: ManagerTeamCompetencyView['reports'][number]['competencies'] = [];
       for (const e of credEntries) {
         try {
-          const cred = await fetchVcFromEntry(e.descriptorUrl, args.fetch ?? globalThis.fetch);
+          const cred = await fetchVcFromEntry(e.descriptorUrl, args.fetch ?? (globalThis.fetch as unknown as FetchFn));
           if (!cred) continue;
           const subj = cred.credentialSubject as { achievement?: { id?: string; name?: string; proficiencyLevel?: string }; competency?: { id?: string; label?: string; proficiencyLevel?: string } };
           const cid = subj.achievement?.id ?? subj.competency?.id;
           const clabel = subj.achievement?.name ?? subj.competency?.label;
           const cprof = subj.achievement?.proficiencyLevel ?? subj.competency?.proficiencyLevel;
           if (!cid) continue;
-          competencies.push({ id: cid, label: clabel, proficiency: cprof, issuedAt: cred.validFrom });
+          competencies.push({ id: cid, label: clabel, proficiency: cprof, issuedAt: typeof cred.validFrom === 'string' ? cred.validFrom : undefined });
           // Team roll-up.
           let existing = teamMap.get(cid);
           if (!existing) {
@@ -497,14 +497,14 @@ export async function buildManagerTeamView(args: {
   };
 }
 
-async function fetchVcFromEntry(descriptorUrl: string, fetchFn: typeof globalThis.fetch): Promise<Record<string, unknown> | null> {
+async function fetchVcFromEntry(descriptorUrl: string, fetchFn: FetchFn): Promise<Record<string, unknown> | null> {
   try {
     const r = await fetchFn(descriptorUrl, { headers: { Accept: 'text/turtle' } });
     if (!r.ok) return null;
     const ttl = await r.text();
     const m = ttl.match(/hydra:target\s+<([^>]+)>/);
     if (!m) return null;
-    const { content } = await fetchGraphContent(m[1]!, { fetch: fetchFn as never });
+    const { content } = await fetchGraphContent(m[1]!, { fetch: fetchFn });
     if (!content) return null;
     const bm = content.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
     if (!bm) return null;

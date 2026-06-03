@@ -109,7 +109,7 @@ export function buildStep(agentDid: string, input: TrajectoryStepInput): Traject
           ...((input.wasDerivedFrom ?? []) as IRI[]),
         ],
       },
-      { type: 'Agent', assertingAgent: agentDid as IRI },
+      { type: 'Agent', assertingAgent: { identity: agentDid as IRI } },
       { type: 'Semiotic', modalStatus: input.modalStatus },
     ],
   };

@@ -257,7 +257,7 @@ function credentialDescriptorFor(args: {
           ? { wasDerivedFrom: args.derivedFrom }
           : {}),
       },
-      { type: 'Agent', assertingAgent: args.issuerDid as IRI },
+      { type: 'Agent', assertingAgent: { identity: args.issuerDid as IRI } },
       { type: 'Semiotic', modalStatus: 'Asserted' },
     ],
   };

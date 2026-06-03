@@ -88,7 +88,7 @@ function buildStatementDescriptor(args: {
   const provenance: ProvenanceFacetData = {
     type: 'Provenance',
     wasAttributedTo: authoritativeSource,
-    wasGeneratedBy: { agent: actorId as IRI, endedAtTime: stored },
+    wasGeneratedBy: { agent: actorId as IRI, endedAt: stored },
     generatedAtTime: stored,
   };
   const agentFacet: AgentFacetData = {
@@ -356,8 +356,8 @@ export class PodStatementStore implements StatementStore {
           String(t) === FOXXI_STATEMENT_TYPE || String(t) === TINCAN_STATEMENT_TYPE)
       );
       for (const entry of statementEntries) {
-        const graphIri = (entry as { graph?: string; describes?: string[] }).graph
-          ?? (entry as { describes?: string[] }).describes?.[0];
+        const graphIri = (entry as { graph?: string }).graph
+          ?? entry.describes?.[0];
         if (!graphIri) continue;
         const id = String(graphIri).replace(/^urn:foxxi:statement:/, '');
         if (this.hot.has(id)) continue;

@@ -21,7 +21,7 @@
  */
 
 import type { CohortIntelligence } from './cohort-intel.js';
-import type { CourseContent, CourseConcept, CoursePrereqEdge } from './agentic-rag.js';
+import type { CourseConcept, CoursePrereqEdge } from '../dashboard-app/src/types.js';
 
 // ── A. A/B experiment design ─────────────────────────────────
 

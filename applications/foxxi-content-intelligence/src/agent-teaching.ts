@@ -41,7 +41,7 @@
  * `foxxi:`-namespaced (see foxxi-vocab.ts).
  */
 
-import type { Performer } from './emergent-content.js';
+import type { Performer } from './performance-architecture.js';
 import type { AgentTrajectory } from './agent-trajectory.js';
 import type { OutcomeRecord } from './performance-calibration.js';
 

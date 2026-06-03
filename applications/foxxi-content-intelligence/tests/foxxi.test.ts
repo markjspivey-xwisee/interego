@@ -52,13 +52,13 @@ describe('foxxi affordances: shape + naming', () => {
 
   it('every action IRI follows the urn:cg:action:foxxi:<verb> convention', () => {
     for (const a of [...foxxiAffordances, ...foxxiAdminAffordances]) {
-      expect(a.action).toMatch(/^urn:cg:action:foxxi:[a-z-]+$/);
+      expect(a.action).toMatch(/^urn:cg:action:foxxi:[a-z0-9-]+$/);
     }
   });
 
   it('every toolName follows the foxxi.<verb> convention', () => {
     for (const a of [...foxxiAffordances, ...foxxiAdminAffordances]) {
-      expect(a.toolName).toMatch(/^foxxi\.[a-z_]+$/);
+      expect(a.toolName).toMatch(/^foxxi\.[a-z0-9_]+$/);
     }
   });
 

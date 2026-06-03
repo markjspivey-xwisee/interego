@@ -339,8 +339,8 @@ export class PodKeyValueStore<T extends object> {
         return Array.isArray(ct) && ct.some(t => String(t) === String(this.typeIri));
       });
       for (const entry of typed) {
-        const graphIri = (entry as { graph?: string; describes?: string[] }).graph
-          ?? (entry as { describes?: string[] }).describes?.[0];
+        const graphIri = (entry as { graph?: string }).graph
+          ?? entry.describes?.[0];
         if (!graphIri) continue;
         const key = String(graphIri).startsWith(this.iriPrefix)
           ? String(graphIri).slice(this.iriPrefix.length)

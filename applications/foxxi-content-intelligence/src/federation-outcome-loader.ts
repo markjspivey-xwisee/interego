@@ -136,8 +136,8 @@ export class FederationOutcomeLoader {
     // manifest carries it explicitly. Read the manifest's `graph` (or
     // `describes`) field and fetch the TriG body.
     for (const entry of outcomeEntries) {
-      const graphIri = (entry as { graph?: string; describes?: string[] }).graph
-        ?? (entry as { describes?: string[] }).describes?.[0];
+      const graphIri = (entry as { graph?: string }).graph
+        ?? entry.describes?.[0];
       if (!graphIri) continue;
       // The graph file URL follows the publisher's slug convention:
       //   <podUrl>foxxi/work-products/<slug>-graph.trig

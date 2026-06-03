@@ -484,14 +484,14 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
     return { error: 'missing session token — pass Authorization: Bearer <token>' };
   }
 
-  const addressMap = buildAddressMap((admin.users as Array<{ user_id: string; web_id: string; wallet_address?: string }>) ?? []);
+  const addressMap = buildAddressMap(admin.users ?? []);
   const verified = verifySessionToken(token, addressMap);
   if (!verified.ok) return { error: `auth: ${verified.reason}` };
 
   const ctx = resolveCallerContext({
     callerWebId: verified.callerDid,
     callerUserId: verified.callerUserId,
-    users: admin.users,
+    users: admin.users as unknown as Parameters<typeof resolveCallerContext>[0]['users'],
     adminWebId,
     learningEngineerWebIds,
   });

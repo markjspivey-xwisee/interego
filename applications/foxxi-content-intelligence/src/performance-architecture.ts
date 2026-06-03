@@ -430,6 +430,8 @@ function authoringFor(type: InterventionType, direction: PerformanceDirection): 
 
 export interface InterventionPlan {
   situationId: string;
+  /** Optional reference to the diagnosed gap this plan addresses. */
+  gapId?: string;
   diagnosis: Diagnosis;
   /** The full paradigm — every option, selected or not, with reasoning. */
   paradigm: InterventionOption[];
