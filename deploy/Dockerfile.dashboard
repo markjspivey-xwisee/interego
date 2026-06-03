@@ -1,25 +1,25 @@
 # ────────────────────────────────────────────────────────────
-#  Build stage: compile the @interego/core library + dashboard
+#  Build stage: workspace install + pack @interego/core tarball
 # ────────────────────────────────────────────────────────────
-# NODE_BASE: Docker Hub by default (local builds), ACR-imported copy in
-# CI via --build-arg — see deploy-azure.yml / Dockerfile.identity.
 ARG NODE_BASE=node:20-slim
 FROM ${NODE_BASE} AS build
 
-# Skip onnxruntime-node CUDA binary (no GPU in containerapp, CPU
-# backend is sufficient, GitHub release binary has flaky 504s).
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 
-WORKDIR /lib
+WORKDIR /workspace
 
-# Build the @interego/core library (compile src/ → dist/)
-COPY package.json package-lock.json tsconfig.json ./
-COPY src/ ./src/
-COPY docs/ns/ ./docs/ns/
-RUN npm ci && npx tsc
+COPY package.json package-lock.json tsconfig.base.json tsconfig.compat.json ./
+COPY scripts/ ./scripts/
+COPY packages/ ./packages/
 
-# Pack the library into a tarball for the app install
-RUN npm pack && mv interego-core-*.tgz /tmp/interego-core.tgz
+RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
+RUN npm run -ws --if-present build
+
+RUN mkdir -p /tarballs && \
+    cd packages/core && npm pack --pack-destination /tarballs && cd /workspace && \
+    for pkg in abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions; do \
+      cd packages/$pkg && npm pack --pack-destination /tarballs && cd /workspace ; \
+    done
 
 # ────────────────────────────────────────────────────────────
 #  Build stage: install the dashboard deps + compile server.ts
@@ -27,25 +27,34 @@ RUN npm pack && mv interego-core-*.tgz /tmp/interego-core.tgz
 WORKDIR /app
 
 COPY examples/dashboard/package.json ./package.json.template
-# Replace file:../../ library dep with the packed tarball path
-# so we get a real @interego/core install (not a symlink to the
-# raw repo layout).
-RUN sed 's|"file:../../"|"file:/tmp/interego-core.tgz"|g' package.json.template > package.json \
- && rm package.json.template \
- && npm install
+RUN sed -e 's|"@interego/core": "[^"]*"|"@interego/core": "file:/tarballs/interego-core-0.2.0.tgz"|g' \
+        -e 's|"file:../../"|"file:/tarballs/interego-core-0.2.0.tgz"|g' \
+        package.json.template > package.json && rm package.json.template && \
+    npm install --no-audit --no-fund && \
+    npm install --no-audit --no-fund --no-save \
+      /tarballs/interego-abac-0.2.0.tgz \
+      /tarballs/interego-compliance-0.2.0.tgz \
+      /tarballs/interego-connectors-0.2.0.tgz \
+      /tarballs/interego-constitutional-0.2.0.tgz \
+      /tarballs/interego-extractors-0.2.0.tgz \
+      /tarballs/interego-ops-0.2.0.tgz \
+      /tarballs/interego-p2p-0.2.0.tgz \
+      /tarballs/interego-passport-0.2.0.tgz \
+      /tarballs/interego-privacy-0.2.0.tgz \
+      /tarballs/interego-registry-0.2.0.tgz \
+      /tarballs/interego-security-txt-0.2.0.tgz \
+      /tarballs/interego-skills-0.2.0.tgz \
+      /tarballs/interego-transactions-0.2.0.tgz
 
 COPY examples/dashboard/tsconfig.json ./
 COPY examples/dashboard/server.ts ./
 COPY examples/dashboard/index.html ./
 COPY examples/multi-agent/css-config.json ./css-config.json
 RUN npx tsc
-# server.ts uses path.resolve(__dirname, 'index.html') to serve the
-# dashboard HTML. After compilation, __dirname inside dist/server.js
-# is /app/dist, so the HTML must live there too.
 RUN cp index.html dist/
 
 # ────────────────────────────────────────────────────────────
-#  Runtime stage: distroless image running compiled JS
+#  Runtime stage
 # ────────────────────────────────────────────────────────────
 FROM gcr.io/distroless/nodejs20-debian12
 

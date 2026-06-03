@@ -1,25 +1,25 @@
 # ────────────────────────────────────────────────────────────
-#  Build stage: compile the library + pgsl-browser server
+#  Build stage: workspace install + pack @interego/core tarball
 # ────────────────────────────────────────────────────────────
-# NODE_BASE: Docker Hub by default (local builds), ACR-imported copy in
-# CI via --build-arg — see deploy-azure.yml / Dockerfile.identity.
 ARG NODE_BASE=node:20-slim
 FROM ${NODE_BASE} AS build
 
-# Skip onnxruntime-node CUDA binary (no GPU in containerapp, CPU
-# backend is sufficient, GitHub release binary has flaky 504s).
 ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 
-WORKDIR /lib
+WORKDIR /workspace
 
-# Build the @interego/core library first (compile src/ → dist/)
-COPY package.json package-lock.json tsconfig.json ./
-COPY src/ ./src/
-COPY docs/ns/ ./docs/ns/
-RUN npm ci && npx tsc
+COPY package.json package-lock.json tsconfig.base.json tsconfig.compat.json ./
+COPY scripts/ ./scripts/
+COPY packages/ ./packages/
 
-# Pack the library into a tarball we can install into the app
-RUN npm pack && mv interego-core-*.tgz /tmp/interego-core.tgz
+RUN npm install --workspaces --include-workspace-root --no-audit --no-fund
+RUN npm run -ws --if-present build
+
+RUN mkdir -p /tarballs && \
+    cd packages/core && npm pack --pack-destination /tarballs && cd /workspace && \
+    for pkg in abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions; do \
+      cd packages/$pkg && npm pack --pack-destination /tarballs && cd /workspace ; \
+    done
 
 # ────────────────────────────────────────────────────────────
 #  Build stage: compile the pgsl-browser server against the lib
@@ -27,54 +27,40 @@ RUN npm pack && mv interego-core-*.tgz /tmp/interego-core.tgz
 WORKDIR /app
 
 COPY examples/pgsl-browser/package.json ./package.json.template
-# Replace the file:../../ library dep with the packed tarball so
-# we get a real @interego/core install (not a symlink into the
-# raw repo layout). This also exercises the ./pgsl subpath export.
-RUN sed 's|"file:../../"|"file:/tmp/interego-core.tgz"|g' package.json.template > package.json \
- && rm package.json.template \
- && npm install
+RUN sed -e 's|"@interego/core": "[^"]*"|"@interego/core": "file:/tarballs/interego-core-0.2.0.tgz"|g' \
+        -e 's|"file:../../"|"file:/tarballs/interego-core-0.2.0.tgz"|g' \
+        package.json.template > package.json && rm package.json.template && \
+    npm install --no-audit --no-fund && \
+    npm install --no-audit --no-fund --no-save \
+      /tarballs/interego-abac-0.2.0.tgz \
+      /tarballs/interego-compliance-0.2.0.tgz \
+      /tarballs/interego-connectors-0.2.0.tgz \
+      /tarballs/interego-constitutional-0.2.0.tgz \
+      /tarballs/interego-extractors-0.2.0.tgz \
+      /tarballs/interego-ops-0.2.0.tgz \
+      /tarballs/interego-p2p-0.2.0.tgz \
+      /tarballs/interego-passport-0.2.0.tgz \
+      /tarballs/interego-privacy-0.2.0.tgz \
+      /tarballs/interego-registry-0.2.0.tgz \
+      /tarballs/interego-security-txt-0.2.0.tgz \
+      /tarballs/interego-skills-0.2.0.tgz \
+      /tarballs/interego-transactions-0.2.0.tgz
 
-# Transpile server.ts to dist/server.js with esbuild.
-#
-# Why esbuild and not tsc:
-#   pgsl-browser is an example/demo that has some latent type drift
-#   with the current library API. Previously the demo ran with `tsx`,
-#   which skips type checking, so the drift went unnoticed. Running
-#   it with real `tsc` surfaces every type error and blocks the build.
-#
-#   esbuild is a drop-in for the tsc + type-strip step: it transforms
-#   TypeScript to JavaScript without type checking, produces real
-#   .js output (not a runtime wrapper like tsx), and is dramatically
-#   faster than tsc. This gives the demo the same forgiving behavior
-#   it had with tsx but with a proper compiled artifact that runs
-#   under plain `node` in the distroless runtime.
-#
-#   The library itself is still type-checked by tsc in the first
-#   build stage above — type safety for @interego/core is unchanged.
-#   Only the DEMO skips type checking.
+# esbuild build (per the prior README note: pgsl-browser is a demo;
+# type drift is tolerated; tsc is reserved for the core library).
 COPY examples/pgsl-browser/server.ts ./
 COPY examples/pgsl-browser/index.html ./
 COPY examples/pgsl-browser/observatory.html ./
-# esbuild is in devDependencies and got installed above
 RUN npm run build
-# server.ts uses path.resolve(__dirname, 'index.html') to serve
-# static HTML. After compilation, __dirname inside dist/server.js
-# is /app/dist, so the HTML files need to live there too.
 RUN cp index.html observatory.html dist/
 
 # ────────────────────────────────────────────────────────────
-#  Runtime stage: distroless image running compiled JS
-#
-#  Distroless drops the Debian userland (no shell, no package
-#  manager, ~60MB vs ~200MB for node:20-slim) and dramatically
-#  reduces the CVE surface. `node` is the entrypoint, so CMD
-#  is just the script path.
+#  Runtime stage: distroless
 # ────────────────────────────────────────────────────────────
 FROM gcr.io/distroless/nodejs20-debian12
 
 WORKDIR /app
 
-# Copy the compiled output + static assets + all prod deps
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./
@@ -85,34 +71,8 @@ EXPOSE 5000
 
 ENV PORT=5000
 
-# ────────────────────────────────────────────────────────────
-#  POD_NAME — pod slug the browser opens by default
-#
-#  Pod-naming convention (post-migration, see context-graphs
-#  CLAUDE.md §First-principles guardrails):
-#    - DIDs are canonical; userIds (== pod slugs) are derived.
-#    - Passkey-rooted users:  /u-pk-<sha256(credId)[:12]>/
-#    - Wallet-rooted users:   /u-eth-<addr[:12]>/
-#    - did:key-rooted users:  /u-did-<sha256(did)[:12]>/
-#    - The Foxxi tenant pod is at /foxxi/ (renamed from the
-#      legacy /markj/ slug; /markj/ was deleted in the migration
-#      along with ~202 orphaned files).
-#
-#  This image previously defaulted POD_NAME=markj, which now
-#  points at a pod path that does not exist. The browser would
-#  silently load an empty/404 surface for any operator who
-#  redeployed without overriding it.
-#
-#  The default below is a NEUTRAL EXAMPLE only. Production
-#  deployments MUST override POD_NAME with the operator's
-#  actual pod slug (their /u-pk-…/ passkey-derived slug, a
-#  tenant slug like /foxxi/, or whatever pod holds the data
-#  the browser should open against), e.g.:
-#
-#    az containerapp update -n pgsl-browser -g context-graphs-rg \
-#      --set-env-vars POD_NAME=u-pk-abc123def456
-#
-# ────────────────────────────────────────────────────────────
+# Default neutral example pod slug. Production deployments must
+# override POD_NAME with the operator's actual pod slug.
 ENV POD_NAME=example-pod
 
 CMD ["dist/server.js"]
