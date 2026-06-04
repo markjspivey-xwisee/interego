@@ -53,7 +53,9 @@ import {
   type DiscoverContextsArgs,
   type FollowAffordanceArgs,
 } from './bridge.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── OpenClaw plugin API surface (minimal subset we use) ──────────────
 //

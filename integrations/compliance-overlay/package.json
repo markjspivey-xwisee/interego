@@ -6,10 +6,24 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
-  "scripts": { "build": "tsc", "test": "vitest run" },
-  "dependencies": { "@interego/core": "*" },
-  "devDependencies": { "typescript": "^5.5.0", "vitest": "^3.2.4" },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@interego/compliance": "*",
+    "@interego/core": "*",
+    "@interego/privacy": "*",
+    "@interego/solid": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vitest": "^3.2.4"
+  },
   "license": "Apache-2.0"
 }

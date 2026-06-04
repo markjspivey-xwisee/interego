@@ -24,7 +24,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@interego/core": "*"
+    "@interego/core": "*",
+    "@interego/solid": "*"
   },
   "devDependencies": {
     "typescript": "^5.5.0",

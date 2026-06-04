@@ -11,10 +11,10 @@ import {
   type AgentActionEvent,
 } from '../src/index.js';
 import {
-  parseTrig,
   findSubjectsOfType,
-  readStringValue,
   type IRI,
+  parseTrig,
+  readStringValue,
 } from '@interego/core';
 
 const AGENT = 'did:web:agent.example' as IRI;

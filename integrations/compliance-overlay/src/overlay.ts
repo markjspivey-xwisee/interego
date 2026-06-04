@@ -29,15 +29,21 @@
 
 import {
   ContextDescriptor,
-  publish,
+  type IRI,
   sha256,
+} from '@interego/core';
+import {
+  type ComplianceFramework,
   FRAMEWORK_CONTROLS,
+} from '@interego/compliance';
+import {
+  formatSensitivityWarning,
   screenForSensitiveContent,
   shouldBlockOnSensitivity,
-  formatSensitivityWarning,
-  type IRI,
-  type ComplianceFramework,
-} from '@interego/core';
+} from '@interego/privacy';
+import {
+  publish,
+} from '@interego/solid';
 
 // ── Public types ─────────────────────────────────────────────────────
 

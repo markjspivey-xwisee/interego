@@ -23,16 +23,18 @@
 
 import {
   ContextDescriptor,
-  publish,
-  discover,
-  parseTrig,
   findSubjectsOfType,
+  type IRI,
+  parseTrig,
+  readIriValue,
   readStringValue,
   readStringValues,
-  readIriValue,
   sha256,
-  type IRI,
 } from '@interego/core';
+import {
+  discover,
+  publish,
+} from '@interego/solid';
 
 // ── Types ────────────────────────────────────────────────────────────
 
