@@ -443,6 +443,12 @@ for (const rel of list) {
       buckets.set(m.pkg, arr);
     }
 
+    // If every entry stays in @interego/core, leave the original
+    // statement untouched — no need to reformat.
+    if (buckets.size === 0) {
+      return whole;
+    }
+
     // Emit one statement per bucket. We split each bucket into a `type`
     // statement and a value statement only if mixing would otherwise
     // change semantics — but `import { type A, B }` is fine in TS, so
