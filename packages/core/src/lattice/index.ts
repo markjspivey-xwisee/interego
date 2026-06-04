@@ -12,6 +12,7 @@ export type {
   AdapterMintResult,
   AdapterPromoteResult,
   AdapterDecomposeResult,
+  AdapterResolveResult,
 } from './adapter.js';
 export {
   fallbackLatticeAdapter,

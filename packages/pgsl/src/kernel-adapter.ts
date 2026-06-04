@@ -23,11 +23,12 @@ import type {
   AdapterMintResult,
   AdapterPromoteResult,
   AdapterDecomposeResult,
+  AdapterResolveResult,
 } from '@interego/core';
 import { setKernelLatticeAdapter } from '@interego/core';
-import { createPGSL, mintAtom, ingest } from './lattice.js';
+import { createPGSL, mintAtom, ingest, resolve as pgslResolve } from './lattice.js';
 import { pullbackSquare } from './category.js';
-import type { PGSLInstance } from './types.js';
+import type { PGSLInstance, Fragment } from './types.js';
 
 function sha256Hex(input: string): string {
   return createHash('sha256').update(input, 'utf-8').digest('hex');
@@ -91,6 +92,23 @@ export function pgslLatticeAdapter(): LatticeAdapter {
         left: square.left,
         right: square.right,
         overlap: square.overlap,
+      };
+    },
+    resolve(iri: IRI): AdapterResolveResult | null {
+      const pgsl = adapterPgsl();
+      const node = pgsl.nodes.get(iri);
+      if (!node) return null;
+      const value = pgslResolve(pgsl, iri);
+      if (node.kind === 'Atom') {
+        return { iri, kind: 'atom', level: 0, value, items: [] };
+      }
+      const fragment = node as Fragment;
+      return {
+        iri,
+        kind: 'fragment',
+        level: fragment.level,
+        value,
+        items: [...fragment.items],
       };
     },
   };

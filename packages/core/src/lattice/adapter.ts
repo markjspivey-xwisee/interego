@@ -71,6 +71,17 @@ export interface AdapterDecomposeResult {
   readonly overlap: IRI;
 }
 
+/** Result of {@link LatticeAdapter.resolve}. */
+export interface AdapterResolveResult {
+  readonly iri: IRI;
+  readonly kind: 'atom' | 'fragment';
+  readonly level: LatticeLevel;
+  /** Recursively-resolved content (string projection of the node). */
+  readonly value: string;
+  /** For fragments: constituent item IRIs. Empty array for atoms. */
+  readonly items: readonly IRI[];
+}
+
 /**
  * Pluggable lattice backend. The kernel composes against this surface;
  * `@interego/pgsl` provides a lattice-aware implementation; the built-in
@@ -85,6 +96,14 @@ export interface LatticeAdapter {
     provenance?: LatticeProvenance,
   ): AdapterPromoteResult;
   decompose(fragmentIri: IRI): AdapterDecomposeResult | null;
+  /**
+   * Resolve a lattice node IRI to its content. Returns `null` when the
+   * IRI is not known to the adapter (no structural index for the
+   * fallback, or unknown node for a lattice-aware adapter). Optional so
+   * adapters can leave it unimplemented and the kernel handles absence
+   * gracefully.
+   */
+  resolve?(iri: IRI): AdapterResolveResult | null;
 }
 
 // ── Built-in fallback ───────────────────────────────────────

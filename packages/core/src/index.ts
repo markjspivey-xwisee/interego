@@ -675,4 +675,5 @@ export type {
   AdapterMintResult,
   AdapterPromoteResult,
   AdapterDecomposeResult,
+  AdapterResolveResult,
 } from './lattice/index.js';

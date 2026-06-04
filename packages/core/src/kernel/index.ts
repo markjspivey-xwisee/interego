@@ -283,6 +283,73 @@ function looksLikeManifest(url: string): boolean {
 }
 
 /**
+ * Resolve a `urn:pgsl:*` IRI through the active LatticeAdapter and
+ * surface a `DereferenceResult` shaped consistently with the HTTP-path
+ * result. Closes the hypermedia contract: affordances minted on lattice
+ * holons advertise `dereference` against `urn:pgsl:*` targets, and this
+ * function makes those calls land in the lattice rather than in an
+ * impossible HTTP fetch.
+ */
+function dereferenceLatticeNode(iri: IRI): DereferenceResult {
+  const adapter = getKernelLatticeAdapter();
+  if (typeof adapter.resolve !== 'function') {
+    // Fallback adapter has no structural index. Return not-found so
+    // callers know to install @interego/pgsl for resolution.
+    return { iri, status: 'not-found', contentType: '', affordances: [] };
+  }
+  const node = adapter.resolve(iri);
+  if (!node) {
+    return { iri, status: 'not-found', contentType: '', affordances: [] };
+  }
+  // Synthesize a JSON-LD representation typed against cg: so consumers
+  // see the node as a first-class substrate resource.
+  const representation = JSON.stringify({
+    '@context': {
+      cg: 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
+      cgh: 'https://markjspivey-xwisee.github.io/interego/ns/cgh#',
+      hydra: 'http://www.w3.org/ns/hydra/core#',
+    },
+    '@id': iri,
+    '@type': node.kind === 'atom' ? 'cg:Atom' : 'cg:Fragment',
+    'cg:level': node.level,
+    'cg:value': node.value,
+    ...(node.kind === 'fragment' ? { 'cg:items': node.items } : {}),
+  });
+  // Affordances: every lattice holon supports decompose (yields null
+  // for atoms but the call is valid) and dereference of each constituent
+  // item, plus promote-with-siblings if a caller wants to climb the
+  // fibration. These route through the kernel verbs themselves.
+  const affordances: Affordance[] = [
+    {
+      action: 'urn:cg:action:kernel:decompose',
+      target: iri,
+      method: 'POST',
+    },
+    {
+      action: 'urn:cg:action:kernel:promote',
+      target: iri,
+      method: 'POST',
+    },
+  ];
+  if (node.kind === 'fragment') {
+    for (const item of node.items) {
+      affordances.push({
+        action: 'urn:cg:action:kernel:dereference',
+        target: item,
+        method: 'GET',
+      });
+    }
+  }
+  return {
+    iri,
+    status: 'ok',
+    representation,
+    contentType: 'application/ld+json',
+    affordances,
+  };
+}
+
+/**
  * `dereference(iri)` — resolve an IRI to its current representation,
  * its embedded affordances, and any lightweight provenance carried in
  * the body.
@@ -300,6 +367,16 @@ function looksLikeManifest(url: string): boolean {
  */
 export async function dereference(iri: string, options?: DereferenceOptions): Promise<DereferenceResult> {
   const fetchImpl = options?.fetch ?? getDefaultFetch();
+
+  // PGSL lattice path — urn:pgsl:atom:* / urn:pgsl:fragment:* IRIs route
+  // through the active LatticeAdapter, NOT through HTTP fetch. Without
+  // this branch the kernel would advertise dereference affordances on
+  // minted/promoted holons that don't actually resolve. The substrate's
+  // hypermedia contract is that any affordance the kernel surfaces is
+  // callable — this closes the contract for the lattice URI scheme.
+  if (iri.startsWith('urn:pgsl:')) {
+    return dereferenceLatticeNode(iri as IRI);
+  }
 
   // Manifest path — walk the pod and surface affordances per entry.
   if (looksLikeManifest(iri)) {
@@ -623,6 +700,60 @@ export type ActAffordance =
   | Affordance;
 
 /**
+ * Dispatch `act()` calls whose target is a `urn:pgsl:*` IRI through the
+ * kernel's own lattice verbs instead of HTTP. Closes the affordance
+ * contract for the actions {@link dereferenceLatticeNode} advertises
+ * (decompose / promote / dereference) on resolved lattice holons.
+ *
+ * Unknown actions return a 405 ActResult so callers see a clear "method
+ * not allowed on this target" rather than a network error.
+ */
+async function actOnLatticeNode(
+  affordance: Affordance,
+  payload?: unknown,
+): Promise<ActResult> {
+  const target = affordance.target as IRI;
+  const ok = (body: unknown): ActResult => ({
+    status: 200,
+    statusText: 'OK',
+    contentType: 'application/json',
+    body: JSON.stringify(body),
+    affordance,
+  });
+  const err = (status: number, statusText: string, body: unknown): ActResult => ({
+    status,
+    statusText,
+    contentType: 'application/json',
+    body: JSON.stringify(body),
+    affordance,
+  });
+  if (affordance.action === 'urn:cg:action:kernel:dereference') {
+    return ok(dereferenceLatticeNode(target));
+  }
+  if (affordance.action === 'urn:cg:action:kernel:decompose') {
+    return ok(decompose(target));
+  }
+  if (affordance.action === 'urn:cg:action:kernel:promote') {
+    const items = payload && typeof payload === 'object' && Array.isArray((payload as { items?: unknown }).items)
+      ? (payload as { items: readonly (LatticeValue | IRI)[] }).items
+      : null;
+    if (!items || items.length === 0) {
+      return err(400, 'Bad Request', {
+        error: 'payload_required',
+        detail: 'promote() needs { items: (LatticeValue | IRI)[] } in the payload. The current target will be prepended.',
+      });
+    }
+    // The target itself participates as the first item — that's the
+    // semantics of "promote me with these siblings."
+    return ok(promote([target, ...items]));
+  }
+  return err(405, 'Method Not Allowed', {
+    error: 'unsupported_action_on_lattice_target',
+    detail: `Action ${affordance.action} is not defined for urn:pgsl:* targets. Supported: urn:cg:action:kernel:{dereference,decompose,promote}.`,
+  });
+}
+
+/**
  * `act(affordance, payload)` — follow an affordance. Wraps
  * `followAffordance` from the Solid layer and adds support for a
  * pre-resolved `Affordance` (the shape `dereference` returns), which
@@ -635,6 +766,12 @@ export async function act(
 ): Promise<ActResult> {
   // Pre-resolved affordance — invoke directly.
   if (isPreResolvedAffordance(affordance)) {
+    // urn:pgsl:* targets route through the lattice adapter, not HTTP.
+    // Closes the affordance contract for the kernel-verb actions that
+    // dereferenceLatticeNode advertises on resolved lattice holons.
+    if (affordance.target.startsWith('urn:pgsl:')) {
+      return actOnLatticeNode(affordance, payload);
+    }
     const fetchImpl = options?.fetch ?? getDefaultFetch();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
