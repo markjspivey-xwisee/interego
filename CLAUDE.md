@@ -60,12 +60,6 @@ packages/
                       Currently inside core because rdf/system-ontology
                       + rdf/virtualized-layer back-reference PGSL;
                       planned split to @interego/pgsl.
-    src/compat.ts     Back-compat re-exports from the per-vertical
-                      @interego/* packages so existing consumers that
-                      imported them from @interego/core keep working
-                      during the transition. Built in a second tsc pass
-                      (tsconfig.compat.json) after the leaves compile.
-
   abac/          @interego/abac — Attribute-Based Access Control over
                  substrate descriptors (evaluator + attribute resolver +
                  decision cache + SHACL-shape policy validation).

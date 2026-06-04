@@ -287,9 +287,9 @@ Three properties matter:
 2. **The kernel verbs work the same.** Wire-level behavior of every
    MCP tool, relay HTTP endpoint, and substrate function is unchanged.
    The package split is purely structural — imports change, behavior
-   doesn't. Back-compat re-exports of the moved-out vertical APIs
-   ship from `@interego/core/compat` (built in a second tsc pass after
-   the leaves compile) so existing callers keep resolving.
+   doesn't. Every consumer imports vertical symbols directly from the
+   per-vertical `@interego/<name>` package that owns them; there is no
+   compat shim in `@interego/core`.
 3. **The line is now contestable.** When a new feature gets proposed,
    the question is no longer "where does it go in `src/`?" but "is it
    substrate or is it a composition?" — and if it's a composition, it
