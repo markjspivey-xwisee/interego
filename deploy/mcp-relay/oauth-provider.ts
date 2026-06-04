@@ -17,6 +17,7 @@ import { randomBytes } from 'node:crypto';
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
+import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type {
   OAuthClientInformationFull,
   OAuthTokens,
@@ -628,11 +629,16 @@ async function didSubmit() {
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
+    // Throw the SDK's `InvalidTokenError` so requireBearerAuth produces
+    // a clean RFC 6750 `401 invalid_token` with WWW-Authenticate header
+    // (rather than wrapping a plain Error as `500 server_error`, which
+    // looks like a backend outage to clients — ChatGPT's connector
+    // surfaces that as a generic "502 upstream" failure mode).
     const info = this.accessTokens.get(token);
-    if (!info) throw new Error('Invalid token');
+    if (!info) throw new InvalidTokenError('Token not found (may have been issued by a prior relay revision; re-authenticate to obtain a fresh token)');
     if (info.expiresAt && info.expiresAt * 1000 < Date.now()) {
       this.accessTokens.delete(token);
-      throw new Error('Token expired');
+      throw new InvalidTokenError('Token expired');
     }
     return info;
   }
