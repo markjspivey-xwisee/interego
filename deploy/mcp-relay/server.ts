@@ -3721,7 +3721,14 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
 
   let authResp: {
     userId?: string;
+    // Display name for the user; used as foaf:name when the relay writes
+    // the pod-side /profile/card mirror below (FIX A — single authoritative
+    // pod writer).
+    name?: string;
     agentId?: string;
+    // Display label for the per-surface agent; used as foaf:name in the
+    // <pod>/agents registry entry the relay writes below.
+    agentName?: string;
     agentDid?: string;
     token?: string;
     webId?: string;
@@ -3775,65 +3782,199 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
     return;
   }
 
-  // Defensive backstop for identity-server's eager-init: ensure the
-  // surface-specific agent is present in /<userId>/agents with the
-  // relay's X25519 public key so cross-pod share_with resolution finds
-  // it as a recipient immediately. Identity already mirrors the
-  // registry on first-touch + ensureSurfaceAgent, but identity has no
-  // access to the relay's X25519 keypair (relayAgentKey lives in the
-  // relay process). This block patches the freshly-written entry with
-  // `encryptionPublicKey: relayAgentKey.publicKey` and, in the worst
-  // case where identity's write is still in flight, creates the entry
-  // itself. Idempotent: if the entry already exists with the right
-  // key, no write happens.
+  // FIX A: relay is now the single authoritative pod-side writer for
+  // /<userId>/profile/card AND /<userId>/agents. Identity-server's old
+  // eager-init writes are removed; two writers were racing on every OAuth
+  // completion, producing CSS file-backend HTTP 500s on the second OAuth
+  // ("Read counter would become negative" on /profile/card) and a ~10s 404
+  // window for any client that hit /agents or /profile/card immediately
+  // after the OAuth code came back.
   //
-  // Fire-and-forget — the OAuth redirect must not block on a slow CSS
-  // write. The relay's publish_context auto-registration path remains
-  // as a third backstop.
-  (async () => {
-    try {
-      const podUrl = authResp.podUrl!;
-      const ownerWebId = authResp.webId! as IRI;
-      const surfaceAgentIri = agentIri as IRI;
-      let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
-      if (!profile) {
-        profile = createOwnerProfile(ownerWebId);
-      }
-      const existing = profile.authorizedAgents.find(a => a.agentId === surfaceAgentIri && !a.revoked);
-      if (!existing) {
-        profile = addAuthorizedAgent(profile, {
-          agentId: surfaceAgentIri,
-          delegatedBy: ownerWebId,
-          label: `Surface agent ${surfaceAgent}`,
-          isSoftwareAgent: true,
-          scope: 'ReadWrite',
-          validFrom: new Date().toISOString(),
-          encryptionPublicKey: relayAgentKey.publicKey,
-        });
-        await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
-      } else if (existing.encryptionPublicKey !== relayAgentKey.publicKey) {
-        const updated = {
-          ...profile,
-          authorizedAgents: Object.freeze(
-            profile.authorizedAgents.map(a =>
-              a.agentId === surfaceAgentIri && !a.revoked
-                ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
-                : a,
-            ),
-          ),
-        };
-        await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
-      }
-    } catch (err) {
-      log(`WARN: /oauth/verify could not sync surface agent ${agentIri} to ${authResp.podUrl}/agents: ${(err as Error).message}`);
+  // This block runs SYNCHRONOUSLY before /oauth/verify returns — no more
+  // fire-and-forget. The OAuth code is only handed back once both pod
+  // documents are HTTP 2xx, so any client hitting the pod right after
+  // authorization sees populated documents instead of 404 / 500.
+  //
+  // Idempotency:
+  //   - First-touch (no /agents yet on this pod): write both /profile/card
+  //     AND /agents as the initial pod bootstrap.
+  //   - Subsequent surface add (registry present, surface agent missing):
+  //     append the surface agent to /agents. /profile/card already points
+  //     to /agents for the canonical authorizedAgent list, so it does not
+  //     need rewriting.
+  //   - Re-connect from known surface (agent present with correct
+  //     encryptionPublicKey): no writes at all. Save the CSS round-trips.
+  try {
+    const podUrl = authResp.podUrl!;
+    const ownerWebId = authResp.webId! as IRI;
+    const surfaceAgentIri = agentIri as IRI;
+    const userName = authResp.name ?? authResp.userId!;
+    const agentLabel = authResp.agentName ?? `Surface agent ${surfaceAgent}`;
+
+    let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+    const firstTouch = profile === null;
+    if (!profile) {
+      profile = createOwnerProfile(ownerWebId, userName);
     }
-  })();
+    const existing = profile.authorizedAgents.find(a => a.agentId === surfaceAgentIri && !a.revoked);
+
+    let nextProfile: typeof profile | null = null;
+    if (!existing) {
+      // First touch OR new surface for an existing user — append.
+      nextProfile = addAuthorizedAgent(profile, {
+        agentId: surfaceAgentIri,
+        delegatedBy: ownerWebId,
+        label: agentLabel,
+        isSoftwareAgent: true,
+        scope: 'ReadWrite',
+        validFrom: new Date().toISOString(),
+        encryptionPublicKey: relayAgentKey.publicKey,
+      });
+    } else if (existing.encryptionPublicKey !== relayAgentKey.publicKey) {
+      // Re-connect, but the relay's persisted X25519 key has rotated —
+      // patch the entry so cross-pod recipient resolution picks the new key.
+      nextProfile = {
+        ...profile,
+        authorizedAgents: Object.freeze(
+          profile.authorizedAgents.map(a =>
+            a.agentId === surfaceAgentIri && !a.revoked
+              ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
+              : a,
+          ),
+        ),
+      };
+    }
+    // else: known surface, key still valid -> no-op detect, skip both writes.
+
+    if (firstTouch) {
+      // First-touch bootstrap: profile/card AND agents registry must land
+      // together so a Solid client (or this relay's own subsequent calls)
+      // sees a coherent pod. Write the card first — it carries
+      // solid:oidcIssuer + storage and is the document conventional Solid
+      // clients dereference; then the registry, which is what every
+      // Interego cross-pod resolution flow GETs.
+      await putRelayProfileCard({
+        podUrl,
+        userId: authResp.userId!,
+        userName,
+        ownerWebId,
+        identityWebId: authResp.webId!,
+        identityDid: authResp.did,
+      });
+      await writeAgentRegistry(nextProfile ?? profile, podUrl, { fetch: solidFetch });
+    } else if (nextProfile) {
+      await writeAgentRegistry(nextProfile, podUrl, { fetch: solidFetch });
+    }
+  } catch (err) {
+    // A pod-init failure means the OAuth flow cannot reliably complete —
+    // the redirected client would hit /agents or /profile/card and 404 or
+    // get a stale view. Return 502 so the client retries the verify step
+    // rather than silently issuing the OAuth code over a broken pod.
+    const msg = `Pod bootstrap failed for ${authResp.podUrl}: ${(err as Error).message}`;
+    log(`ERROR: /oauth/verify ${msg}`);
+    res.status(502).json({ error: msg });
+    return;
+  }
 
   const redirect = new URL(result.redirectUri);
   redirect.searchParams.set('code', result.code);
   if (result.state) redirect.searchParams.set('state', result.state);
   res.json({ redirect: redirect.toString() });
 });
+
+// ── Pod-side /profile/card writer (FIX A) ─────────────────────────
+//
+// Conventional Solid clients (Penny, @inrupt/solid-client, NSS-derived
+// profile dereferencers) dereference `<pod>/profile/card#me` expecting
+// `solid:oidcIssuer` + `solid:storage` so they can sign in against the
+// pod alone, without out-of-band knowledge of the identity server. The
+// relay mirrors this card on the first OAuth completion for a given
+// pod. Subsequent surface-agent additions don't require rewriting the
+// card — it points to `<pod>/agents` (via rdfs:seeAlso) as the
+// authoritative authorized-agent list.
+//
+// We deliberately keep the inline `cg:authorizedAgent` payload narrow
+// (the current surface agent only). The full multi-surface list lives
+// on `<pod>/agents` and is read from there by every cross-pod
+// resolution flow.
+async function putRelayProfileCard(params: {
+  podUrl: string;
+  userId: string;
+  userName: string;
+  ownerWebId: IRI;
+  identityWebId: string;
+  identityDid?: string | undefined;
+}): Promise<void> {
+  const { podUrl, userId, userName, ownerWebId, identityWebId, identityDid } = params;
+  const cardUrl = `${podUrl}profile/card`;
+  const agentsRegistryUrl = `${podUrl}agents`;
+
+  // Ensure the pod's root container and /profile/ subcontainer exist —
+  // CSS file backend needs explicit LDP BasicContainer PUTs before a
+  // leaf PUT into a missing parent. Best-effort; later steps surface a
+  // real error if the leaf PUT still fails.
+  for (const containerUrl of [podUrl, `${podUrl}profile/`]) {
+    try {
+      await fetch(containerUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'text/turtle',
+          'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+        },
+        body: '',
+      });
+    } catch { /* best-effort */ }
+  }
+
+  const seeAlsoTargets: string[] = [agentsRegistryUrl, identityWebId];
+  if (identityDid) seeAlsoTargets.push(identityDid);
+
+  const turtle = [
+    `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
+    `@prefix solid: <http://www.w3.org/ns/solid/terms#> .`,
+    `@prefix pim: <http://www.w3.org/ns/pim/space#> .`,
+    `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .`,
+    `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .`,
+    ``,
+    `<${cardUrl}#me>`,
+    `    a foaf:Person ;`,
+    `    foaf:name "${escapeTurtleString(userName)}" ;`,
+    `    solid:oidcIssuer <${IDENTITY_URL}> ;`,
+    `    solid:storage <${podUrl}> ;`,
+    `    pim:storage <${podUrl}> ;`,
+    `    cg:agentRegistry <${agentsRegistryUrl}> ;`,
+    `    rdfs:seeAlso ${seeAlsoTargets.map(t => `<${t}>`).join(', ')} .`,
+    ``,
+    // Owner WebID returned by identity (`<identityWebId>`) is the
+    // canonical one; cross-reference it back to the pod card so a client
+    // resolving either direction stays linked. owl:sameAs is intentional —
+    // both IRIs denote the same Person.
+    `@prefix owl: <http://www.w3.org/2002/07/owl#> .`,
+    `<${ownerWebId}> owl:sameAs <${cardUrl}#me> .`,
+    ``,
+  ].join('\n');
+  void userId; // referenced only for the log/diagnostics surface upstream
+
+  const r = await fetch(cardUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/turtle' },
+    body: turtle,
+  });
+  if (!r.ok && r.status !== 205) {
+    throw new Error(`PUT ${cardUrl} failed: ${r.status} ${r.statusText}`);
+  }
+}
+
+// Minimal Turtle string escape — escape backslashes, double quotes,
+// and the control characters that Turtle long-string literals reject.
+function escapeTurtleString(s: string): string {
+  return s
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+}
 
 // ── Browser-friendly landing page ─────────────────────────────────
 //

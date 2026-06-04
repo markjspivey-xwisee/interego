@@ -484,28 +484,31 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<
   rebuildIndexesForUser(userId, methods);
 }
 
-// ── Pod-side WebID profile/card mirror ───────────────────────
+// ── Pod-side WebID profile/card mirror (DEPRECATED — see FIX A) ──
 //
-// The identity server's canonical WebID document lives at
+// As of FIX A the identity server NO LONGER writes the pod-side
+// `<pod>/profile/card` or `<pod>/agents` documents. The MCP relay's
+// /oauth/verify handler is the single authoritative pod-side writer
+// for both — it has the OAuth context, the user's identityToken, and
+// the relay's X25519 keypair needed to populate
+// `cg:AuthorizedAgent.encryptionPublicKey` on the registry entry, and
+// it runs the writes synchronously before returning the OAuth code.
+//
+// The functions below (`buildPodProfileCard`, `putPodProfileCard`,
+// `buildPodAgentRegistry`, `putPodAgentRegistry`) are kept as dead
+// code only as a reference for the document shape; they are not
+// called from any code path. Do not re-enable without a coordinated
+// change to the relay — two writers racing on the same CSS file
+// backend produced the "Read counter would become negative" 500s the
+// FIX A migration is closing out.
+//
+// Background: the identity server's canonical WebID document lives at
 // `${BASE_URL}/users/<userId>/profile` (see buildWebIdProfile +
-// app.get('/users/:id/profile')). Conventional Solid clients
-// (Penny, Inrupt's @inrupt/solid-client, NSS-derived profile
-// dereferencers, ...) instead expect a `<pod>/profile/card`
-// document whose `<#me>` declares `solid:oidcIssuer` and
-// `solid:storage`. By mirroring the canonical document onto the
-// pod at first-touch registration, the pod becomes a self-
-// sufficient Solid profile target — a client that knows only the
-// pod URL can dereference `<pod>/profile/card#me`, follow
-// `solid:oidcIssuer` to find this identity server, and proceed
-// with auth. The card cross-references the identity-side
-// canonical document via `rdfs:seeAlso` so the two round-trip.
-//
-// The card is denormalised state — the single source of truth
-// remains the in-memory identities map (and, derivatively, the
-// identity-side /users/:id/profile route). Any time a new
-// per-surface agent is minted (ensureSurfaceAgent), the card is
-// rewritten so the `cg:authorizedAgent` list stays in sync with
-// the agents registry.
+// app.get('/users/:id/profile')). Conventional Solid clients (Penny,
+// Inrupt's @inrupt/solid-client, NSS-derived profile dereferencers)
+// expect a `<pod>/profile/card` document whose `<#me>` declares
+// `solid:oidcIssuer` and `solid:storage`. The relay mirrors a
+// pod-self-sufficient version of that card under FIX A.
 
 function podProfileCardUrl(userId: string): string {
   return `${CSS_URL}${userId}/profile/card`;
@@ -1744,23 +1747,14 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       res.status(500).json({ error: `Failed to persist wallet to pod: ${(err as Error).message}` });
       return;
     }
-    // Mirror the canonical WebID document onto the pod at /profile/card so
-    // conventional Solid clients (Penny, @inrupt/solid-client, ...) can
-    // dereference the pod alone without knowing about the identity server.
-    // Fire-and-forget — registration must not block on this; the card is
-    // denormalised state that surface-agent mints will rewrite anyway.
-    putPodProfileCard(user.id).catch(err =>
-      log(`WARN: profile/card mirror failed for ${user.id}: ${(err as Error).message}`),
-    );
-    // Eager-init /<userId>/agents so verifyDelegation + cross-pod share_with
-    // resolution find a populated registry even before the user's first
-    // publish_context (which previously was the only thing that wrote it
-    // via the relay's lazy auto-registration backstop). Fire-and-forget —
-    // the registry is denormalised state and ensureSurfaceAgent will
-    // rewrite it on every new surface-agent mint.
-    putPodAgentRegistry(user.id).catch(err =>
-      log(`WARN: agents registry init failed for ${user.id}: ${(err as Error).message}`),
-    );
+    // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
+    // The relay is now the single authoritative writer for both pod-side
+    // documents and does so synchronously inside /oauth/verify before
+    // returning the OAuth code — see deploy/mcp-relay/server.ts. Two
+    // writers were previously racing each other on every OAuth completion,
+    // causing CSS file-backend HTTP 500s on the second OAuth ("Read counter
+    // would become negative" on /profile/card) and a ~10s 404 window for
+    // any client polling those URLs immediately after auth.
     log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-wallet (authenticated) path — append if not already bound.
@@ -2030,19 +2024,10 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     res.status(500).json({ error: `Failed to persist passkey to pod: ${(err as Error).message}` });
     return;
   }
-  // Mirror the canonical WebID document onto the pod at /profile/card so
-  // conventional Solid clients can dereference the pod alone. Only on
-  // first-touch registration (add-device flows don't need a re-mirror —
-  // ensureSurfaceAgent will rewrite the card if a new surface appears).
-  if (!ch.addDeviceUserId) {
-    putPodProfileCard(targetUserId).catch(err =>
-      log(`WARN: profile/card mirror failed for ${targetUserId}: ${(err as Error).message}`),
-    );
-    // Eager-init /<userId>/agents — see SIWE first-touch comment above.
-    putPodAgentRegistry(targetUserId).catch(err =>
-      log(`WARN: agents registry init failed for ${targetUserId}: ${(err as Error).message}`),
-    );
-  }
+  // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
+  // Single authoritative pod-side writer is the relay's /oauth/verify
+  // handler — see deploy/mcp-relay/server.ts. See SIWE first-touch comment
+  // above for the race / 500 / 404-window background.
   log(`WebAuthn credential registered for ${targetUserId} (mode=${ch.addDeviceUserId ? 'add-device' : ch.bootstrapUserId ? 'bootstrap' : 'derive'})`);
 
   res.json(await issueTokenResponse(user, surfaceAgent));
@@ -2311,16 +2296,9 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       res.status(500).json({ error: `Failed to persist DID to pod: ${(err as Error).message}` });
       return;
     }
-    // Mirror the canonical WebID document onto the pod at /profile/card so
-    // conventional Solid clients can dereference the pod alone without
-    // knowing about the identity server.
-    putPodProfileCard(user.id).catch(err =>
-      log(`WARN: profile/card mirror failed for ${user.id}: ${(err as Error).message}`),
-    );
-    // Eager-init /<userId>/agents — see SIWE first-touch comment above.
-    putPodAgentRegistry(user.id).catch(err =>
-      log(`WARN: agents registry init failed for ${user.id}: ${(err as Error).message}`),
-    );
+    // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
+    // Single authoritative pod-side writer is the relay's /oauth/verify
+    // handler. See SIWE first-touch comment above for background.
     log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-did (authenticated) path — append if not already bound.
@@ -2392,11 +2370,13 @@ app.post('/try', tryProvisionLimiter, async (_req, res) => {
     res.status(503).json({ error: `Could not provision pod: ${(err as Error).message}` });
     return;
   }
-  // Mirror the canonical WebID document onto the pod at /profile/card so
-  // conventional Solid clients can dereference the try-it pod alone too.
-  putPodProfileCard(userId).catch(err =>
-    log(`WARN: profile/card mirror failed for ${userId}: ${(err as Error).message}`),
-  );
+  // FIX A: pod-side /profile/card + /<id>/agents are no longer written
+  // here. Try-it users hit the relay's OAuth flow once they begin using
+  // an MCP client, at which point the relay's /oauth/verify becomes the
+  // single authoritative writer for both documents. For try-it users who
+  // never use the OAuth flow, the pod still has the canonical auth-methods
+  // document and `${IDENTITY_URL}/users/<id>/profile` remains
+  // dereferenceable as the WebID — no pod-side mirror needed pre-OAuth.
   const tokenResponse = await issueTokenResponse(identities.get(userId)!);
   const mcpConfigSnippet = JSON.stringify({
     mcpServers: {
@@ -2450,21 +2430,13 @@ function ensureSurfaceAgent(user: Identity, surfaceAgent: string | undefined): I
         .map(p => p.charAt(0).toUpperCase() + p.slice(1))
         .join(' ');
       seedIdentity(surfaceAgentId, 'agent', `${label} (${user.name})`, user.id, 'ReadWrite');
-      // A new per-surface agent appeared in the in-memory map — rewrite
-      // the pod's profile/card AND the pod's agents registry so the
-      // `cg:authorizedAgent` list stays in sync with the in-memory truth.
-      // Both writes are fire-and-forget; the canonical /users/:id/profile
-      // endpoint is still served from the in-memory map, so token
-      // issuance does not block on either. The agents-registry write is
-      // what makes the per-surface agent immediately addressable for
-      // verifyDelegation + cross-pod share_with recipient resolution,
-      // without waiting for the relay's publish_context backstop.
-      putPodProfileCard(user.id).catch(err =>
-        log(`WARN: profile/card mirror failed for ${user.id} after surface-agent mint: ${(err as Error).message}`),
-      );
-      putPodAgentRegistry(user.id).catch(err =>
-        log(`WARN: agents registry mirror failed for ${user.id} after surface-agent mint: ${(err as Error).message}`),
-      );
+      // FIX A: identity-server no longer touches /profile/card or
+      // /<id>/agents on the pod. The relay's /oauth/verify is the single
+      // authoritative writer for both, and runs the surface-agent
+      // registration synchronously after this token is issued. The
+      // canonical /users/:id/profile endpoint (in-memory) reflects the
+      // new agent immediately for any client that resolves the
+      // identity-side WebID directly.
       return identities.get(surfaceAgentId)!;
     }
   }
@@ -2482,7 +2454,16 @@ async function issueTokenResponse(user: Identity, surfaceAgent?: string): Promis
   const cached = authMethodsCache.get(user.id)?.value;
   return {
     userId: user.id,
+    // Display name for the pod-side /profile/card mirror the relay writes
+    // in /oauth/verify (FIX A: relay is now the single authoritative pod
+    // writer). Without this, the relay falls back to userId as the
+    // foaf:name, which is uglier for human-facing Solid clients.
+    name: user.name,
     agentId: agent.id,
+    // Display label for the per-surface agent — also needed by the relay's
+    // pod-side registry write so cg:AuthorizedAgent entries get a meaningful
+    // foaf:name instead of just "Surface agent <slug>".
+    agentName: agent.name,
     token: tokenRecord.token,
     expiresAt: tokenRecord.expiresAt,
     scope: tokenRecord.scope,
