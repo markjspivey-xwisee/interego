@@ -43,6 +43,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
 import { WebSocket } from 'ws';
 
+// Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
   ContextDescriptor,
   toTurtle,
@@ -50,69 +51,20 @@ import {
   validate,
   intersection,
   union,
-  publish,
-  discover,
-  subscribe,
-  writeAgentRegistry,
-  readAgentRegistry,
-  writeDelegationCredential,
-  verifyAgentDelegation,
   createOwnerProfile,
   addAuthorizedAgent,
   removeAuthorizedAgent,
   createDelegationCredential,
-  fetchPodDirectory,
-  publishPodDirectory,
-  resolveWebFinger,
   sha256,
-  // IPFS
   pinToIpfs,
   pinDescriptor,
   cryptoComputeCid,
-  // PGSL
-  createPGSL,
-  mintAtom,
-  ingest,
-  pgslResolve,
-  queryNeighbors,
-  latticeStats,
-  pgslToTurtle,
-  embedInPGSL,
-  liftToDescriptor,
-  latticeMeet,
-  isSubFragment,
-  pullbackSquare,
-  // Extraction + Computation + Affordance
-  extractEntities,
-  extractRelations,
-  classifyQuestion,
-  expandEntitiesWithOntology,
-  computeCognitiveStrategy,
-  parseDate,
-  daysBetween,
-  countUnique,
-  shouldAbstain,
-  // E2EE
   generateKeyPair,
   createEncryptedEnvelope,
   openEncryptedEnvelope,
   type EncryptionKeyPair,
-  fetchGraphContent,
-  parseDistributionFromDescriptorTurtle,
-  // Cross-pod sharing
-  resolveRecipients,
-  // Publish-input preprocessing
   normalizePublishInputs,
-  // Privacy hygiene (pre-publish content screening)
-  screenForSensitiveContent,
-  formatSensitivityWarning,
-  // Compliance grade publish + framework reports + ECDSA signing
-  checkComplianceInputs,
-  loadOrCreateComplianceWallet,
   signDescriptor,
-  predictDescriptorUrl,
-  type PersistedComplianceWallet,
-  type SignedDescriptor,
   // Generic affordance follower (Path A — reach any vertical via descriptors)
   followAffordance,
   // ── Kernel (the substrate's primitives as first-class verbs) ──
@@ -148,9 +100,62 @@ import type {
   Subscription,
   ContextChangeEvent,
   ManifestEntry,
-  PGSLInstance,
-  NodeProvenance,
+  SignedDescriptor,
 } from '@interego/core';
+
+// Solid binding — `@interego/solid`.
+import {
+  publish,
+  discover,
+  subscribe,
+  writeAgentRegistry,
+  readAgentRegistry,
+  writeDelegationCredential,
+  verifyAgentDelegation,
+  fetchPodDirectory,
+  publishPodDirectory,
+  resolveWebFinger,
+  fetchGraphContent,
+  parseDistributionFromDescriptorTurtle,
+  resolveRecipients,
+  predictDescriptorUrl,
+} from '@interego/solid';
+
+// PGSL — `@interego/pgsl`.
+import {
+  createPGSL,
+  mintAtom,
+  ingest,
+  resolve as pgslResolve,
+  queryNeighbors,
+  latticeStats,
+  pgslToTurtle,
+  embedInPGSL,
+  liftToDescriptor,
+  latticeMeet,
+  isSubFragment,
+  pullbackSquare,
+  extractEntities,
+  extractRelations,
+  classifyQuestion,
+  expandEntitiesWithOntology,
+  computeCognitiveStrategy,
+  parseDate,
+  daysBetween,
+  countUnique,
+  shouldAbstain,
+} from '@interego/pgsl';
+import type { PGSLInstance, NodeProvenance } from '@interego/pgsl';
+
+// Privacy screening — `@interego/privacy`.
+import { screenForSensitiveContent, formatSensitivityWarning } from '@interego/privacy';
+
+// Compliance grade publish + framework reports + ECDSA signing — `@interego/compliance`.
+import {
+  checkComplianceInputs,
+  loadOrCreateComplianceWallet,
+} from '@interego/compliance';
+import type { PersistedComplianceWallet } from '@interego/compliance';
 
 import { PodRegistry, type KnownPod } from './pod-registry.js';
 

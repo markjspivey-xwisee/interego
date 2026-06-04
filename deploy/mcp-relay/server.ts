@@ -48,67 +48,23 @@ import {
   reconstructRequestUrl,
 } from './dpop.js';
 
+// Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
   ContextDescriptor,
   toTurtle,
   validate,
-  publish,
-  discover,
-  subscribe,
-  writeAgentRegistry,
-  readAgentRegistry,
-  writeDelegationCredential,
-  verifyAgentDelegation,
   createOwnerProfile,
   addAuthorizedAgent,
   removeAuthorizedAgent,
   createDelegationCredential,
-  fetchPodDirectory,
-  publishPodDirectory,
-  resolveWebFinger,
   pinToIpfs,
   cryptoComputeCid,
   generateKeyPair,
-  fetchGraphContent,
   type EncryptionKeyPair,
-  resolveRecipients,
-  parseDistributionFromDescriptorTurtle,
   normalizePublishInputs,
-  // Privacy hygiene (pre-publish content screening)
-  screenForSensitiveContent,
-  formatSensitivityWarning,
-  // Compliance — framework reports + lineage walks for /audit/* endpoints
-  checkComplianceInputs,
-  generateFrameworkReport,
-  walkLineage,
-  FRAMEWORK_CONTROLS,
-  loadOrCreateComplianceWallet,
   signDescriptor,
   verifyDescriptorSignature,
-  predictDescriptorUrl,
-  buildSecurityTxtFromEnv,
   buildAccessChangeEvent,
-  type ComplianceFramework,
-  type AuditableDescriptor,
-  type PersistedComplianceWallet,
-  type SignedDescriptor,
-  // PGSL lattice — process-wide instance used by pgsl_* tools
-  createPGSL,
-  embedInPGSL,
-  latticeStats,
-  pgslResolve,
-  liftToDescriptor,
-  latticeMeet,
-  pullbackSquare,
-  pgslToTurtle,
-  // Affordance engine — used by analyze_question
-  computeCognitiveStrategy,
-  extractEntities,
-  shouldAbstain,
-  // Wallet — used by check_balance
-  checkBalance,
-  getChainConfig,
-  // Generic affordance follower (Path A — reach any vertical via descriptors)
   followAffordance,
   // ── Kernel (substrate primitives as first-class verbs) ──
   // The named tools below remain as compatibility shims; new
@@ -130,8 +86,7 @@ import {
   KERNEL_JSONLD_CONTEXT,
   KERNEL_RESULT_SHAPES,
   getShaclShapesTurtle,
-  type NodeProvenance,
-  type PGSLInstance,
+  type SignedDescriptor,
 } from '@interego/core';
 
 import type {
@@ -146,6 +101,59 @@ import type {
   ContextChangeEvent,
   ManifestEntry,
 } from '@interego/core';
+
+// Solid binding — `@interego/solid`.
+import {
+  publish,
+  discover,
+  subscribe,
+  writeAgentRegistry,
+  readAgentRegistry,
+  writeDelegationCredential,
+  verifyAgentDelegation,
+  fetchPodDirectory,
+  publishPodDirectory,
+  resolveWebFinger,
+  fetchGraphContent,
+  resolveRecipients,
+  parseDistributionFromDescriptorTurtle,
+  predictDescriptorUrl,
+} from '@interego/solid';
+
+// PGSL — `@interego/pgsl`.
+import {
+  createPGSL,
+  embedInPGSL,
+  latticeStats,
+  resolve as pgslResolve,
+  liftToDescriptor,
+  latticeMeet,
+  pullbackSquare,
+  pgslToTurtle,
+  computeCognitiveStrategy,
+  extractEntities,
+  shouldAbstain,
+} from '@interego/pgsl';
+import type { NodeProvenance, PGSLInstance } from '@interego/pgsl';
+
+// Privacy — `@interego/privacy`.
+import { screenForSensitiveContent, formatSensitivityWarning } from '@interego/privacy';
+
+// Compliance — `@interego/compliance`.
+import {
+  checkComplianceInputs,
+  generateFrameworkReport,
+  walkLineage,
+  FRAMEWORK_CONTROLS,
+  loadOrCreateComplianceWallet,
+} from '@interego/compliance';
+import type { ComplianceFramework, AuditableDescriptor, PersistedComplianceWallet } from '@interego/compliance';
+
+// Wallet check_balance — `@interego/core` (wallet primitives).
+import { checkBalance, getChainConfig } from '@interego/core';
+
+// Security.txt — `@interego/security-txt`.
+import { buildSecurityTxtFromEnv } from '@interego/security-txt';
 
 // ── Config ──────────────────────────────────────────────────
 
