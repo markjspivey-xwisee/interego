@@ -17,7 +17,7 @@ RUN npm run build
 
 RUN mkdir -p /tarballs && \
     cd packages/core && npm pack --pack-destination /tarballs && cd /workspace && \
-    for pkg in abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions; do \
+    for pkg in pgsl solid abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions; do \
       cd packages/$pkg && npm pack --pack-destination /tarballs && cd /workspace ; \
     done
 
@@ -27,21 +27,29 @@ RUN mkdir -p /tarballs && \
 WORKDIR /app
 
 COPY examples/dashboard/package.json ./package.json.template
-RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./package.json.template','utf8'));if(p.dependencies)delete p.dependencies['@interego/core'];require('fs').writeFileSync('./package.json',JSON.stringify(p,null,2));" && \
+# Drop every @interego/* workspace specifier from the dashboard's
+# package.json, then install ALL workspace tarballs as file: deps so
+# @interego/core's compat re-export keeps working for un-migrated
+# code paths the dashboard might exercise transitively. We install the
+# full set rather than only the dashboard's direct deps because the
+# compat shim in core re-exports from every vertical.
+RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./package.json.template','utf8'));if(p.dependencies){for(const k of Object.keys(p.dependencies)){if(k.startsWith('@interego/'))delete p.dependencies[k];}}fs.writeFileSync('./package.json',JSON.stringify(p,null,2));" && \
     rm package.json.template && \
     npm install --no-audit --no-fund \
       /tarballs/interego-core-0.2.0.tgz \
-      /tarballs/interego-abac-0.2.0.tgz \
+      /tarballs/interego-solid-0.2.0.tgz \
+      /tarballs/interego-pgsl-0.2.0.tgz \
       /tarballs/interego-compliance-0.2.0.tgz \
+      /tarballs/interego-privacy-0.2.0.tgz \
+      /tarballs/interego-security-txt-0.2.0.tgz \
+      /tarballs/interego-ops-0.2.0.tgz \
+      /tarballs/interego-passport-0.2.0.tgz \
+      /tarballs/interego-registry-0.2.0.tgz \
+      /tarballs/interego-p2p-0.2.0.tgz \
+      /tarballs/interego-abac-0.2.0.tgz \
       /tarballs/interego-connectors-0.2.0.tgz \
       /tarballs/interego-constitutional-0.2.0.tgz \
       /tarballs/interego-extractors-0.2.0.tgz \
-      /tarballs/interego-ops-0.2.0.tgz \
-      /tarballs/interego-p2p-0.2.0.tgz \
-      /tarballs/interego-passport-0.2.0.tgz \
-      /tarballs/interego-privacy-0.2.0.tgz \
-      /tarballs/interego-registry-0.2.0.tgz \
-      /tarballs/interego-security-txt-0.2.0.tgz \
       /tarballs/interego-skills-0.2.0.tgz \
       /tarballs/interego-transactions-0.2.0.tgz
 
