@@ -56,8 +56,10 @@ import {
   parseTrig,
   readStringValue,
   readStringValues,
-  withTransientRetry,
 } from '@interego/core';
+import {
+  withTransientRetry,
+} from '@interego/solid';
 import {
   discover,
   fetchGraphContent,

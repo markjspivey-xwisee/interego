@@ -28,14 +28,16 @@ import {
   intersection,
   override,
   restriction,
-  sparqlFragmentsContaining,
-  sparqlQueryPGSL,
   toJsonLdString,
   toTurtle,
   union,
   validate,
-  validateAllPGSL,
 } from '@interego/core';
+import {
+  sparqlFragmentsContaining,
+  sparqlQueryPGSL,
+  validateAllPGSL,
+} from '@interego/pgsl';
 import {
   createPGSL,
   embedInPGSL,

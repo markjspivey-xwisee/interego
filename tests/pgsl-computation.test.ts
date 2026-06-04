@@ -19,13 +19,13 @@ import {
   parseDate,
   sumValues,
   whichCameFirst,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   shouldAbstain,
 } from '@interego/pgsl';
 import type {
   TemporalFact,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 describe('parseDate', () => {
   it('parses ISO dates', () => {

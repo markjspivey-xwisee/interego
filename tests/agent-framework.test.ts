@@ -27,17 +27,19 @@ import {
   traceToTurtle,
   validateAction,
   wrapWithTracing,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
 } from '@interego/pgsl';
 import type {
+  PolicyContext,
+} from '@interego/abac';
+import type {
   AbstractAgentType,
   DecoratedAffordance,
-  PolicyContext,
   PolicyRule,
   ProvTrace,
-} from '@interego/core';
+} from '@interego/pgsl';
 import type {
   IRI,
 } from '@interego/core';

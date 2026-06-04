@@ -43,12 +43,14 @@ import type {
   FederationFacetData,
   FetchFn,
   IRI,
-  PGSLInstance,
   ProvenanceFacetData,
   SemioticFacetData,
   TemporalFacetData,
   TrustFacetData,
 } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/pgsl';
 import type {
   PublishResult,
 } from '@interego/solid';

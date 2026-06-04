@@ -29,21 +29,9 @@
       "import": "./dist/sparql/index.js",
       "types": "./dist/sparql/index.d.ts"
     },
-    "./solid": {
-      "import": "./dist/solid/index.js",
-      "types": "./dist/solid/index.d.ts"
-    },
-    "./pgsl": {
-      "import": "./dist/pgsl/index.js",
-      "types": "./dist/pgsl/index.d.ts"
-    },
     "./crypto": {
       "import": "./dist/crypto/index.js",
       "types": "./dist/crypto/index.d.ts"
-    },
-    "./naming": {
-      "import": "./dist/naming/index.js",
-      "types": "./dist/naming/index.d.ts"
     },
     "./kernel": {
       "import": "./dist/kernel/index.js",
@@ -64,10 +52,6 @@
     "./lattice": {
       "import": "./dist/lattice/index.js",
       "types": "./dist/lattice/index.d.ts"
-    },
-    "./compat": {
-      "import": "./dist/compat.js",
-      "types": "./dist/compat.d.ts"
     }
   },
   "files": [
@@ -78,7 +62,6 @@
   ],
   "scripts": {
     "build": "tsc",
-    "build:compat": "tsc -p tsconfig.compat.json && node ../../scripts/append-compat-reexport.mjs",
     "watch": "tsc --watch",
     "clean": "rm -rf dist/"
   },
@@ -98,22 +81,7 @@
     "siwe": "^3.0.0",
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
-    "ws": "^8.20.0",
-    "@interego/abac": "*",
-    "@interego/compliance": "*",
-    "@interego/connectors": "*",
-    "@interego/constitutional": "*",
-    "@interego/extractors": "*",
-    "@interego/ops": "*",
-    "@interego/p2p": "*",
-    "@interego/passport": "*",
-    "@interego/privacy": "*",
-    "@interego/registry": "*",
-    "@interego/security-txt": "*",
-    "@interego/skills": "*",
-    "@interego/transactions": "*",
-    "@interego/pgsl": "*",
-    "@interego/solid": "*"
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

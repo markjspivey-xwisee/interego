@@ -8,7 +8,7 @@ import {
   sparqlNeighbors,
   sparqlPullbackOf,
   sparqlQueryPGSL,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
   ingest,
@@ -17,10 +17,10 @@ import {
 } from '@interego/pgsl';
 import {
   matchPattern,
-} from '@interego/core';
+} from '@interego/pgsl';
 import type {
   PGSLInstance,
-} from '@interego/core';
+} from '@interego/pgsl';
 import type {
   IRI,
 } from '@interego/core';

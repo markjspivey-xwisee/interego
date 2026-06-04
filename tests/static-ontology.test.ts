@@ -20,7 +20,7 @@ import {
   loadOntology,
   ONTOLOGY_MANIFEST,
   type OntologyName,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 /** Parse a Turtle string and return the number of quads, or throw. */
 function parseTtl(ttl: string): number {

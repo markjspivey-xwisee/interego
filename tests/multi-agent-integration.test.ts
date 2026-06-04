@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   resolve as pgslResolve,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
   ingest,
@@ -21,13 +21,13 @@ import {
   computeCoverage,
   getCertificates,
   verifyCoherence,
-} from '@interego/core';
+} from '@interego/pgsl';
 import type {
   IRI,
 } from '@interego/core';
 import type {
   PGSLInstance,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 // Agent framework
 import {
@@ -41,7 +41,7 @@ import {
   createPolicyEngine,
   createTraceStore,
   defaultPolicies,
-  evaluate as evaluatePolicy,
+  evaluatePolicy,
   ExecutorAAT,
   filterAffordancesByAAT,
   FullAccessAAT,
@@ -52,13 +52,13 @@ import {
   registerAAT,
   startConversation,
   validateAction,
-} from '@interego/core';
+} from '@interego/pgsl';
 import type {
   PersonalBroker,
   PolicyRule,
   ProvTrace,
   TraceStore,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 // Infrastructure
 import {
@@ -78,7 +78,7 @@ import {
   markSynced,
   mergeEnclave,
   restoreCheckpoint,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 // Discovery
 import {
@@ -92,7 +92,7 @@ import {
   queryMetagraph,
   registerListing,
   validateMetagraph,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 // Decision functor — the bare `decide` from @interego/core is the
 // affordance OODA-loop decide (cycle args). The pgsl decision-functor
@@ -100,9 +100,11 @@ import {
 // avoid that collision.
 import {
   computeAffordances as computeDecisionAffordances,
+} from '@interego/core';
+import {
   extractObservations,
   selectStrategy,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   decide as decideFromObservations,
 } from '@interego/pgsl';
@@ -113,11 +115,11 @@ import {
   createDefaultRegistry,
   decorateNode,
   registerDecorator,
-} from '@interego/core';
+} from '@interego/pgsl';
 import type {
   DecoratedAffordance,
   DecoratorContext,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 // ── Helpers ──────────────────────────────────────────────────
 

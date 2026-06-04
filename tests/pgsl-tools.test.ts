@@ -7,16 +7,18 @@ import {
   materializeTriples,
   parseToolCalls,
   runToolLoop,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
   ingest,
 } from '@interego/pgsl';
 import type {
   PGSLInstance,
+} from '@interego/pgsl';
+import type {
   ToolCall,
   ToolContext,
-} from '@interego/core';
+} from '@interego/pgsl';
 import type {
   IRI,
 } from '@interego/core';

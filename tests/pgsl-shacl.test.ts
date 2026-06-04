@@ -8,15 +8,17 @@ import {
   validateCorePGSL,
   validateDomainShapes,
   validateStructuralPGSL,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
   ingest,
 } from '@interego/pgsl';
 import type {
   PGSLInstance,
+} from '@interego/pgsl';
+import type {
   ShaclShapeDefinition,
-} from '@interego/core';
+} from '@interego/pgsl';
 import type {
   IRI,
 } from '@interego/core';

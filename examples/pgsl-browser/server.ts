@@ -19,44 +19,46 @@ import { fileURLToPath } from 'url';
 import {
   allPrefixes,
   buildSCM,
-  computeContainmentAnnotations,
   ContextDescriptor,
-  createDefaultRegistry,
   createDelegation,
   createWallet,
-  decorateNode,
   evaluateCounterfactual,
-  executeSparqlProtocol,
-  executeSparqlString,
   findBackdoorSet,
-  getCertificates,
-  getProfile,
-  ingestWithProfile,
   intersection,
   isDSeparated,
-  materializeSystem,
-  materializeTriples,
   override,
-  queryNeighbors,
   restriction,
   signDescriptor,
-  sparqlFragmentsContaining,
-  sparqlQueryPGSL,
-  sparqlUpdateHandler,
   systemDcatCatalog,
   systemHydraApi,
   systemOntology,
   systemShaclShapes,
-  systemToJsonLd,
-  systemToTurtle,
   toTurtle,
   union,
   validate,
-  validateAllPGSL,
   verifyDelegationSignature,
   verifyDescriptorSignature,
-  writeBackTriples,
 } from '@interego/core';
+import {
+  computeContainmentAnnotations,
+  createDefaultRegistry,
+  decorateNode,
+  executeSparqlProtocol,
+  executeSparqlString,
+  getCertificates,
+  getProfile,
+  ingestWithProfile,
+  materializeSystem,
+  materializeTriples,
+  queryNeighbors,
+  sparqlFragmentsContaining,
+  sparqlQueryPGSL,
+  sparqlUpdateHandler,
+  systemToJsonLd,
+  systemToTurtle,
+  validateAllPGSL,
+  writeBackTriples,
+} from '@interego/pgsl';
 import {
   computeCognitiveStrategy,
   createPGSL,
@@ -95,12 +97,16 @@ import type {
   ContextDescriptorData,
   IRI,
   ManifestEntry,
-  PGSLInstance,
   SignedDescriptor,
-  TokenGranularity,
   Wallet,
   WalletDelegation,
 } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/pgsl';
+import type {
+  TokenGranularity,
+} from '@interego/pgsl';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env['PORT'] ?? '5000');
@@ -1792,7 +1798,7 @@ import {
   extractObservations,
   selectStrategy,
   verifyCoherence,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   computeAffordances as computeDecisionAffordances,
   decide as decideFromObservations,

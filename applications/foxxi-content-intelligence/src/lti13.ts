@@ -46,7 +46,7 @@ import { tenantOrUsers, type OrUser } from './oneroster.js';
 import { listCmi5Courses } from './cmi5-lms.js';
 import {
   withTransientRetry,
-} from '@interego/core';
+} from '@interego/solid';
 
 // ── Config ──────────────────────────────────────────────────────────
 

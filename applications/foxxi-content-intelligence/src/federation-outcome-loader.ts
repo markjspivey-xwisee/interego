@@ -17,7 +17,7 @@
 
 import {
   withTransientRetry,
-} from '@interego/core';
+} from '@interego/solid';
 import {
   discover,
 } from '@interego/solid';

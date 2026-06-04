@@ -34,12 +34,14 @@ import type {
   FederationFacetData,
   FetchFn,
   IRI,
-  PGSLInstance,
   ProvenanceFacetData,
   SemioticFacetData,
   TemporalFacetData,
   TrustFacetData,
 } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/pgsl';
 import { createHash } from 'node:crypto';
 import {
   type StatementStore, type StoredStatement, type QueryFilter, type QueryResult,

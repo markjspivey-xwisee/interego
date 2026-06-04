@@ -16,11 +16,11 @@ import {
 } from '@interego/pgsl';
 import type {
   PGSLInstance,
-} from '@interego/core';
+} from '@interego/pgsl';
 import type {
   DataSource,
   MarketplaceListing,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   applyIntrospection,
   createMarketplace,
@@ -44,7 +44,7 @@ import {
   resolveReference,
   validateMetagraph,
   virtualLayerStats,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 // ── Shared fixtures ──────────────────────────────────────────
 

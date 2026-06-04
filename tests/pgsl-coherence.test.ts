@@ -4,7 +4,7 @@ import {
   getCertificates,
   getCoherenceStatus,
   verifyCoherence,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
   embedInPGSL,

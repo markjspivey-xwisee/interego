@@ -12,9 +12,11 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  ContextDescriptor,
+} from '@interego/core';
+import {
   ancestorFragments,
   constituents,
-  ContextDescriptor,
   countUniquePGSL,
   descendantNodes,
   fiber,
@@ -29,7 +31,7 @@ import {
   sparqlPullbackOf,
   verifyIntersectionCoherence,
   verifyProvenanceNaturality,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
   embedInPGSL,
@@ -44,9 +46,11 @@ import {
 } from '@interego/pgsl';
 import type {
   IRI,
+} from '@interego/core';
+import type {
   NodeProvenance,
   PGSLInstance,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 const TEST_PROV: NodeProvenance = {
   wasAttributedTo: 'did:web:test.example' as IRI,

@@ -44,7 +44,7 @@
 import { createHash } from 'node:crypto';
 import {
   withTransientRetry,
-} from '@interego/core';
+} from '@interego/solid';
 import type {
   IRI,
 } from '@interego/core';

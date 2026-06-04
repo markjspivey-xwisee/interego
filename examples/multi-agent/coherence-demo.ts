@@ -35,7 +35,7 @@ import {
   sparqlQueryPGSL,
   validateAllPGSL,
   verifyCoherence,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
   embedInPGSL,
@@ -47,8 +47,10 @@ import {
 
 import type {
   IRI,
-  PGSLInstance,
 } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/pgsl';
 
 // ── Colors & Logging ───────────────────────────────────────
 

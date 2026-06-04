@@ -22,7 +22,7 @@ import {
   getCertificates,
   sparqlQueryPGSL,
   verifyCoherence,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
   embedInPGSL,
@@ -33,19 +33,23 @@ import {
 import {
   computeAffordances as computeDecisionAffordances,
   decide as decideFromObservations,
+} from '@interego/core';
+import {
   extractObservations,
   selectStrategy,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 import {
   generateMetagraph,
   ingestMetagraph,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 import type {
   IRI,
-  PGSLInstance,
 } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/pgsl';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 

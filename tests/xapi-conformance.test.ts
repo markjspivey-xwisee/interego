@@ -20,7 +20,7 @@ import {
   materializeTriples,
   sparqlQueryPGSL,
   validateAllPGSL,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
   latticeStats,
@@ -29,9 +29,13 @@ import {
 } from '@interego/pgsl';
 import type {
   IRI,
-  PGSLInstance,
-  XapiStatement,
 } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/pgsl';
+import type {
+  XapiStatement,
+} from '@interego/pgsl';
 
 // ── Test Data ─────────────────────────────────────────────
 

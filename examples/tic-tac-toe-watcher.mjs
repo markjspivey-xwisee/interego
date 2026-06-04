@@ -79,7 +79,7 @@ import {
 } from '../dist/index.js';
 import {
   recordHeartbeatTickIfChanged,
-} from '@interego/core';
+} from '@interego/passport';
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE

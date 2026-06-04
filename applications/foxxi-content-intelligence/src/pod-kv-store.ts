@@ -47,12 +47,14 @@ import type {
   FederationFacetData,
   FetchFn,
   IRI,
-  PGSLInstance,
   ProvenanceFacetData,
   SemioticFacetData,
   TemporalFacetData,
   TrustFacetData,
 } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/pgsl';
 import { createHash } from 'node:crypto';
 
 const FOXXI = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';

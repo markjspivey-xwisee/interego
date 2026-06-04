@@ -29,7 +29,7 @@
 
 import {
   withTransientRetry,
-} from '@interego/core';
+} from '@interego/solid';
 import {
   createPGSL,
   mintAtom,
@@ -45,12 +45,14 @@ import type {
   FederationFacetData,
   FetchFn,
   IRI,
-  PGSLInstance,
   ProvenanceFacetData,
   SemioticFacetData,
   TemporalFacetData,
   TrustFacetData,
 } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/pgsl';
 import { createHash } from 'node:crypto';
 import { bridgeDid, signAsBridge, withPublishLock } from './bridge-signer.js';
 

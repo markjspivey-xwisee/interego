@@ -16,22 +16,24 @@
  */
 
 import {
-  computeCoverage,
   ContextDescriptor,
-  extractObservations,
-  getCertificates,
   intersection,
   override,
-  resolve as pgslResolve,
   restriction,
-  selectStrategy,
-  sparqlQueryPGSL,
   toTurtle,
   union,
   validate,
+} from '@interego/core';
+import {
+  computeCoverage,
+  extractObservations,
+  getCertificates,
+  resolve as pgslResolve,
+  selectStrategy,
+  sparqlQueryPGSL,
   validateAllPGSL,
   verifyCoherence,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   createPGSL,
   embedInPGSL,
@@ -47,8 +49,10 @@ import {
 
 import type {
   IRI,
-  PGSLInstance,
 } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/pgsl';
 
 // ── Browser API ─────────────────────────────────────────
 

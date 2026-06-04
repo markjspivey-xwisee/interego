@@ -55,7 +55,7 @@ import { validateStatement, validateAgentObject } from './xapi-validate.js';
 import { TenantPartition, DEFAULT_TENANT, parseTenantCredentials, type TenantId } from './tenant-context.js';
 import {
   withTransientRetry,
-} from '@interego/core';
+} from '@interego/solid';
 import type {
   IRI,
 } from '@interego/core';

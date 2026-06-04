@@ -295,19 +295,17 @@ export {
 
 // ── Solid Integration ───────────────────────────────────────
 //
-// The Solid + LDP binding moved out to `@interego/solid`. Historical
-// `import { publish, discover, ... } from '@interego/core'` callers
-// continue to work via the compat shim. New code SHOULD import
-// directly from `@interego/solid`. Substrate-level HTTP types (FetchFn
-// / FetchResponse / WebSocket*) live in `@interego/core/http`; the
-// generic affordance follower lives in `@interego/core/affordance`;
-// withTransientRetry lives in `@interego/core/http`.
+// The Solid + LDP binding lives in `@interego/solid`. Substrate-level
+// HTTP types (FetchFn / FetchResponse / WebSocket*) live in
+// `@interego/core/http`; the generic affordance follower lives in
+// `@interego/core/affordance`; withTransientRetry lives in
+// `@interego/core/http`.
 
 // Local re-exports kept here because they're substrate-shaped — used
-// by the kernel + compat. `ManifestEntry` is the substrate's manifest-
-// row shape; `withTransientRetry` and `isTransientNetworkError` are
-// the substrate's transient retry helper; `followAffordance` is the
-// generic affordance follower; the FetchFn family is substrate HTTP.
+// by the kernel. `ManifestEntry` is the substrate's manifest-row shape;
+// `withTransientRetry` and `isTransientNetworkError` are the substrate's
+// transient retry helper; `followAffordance` is the generic affordance
+// follower; the FetchFn family is substrate HTTP.
 export {
   withTransientRetry,
   isTransientNetworkError,
@@ -339,13 +337,10 @@ export type { ManifestEntry } from './manifest/index.js';
 
 // ── PGSL (Poly-Granular Sequence Lattice) ───────────────────
 //
-// PGSL is now its own package: `@interego/pgsl`. The kernel's `mint` /
+// PGSL lives in its own package: `@interego/pgsl`. The kernel's `mint` /
 // `promote` / `decompose` verbs reach the lattice through the registered
 // `LatticeAdapter`; importing `@interego/pgsl` registers the lattice-
-// aware adapter as a side effect. Historical `import { ... } from
-// '@interego/core'` callers for PGSL symbols continue to work via the
-// compat shim (`@interego/core/compat`) while the migration is in
-// flight; new code SHOULD import from `@interego/pgsl` directly.
+// aware adapter as a side effect.
 
 // ── Affordance Engine ────────────────────────────────────────
 export {
@@ -567,18 +562,17 @@ export type {
 } from './crypto/index.js';
 
 // ── SDK (3-line developer API) ───────────────────────────────
-// Moved out to `@interego/solid` — the SDK is convenience over
+// Lives in `@interego/solid` — the SDK is convenience over
 // publish/discover/subscribe, which are the Solid binding's surface.
-// `import { ContextGraphsSDK } from '@interego/core'` continues to
-// work via the compat shim.
 
 // ── Per-vertical compositions live in sibling @interego/* packages ──
 //
 // Interego = primitives + composition mechanics for emergence. Anything
 // that CAN be composed from the substrate primitives is split out into
 // its own package so the kernel surface stays minimal + the composition
-// boundaries are explicit. The verticals now live in:
+// boundaries are explicit. The verticals live in:
 //
+//   @interego/solid             @interego/pgsl
 //   @interego/connectors        @interego/extractors
 //   @interego/registry          @interego/constitutional
 //   @interego/compliance        @interego/privacy
@@ -587,13 +581,9 @@ export type {
 //   @interego/passport          @interego/abac
 //   @interego/skills
 //
-// Callers should import the verticals they need directly — that's the
-// principled form. Back-compat re-exports live in `@interego/core/compat`
-// (a separate package subpath emitted by a second tsc pass against
-// `tsconfig.compat.json` after the leaves build). Existing callers that
-// used `from '@interego/core'` for the moved symbols should migrate to
-// either the per-vertical package or `@interego/core/compat` over the
-// transition window.
+// Callers import the verticals they need directly. `@interego/core` no
+// longer re-exports vertical symbols; the per-package import path is the
+// only one.
 
 // ── Kernel (the substrate's primitives as a first-class API) ────────
 //
@@ -658,14 +648,11 @@ export type {
 } from './kernel/index.js';
 
 // ── Name service (L2 — attestation-based naming) ───────────────────
-// Moved out to `@interego/solid/naming` (it composes against the
-// Solid binding's publish + discover). The compat shim re-exports the
-// historical names so `import { resolveName, namesFor, ... } from
-// '@interego/core'` keeps working.
+// Lives in `@interego/solid/naming` (it composes against the Solid
+// binding's publish + discover).
 
 // ── HTTP plumbing (substrate-level — FetchFn / fetch resolver / retry) ──
-// Authoritative location for substrate HTTP types + helpers. The solid/
-// re-exports above continue to serve the historical import paths.
+// Authoritative location for substrate HTTP types + helpers.
 export {
   getDefaultFetch,
   getDefaultWebSocket,

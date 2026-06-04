@@ -37,13 +37,15 @@ import {
   ContextDescriptor,
   intersection,
   override,
-  sparqlFragmentsContaining,
-  sparqlQueryPGSL,
   toTurtle,
   union,
   validate,
-  validateAllPGSL,
 } from '@interego/core';
+import {
+  sparqlFragmentsContaining,
+  sparqlQueryPGSL,
+  validateAllPGSL,
+} from '@interego/pgsl';
 import {
   createPGSL,
   embedInPGSL,

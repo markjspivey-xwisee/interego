@@ -75,7 +75,9 @@ function resolveNsDir(): string {
  *
  * @example
  * ```ts
- * import { loadOntology } from '@interego/core';
+ * import {
+  loadOntology,
+} from '@interego/pgsl';
  *
  * const interegoTtl = loadOntology('interego');  // interrogatives core
  * const pgslTtl = loadOntology('pgsl');          // substrate layer

@@ -22,7 +22,7 @@ import type {
 import type {
   NodeProvenance,
   PGSLInstance,
-} from '@interego/core';
+} from '@interego/pgsl';
 import {
   abandonEnclave,
   applyOp,
@@ -49,13 +49,13 @@ import {
   mergeClock,
   mergeEnclave,
   restoreCheckpoint,
-} from '@interego/core';
+} from '@interego/pgsl';
 import type {
   CheckpointStore,
   CRDTState,
   EnclaveRegistry,
   VectorClock,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 const TEST_PROV: NodeProvenance = {
   wasAttributedTo: 'did:web:test.example' as IRI,

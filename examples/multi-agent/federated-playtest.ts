@@ -22,19 +22,21 @@
  */
 
 import {
-  computeCoverage,
   ContextDescriptor,
   createDelegation,
   createWallet,
-  getCertificates,
-  ingestWithProfile,
   intersection,
   signDescriptor,
   toTurtle,
   union,
   validate,
-  verifyCoherence,
 } from '@interego/core';
+import {
+  computeCoverage,
+  getCertificates,
+  ingestWithProfile,
+  verifyCoherence,
+} from '@interego/pgsl';
 import {
   createPGSL,
   embedInPGSL,
@@ -49,6 +51,9 @@ import {
 } from '@interego/solid';
 
 import {
+  evaluate as evaluatePolicy,
+} from '@interego/abac';
+import {
   addMessage,
   addRule,
   AnalystAAT,
@@ -57,7 +62,6 @@ import {
   createPolicyEngine,
   createTraceStore,
   defaultPolicies,
-  evaluate as evaluatePolicy,
   ExecutorAAT,
   FullAccessAAT,
   getMemoryStats,
@@ -66,7 +70,7 @@ import {
   recordTrace,
   startConversation,
   traceToTurtle,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 import {
   applyOp,
@@ -82,7 +86,7 @@ import {
   getPendingOps,
   markSynced,
   mergeEnclave,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 import {
   createMarketplace,
@@ -91,20 +95,24 @@ import {
   ingestMetagraph,
   marketplaceStats,
   registerListing,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 import {
   computeAffordances as computeDecisionAffordances,
   decide as decideFromObservations,
+} from '@interego/core';
+import {
   extractObservations,
   selectStrategy,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 import type {
   FetchFn,
   IRI,
-  PGSLInstance,
 } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/pgsl';
 
 // ── Config ─────────────────────────────────────────────
 
