@@ -12,7 +12,7 @@
  * to issue the code and redirect the user back to the client's redirect_uri.
  */
 import type { Response } from 'express';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
@@ -94,6 +94,21 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     expiresAt: number;
   }>();
   private accessTokens = new Map<string, InteregoAuthInfo>();
+  /**
+   * Secondary access-token index keyed by sha256(token).hex.
+   *
+   * Hydrated at startup from the persistent backing store (see
+   * `cfg.initialAccessTokensBySha`). The raw token string is NEVER
+   * persisted, only its sha256, so we cannot reconstruct the primary
+   * `accessTokens` map at startup. Instead we keep this side map.
+   *
+   * verifyAccessToken's hot path consults `accessTokens` first (cheap
+   * O(1) on the raw token); on a miss it falls back to hashing the
+   * inbound bearer and probing `accessTokensBySha`. On a hit there it
+   * promotes the entry into `accessTokens` (now that the raw token is
+   * known) so subsequent calls skip the sha step.
+   */
+  private accessTokensBySha = new Map<string, InteregoAuthInfo>();
   // Refresh tokens: long-lived (14 days) secrets that can be traded for a
   // fresh access token without reprompting the user. Keyed by the token
   // string. One refresh token per access token issuance.
@@ -102,6 +117,14 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     scopes: string[];
     identity: ResolvedIdentity;
     expiresAt: number;
+  }>();
+  /** Refresh-token analog of `accessTokensBySha`. Same promotion rules. */
+  private refreshTokensBySha = new Map<string, {
+    clientId: string;
+    scopes: string[];
+    identity: ResolvedIdentity;
+    expiresAt: number;
+    dpopJkt?: string;
   }>();
   private pendingAuthorizations = new Map<string, {
     client: OAuthClientInformationFull;
@@ -150,11 +173,62 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
         client_id: string,
         client_data: OAuthClientInformationFull,
       ) => Promise<void>;
+      /**
+       * Pre-hydrated secondary index for access tokens, keyed by
+       * sha256(token).hex. Built at startup from the persistent
+       * backing store. See the comment on `accessTokensBySha`.
+       */
+      initialAccessTokensBySha?: Map<string, InteregoAuthInfo>;
+      /** Same idea for refresh tokens. */
+      initialRefreshTokensBySha?: Map<string, {
+        clientId: string;
+        scopes: string[];
+        identity: ResolvedIdentity;
+        expiresAt: number;
+        dpopJkt?: string;
+      }>;
+      /**
+       * Optional async sinks for OAuth token lifecycle events. Same
+       * fire-and-forget contract as `persistClient` — failures log
+       * but do NOT fail the OAuth exchange. Without these the provider
+       * still works but tokens evaporate on container restart, which
+       * surfaces to MCP clients as stale-token 401s.
+       */
+      persistAccessToken?: (token: string, info: InteregoAuthInfo) => Promise<void>;
+      persistRefreshToken?: (refreshToken: string, rec: {
+        clientId: string;
+        scopes: string[];
+        identity: ResolvedIdentity;
+        expiresAt: number;
+        dpopJkt?: string;
+      }) => Promise<void>;
+      removeAccessToken?: (sha256Hex: string) => Promise<void>;
+      removeRefreshToken?: (sha256Hex: string) => Promise<void>;
+      /**
+       * Best-effort one-shot lookup for a single raw access token.
+       * Called on verifyAccessToken miss BEFORE throwing
+       * InvalidTokenError. Lets a client whose token was issued by a
+       * prior relay revision keep working without re-authenticating
+       * — the provider transparently rehydrates from the backing
+       * store. Return null on miss.
+       */
+      lookupAccessTokenByRaw?: (token: string) => Promise<InteregoAuthInfo | null>;
       /** Optional logger used by the fire-and-forget persistence path. */
       log?: (msg: string) => void;
     },
   ) {
     this.clients = cfg.initialClients ?? new Map();
+    if (cfg.initialAccessTokensBySha) {
+      this.accessTokensBySha = cfg.initialAccessTokensBySha;
+    }
+    if (cfg.initialRefreshTokensBySha) {
+      this.refreshTokensBySha = cfg.initialRefreshTokensBySha;
+    }
+  }
+
+  /** sha256(token).hex — same hash the persistence backend keys on. */
+  private static sha256Hex(token: string): string {
+    return createHash('sha256').update(token, 'utf8').digest('hex');
   }
 
   /**
@@ -519,7 +593,7 @@ async function didSubmit() {
     const refresh = randomBytes(32).toString('hex');
     const expiresIn = this.cfg.tokenTtlSec ?? 3600;
     const refreshTtlSec = 14 * 24 * 3600; // 14 days
-    this.accessTokens.set(token, {
+    const accessInfo: InteregoAuthInfo = {
       token,
       clientId: client.client_id,
       scopes: c.scopes,
@@ -540,16 +614,47 @@ async function didSubmit() {
         // header carries a JWK whose thumbprint equals this value.
         ...(jkt ? { cnf: { jkt } } : {}),
       },
-    });
-    this.refreshTokens.set(refresh, {
+    };
+    this.accessTokens.set(token, accessInfo);
+    this.accessTokensBySha.set(InteregoOAuthProvider.sha256Hex(token), accessInfo);
+    const refreshRec = {
       clientId: client.client_id,
       scopes: c.scopes,
       identity: c.identity,
       expiresAt: Date.now() + refreshTtlSec * 1000,
+    };
+    this.refreshTokens.set(refresh, refreshRec);
+    this.refreshTokensBySha.set(InteregoOAuthProvider.sha256Hex(refresh), {
+      ...refreshRec,
+      ...(jkt ? { dpopJkt: jkt } : {}),
     });
     // Propagate the DPoP binding onto the refresh token so the next
     // refresh-token grant inherits + enforces it. RFC 9449 §5.2.
     if (jkt) this.refreshDpopJkt.set(refresh, jkt);
+
+    // Fire-and-forget persistence. Same contract as persistClient: a
+    // failure logs but does NOT fail the token exchange — the token
+    // is live in this process's Map for the lifetime of this process,
+    // so the immediate request succeeds. Worst case is the token is
+    // lost on the next restart (legacy behaviour).
+    const log = this.cfg.log;
+    const persistA = this.cfg.persistAccessToken;
+    if (persistA) {
+      void persistA(token, accessInfo).catch((err: unknown) => {
+        const msg = (err as Error)?.message ?? String(err);
+        if (log) log(`[oauth-provider] persistAccessToken failed: ${msg}`);
+      });
+    }
+    const persistR = this.cfg.persistRefreshToken;
+    if (persistR) {
+      void persistR(refresh, {
+        ...refreshRec,
+        ...(jkt ? { dpopJkt: jkt } : {}),
+      }).catch((err: unknown) => {
+        const msg = (err as Error)?.message ?? String(err);
+        if (log) log(`[oauth-provider] persistRefreshToken failed: ${msg}`);
+      });
+    }
     return {
       access_token: token,
       // DPoP token_type per RFC 9449 §4. Bearer remains the fallback for
@@ -567,7 +672,25 @@ async function didSubmit() {
     refreshToken: string,
     scopes?: string[],
   ): Promise<OAuthTokens> {
-    const rec = this.refreshTokens.get(refreshToken);
+    let rec = this.refreshTokens.get(refreshToken);
+    // Sha-keyed fallback for refresh tokens hydrated at startup — same
+    // shape as the access-token path. The promote step copies the
+    // record into the raw-token map so the rest of this method sees
+    // the same in-memory state regardless of which path hit.
+    if (!rec) {
+      const sha = InteregoOAuthProvider.sha256Hex(refreshToken);
+      const bySha = this.refreshTokensBySha.get(sha);
+      if (bySha) {
+        rec = {
+          clientId: bySha.clientId,
+          scopes: bySha.scopes,
+          identity: bySha.identity,
+          expiresAt: bySha.expiresAt,
+        };
+        this.refreshTokens.set(refreshToken, rec);
+        if (bySha.dpopJkt) this.refreshDpopJkt.set(refreshToken, bySha.dpopJkt);
+      }
+    }
     if (!rec) throw new Error('Invalid refresh token');
     if (rec.expiresAt < Date.now()) {
       this.refreshTokens.delete(refreshToken);
@@ -586,6 +709,8 @@ async function didSubmit() {
     // Rotate the refresh token: invalidate the old one, issue a new one.
     // Defense against replayed refresh tokens (standard OAuth best practice).
     this.refreshTokens.delete(refreshToken);
+    const oldRefreshSha = InteregoOAuthProvider.sha256Hex(refreshToken);
+    this.refreshTokensBySha.delete(oldRefreshSha);
 
     // Inherit any DPoP binding from the prior refresh token. The /token
     // middleware also validated the inbound DPoP proof against this jkt
@@ -597,7 +722,7 @@ async function didSubmit() {
     const token = randomBytes(32).toString('hex');
     const newRefresh = randomBytes(32).toString('hex');
     const expiresIn = this.cfg.tokenTtlSec ?? 3600;
-    this.accessTokens.set(token, {
+    const accessInfo: InteregoAuthInfo = {
       token,
       clientId: client.client_id,
       scopes: finalScopes,
@@ -611,14 +736,51 @@ async function didSubmit() {
         identityToken: rec.identity.identityToken,
         ...(inheritedJkt ? { cnf: { jkt: inheritedJkt } } : {}),
       },
-    });
-    this.refreshTokens.set(newRefresh, {
+    };
+    this.accessTokens.set(token, accessInfo);
+    this.accessTokensBySha.set(InteregoOAuthProvider.sha256Hex(token), accessInfo);
+    const refreshRec = {
       clientId: client.client_id,
       scopes: finalScopes,
       identity: rec.identity,
       expiresAt: rec.expiresAt, // preserve original refresh TTL window
+    };
+    this.refreshTokens.set(newRefresh, refreshRec);
+    this.refreshTokensBySha.set(InteregoOAuthProvider.sha256Hex(newRefresh), {
+      ...refreshRec,
+      ...(inheritedJkt ? { dpopJkt: inheritedJkt } : {}),
     });
     if (inheritedJkt) this.refreshDpopJkt.set(newRefresh, inheritedJkt);
+
+    // Fire-and-forget persistence — same as the auth-code path. Also
+    // best-effort drop the rotated-out refresh token from the backing
+    // store so an attacker who exfiltrated the pod file can't replay
+    // a refresh token we just retired.
+    const log = this.cfg.log;
+    const persistA = this.cfg.persistAccessToken;
+    if (persistA) {
+      void persistA(token, accessInfo).catch((err: unknown) => {
+        const msg = (err as Error)?.message ?? String(err);
+        if (log) log(`[oauth-provider] persistAccessToken (refresh) failed: ${msg}`);
+      });
+    }
+    const persistR = this.cfg.persistRefreshToken;
+    if (persistR) {
+      void persistR(newRefresh, {
+        ...refreshRec,
+        ...(inheritedJkt ? { dpopJkt: inheritedJkt } : {}),
+      }).catch((err: unknown) => {
+        const msg = (err as Error)?.message ?? String(err);
+        if (log) log(`[oauth-provider] persistRefreshToken (rotated) failed: ${msg}`);
+      });
+    }
+    const removeR = this.cfg.removeRefreshToken;
+    if (removeR) {
+      void removeR(oldRefreshSha).catch((err: unknown) => {
+        const msg = (err as Error)?.message ?? String(err);
+        if (log) log(`[oauth-provider] removeRefreshToken (rotated-out) failed: ${msg}`);
+      });
+    }
     return {
       access_token: token,
       token_type: inheritedJkt ? 'DPoP' : 'Bearer',
@@ -634,10 +796,51 @@ async function didSubmit() {
     // (rather than wrapping a plain Error as `500 server_error`, which
     // looks like a backend outage to clients — ChatGPT's connector
     // surfaces that as a generic "502 upstream" failure mode).
-    const info = this.accessTokens.get(token);
+    let info = this.accessTokens.get(token);
+    const sha = InteregoOAuthProvider.sha256Hex(token);
+    // Hot-path miss: consult the sha-keyed secondary map (populated at
+    // startup from the persistent backing store). On hit, promote into
+    // the raw-token Map so subsequent calls are O(1).
+    if (!info) {
+      const bySha = this.accessTokensBySha.get(sha);
+      if (bySha) {
+        // The persisted record's `token` slot may be the sha (we don't
+        // know the raw token at hydration time). Fix it now that we do.
+        info = { ...bySha, token };
+        this.accessTokens.set(token, info);
+      }
+    }
+    // Cold-path miss: one best-effort backing-store fetch. Handles the
+    // case where the token was issued AFTER the current process started
+    // but is being VERIFIED by a different process / after a restart
+    // that didn't include this token in its initial load.
+    if (!info && this.cfg.lookupAccessTokenByRaw) {
+      try {
+        const loaded = await this.cfg.lookupAccessTokenByRaw(token);
+        if (loaded) {
+          info = { ...loaded, token };
+          this.accessTokens.set(token, info);
+          this.accessTokensBySha.set(sha, info);
+        }
+      } catch (err) {
+        const log = this.cfg.log;
+        if (log) log(`[oauth-provider] lookupAccessTokenByRaw failed: ${(err as Error).message}`);
+      }
+    }
     if (!info) throw new InvalidTokenError('Token not found (may have been issued by a prior relay revision; re-authenticate to obtain a fresh token)');
     if (info.expiresAt && info.expiresAt * 1000 < Date.now()) {
       this.accessTokens.delete(token);
+      this.accessTokensBySha.delete(sha);
+      // Best-effort drop the file too so we don't keep finding the
+      // expired entry on every subsequent miss.
+      const removeA = this.cfg.removeAccessToken;
+      if (removeA) {
+        void removeA(sha).catch((err: unknown) => {
+          const log = this.cfg.log;
+          const msg = (err as Error)?.message ?? String(err);
+          if (log) log(`[oauth-provider] removeAccessToken (expired) failed: ${msg}`);
+        });
+      }
       throw new InvalidTokenError('Token expired');
     }
     return info;

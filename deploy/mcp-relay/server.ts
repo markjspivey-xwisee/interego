@@ -43,6 +43,16 @@ import {
   type OAuthClientStoreConfig,
 } from './oauth-client-store.js';
 import {
+  loadAccessTokens as loadOAuthAccessTokens,
+  loadRefreshTokens as loadOAuthRefreshTokens,
+  loadAccessTokenByRaw as loadOAuthAccessTokenByRaw,
+  persistAccessToken as persistOAuthAccessToken,
+  persistRefreshToken as persistOAuthRefreshToken,
+  removeAccessToken as removeOAuthAccessToken,
+  removeRefreshToken as removeOAuthRefreshToken,
+  type OAuthTokenStoreConfig,
+} from './oauth-token-store.js';
+import {
   validateDpopJwt,
   athFromAccessToken,
   reconstructRequestUrl,
@@ -478,12 +488,39 @@ const oauthStoreCfg: OAuthClientStoreConfig = {
 };
 const _oauthInitialClients = await loadOAuthClients(oauthStoreCfg);
 log(`OAuth DCR store: pod=${oauthStorePodUrl} relayDid=${oauthStoreCfg.relayDid} loaded=${_oauthInitialClients.size}`);
+
+// OAuth access + refresh tokens piggyback on the same service-account
+// pod. They live under sibling subcontainers `tokens/` and
+// `tokens-refresh/`, filename = sha256(token).hex so the raw bearer
+// never lands on disk. See oauth-token-store.ts for the storage shape.
+//
+// Without this hydration, every relay restart drops every issued
+// access token and existing ChatGPT / claude.ai sessions surface as
+// `401 invalid_token` until the user re-authorizes. The
+// `lookupAccessTokenByRaw` hook handles the narrower case where a
+// token was issued by a peer process this restart hasn't seen yet.
+const oauthTokenStoreCfg: OAuthTokenStoreConfig = {
+  podUrl: oauthStorePodUrl,
+  fetch: solidFetch,
+  log: (msg: string) => log(msg),
+};
+const _oauthInitialAccessTokensBySha = await loadOAuthAccessTokens(oauthTokenStoreCfg);
+const _oauthInitialRefreshTokensBySha = await loadOAuthRefreshTokens(oauthTokenStoreCfg);
+log(`OAuth token store: pod=${oauthStorePodUrl} access=${_oauthInitialAccessTokensBySha.size} refresh=${_oauthInitialRefreshTokensBySha.size}`);
+
 oauthProvider = new InteregoOAuthProvider({
   identityUrl: IDENTITY_URL,
   tokenTtlSec: 3600,
   initialClients: _oauthInitialClients,
   persistClient: (client_id, client_data) =>
     saveOAuthClient(client_id, client_data, oauthStoreCfg),
+  initialAccessTokensBySha: _oauthInitialAccessTokensBySha,
+  initialRefreshTokensBySha: _oauthInitialRefreshTokensBySha,
+  persistAccessToken: (token, info) => persistOAuthAccessToken(token, info, oauthTokenStoreCfg),
+  persistRefreshToken: (refreshToken, rec) => persistOAuthRefreshToken(refreshToken, rec, oauthTokenStoreCfg),
+  removeAccessToken: (sha) => removeOAuthAccessToken(sha, oauthTokenStoreCfg),
+  removeRefreshToken: (sha) => removeOAuthRefreshToken(sha, oauthTokenStoreCfg),
+  lookupAccessTokenByRaw: (token) => loadOAuthAccessTokenByRaw(token, oauthTokenStoreCfg),
   log: (msg: string) => log(msg),
 });
 
