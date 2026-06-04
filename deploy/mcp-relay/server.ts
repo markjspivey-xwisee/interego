@@ -955,6 +955,29 @@ const IDENTITY_ME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const IDENTITY_ME_CACHE_MAX = 1024;
 const identityMeCache = new Map<string, { record: IdentityMeRecord; expiresAt: number }>();
 
+// Cached identity-side agent inventory. IDENTITY_URL/agents/me returns
+// every agent registered to the calling user across all per-surface
+// minting flows (chatgpt-<userId>, claude-mobile-<userId>, etc.) — the
+// "primary agent" exposed by /me is just the first one and is a
+// historical artefact of registration order. get_pod_status needs the
+// full list so the dashboard / MCP client can show "you have 3 agents
+// across 3 surfaces; this session is using chatgpt-<userId>" instead
+// of pinning the headline identity to whichever agent was minted first.
+// Cached per userId with the same 5 min TTL as /me.
+interface IdentityAgentRecord {
+  id: string;
+  name?: string;
+  scope?: string;
+  createdAt?: string;
+  did?: string;
+}
+interface IdentityAgentsRecord {
+  userId?: string;
+  name?: string;
+  agents: IdentityAgentRecord[];
+}
+const identityAgentsCache = new Map<string, { record: IdentityAgentsRecord; expiresAt: number }>();
+
 async function fetchIdentityMe(identityToken: string): Promise<IdentityMeRecord | null> {
   // Best-effort decode of the JWT to get the userId claim — used only as
   // a cache key. If decode fails, fall back to keying by token (still
@@ -993,6 +1016,66 @@ async function fetchIdentityMe(identityToken: string): Promise<IdentityMeRecord 
   }
 }
 
+// Fetch the calling user's full agent inventory from the identity
+// server. Returns null on auth / network failure (caller falls back to
+// /me's primary-agent-only view). Same caching contract as
+// fetchIdentityMe — keyed by userId, 5 min TTL, LRU-capped.
+async function fetchIdentityAgents(identityToken: string): Promise<IdentityAgentsRecord | null> {
+  const cacheKey = jwtUserIdClaim(identityToken) ?? `tok:${identityToken}`;
+  const now = Date.now();
+  const cached = identityAgentsCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.record;
+
+  try {
+    const r = await fetch(`${IDENTITY_URL}/agents/me`, {
+      headers: { 'Authorization': `Bearer ${identityToken}` },
+    });
+    if (!r.ok) return cached?.record ?? null;
+    const data = await r.json() as IdentityAgentsRecord;
+    const record: IdentityAgentsRecord = {
+      ...(data.userId ? { userId: data.userId } : {}),
+      ...(data.name ? { name: data.name } : {}),
+      agents: Array.isArray(data.agents) ? data.agents.map(a => ({
+        id: a.id,
+        ...(a.name ? { name: a.name } : {}),
+        ...(a.scope ? { scope: a.scope } : {}),
+        ...(a.createdAt ? { createdAt: a.createdAt } : {}),
+        ...(a.did ? { did: a.did } : {}),
+      })) : [],
+    };
+    if (identityAgentsCache.size >= IDENTITY_ME_CACHE_MAX) {
+      const oldestKey = identityAgentsCache.keys().next().value;
+      if (oldestKey !== undefined) identityAgentsCache.delete(oldestKey);
+    }
+    identityAgentsCache.set(cacheKey, { record, expiresAt: now + IDENTITY_ME_CACHE_TTL_MS });
+    return record;
+  } catch {
+    return cached?.record ?? null;
+  }
+}
+
+// Best-effort surface-slug extraction from an agent id like
+// "chatgpt-u-pk-b03a054d6915" → "chatgpt". Walks back from the userId
+// prefix ("u-pk-", "u-eth-", "u-did-") since the slug itself may
+// contain hyphens (e.g. "claude-mobile-u-pk-..."). If no userId prefix
+// is found, returns undefined.
+function surfaceSlugFromAgentId(agentId: string | undefined): string | undefined {
+  if (!agentId) return undefined;
+  const m = agentId.match(/^(.+?)-u-(?:pk|eth|did)-/);
+  return m?.[1];
+}
+
+// Extract the bare agent id from either a bare id or a did:web form.
+// did:web:host:agents:chatgpt-u-pk-xxx → chatgpt-u-pk-xxx
+function bareAgentId(idOrDid: string | undefined): string | undefined {
+  if (!idOrDid) return undefined;
+  if (idOrDid.startsWith('did:web:')) {
+    const parts = idOrDid.split(':');
+    return parts[parts.length - 1];
+  }
+  return idOrDid;
+}
+
 // Decode the sub / userId claim from a JWT without verifying it. Used
 // only as a cache key — the upstream IDENTITY_URL/me request still does
 // the real verification.
@@ -1011,6 +1094,14 @@ function jwtUserIdClaim(token: string): string | undefined {
 async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   const podUrl = args.pod_url as string;
   const identityToken = args._identity_token as string | undefined;
+  // Session agent — derived from THIS connection's OAuth bearer token
+  // (req.auth.extra.agentId), not from registration order. The relay
+  // mints one per-surface agent per session (chatgpt-<userId>,
+  // claude-mobile-<userId>, ...) and we surface THAT one as the
+  // headline identity. The historical "primary agent" from /me is
+  // demoted to one entry in the `agents` list.
+  const sessionAgentDid = args._session_agent_did as string | undefined;
+  const sessionAgentIdRaw = args._session_agent_id as string | undefined;
   const entries = await discover(podUrl, undefined, { fetch: solidFetch }).catch(() => []);
   const profile = await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null);
 
@@ -1022,7 +1113,9 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   // displayName, primaryAgentDid, podHint, ... }. Cached per userId with
   // a 5 min TTL so we don't take a network hop on every status call.
   // Failure here is non-fatal: the rest of the response still lands.
-  const identity = identityToken ? await fetchIdentityMe(identityToken) : null;
+  const [identity, agentsList] = identityToken
+    ? await Promise.all([fetchIdentityMe(identityToken), fetchIdentityAgents(identityToken)])
+    : [null, null];
 
   // The display name is set at registration. Surface it at the top level
   // (and inside `identity` for full context) so MCP clients can render
@@ -1031,13 +1124,93 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   const displayName = identity?.displayName
     ?? profile?.name
     ?? undefined;
-  // Also expose webId / userId / agentId top-level (back-compat: existing
-  // fields like `registry`, `descriptors`, `entries`, `recentNotifications`
+  // Also expose webId / userId top-level (back-compat: existing fields
+  // like `registry`, `descriptors`, `entries`, `recentNotifications`
   // are untouched). Lets MCP clients render "logged in as <name> (<webId>)"
   // without descending into the nested `identity` block.
   const webId = identity?.webId;
   const userId = identity?.userId;
-  const agentId = identity?.primaryAgentId;
+
+  // Build the agents list. Prefer identity-server /agents/me (every
+  // surface-minted agent the user owns) and fall back to pod-side
+  // AgentRegistry if identity is unreachable. Each entry carries id,
+  // did, label, surface slug (derived from id), and firstSeen so MCP
+  // clients can render per-surface management UIs.
+  type AgentEntry = {
+    id: string;
+    did?: string;
+    label?: string;
+    surface?: string;
+    firstSeen?: string;
+    scope?: string;
+  };
+  const agents: AgentEntry[] = [];
+  if (agentsList?.agents.length) {
+    for (const a of agentsList.agents) {
+      agents.push({
+        id: a.id,
+        ...(a.did ? { did: a.did } : {}),
+        ...(a.name ? { label: a.name } : {}),
+        ...(surfaceSlugFromAgentId(a.id) ? { surface: surfaceSlugFromAgentId(a.id)! } : {}),
+        ...(a.createdAt ? { firstSeen: a.createdAt } : {}),
+        ...(a.scope ? { scope: a.scope } : {}),
+      });
+    }
+  } else if (profile) {
+    // Identity unavailable — derive what we can from the pod-side
+    // AgentRegistry. validFrom is the pod's nearest equivalent to
+    // identity-side createdAt.
+    for (const a of profile.authorizedAgents.filter(x => !x.revoked)) {
+      const bare = bareAgentId(a.agentId) ?? a.agentId;
+      agents.push({
+        id: bare,
+        did: a.agentId,
+        ...(a.label ? { label: a.label } : {}),
+        ...(surfaceSlugFromAgentId(bare) ? { surface: surfaceSlugFromAgentId(bare)! } : {}),
+        ...(a.validFrom ? { firstSeen: a.validFrom } : {}),
+        ...(a.scope ? { scope: a.scope } : {}),
+      });
+    }
+  }
+
+  // Resolve the session agent. The authContext-injected
+  // _session_agent_did is the OAuth token's agent IRI (did:web:... when
+  // identity returned an agentDid; bare id otherwise). We prefer the
+  // matching entry from the agents list so label/surface/firstSeen come
+  // from a single source of truth; if no match (e.g. agents list fetch
+  // failed) we fabricate a minimal entry from what the token tells us.
+  const sessionBareId = bareAgentId(sessionAgentIdRaw) ?? bareAgentId(sessionAgentDid);
+  let sessionAgent: AgentEntry | undefined;
+  if (sessionBareId) {
+    const match = agents.find(a => a.id === sessionBareId || a.did === sessionAgentDid);
+    if (match) {
+      sessionAgent = match;
+    } else {
+      sessionAgent = {
+        id: sessionBareId,
+        ...(sessionAgentDid ? { did: sessionAgentDid } : {}),
+        ...(surfaceSlugFromAgentId(sessionBareId) ? { surface: surfaceSlugFromAgentId(sessionBareId)! } : {}),
+      };
+    }
+  }
+
+  // back-compat: top-level agentId continues to exist but now points at
+  // the SESSION agent (what this connection is actually using), not the
+  // historical "primary". Old clients keep rendering; new clients should
+  // read sessionAgent.id.
+  const agentId = sessionAgent?.id ?? identity?.primaryAgentId;
+
+  // Inside the nested `identity` block we keep primaryAgentId/Did for
+  // strict back-compat AND add a clarifying note pointing readers at
+  // sessionAgent. "Primary" is the historical first-registered agent;
+  // the current session is using sessionAgent. Without this note a
+  // dashboard could keep showing primaryAgentId as the headline.
+  const identityWithNote = identity ? {
+    ...identity,
+    ...(sessionAgent ? {
+      sessionAgentNote: 'primaryAgentId is the first agent ever registered for this user; the current connection is using sessionAgent (see top-level field).',
+    } : {}),
+  } : null;
 
   return JSON.stringify({
     pod: podUrl,
@@ -1045,8 +1218,10 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
     ...(displayName ? { displayName } : {}),
     ...(webId ? { webId } : {}),
     ...(userId ? { userId } : {}),
+    ...(sessionAgent ? { sessionAgent } : {}),
+    ...(agents.length ? { agents } : {}),
     ...(agentId ? { agentId } : {}),
-    ...(identity ? { identity } : {}),
+    ...(identityWithNote ? { identity: identityWithNote } : {}),
     registry: profile ? {
       owner: profile.webId,
       name: profile.name,
@@ -3001,6 +3176,23 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       // this as opaque + non-overridable from the wire (a caller cannot
       // smuggle their own token in via tools/call arguments — we overwrite).
       if (authContext.identityToken) args._identity_token = authContext.identityToken;
+      // Thread the THIS-session agent identity through so handlers like
+      // handleGetPodStatus can surface the per-surface agent that the
+      // current OAuth token actually authorizes (chatgpt-<userId>,
+      // claude-mobile-<userId>, ...) instead of falling back to the
+      // historical "primary agent" from identity /me. Like _identity_token,
+      // these are server-injected and non-overridable from the wire.
+      // _session_agent_did carries the agent IRI as it was minted at
+      // OAuth (did:web:... when identity returned an agentDid, bare
+      // string otherwise); _session_agent_id is the bare slug that handlers
+      // can match against IDENTITY_URL/agents/me responses.
+      args._session_agent_did = authContext.agentId;
+      // Best-effort bare id: handlers use bareAgentId() defensively but
+      // pre-computing here avoids re-parsing per call.
+      const bareSessionId = authContext.agentId.startsWith('did:web:')
+        ? authContext.agentId.split(':').pop()
+        : authContext.agentId;
+      if (bareSessionId) args._session_agent_id = bareSessionId;
     }
     try {
       const text = await tool.handler(args);
