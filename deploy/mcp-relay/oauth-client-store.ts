@@ -49,18 +49,20 @@ import type {
 
 import {
   ContextDescriptor,
-  publish,
-  discover,
-  fetchGraphContent,
-  parseTrig,
+  type FetchFn,
   findSubjectsOfType,
+  type IRI,
+  type ParsedSubject,
+  parseTrig,
   readStringValue,
   readStringValues,
   withTransientRetry,
-  type FetchFn,
-  type IRI,
-  type ParsedSubject,
 } from '@interego/core';
+import {
+  discover,
+  fetchGraphContent,
+  publish,
+} from '@interego/solid';
 
 // ── Scenario namespace ──────────────────────────────────────
 // Deliberately under a non-owned namespace per the codebase's ontology-

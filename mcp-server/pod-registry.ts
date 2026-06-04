@@ -6,7 +6,12 @@
  * WebFinger-resolved pods. Manages per-pod subscription lifecycle.
  */
 
-import type { IRI, Subscription } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
+import type {
+  Subscription,
+} from '@interego/solid';
 
 export type DiscoverySource = 'config' | 'directory' | 'webfinger' | 'manual';
 

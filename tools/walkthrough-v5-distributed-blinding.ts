@@ -58,9 +58,15 @@ import {
   reconstructAndVerifyV5,
   type DistributedContribution,
 } from '../applications/_shared/aggregate-privacy/index.js';
-import { generateKeyPair } from '@interego/core';
-import { verifyShare } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  generateKeyPair,
+} from '@interego/core';
+import {
+  verifyShare,
+} from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 const COHORT = 'urn:demo:cohort:v5-walkthrough' as IRI;
 const AGGREGATOR = 'did:web:operator.v5-demo' as IRI;

@@ -50,57 +50,55 @@ import {
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
-  ContextDescriptor,
-  toTurtle,
-  validate,
-  createOwnerProfile,
   addAuthorizedAgent,
-  removeAuthorizedAgent,
-  createDelegationCredential,
-  pinToIpfs,
-  cryptoComputeCid,
-  generateKeyPair,
-  type EncryptionKeyPair,
-  normalizePublishInputs,
-  signDescriptor,
-  verifyDescriptorSignature,
-  buildAccessChangeEvent,
-  followAffordance,
-  // ── Kernel (substrate primitives as first-class verbs) ──
-  // The named tools below remain as compatibility shims; new
-  // clients can call the kernel verbs directly. The substrate
-  // `act` verb is exposed as `kernelAct` to avoid colliding with
-  // the OODA cognitive-loop phase (preserved for backward compat).
-  // See docs/ARCHITECTURAL-FOUNDATIONS.md §11.
-  mint as kernelMint,
-  dereference as kernelDereference,
   compose as kernelCompose,
-  kernelAct,
-  restrict as kernelRestrict,
-  extend as kernelExtend,
-  promote as kernelPromote,
+  ContextDescriptor,
+  createDelegationCredential,
+  createOwnerProfile,
+  cryptoComputeCid,
   decompose as kernelDecompose,
   decorateKernelResult,
   decorateShim,
+  dereference as kernelDereference,
+  type EncryptionKeyPair,
+  extend as kernelExtend,
+  followAffordance,
+  generateKeyPair,
+  getShaclShapesTurtle,
   hydraEntryPoint,
   KERNEL_JSONLD_CONTEXT,
   KERNEL_RESULT_SHAPES,
-  getShaclShapesTurtle,
+  kernelAct,
+  mint as kernelMint,
+  normalizePublishInputs,
+  pinToIpfs,
+  promote as kernelPromote,
+  removeAuthorizedAgent,
+  restrict as kernelRestrict,
+  signDescriptor,
   type SignedDescriptor,
+  toTurtle,
+  validate,
+  verifyDescriptorSignature,
 } from '@interego/core';
+import {
+  buildAccessChangeEvent,
+} from '@interego/ops';
 
 import type {
-  IRI,
   ContextDescriptorData,
+  FetchFn,
+  IRI,
+  ManifestEntry,
   OwnerProfileData,
   PodDirectoryData,
   PodDirectoryEntry,
-  FetchFn,
   WebSocketConstructor,
-  Subscription,
-  ContextChangeEvent,
-  ManifestEntry,
 } from '@interego/core';
+import type {
+  ContextChangeEvent,
+  Subscription,
+} from '@interego/solid';
 
 // Solid binding — `@interego/solid`.
 import {
@@ -150,7 +148,10 @@ import {
 import type { ComplianceFramework, AuditableDescriptor, PersistedComplianceWallet } from '@interego/compliance';
 
 // Wallet check_balance — `@interego/core` (wallet primitives).
-import { checkBalance, getChainConfig } from '@interego/core';
+import {
+  checkBalance,
+  getChainConfig,
+} from '@interego/core';
 
 // Security.txt — `@interego/security-txt`.
 import { buildSecurityTxtFromEnv } from '@interego/security-txt';

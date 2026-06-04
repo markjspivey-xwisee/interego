@@ -45,63 +45,58 @@ import { WebSocket } from 'ws';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
-  ContextDescriptor,
-  toTurtle,
-  toJsonLdString,
-  validate,
-  intersection,
-  union,
-  createOwnerProfile,
   addAuthorizedAgent,
-  removeAuthorizedAgent,
-  createDelegationCredential,
-  sha256,
-  pinToIpfs,
-  pinDescriptor,
-  cryptoComputeCid,
-  generateKeyPair,
-  createEncryptedEnvelope,
-  openEncryptedEnvelope,
-  type EncryptionKeyPair,
-  normalizePublishInputs,
-  signDescriptor,
-  // Generic affordance follower (Path A — reach any vertical via descriptors)
-  followAffordance,
-  // ── Kernel (the substrate's primitives as first-class verbs) ──
-  // Compatibility shims below re-route through these where natural.
-  // See docs/ARCHITECTURAL-FOUNDATIONS.md §11. The kernel's `act`
-  // verb is exported as `kernelAct` at the top level (the bare `act`
-  // export is the OODA cognitive-loop phase, preserved for backward
-  // compatibility).
-  mint as kernelMint,
-  dereference as kernelDereference,
   compose as kernelCompose,
-  kernelAct,
-  restrict as kernelRestrict,
-  extend as kernelExtend,
-  promote as kernelPromote,
+  ContextDescriptor,
+  createDelegationCredential,
+  createEncryptedEnvelope,
+  createOwnerProfile,
+  cryptoComputeCid,
   decompose as kernelDecompose,
-  extractAffordancesFromTurtle,
   decorateKernelResult,
   decorateShim,
+  dereference as kernelDereference,
+  type EncryptionKeyPair,
+  extend as kernelExtend,
+  extractAffordancesFromTurtle,
+  followAffordance,
+  generateKeyPair,
   hydraEntryPoint,
+  intersection,
   KERNEL_JSONLD_CONTEXT,
   KERNEL_RESULT_SHAPES,
+  kernelAct,
+  mint as kernelMint,
+  normalizePublishInputs,
+  openEncryptedEnvelope,
+  pinDescriptor,
+  pinToIpfs,
+  promote as kernelPromote,
+  removeAuthorizedAgent,
+  restrict as kernelRestrict,
+  sha256,
+  signDescriptor,
+  toJsonLdString,
+  toTurtle,
+  union,
+  validate,
 } from '@interego/core';
 
 import type {
-  IRI,
   ContextDescriptorData,
+  FetchFn,
+  IRI,
+  ManifestEntry,
   OwnerProfileData,
   PodDirectoryData,
   PodDirectoryEntry,
-  FetchFn,
-  WebSocketConstructor,
-  Subscription,
-  ContextChangeEvent,
-  ManifestEntry,
   SignedDescriptor,
+  WebSocketConstructor,
 } from '@interego/core';
+import type {
+  ContextChangeEvent,
+  Subscription,
+} from '@interego/solid';
 
 // Solid binding — `@interego/solid`.
 import {
