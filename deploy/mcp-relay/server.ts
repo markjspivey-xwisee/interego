@@ -119,20 +119,29 @@ import {
 } from '@interego/solid';
 
 // PGSL — `@interego/pgsl`.
+//
+// IMPORTANT: do NOT import `createPGSL` here. The relay must not mint
+// its own PGSL instance — the kernel adapter owns the one true PGSL
+// singleton, exposed via `getKernelPGSL()`. Routing pgsl_* shims
+// through anything else fragments the substrate (kernel.dereference
+// of a shim-minted URI returns not-found). The kernel verbs
+// (`kernel.mint` / `promote` / `dereference` / `decompose`) are the
+// primary surface; this package exposes the singleton accessor and
+// the lattice-only helpers (embedInPGSL, liftToDescriptor,
+// pgslToTurtle, latticeStats, latticeMeet) that operate on it.
 import {
-  createPGSL,
   embedInPGSL,
+  getKernelPGSL,
   latticeStats,
   resolve as pgslResolve,
   liftToDescriptor,
   latticeMeet,
-  pullbackSquare,
   pgslToTurtle,
   computeCognitiveStrategy,
   extractEntities,
   shouldAbstain,
 } from '@interego/pgsl';
-import type { NodeProvenance, PGSLInstance } from '@interego/pgsl';
+import type { NodeProvenance } from '@interego/pgsl';
 
 // Privacy — `@interego/privacy`.
 import { screenForSensitiveContent, formatSensitivityWarning } from '@interego/privacy';
@@ -373,15 +382,24 @@ const solidFetch: FetchFn = async (url, init) => {
 let subscriptions: Map<string, Subscription> = new Map();
 let notificationLog: ContextChangeEvent[] = [];
 
-// PGSL lattice — process-wide instance, mirrors the stdio MCP server.
-// Provenance is attributed to a synthetic relay-owned identity because
-// the lattice is shared across all authenticated callers; per-ingest
-// attribution lives on each minted node, not the instance itself.
+// PGSL lattice — the relay does NOT own a private PGSL instance.
+// Every pgsl_* shim composes against the kernel's lattice via the
+// substrate verbs (`kernel.mint` / `promote` / `dereference` /
+// `decompose`) plus the kernel-owned PGSL singleton accessor
+// `getKernelPGSL()` for read-only structural ops the kernel hasn't
+// surfaced as verbs (turtle export, lattice stats, lattice meet,
+// content-to-fragment embedding, descriptor lift). Holding a parallel
+// `createPGSL(...)` here used to mean kernel.dereference of a shim-
+// minted URI returned not-found — two PGSL instances, two truths.
+// Now there is exactly one PGSL instance: the kernel adapter's. The
+// provenance below is the relay-attribution attached to nodes minted
+// through the shims (first call to `getKernelPGSL(pgslProvenance)`
+// seeds the singleton's `defaultProvenance`; subsequent calls reuse
+// the existing instance).
 const pgslProvenance: NodeProvenance = {
   wasAttributedTo: 'urn:agent:mcp-relay:pgsl' as IRI,
   generatedAtTime: new Date().toISOString(),
 };
-const pgslInstance: PGSLInstance = createPGSL(pgslProvenance);
 
 // Per-process X25519 keypair used to encrypt content the relay publishes on
 // behalf of the authenticated mobile agent. Persisted to disk so container
@@ -1221,13 +1239,46 @@ async function handleAnalyzeQuestion(args: ToolArgs): Promise<string> {
   });
 }
 
-// ── PGSL — lattice operations on the relay's process-wide instance ──
+// ── PGSL — compatibility shims composed over the kernel ────────────────
+//
+// Every pgsl_* tool here is a thin compatibility shim. The wire shape
+// (inputs + outputs) is preserved unchanged for existing clients
+// (ChatGPT, Claude, Cursor); only the internal routing has been
+// rewritten to compose against the KERNEL'S PGSL singleton — the one
+// the kernel's LatticeAdapter owns — instead of a relay-private
+// `createPGSL(...)` instance. The previous parallel-state shim meant
+// a URI minted by `pgsl_ingest` here was invisible to
+// `kernel.dereference`; that contract is now restored.
+//
+// Composition strategy:
+//   - per-URI lookups go through kernel verbs (`kernelDereference`,
+//     `kernelDecompose`) so callers see the adapter's authoritative
+//     view.
+//   - structural helpers the kernel does not surface as verbs
+//     (`embedInPGSL` tokenization, `liftToDescriptor`, `latticeStats`,
+//     `latticeMeet`, `pgslToTurtle`) operate on the kernel-owned
+//     singleton via `getKernelPGSL(pgslProvenance)`. That singleton
+//     is the same PGSLInstance the adapter mutates inside
+//     `kernel.mint` / `kernel.promote`, so writes from any path are
+//     visible to reads from every path.
 
 async function handlePgslIngest(args: ToolArgs): Promise<string> {
   const content = args.content as string;
-  const topUri = embedInPGSL(pgslInstance, content);
-  const stats = latticeStats(pgslInstance);
-  const resolved = pgslResolve(pgslInstance, topUri);
+  // Tokenize + ingest into the kernel-owned lattice. `embedInPGSL`
+  // routes through the same `ingest` primitive the kernel adapter's
+  // `promote` verb uses, so the resulting apex IRI is the one the
+  // kernel will subsequently `dereference` / `decompose`.
+  const pgsl = getKernelPGSL(pgslProvenance);
+  const topUri = embedInPGSL(pgsl, content);
+
+  // Read-back via kernel verb confirms the URI is live on the
+  // substrate (kernel.dereference now finds shim-minted URIs because
+  // there is only one PGSL).
+  const deref = await kernelDereference(topUri);
+  const adapterView = deref.status === 'ok' ? deref : null;
+
+  const resolved = pgslResolve(pgsl, topUri);
+  const stats = latticeStats(pgsl);
 
   const result: Record<string, unknown> = {
     ingested: true,
@@ -1235,6 +1286,12 @@ async function handlePgslIngest(args: ToolArgs): Promise<string> {
     resolved,
     stats,
   };
+  // Additive only — historical fields above are unchanged. Kernel
+  // affordances are surfaced as a sibling so hypermedia-aware clients
+  // can follow them; legacy clients ignore the new key.
+  if (adapterView) {
+    result.kernelAffordances = adapterView.affordances;
+  }
 
   // Optional: lift to a context descriptor and publish to the user's pod.
   // Mirrors toolPgslIngest in the stdio server, but uses the authenticated
@@ -1248,7 +1305,7 @@ async function handlePgslIngest(args: ToolArgs): Promise<string> {
 
     try {
       const desc = liftToDescriptor(
-        pgslInstance,
+        pgsl,
         topUri,
         `urn:cg:${podName}:pgsl:${Date.now()}` as IRI,
         [{
@@ -1261,7 +1318,7 @@ async function handlePgslIngest(args: ToolArgs): Promise<string> {
           wasGeneratedBy: { agent: agentId as IRI, endedAt: now },
         }],
       );
-      const turtle = pgslToTurtle(pgslInstance);
+      const turtle = pgslToTurtle(pgsl);
       const publishResult = await publish(desc, turtle, podUrl, { fetch: solidFetch });
       result.publishedDescriptorUrl = publishResult.descriptorUrl;
     } catch (err) {
@@ -1274,11 +1331,22 @@ async function handlePgslIngest(args: ToolArgs): Promise<string> {
 
 async function handlePgslResolve(args: ToolArgs): Promise<string> {
   const uri = args.uri as IRI;
-  const node = pgslInstance.nodes.get(uri);
-  if (!node) {
+
+  // Route resolution through the kernel verb so the shim and any
+  // direct `dereference` caller see the same source of truth.
+  const deref = await kernelDereference(uri);
+  if (deref.status !== 'ok') {
     return JSON.stringify({ error: `Not found: ${uri}` });
   }
-  const resolved = pgslResolve(pgslInstance, uri);
+
+  const pgsl = getKernelPGSL(pgslProvenance);
+  const node = pgsl.nodes.get(uri);
+  if (!node) {
+    // Defensive: kernel reported ok but the singleton lost track.
+    // Treat as not-found to preserve the legacy wire response.
+    return JSON.stringify({ error: `Not found: ${uri}` });
+  }
+  const resolved = pgslResolve(pgsl, uri);
   const base: Record<string, unknown> = {
     uri,
     resolved,
@@ -1296,20 +1364,26 @@ async function handlePgslResolve(args: ToolArgs): Promise<string> {
     base.itemCount = node.items.length;
     if (node.left) base.left = node.left;
     if (node.right) base.right = node.right;
-    const pb = pullbackSquare(pgslInstance, uri);
-    if (pb) base.overlap = pb.overlap;
+    // Overlap comes from the kernel verb — the same pullback square
+    // kernel.decompose surfaces to direct callers.
+    const dec = kernelDecompose(uri);
+    if (dec) base.overlap = dec.overlap;
   }
   return JSON.stringify(base);
 }
 
 async function handlePgslLatticeStatus(_args: ToolArgs): Promise<string> {
-  return JSON.stringify(latticeStats(pgslInstance));
+  // No kernel verb returns lattice statistics — this is observability
+  // over the singleton, not a substrate primitive. Read directly from
+  // the kernel-owned instance.
+  return JSON.stringify(latticeStats(getKernelPGSL(pgslProvenance)));
 }
 
 async function handlePgslMeet(args: ToolArgs): Promise<string> {
   const uriA = args.uri_a as IRI;
   const uriB = args.uri_b as IRI;
-  const meet = latticeMeet(pgslInstance, uriA, uriB);
+  const pgsl = getKernelPGSL(pgslProvenance);
+  const meet = latticeMeet(pgsl, uriA, uriB);
   if (!meet) {
     return JSON.stringify({
       meet: null,
@@ -1318,14 +1392,14 @@ async function handlePgslMeet(args: ToolArgs): Promise<string> {
   }
   return JSON.stringify({
     meet,
-    resolved: pgslResolve(pgslInstance, meet),
+    resolved: pgslResolve(pgsl, meet),
     a: uriA,
     b: uriB,
   });
 }
 
 async function handlePgslToTurtle(_args: ToolArgs): Promise<string> {
-  return JSON.stringify({ turtle: pgslToTurtle(pgslInstance) });
+  return JSON.stringify({ turtle: pgslToTurtle(getKernelPGSL(pgslProvenance)) });
 }
 
 // ── Generic affordance follower ─────────────────────────────

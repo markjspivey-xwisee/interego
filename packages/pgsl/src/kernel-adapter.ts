@@ -58,6 +58,25 @@ export function resetKernelPGSL(): void {
 }
 
 /**
+ * Accessor for the kernel-owned PGSL singleton — the single substrate
+ * lattice that backs `kernel.mint` / `promote` / `dereference` /
+ * `decompose`. Higher layers (MCP shims, verticals) that need to call
+ * lattice-only operations not exposed as kernel verbs (e.g.
+ * `pgslToTurtle`, `latticeStats`, `latticeMeet`, `embedInPGSL`,
+ * `liftToDescriptor`) MUST go through this accessor instead of
+ * minting their own `createPGSL(...)` instance. Two PGSL instances
+ * means two truths, and the kernel can't `dereference` a URI minted
+ * into a sibling lattice.
+ *
+ * The optional `provenance` is used only on first allocation (to
+ * seed `defaultProvenance` on the new instance); subsequent calls
+ * return the existing singleton unchanged.
+ */
+export function getKernelPGSL(provenance?: LatticeProvenance): PGSLInstance {
+  return adapterPgsl(provenance);
+}
+
+/**
  * Build the lattice-aware adapter. Each call returns the same instance —
  * the adapter is stateless apart from the PGSL singleton it lazily
  * creates.
