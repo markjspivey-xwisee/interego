@@ -103,18 +103,20 @@ jobs:
 
       # Belt-and-braces cache: setup-node@v4+ already caches ~/.npm
       # via the cache: 'npm' input above, but we ALSO cache node_modules
-      # and dist/. npm ci is the slowest single step in the workflow
-      # (~30s cold), and on a cache hit we skip both ci and tsc.
-      - name: Cache node_modules + dist
+      # and every workspace package's dist/. npm ci is the slowest
+      # single step in the workflow (~30s cold), and on a cache hit
+      # we skip both ci and tsc.
+      - name: Cache node_modules + packages/*/dist
         id: cache-build
         uses: actions/cache@v6
         with:
           path: |
             node_modules
-            dist
-          key: node-22-build-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/**/*.ts') }}
+            packages/*/node_modules
+            packages/*/dist
+          key: node-22-monorepo-${{ hashFiles('package-lock.json', 'tsconfig.base.json', 'packages/*/tsconfig.json', 'packages/*/src/**/*.ts') }}
           restore-keys: |
-            node-22-build-
+            node-22-monorepo-
 
       - name: Install deps
         if: steps.cache-build.outputs.cache-hit != 'true'
@@ -124,11 +126,18 @@ jobs:
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: npm run build
 
-      - name: Upload dist artifact
+      # The emergent .mjs scripts import from packages/core/dist/index.js
+      # plus the workspace-symlinked @interego/* leaves. Bundle the
+      # whole workspace build so the scenario matrix shards don't need
+      # to reinstall.
+      - name: Tar workspace build
+        run: tar -czf workspace-build.tar.gz node_modules packages/*/dist packages/*/node_modules || tar -czf workspace-build.tar.gz node_modules packages/*/dist
+
+      - name: Upload workspace build artifact
         uses: actions/upload-artifact@v7
         with:
-          name: dist
-          path: dist/
+          name: workspace-build
+          path: workspace-build.tar.gz
           retention-days: 3
           if-no-files-found: error
 
@@ -235,31 +244,37 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: Restore node_modules + dist cache
+      - name: Restore node_modules + packages/*/dist cache
         id: cache-build
         uses: actions/cache@v6
         with:
           path: |
             node_modules
-            dist
-          key: node-22-build-${{ hashFiles('package-lock.json', 'tsconfig.json', 'src/**/*.ts') }}
+            packages/*/node_modules
+            packages/*/dist
+          key: node-22-monorepo-${{ hashFiles('package-lock.json', 'tsconfig.base.json', 'packages/*/tsconfig.json', 'packages/*/src/**/*.ts') }}
           restore-keys: |
-            node-22-build-
+            node-22-monorepo-
 
       # If the cache key didn't hit (e.g. a different src/ hash), we
       # need node_modules at least so tsx can resolve imports. The
-      # `build` job has already produced + uploaded dist/, so we
-      # download that rather than rebuild.
+      # `build` job has already produced + uploaded the workspace
+      # build tarball, so we download + extract that rather than
+      # rebuild.
       - name: Install deps (cache miss only)
         if: steps.cache-build.outputs.cache-hit != 'true'
         run: npm ci --no-audit --no-fund
 
-      - name: Download dist artifact
+      - name: Download workspace build artifact
         if: steps.cache-build.outputs.cache-hit != 'true'
         uses: actions/download-artifact@v5
         with:
-          name: dist
-          path: dist/
+          name: workspace-build
+          path: .
+
+      - name: Extract workspace build
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        run: tar -xzf workspace-build.tar.gz && rm workspace-build.tar.gz
 
       # Run the scenario. The scenario script's date-env (CC_DATE,
       # DISPUTED_FACT_DATE, etc.) gets the RUN_TAG so this job's pod
