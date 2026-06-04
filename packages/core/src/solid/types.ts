@@ -4,6 +4,11 @@
  *
  * These types define the runtime layer that reads and writes
  * context-annotated graphs to Solid pods over LDP/HTTP.
+ *
+ * Substrate HTTP types (`FetchFn`, `FetchResponse`, `WebSocketLike`,
+ * `WebSocketConstructor`) used to live here. They are now in `../http/types`
+ * because they are not Solid-specific. The re-exports below preserve
+ * back-compat for any existing import path.
  */
 
 import type {
@@ -13,30 +18,16 @@ import type {
   ContextFacetData,
 } from '../model/types.js';
 
-// ── Minimal HTTP/WS interfaces ──────────────────────────────
-// Defined here so the library doesn't require DOM lib types.
-// Compatible with Node 20+ globals and browser environments.
+// ── Substrate HTTP/WS interfaces — re-exported for back-compat ──
+// Authoritative definitions live in ../http/types.
+export type {
+  FetchFn,
+  FetchResponse,
+  WebSocketLike,
+  WebSocketConstructor,
+} from '../http/types.js';
 
-export interface FetchResponse {
-  readonly ok: boolean;
-  readonly status: number;
-  readonly statusText: string;
-  readonly headers?: { get(name: string): string | null };
-  text(): Promise<string>;
-  json(): Promise<unknown>;
-}
-
-export type FetchFn = (
-  url: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string },
-) => Promise<FetchResponse>;
-
-export interface WebSocketLike {
-  onmessage: ((event: { data: unknown }) => void) | null;
-  close(): void;
-}
-
-export type WebSocketConstructor = new (url: string) => WebSocketLike;
+import type { FetchFn } from '../http/types.js';
 
 // ── Publish ─────────────────────────────────────────────────
 
@@ -231,7 +222,7 @@ export interface Subscription {
 /** Options for the subscribe function. */
 export interface SubscribeOptions {
   /** Custom WebSocket constructor (default: globalThis.WebSocket). */
-  readonly WebSocket?: WebSocketConstructor;
+  readonly WebSocket?: import('../http/types.js').WebSocketConstructor;
   /** Custom fetch for the notification channel negotiation. */
   readonly fetch?: FetchFn;
 }

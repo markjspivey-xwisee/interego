@@ -1,3 +1,9 @@
+// Side-effect import: registers the PGSL-backed lattice adapter with the
+// kernel so `mint` / `promote` / `decompose` see the full structural index
+// when consumers `import '@interego/core'` (or, post-split,
+// `import '@interego/pgsl'`).
+import './kernel-adapter.js';
+export { pgslLatticeAdapter, resetKernelPGSL } from './kernel-adapter.js';
 export * from './types.js';
 export {
   createPGSL,

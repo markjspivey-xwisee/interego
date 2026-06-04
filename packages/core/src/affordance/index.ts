@@ -62,3 +62,16 @@ export {
   createStigmergicField,
   updateStigmergicField,
 } from './engine.js';
+
+// Generic affordance follower (binding-agnostic Path A reach-anywhere primitive)
+export {
+  followAffordance,
+  DescriptorNotFoundError,
+  AffordanceNotFoundError,
+} from './follow.js';
+export type {
+  FollowAffordanceOptions,
+  FollowAffordanceResult,
+  ResolvedAffordance,
+  AffordanceMethod,
+} from './follow.js';

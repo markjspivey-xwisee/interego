@@ -43,24 +43,26 @@ import {
   override as composeOverride,
 } from '../model/composition.js';
 
-import {
-  createPGSL,
-  mintAtom,
-  ingest as pgslIngest,
-} from '../pgsl/lattice.js';
-import { pullbackSquare } from '../pgsl/category.js';
-import type { PGSLInstance, NodeProvenance, Value, Level } from '../pgsl/types.js';
+import { getKernelLatticeAdapter } from '../lattice/adapter.js';
+import type { LatticeProvenance, LatticeValue, LatticeLevel } from '../lattice/adapter.js';
+
+// Backwards-compatible type aliases so existing kernel exports keep their
+// historical shape (`Value`, `Level`, `NodeProvenance`) even though the
+// lattice machinery now flows through the adapter.
+type Value = LatticeValue;
+type Level = LatticeLevel;
+type NodeProvenance = LatticeProvenance;
 
 import {
   followAffordance,
   DescriptorNotFoundError,
   AffordanceNotFoundError,
-} from '../solid/affordance.js';
+} from '../affordance/follow.js';
 import { fetchGraphContent, parseManifest } from '../solid/client.js';
 import { parseTrig } from '../rdf/turtle-parser.js';
-import { getDefaultFetch } from '../solid/client.js';
-import { withTransientRetry } from '../solid/retry.js';
-import type { FetchFn } from '../solid/types.js';
+import { getDefaultFetch } from '../http/fetch.js';
+import { withTransientRetry } from '../http/retry.js';
+import type { FetchFn } from '../http/types.js';
 import type { EncryptionKeyPair } from '../crypto/encryption.js';
 
 import { extractAffordancesFromTurtle } from './affordance-extraction.js';
@@ -99,29 +101,15 @@ export type {
 // ── Shared substrate state ───────────────────────────────────
 
 /**
- * Kernel-internal PGSL instance — content-addressed, deterministic,
- * shared across `mint` / `promote` / `decompose` calls so that the
- * second `mint("foo")` returns the same IRI as the first (Invariant 1).
- *
- * This is the same instance pattern used by the rest of the
- * substrate; it is intentionally process-local because content
- * addressing is global — a `urn:pgsl:atom:<hash>` IRI minted in one
- * process matches the same IRI minted in another, with no shared
- * registry required.
+ * Default per-call provenance the kernel attaches to lattice operations
+ * when the caller does not supply one. Lattice-aware adapters record it;
+ * the fallback adapter ignores it.
  */
-let _kernelPgsl: PGSLInstance | null = null;
-
 function defaultProvenance(): NodeProvenance {
   return {
     wasAttributedTo: 'urn:cg:kernel' as IRI,
     generatedAtTime: new Date().toISOString(),
   };
-}
-
-function kernelPgsl(): PGSLInstance {
-  if (_kernelPgsl) return _kernelPgsl;
-  _kernelPgsl = createPGSL(defaultProvenance());
-  return _kernelPgsl;
 }
 
 function sha256Hex(input: string): string {
@@ -172,13 +160,14 @@ export function mint(content: unknown, options?: MintOptions): MintResult {
 
   if (kind === 'atom') {
     const value = content as Value;
-    const iri = mintAtom(kernelPgsl(), value, options?.provenance);
+    const adapter = getKernelLatticeAdapter();
+    const minted = adapter.mint(value, options?.provenance ?? defaultProvenance());
     return {
       holon: {
-        iri,
-        level: 0 as Level,
+        iri: minted.iri,
+        level: minted.level as Level,
         kind: 'atom',
-        contentHash: sha256Hex(`atom:${String(value)}`),
+        contentHash: minted.contentHash,
         content: value,
       },
     };
@@ -189,15 +178,12 @@ export function mint(content: unknown, options?: MintOptions): MintResult {
     if (!Array.isArray(content) || content.length === 0) {
       throw new TypeError('mint(kind:fragment) requires a non-empty array of values or atom IRIs');
     }
-    const iri = pgslIngest(kernelPgsl(), content as (Value | IRI)[], options?.provenance);
-    // The fragment's level is its sequence length minus 1 when content
-    // is a flat value list; for IRI inputs we recover it from the node.
-    const node = kernelPgsl().nodes.get(iri);
-    const level = (node && node.kind === 'Fragment' ? node.level : (content.length - 1)) as Level;
+    const adapter = getKernelLatticeAdapter();
+    const promoted = adapter.promote(content as (Value | IRI)[], options?.provenance ?? defaultProvenance());
     return {
       holon: {
-        iri,
-        level,
+        iri: promoted.apex,
+        level: promoted.level as Level,
         kind: 'fragment',
         contentHash: sha256Hex(`fragment:${content.map(String).join('|')}`),
       },
@@ -777,13 +763,13 @@ export function promote(
   if (atoms.length === 0) {
     throw new TypeError('promote() requires at least one atom');
   }
-  const pgsl = kernelPgsl();
-  const apex = pgslIngest(pgsl, atoms, options?.provenance);
-  const node = pgsl.nodes.get(apex);
-  const level = (node && node.kind === 'Fragment' ? node.level : 0) as Level;
+  const adapter = getKernelLatticeAdapter();
+  const promoted = adapter.promote(atoms, options?.provenance ?? defaultProvenance());
+  const apex = promoted.apex;
+  const level = promoted.level as Level;
 
   if (level >= 2) {
-    const square = pullbackSquare(pgsl, apex);
+    const square = adapter.decompose(apex);
     if (square) {
       return {
         apex,
@@ -812,12 +798,12 @@ export function promote(
  * for atoms and level-1 fragments (no pullback structure).
  */
 export function decompose(fragmentIri: IRI): DecomposeResult | null {
-  const pgsl = kernelPgsl();
-  const square = pullbackSquare(pgsl, fragmentIri);
+  const adapter = getKernelLatticeAdapter();
+  const square = adapter.decompose(fragmentIri);
   if (!square) return null;
   return {
     apex: square.apex,
-    level: square.level,
+    level: square.level as Level,
     left: square.left,
     right: square.right,
     overlap: square.overlap,
@@ -829,12 +815,16 @@ export function decompose(fragmentIri: IRI): DecomposeResult | null {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Reset the kernel-internal PGSL instance. Intended for tests — the
+ * Reset any kernel-internal lattice state. Intended for tests — the
  * substrate's content addressing is global, so resetting only affects
- * in-memory mappings (existing IRIs remain valid).
+ * in-memory mappings inside the active lattice adapter (existing IRIs
+ * remain valid). Lattice-aware adapters (`@interego/pgsl`) are
+ * responsible for honouring this reset via their own teardown.
  */
 export function resetKernelState(): void {
-  _kernelPgsl = null;
+  // No kernel-local lattice state remains — the active adapter owns it.
+  // Lattice-aware adapter resets are exposed by their package (e.g.
+  // `import { resetKernelPGSL } from '@interego/pgsl'`).
 }
 
 /** Local mutable view for incremental fill of readonly result shapes. */

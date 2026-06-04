@@ -53,6 +53,14 @@
       "import": "./dist/affordance/index.js",
       "types": "./dist/affordance/index.d.ts"
     },
+    "./http": {
+      "import": "./dist/http/index.js",
+      "types": "./dist/http/index.d.ts"
+    },
+    "./lattice": {
+      "import": "./dist/lattice/index.js",
+      "types": "./dist/lattice/index.d.ts"
+    },
     "./compat": {
       "import": "./dist/compat.js",
       "types": "./dist/compat.d.ts"

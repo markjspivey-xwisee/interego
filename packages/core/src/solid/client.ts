@@ -18,11 +18,11 @@ import { toTurtle } from '../rdf/serializer.js';
 import { turtlePrefixes } from '../rdf/namespaces.js';
 import { ownerProfileToTurtle, parseOwnerProfile, delegationCredentialToJsonLd, verifyDelegation } from '../model/delegation.js';
 import { createEncryptedEnvelope, openEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair } from '../crypto/encryption.js';
-import { withTransientRetry } from './retry.js';
+import { withTransientRetry } from '../http/retry.js';
+import { getDefaultFetch, getDefaultWebSocket } from '../http/fetch.js';
 
+import type { FetchFn } from '../http/types.js';
 import type {
-  FetchFn,
-  WebSocketConstructor,
   PublishResult,
   PublishOptions,
   DiscoverFilter,
@@ -82,21 +82,11 @@ export function predictDescriptorUrl(
   return `${container}${slug}.ttl`;
 }
 
-export function getDefaultFetch(): FetchFn {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (typeof globalThis !== 'undefined' && typeof (globalThis as Record<string, unknown>)['fetch'] === 'function') {
-    return (globalThis as Record<string, unknown>)['fetch'] as FetchFn;
-  }
-  throw new Error('No fetch implementation available. Pass one via options.fetch.');
-}
-
-function getDefaultWebSocket(): WebSocketConstructor {
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  if (typeof globalThis !== 'undefined' && typeof (globalThis as Record<string, unknown>)['WebSocket'] === 'function') {
-    return (globalThis as Record<string, unknown>)['WebSocket'] as WebSocketConstructor;
-  }
-  throw new Error('No WebSocket implementation available. Pass one via options.WebSocket.');
-}
+// Substrate-level HTTP plumbing (`getDefaultFetch`, `getDefaultWebSocket`,
+// `withTransientRetry`) lives in `../http/`. `getDefaultFetch` used to be
+// defined and exported from this file — it is re-exported below so the
+// historical import path keeps working.
+export { getDefaultFetch } from '../http/fetch.js';
 
 /**
  * Wrap Turtle triples inside a TriG named graph block.

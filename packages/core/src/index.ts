@@ -1031,3 +1031,30 @@ export type {
   NameTrustPolicy,
   NameHint,
 } from './naming/index.js';
+
+// ── HTTP plumbing (substrate-level — FetchFn / fetch resolver / retry) ──
+// Authoritative location for substrate HTTP types + helpers. The solid/
+// re-exports above continue to serve the historical import paths.
+export {
+  getDefaultFetch,
+  getDefaultWebSocket,
+} from './http/index.js';
+
+// ── Lattice adapter (substrate-level — pluggable mint/promote/decompose backend) ──
+// The kernel's lattice ops delegate to the active adapter. `@interego/pgsl`
+// registers a lattice-aware adapter at module-load time; without it a
+// pure-hash fallback preserves wire compat (URI scheme is unchanged).
+export {
+  setKernelLatticeAdapter,
+  getKernelLatticeAdapter,
+  fallbackLatticeAdapter,
+} from './lattice/index.js';
+export type {
+  LatticeAdapter,
+  LatticeValue,
+  LatticeLevel,
+  LatticeProvenance,
+  AdapterMintResult,
+  AdapterPromoteResult,
+  AdapterDecomposeResult,
+} from './lattice/index.js';
