@@ -2872,16 +2872,19 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
       const r = kernelMint(content, kind ? { kind } : undefined);
       // Hypermedia decoration: surface the next-step affordances a
       // caller can follow after minting (dereference + promote +
-      // decompose). The decorator preserves r.holon / r.* fields
-      // verbatim and adds @context / @id / @type / conformsToShape /
-      // affordances.
+      // decompose). The advertised affordances MUST be invokable through
+      // `act` against the minted holon's IRI — `act` routes urn:pgsl:*
+      // targets through actOnLatticeNode, which dispatches only on
+      // canonical `urn:cg:action:kernel:{dereference,decompose,promote}`
+      // action IRIs and expects the holon IRI itself as the target.
+      // Sentinel `urn:cg:tool:*` targets broke the round-trip (405).
       const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
         kind: 'mint',
         id: r.holon.iri,
         nextSteps: [
-          { action: 'urn:cg:action:dereference', target: r.holon.iri, method: 'GET' },
-          { action: 'urn:cg:action:promote',     target: 'urn:cg:tool:promote',     method: 'POST' },
-          { action: 'urn:cg:action:decompose',   target: 'urn:cg:tool:decompose',   method: 'POST' },
+          { action: 'urn:cg:action:kernel:dereference', target: r.holon.iri, method: 'GET' },
+          { action: 'urn:cg:action:kernel:promote',     target: r.holon.iri, method: 'POST' },
+          { action: 'urn:cg:action:kernel:decompose',   target: r.holon.iri, method: 'POST' },
         ],
       });
       return JSON.stringify(decorated);
@@ -2986,12 +2989,16 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
     case 'promote': {
       const { atoms } = args as { atoms: unknown[] };
       const r = kernelPromote(atoms as Parameters<typeof kernelPromote>[0]);
+      // Same hypermedia contract as the mint case: emit canonical
+      // `urn:cg:action:kernel:*` action IRIs with the apex's urn:pgsl:*
+      // IRI as the target so `act` round-trips through actOnLatticeNode
+      // cleanly.
       const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {
         kind: 'promote',
         id: r.apex,
         nextSteps: [
-          { action: 'urn:cg:action:dereference', target: r.apex, method: 'GET' },
-          { action: 'urn:cg:action:decompose',   target: 'urn:cg:tool:decompose', method: 'POST' },
+          { action: 'urn:cg:action:kernel:dereference', target: r.apex, method: 'GET' },
+          { action: 'urn:cg:action:kernel:decompose',   target: r.apex, method: 'POST' },
         ],
       });
       return JSON.stringify(decorated);
@@ -2999,12 +3006,15 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
     case 'decompose': {
       const { iri } = args as { iri: IRI };
       const r = kernelDecompose(iri);
+      // Decompose constituents are urn:pgsl:* IRIs so the advertised
+      // dereference affordances must use the kernel-prefixed action IRI
+      // for `act` to dispatch through actOnLatticeNode.
       if (r === null) {
         const decorated = decorateKernelResult({ result: null, iri }, {
           kind: 'decompose',
           id: iri,
           nextSteps: [
-            { action: 'urn:cg:action:dereference', target: iri, method: 'GET' },
+            { action: 'urn:cg:action:kernel:dereference', target: iri, method: 'GET' },
           ],
         });
         return JSON.stringify(decorated);
@@ -3013,9 +3023,9 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
         kind: 'decompose',
         id: r.apex,
         nextSteps: [
-          { action: 'urn:cg:action:dereference', target: r.left,    method: 'GET' },
-          { action: 'urn:cg:action:dereference', target: r.right,   method: 'GET' },
-          { action: 'urn:cg:action:dereference', target: r.overlap, method: 'GET' },
+          { action: 'urn:cg:action:kernel:dereference', target: r.left,    method: 'GET' },
+          { action: 'urn:cg:action:kernel:dereference', target: r.right,   method: 'GET' },
+          { action: 'urn:cg:action:kernel:dereference', target: r.overlap, method: 'GET' },
         ],
       });
       return JSON.stringify(decorated);
@@ -3143,14 +3153,21 @@ function shimNextSteps(name: string, payload: Record<string, unknown>): Readonly
     case 'pgsl_resolve':
     case 'pgsl_lattice_status':
     case 'pgsl_meet':
-    case 'pgsl_to_turtle':
+    case 'pgsl_to_turtle': {
+      // Canonical kernel action IRIs so a caller can `act` on a
+      // real urn:pgsl:* IRI surfaced in the payload (top fragment,
+      // resolved meet, etc.) and have actOnLatticeNode dispatch it
+      // through kernel.{promote,decompose}.
+      const pgslTarget = pick('topUri') ?? pick('uri') ?? pick('meet');
+      const target = pgslTarget ?? 'urn:cg:tool:promote';
       return [
-        { action: 'urn:cg:action:promote',   target: 'urn:cg:tool:promote',   method: 'POST' },
-        { action: 'urn:cg:action:decompose', target: 'urn:cg:tool:decompose', method: 'POST' },
+        { action: 'urn:cg:action:kernel:promote',   target,                                method: 'POST' },
+        { action: 'urn:cg:action:kernel:decompose', target: pgslTarget ?? 'urn:cg:tool:decompose', method: 'POST' },
       ];
+    }
     case 'invoke_affordance':
       return [
-        { action: 'urn:cg:action:dereference', target: 'urn:cg:tool:dereference', method: 'POST' },
+        { action: 'urn:cg:action:kernel:dereference', target: 'urn:cg:tool:dereference', method: 'GET' },
       ];
     default:
       return [];
