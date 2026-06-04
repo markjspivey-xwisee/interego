@@ -41,6 +41,18 @@ This note captures the first-principles shape of identity in Interego so future 
 | **WebAuthn / passkey** | OS secure enclave (iCloud Keychain / Google Password Manager / hardware key) | `navigator.credentials.create` (userHandle is a transient `u-pend-<rand>` at options time) → `verifyRegistrationResponse` → server derives `u-pk-<sha256(credId)[0:12]>` → credential stored in pod's `webAuthnCredentials[]` | Discoverable credentials: `navigator.credentials.get` with empty `allowCredentials` → `credentialIndex[response.id]` resolves user → `verifyAuthenticationResponse`, counter bumped in pod |
 | **DID Ed25519** | User-managed `did:key` or `did:web` with off-server private key | Client signs server nonce with private key → server verifies with public key → mints `u-did-<sha256(did)[0:12]>` → writes `didKeys[]` to pod | Same signature path; `didIndex[did]` lookup resolves user |
 
+### `did:key` encoding (Ed25519)
+
+The server emits and accepts the W3C did:key Method Spec canonical form:
+
+```
+did:key:z<base58btc(0xed 0x01 || rawPubKey32)>
+```
+
+where `z` is the multibase base58btc prefix and `0xed 0x01` is the varint-encoded multicodec for `ed25519-pub`. A real example looks like `did:key:z6MkpTHR8VNsBx…`. The same encoding is used for the `publicKeyMultibase` field of every `Ed25519VerificationKey2020` we emit.
+
+For back-compat with clients that registered against earlier server builds (which emitted `'z' + base64url(rawKey32)`), the decode path falls back to base64url and emits a `Deprecation: true` response header so the client can migrate. A future server version will turn this into a hard `400`.
+
 ### Three modes of first-enrollment
 
 Every `/auth/*` endpoint picks one of three modes based on the request, and **the mode is fixed at options-time so /register cannot be coerced**:

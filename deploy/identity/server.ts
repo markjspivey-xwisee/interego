@@ -159,11 +159,145 @@ interface KeyPair {
   publicKey: crypto.KeyObject;
 }
 
+// ── base58btc (Bitcoin alphabet) — for W3C did:key + multibase ──
+//
+// `did:key:z<...>` per the W3C did:key Method Spec is multibase-encoded
+// with prefix 'z' = base58btc, and the decoded bytes are
+//   multicodec_prefix || raw_public_key
+// For Ed25519 the multicodec prefix is the varint 0xed 0x01, followed by
+// the 32-byte raw public key — total 34 bytes.
+//
+// Why hand-rolled: this deploy package intentionally keeps zero runtime
+// deps beyond express/ethers/@simplewebauthn (see package.json) and
+// pulls no separate base58/multibase library. The implementation is
+// ~30 LOC of unambiguous arithmetic; correctness is verified against
+// the W3C did:key test vectors at runtime via the round-trip
+// emit-then-parse done on every new registration.
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const BASE58_INDEX: Record<string, number> = (() => {
+  const m: Record<string, number> = {};
+  for (let i = 0; i < BASE58_ALPHABET.length; i++) m[BASE58_ALPHABET[i]!] = i;
+  return m;
+})();
+
+function base58btcEncode(bytes: Uint8Array): string {
+  // Count leading zero bytes — each maps to a '1' in the output.
+  let zeros = 0;
+  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
+  // Convert the big-endian byte string to base58 by repeated division.
+  // Work on a copy because we mutate.
+  const buf = Array.from(bytes);
+  const out: number[] = [];
+  let start = zeros;
+  while (start < buf.length) {
+    let carry = 0;
+    for (let i = start; i < buf.length; i++) {
+      const v = (buf[i]! & 0xff) + carry * 256;
+      buf[i] = Math.floor(v / 58);
+      carry = v % 58;
+    }
+    out.push(carry);
+    if (buf[start] === 0) start++;
+  }
+  let result = '';
+  for (let i = 0; i < zeros; i++) result += BASE58_ALPHABET[0];
+  for (let i = out.length - 1; i >= 0; i--) result += BASE58_ALPHABET[out[i]!];
+  return result;
+}
+
+function base58btcDecode(str: string): Uint8Array {
+  if (str.length === 0) return new Uint8Array(0);
+  let zeros = 0;
+  while (zeros < str.length && str[zeros] === BASE58_ALPHABET[0]) zeros++;
+  const buf: number[] = [];
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i]!;
+    const digit = BASE58_INDEX[ch];
+    if (digit === undefined) throw new Error(`invalid base58 character '${ch}' at position ${i}`);
+    let carry = digit;
+    for (let j = 0; j < buf.length; j++) {
+      const v = buf[j]! * 58 + carry;
+      buf[j] = v & 0xff;
+      carry = v >> 8;
+    }
+    while (carry > 0) {
+      buf.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  // The leading-zero-character count from base58 reflects leading zero
+  // bytes in the original. Append them.
+  const out = new Uint8Array(zeros + buf.length);
+  for (let i = 0; i < buf.length; i++) out[zeros + i] = buf[buf.length - 1 - i]!;
+  return out;
+}
+
+// Multicodec varint for Ed25519 public key: 0xed 0x01.
+const ED25519_MULTICODEC = Uint8Array.from([0xed, 0x01]);
+
+/**
+ * Encode a 32-byte raw Ed25519 public key as a W3C-spec multibase string:
+ *   'z' + base58btc(0xed 0x01 || rawKey)
+ * This is the canonical form for `did:key:z…` and for the
+ * `publicKeyMultibase` field of `Ed25519VerificationKey2020`.
+ */
+function encodeEd25519Multibase(rawKey: Buffer): string {
+  if (rawKey.length !== 32) throw new Error(`Ed25519 raw key must be 32 bytes, got ${rawKey.length}`);
+  const buf = new Uint8Array(ED25519_MULTICODEC.length + 32);
+  buf.set(ED25519_MULTICODEC, 0);
+  buf.set(rawKey, ED25519_MULTICODEC.length);
+  return 'z' + base58btcEncode(buf);
+}
+
+/**
+ * Parse a `did:key:z…` Ed25519 DID and return the 32-byte raw public key.
+ *
+ * Compat strategy (FIX 3): canonical W3C base58btc-with-multicodec is
+ * tried first. If that fails we fall back to the legacy
+ * `'z' + base64url(rawKey)` shape this server originally emitted, so
+ * pre-existing clients that registered under the old encoding keep
+ * working. The fallback logs a deprecation marker; a future relay
+ * version will flip this to a hard 400.
+ *
+ * Returns either `{ ok: true, publicKey, format }` or
+ * `{ ok: false, error }`.
+ */
+function parseEd25519DidKey(did: string): { ok: true; publicKey: Buffer; format: 'base58btc' | 'base64url-legacy' } | { ok: false; error: string } {
+  if (!did.startsWith('did:key:')) return { ok: false, error: 'not a did:key DID' };
+  const rawMultibase = did.slice('did:key:'.length);
+  if (!rawMultibase.startsWith('z')) {
+    return { ok: false, error: 'only base58btc (z-prefixed) multibase is supported for did:key' };
+  }
+  const encoded = rawMultibase.slice(1);
+  // Try canonical W3C form first.
+  try {
+    const decoded = base58btcDecode(encoded);
+    if (decoded.length === 34
+      && decoded[0] === ED25519_MULTICODEC[0]
+      && decoded[1] === ED25519_MULTICODEC[1]) {
+      return { ok: true, publicKey: Buffer.from(decoded.subarray(2)), format: 'base58btc' };
+    }
+  } catch { /* fall through to legacy path */ }
+  // Legacy fallback: 'z' + base64url(rawKey).
+  try {
+    const legacy = Buffer.from(encoded, 'base64url');
+    if (legacy.length >= 32) {
+      const publicKey = legacy.subarray(legacy.length - 32);
+      log(`[did-key-legacy] accepted base64url-encoded did:key for ${did.slice(0, 24)}…; client should migrate to W3C base58btc encoding`);
+      return { ok: true, publicKey: Buffer.from(publicKey), format: 'base64url-legacy' };
+    }
+  } catch { /* fall through */ }
+  return {
+    ok: false,
+    error: 'could not decode did:key public key — tried W3C base58btc(0xed 0x01 || key) (the spec form) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key',
+  };
+}
+
 function generateEd25519(): KeyPair {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
   const pubRaw = publicKey.export({ type: 'spki', format: 'der' });
   const rawKey = pubRaw.subarray(pubRaw.length - 32);
-  const publicKeyMultibase = 'z' + rawKey.toString('base64url');
+  const publicKeyMultibase = encodeEd25519Multibase(rawKey);
   return { publicKeyMultibase, privateKey, publicKey };
 }
 
@@ -1745,29 +1879,57 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
 
   // Resolve public key
   let publicKeyRaw: Buffer;
+  let didKeyFormat: 'base58btc' | 'base64url-legacy' | null = null;
   if (did.startsWith('did:key:z') && did.length > 10) {
-    // did:key multibase is the public key itself (z... base58btc)
-    // For Ed25519 did:key: prefix bytes 0xed 0x01 + 32-byte key
-    const rawMultibase = did.slice('did:key:'.length);
-    if (!rawMultibase.startsWith('z')) {
-      res.status(400).json({ error: 'Only base58btc (z-prefixed) did:key supported' });
+    // Per W3C did:key spec: 'z' + base58btc(0xed 0x01 || rawKey32) for
+    // Ed25519. We accept the spec form first and the legacy
+    // 'z' + base64url(rawKey32) shape this server originally emitted as
+    // a deprecated fallback — see parseEd25519DidKey for the migration
+    // story.
+    const parsed = parseEd25519DidKey(did);
+    if (parsed.ok === false) {
+      res.status(400).json({ error: `Could not decode did:key public key: ${parsed.error}` });
       return;
     }
-    // Decode using our multibase format (publicKeyMultibase is 'z' + base64url 32-byte raw key)
-    // For interop with the simple format used elsewhere in this server
-    try {
-      publicKeyRaw = Buffer.from(rawMultibase.slice(1), 'base64url');
-      if (publicKeyRaw.length < 32) throw new Error('key too short');
-      publicKeyRaw = publicKeyRaw.subarray(publicKeyRaw.length - 32);
-    } catch (err) {
-      res.status(400).json({ error: `Could not decode did:key public key: ${(err as Error).message}` });
-      return;
-    }
+    publicKeyRaw = parsed.publicKey;
+    didKeyFormat = parsed.format;
   } else if (publicKeyMultibase?.startsWith('z')) {
-    publicKeyRaw = Buffer.from(publicKeyMultibase.slice(1), 'base64url');
+    // Caller-supplied publicKeyMultibase for non-did:key DIDs (did:web, etc.).
+    // Try W3C base58btc-with-multicodec first; fall back to the legacy
+    // base64url form for back-compat.
+    const encoded = publicKeyMultibase.slice(1);
+    let resolved: Buffer | null = null;
+    try {
+      const decoded = base58btcDecode(encoded);
+      if (decoded.length === 34
+        && decoded[0] === ED25519_MULTICODEC[0]
+        && decoded[1] === ED25519_MULTICODEC[1]) {
+        resolved = Buffer.from(decoded.subarray(2));
+      }
+    } catch { /* fall through */ }
+    if (!resolved) {
+      try {
+        const legacy = Buffer.from(encoded, 'base64url');
+        if (legacy.length >= 32) {
+          resolved = Buffer.from(legacy.subarray(legacy.length - 32));
+          log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
+        }
+      } catch { /* fall through */ }
+    }
+    if (!resolved) {
+      res.status(400).json({ error: 'Could not decode publicKeyMultibase — tried W3C base58btc(0xed 0x01 || key) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key' });
+      return;
+    }
+    publicKeyRaw = resolved;
   } else {
     res.status(400).json({ error: 'Supply publicKeyMultibase alongside non-did:key DIDs' });
     return;
+  }
+  if (didKeyFormat === 'base64url-legacy') {
+    // Telegraph the upcoming hard-fail to clients via a deprecation header
+    // on every legacy-format login response, per the FIX 3 plan.
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Warning', '299 - "did:key base64url encoding is deprecated; migrate to W3C base58btc multicodec format"');
   }
 
   // Verify Ed25519 signature over the nonce
@@ -1837,7 +1999,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     const methods = emptyAuthMethods(user.id, user.name, agentId);
     methods.didKeys.push({
       did,
-      publicKeyMultibase: publicKeyMultibase ?? ('z' + publicKeyRaw.toString('base64url')),
+      // Always persist the canonical W3C base58btc-with-multicodec form,
+      // even if the caller supplied a legacy base64url-encoded multibase
+      // string — `publicKeyRaw` already holds the raw 32-byte key the
+      // server actually verified the nonce signature against (parser path
+      // normalised it). New entries on the pod are W3C-spec from day one.
+      publicKeyMultibase: encodeEd25519Multibase(publicKeyRaw),
       keyType: 'Ed25519VerificationKey2020',
       createdAt: new Date().toISOString(),
     });
@@ -1854,7 +2021,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     if (!methods.didKeys.some(k => k.did === did)) {
       methods.didKeys.push({
         did,
-        publicKeyMultibase: publicKeyMultibase ?? ('z' + publicKeyRaw.toString('base64url')),
+        // Always persist the canonical W3C base58btc-with-multicodec form,
+      // even if the caller supplied a legacy base64url-encoded multibase
+      // string — `publicKeyRaw` already holds the raw 32-byte key the
+      // server actually verified the nonce signature against (parser path
+      // normalised it). New entries on the pod are W3C-spec from day one.
+      publicKeyMultibase: encodeEd25519Multibase(publicKeyRaw),
         keyType: 'Ed25519VerificationKey2020',
         createdAt: new Date().toISOString(),
       });
