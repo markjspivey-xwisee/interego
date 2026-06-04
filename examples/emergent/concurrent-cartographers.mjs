@@ -46,17 +46,21 @@
 import { createHash } from 'node:crypto';
 import {
   ContextDescriptor,
-  publish,
+  intersection,
+  union,
+  verifyAbsorption,
+  verifyAssociativity,
+  verifyIdempotence,
+  withTransientRetry,
+} from '../../packages/core/dist/index.js';
+import {
+  loadAgentKeypair,
+} from '../../packages/passport/dist/index.js';
+import {
   discover,
   fetchGraphContent,
-  union,
-  intersection,
-  verifyIdempotence,
-  verifyAssociativity,
-  verifyAbsorption,
-  withTransientRetry,
-  loadAgentKeypair,
-} from '../../packages/core/dist/index.js';
+  publish,
+} from '../../packages/solid/dist/index.js';
 
 // ── Configuration ─────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE

@@ -156,6 +156,11 @@ const SUBSTRATE_OWNED = new Set([
   'signDescriptor', 'verifyDescriptorSignature', 'SignedDescriptor',
   // computeCid — core has it under the bare name; solid has computeSolidCid alias.
   'computeCid',
+  // Substrate HTTP plumbing — historically lived in solid/, moved out
+  // to core/http when the binding split. Both core + solid re-export
+  // for back-compat; the substrate owns the name.
+  'withTransientRetry', 'isTransientNetworkError',
+  'getDefaultFetch', 'getDefaultWebSocket',
 ]);
 for (const name of SUBSTRATE_OWNED) delete MAP[name];
 

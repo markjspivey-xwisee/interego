@@ -71,18 +71,24 @@ import { Wallet, verifyMessage } from 'ethers';
 import { createHash } from 'node:crypto';
 import {
   ContextDescriptor,
-  publish,
-  discover,
-  fetchGraphContent,
+  ModalAlgebra,
   withTransientRetry,
-  loadAgentKeypair,
-  proposeAmendment,
-  vote,
-  tryRatify,
+} from '../../packages/core/dist/index.js';
+import {
   communityModal,
   DEFAULT_RULES,
-  ModalAlgebra,
-} from '../../packages/core/dist/index.js';
+  proposeAmendment,
+  tryRatify,
+  vote,
+} from '../../packages/constitutional/dist/index.js';
+import {
+  loadAgentKeypair,
+} from '../../packages/passport/dist/index.js';
+import {
+  discover,
+  fetchGraphContent,
+  publish,
+} from '../../packages/solid/dist/index.js';
 
 // ── Configuration ─────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE

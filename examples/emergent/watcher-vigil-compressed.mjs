@@ -53,18 +53,22 @@ import { Wallet, verifyMessage } from 'ethers';
 import { createHash } from 'node:crypto';
 import {
   ContextDescriptor,
-  publish,
+  effectiveModal,
+  temporalAnnotations,
+  topologicalSort,
+  withTransientRetry,
+} from '../../packages/core/dist/index.js';
+import {
+  createPassport,
+  loadAgentKeypair,
+  passportSummary,
+  recordLifeEvent,
+} from '../../packages/passport/dist/index.js';
+import {
   discover,
   fetchGraphContent,
-  withTransientRetry,
-  loadAgentKeypair,
-  createPassport,
-  recordLifeEvent,
-  passportSummary,
-  temporalAnnotations,
-  effectiveModal,
-  topologicalSort,
-} from '../../packages/core/dist/index.js';
+  publish,
+} from '../../packages/solid/dist/index.js';
 // The heartbeat helpers are re-exported from the passport submodule
 // (not from the package root). Import from the passport facade so the
 // emergent harness stays substrate-pure.

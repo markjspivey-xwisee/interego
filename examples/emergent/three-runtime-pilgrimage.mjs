@@ -47,12 +47,16 @@ import { Wallet, verifyMessage } from 'ethers';
 import { createHash } from 'node:crypto';
 import {
   ContextDescriptor,
-  publish,
+  withTransientRetry,
+} from '../../packages/core/dist/index.js';
+import {
+  loadAgentKeypair,
+} from '../../packages/passport/dist/index.js';
+import {
   discover,
   fetchGraphContent,
-  withTransientRetry,
-  loadAgentKeypair,
-} from '../../packages/core/dist/index.js';
+  publish,
+} from '../../packages/solid/dist/index.js';
 
 // ── configuration ────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE

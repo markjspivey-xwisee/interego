@@ -48,16 +48,22 @@ import { HDNodeWallet, Mnemonic } from 'ethers';
 import { createHash } from 'node:crypto';
 import {
   ContextDescriptor,
-  publish,
+  withTransientRetry,
+} from '../../packages/core/dist/index.js';
+import {
+  evaluate as evaluateAbac,
+  extractAttribute,
+  filterAttributeGraph,
+  resolveAttributes,
+} from '../../packages/abac/dist/index.js';
+import {
+  loadAgentKeypair,
+} from '../../packages/passport/dist/index.js';
+import {
   discover,
   fetchGraphContent,
-  withTransientRetry,
-  loadAgentKeypair,
-  evaluateAbac,
-  resolveAttributes,
-  filterAttributeGraph,
-  extractAttribute,
-} from '../../packages/core/dist/index.js';
+  publish,
+} from '../../packages/solid/dist/index.js';
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE

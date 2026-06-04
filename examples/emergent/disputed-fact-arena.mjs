@@ -41,17 +41,21 @@ import { Wallet, verifyMessage } from 'ethers';
 import { createHash } from 'node:crypto';
 import {
   ContextDescriptor,
-  publish,
+  intersection,
+  ModalAlgebra,
+  override,
+  restriction,
+  union,
+  withTransientRetry,
+} from '../../packages/core/dist/index.js';
+import {
+  loadAgentKeypair,
+} from '../../packages/passport/dist/index.js';
+import {
   discover,
   fetchGraphContent,
-  withTransientRetry,
-  loadAgentKeypair,
-  union,
-  intersection,
-  restriction,
-  override,
-  ModalAlgebra,
-} from '../../packages/core/dist/index.js';
+  publish,
+} from '../../packages/solid/dist/index.js';
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
