@@ -185,10 +185,10 @@ ${recipient ? `    <${ns}recipient> "${xmlStr(recipient)}" ;\n` : ''}    <${ns}d
       { type: 'Semiotic', modalStatus: 'Asserted' },
     ],
   };
-  // Lazy import — the substrate's publish() is only pulled in when a
-  // delivery is actually published to a pod, so the transport module
-  // (webhook + none paths) loads without resolving @interego/core.
-  const { publish } = await import('@interego/core');
+  // Lazy import — the Solid binding's publish() is only pulled in when
+  // a delivery is actually published to a pod, so the transport module
+  // (webhook + none paths) loads without resolving @interego/solid.
+  const { publish } = await import('@interego/solid');
   const result = await publish(descriptor, graph, config.podUrl!, {
     fetch: fetchFn as never,
     containerPath: 'foxxi/delivered/',
