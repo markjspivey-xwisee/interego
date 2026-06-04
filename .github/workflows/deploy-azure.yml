@@ -77,27 +77,27 @@ jobs:
           filters: |
             dashboard:
               - 'examples/dashboard/**'
-              - 'src/**'
+              - 'packages/**'
               - 'deploy/Dockerfile.dashboard'
               - 'package.json'
               - 'package-lock.json'
-              - 'tsconfig.json'
+              - 'tsconfig.base.json'
               - '.github/workflows/deploy-azure.yml'
             pgsl-browser:
               - 'examples/pgsl-browser/**'
-              - 'src/**'
+              - 'packages/**'
               - 'deploy/Dockerfile.pgsl-browser'
               - 'package.json'
               - 'package-lock.json'
-              - 'tsconfig.json'
+              - 'tsconfig.base.json'
               - '.github/workflows/deploy-azure.yml'
             relay:
               - 'deploy/mcp-relay/**'
-              - 'src/**'
+              - 'packages/**'
               - 'deploy/Dockerfile.relay'
               - 'package.json'
               - 'package-lock.json'
-              - 'tsconfig.json'
+              - 'tsconfig.base.json'
               - '.github/workflows/deploy-azure.yml'
             identity:
               - 'deploy/identity/**'
