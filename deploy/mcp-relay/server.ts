@@ -936,14 +936,117 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
   return JSON.stringify({ url, turtle, ...(graph ? { graph } : {}) });
 }
 
+// Per-user identity cache for the IDENTITY_URL/me lookup. The display
+// name + DID + webId + primary-agent-DID are stable for the duration of
+// an OAuth session (they change only on credential rotation / passport
+// edit), so a per-userId TTL cache lets every get_pod_status (and any
+// future identity-aware handler) avoid a per-call round-trip without
+// going stale on actual changes. Keyed by userId — NOT by bearer token,
+// so multiple concurrent sessions for the same user share one entry.
+interface IdentityMeRecord {
+  userId?: string;
+  did?: string;
+  webId?: string;
+  displayName?: string;
+  primaryAgentId?: string;
+  primaryAgentDid?: string;
+}
+const IDENTITY_ME_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const IDENTITY_ME_CACHE_MAX = 1024;
+const identityMeCache = new Map<string, { record: IdentityMeRecord; expiresAt: number }>();
+
+async function fetchIdentityMe(identityToken: string): Promise<IdentityMeRecord | null> {
+  // Best-effort decode of the JWT to get the userId claim — used only as
+  // a cache key. If decode fails, fall back to keying by token (still
+  // sound, just lower hit rate). Cache key MUST be derivable without a
+  // network call, otherwise we defeat the cache's purpose.
+  const cacheKey = jwtUserIdClaim(identityToken) ?? `tok:${identityToken}`;
+  const now = Date.now();
+  const cached = identityMeCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) return cached.record;
+
+  try {
+    const r = await fetch(`${IDENTITY_URL}/me`, {
+      headers: { 'Authorization': `Bearer ${identityToken}` },
+    });
+    if (!r.ok) return cached?.record ?? null;
+    const me = await r.json() as IdentityMeRecord;
+    const record: IdentityMeRecord = {
+      ...(me.userId ? { userId: me.userId } : {}),
+      ...(me.did ? { did: me.did } : {}),
+      ...(me.webId ? { webId: me.webId } : {}),
+      ...(me.displayName ? { displayName: me.displayName } : {}),
+      ...(me.primaryAgentId ? { primaryAgentId: me.primaryAgentId } : {}),
+      ...(me.primaryAgentDid ? { primaryAgentDid: me.primaryAgentDid } : {}),
+    };
+    // LRU eviction: cap the cache so a hostile client can't OOM us with
+    // distinct tokens. Evict the oldest entry by insertion order.
+    if (identityMeCache.size >= IDENTITY_ME_CACHE_MAX) {
+      const oldestKey = identityMeCache.keys().next().value;
+      if (oldestKey !== undefined) identityMeCache.delete(oldestKey);
+    }
+    identityMeCache.set(cacheKey, { record, expiresAt: now + IDENTITY_ME_CACHE_TTL_MS });
+    return record;
+  } catch {
+    // Network / parse error: serve stale-if-available, else null.
+    return cached?.record ?? null;
+  }
+}
+
+// Decode the sub / userId claim from a JWT without verifying it. Used
+// only as a cache key — the upstream IDENTITY_URL/me request still does
+// the real verification.
+function jwtUserIdClaim(token: string): string | undefined {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return undefined;
+    const payloadJson = Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    const payload = JSON.parse(payloadJson) as { sub?: string; userId?: string };
+    return payload.userId ?? payload.sub;
+  } catch {
+    return undefined;
+  }
+}
+
 async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   const podUrl = args.pod_url as string;
+  const identityToken = args._identity_token as string | undefined;
   const entries = await discover(podUrl, undefined, { fetch: solidFetch }).catch(() => []);
   const profile = await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null);
+
+  // Resolve the calling user's display name (set at WebAuthn / DID
+  // registration and stored in auth-methods.jsonld#name on identity).
+  // The pod-side AgentRegistry only carries a name once register_agent
+  // has run — but every onboarded user has a display name from day 1, so
+  // we fetch IDENTITY_URL/me which returns { userId, did, webId,
+  // displayName, primaryAgentDid, podHint, ... }. Cached per userId with
+  // a 5 min TTL so we don't take a network hop on every status call.
+  // Failure here is non-fatal: the rest of the response still lands.
+  const identity = identityToken ? await fetchIdentityMe(identityToken) : null;
+
+  // The display name is set at registration. Surface it at the top level
+  // (and inside `identity` for full context) so MCP clients can render
+  // "Hi <displayName>" without parsing a nested registry block that may
+  // not exist yet on first-use pods.
+  const displayName = identity?.displayName
+    ?? profile?.name
+    ?? undefined;
+  // Also expose webId / userId / agentId top-level (back-compat: existing
+  // fields like `registry`, `descriptors`, `entries`, `recentNotifications`
+  // are untouched). Lets MCP clients render "logged in as <name> (<webId>)"
+  // without descending into the nested `identity` block.
+  const webId = identity?.webId;
+  const userId = identity?.userId;
+  const agentId = identity?.primaryAgentId;
 
   return JSON.stringify({
     pod: podUrl,
     css: CSS_URL,
+    ...(displayName ? { displayName } : {}),
+    ...(webId ? { webId } : {}),
+    ...(userId ? { userId } : {}),
+    ...(agentId ? { agentId } : {}),
+    ...(identity ? { identity } : {}),
     registry: profile ? {
       owner: profile.webId,
       name: profile.name,
@@ -1490,13 +1593,21 @@ async function handleKernelMint(args: ToolArgs): Promise<string> {
   const content = args['content'];
   const kind = args['kind'] as ('atom' | 'fragment' | 'descriptor' | 'opaque' | undefined);
   const r = kernelMint(content, kind ? { kind } : undefined);
+  // The advertised affordances MUST be invokable through `act` against the
+  // minted holon's IRI. `act` routes urn:pgsl:* targets through
+  // actOnLatticeNode, which dispatches only on the canonical
+  // `urn:cg:action:kernel:{dereference,decompose,promote}` action IRIs and
+  // expects the holon IRI itself as the target. The previous
+  // `urn:cg:action:{dereference,promote,decompose}` action IRIs plus the
+  // bogus `urn:cg:tool:promote` / `urn:cg:tool:decompose` targets broke the
+  // hypermedia round-trip (act → 405 unsupported_action_on_lattice_target).
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
     kind: 'mint',
     id: r.holon.iri,
     nextSteps: [
-      { action: 'urn:cg:action:dereference', target: r.holon.iri, method: 'GET' },
-      { action: 'urn:cg:action:promote',     target: 'urn:cg:tool:promote',     method: 'POST' },
-      { action: 'urn:cg:action:decompose',   target: 'urn:cg:tool:decompose',   method: 'POST' },
+      { action: 'urn:cg:action:kernel:dereference', target: r.holon.iri, method: 'GET' },
+      { action: 'urn:cg:action:kernel:promote',     target: r.holon.iri, method: 'POST' },
+      { action: 'urn:cg:action:kernel:decompose',   target: r.holon.iri, method: 'POST' },
     ],
   }));
 }
@@ -1576,24 +1687,30 @@ async function handleKernelExtend(args: ToolArgs): Promise<string> {
 async function handleKernelPromote(args: ToolArgs): Promise<string> {
   const atoms = (args['atoms'] ?? []) as Parameters<typeof kernelPromote>[0];
   const r = kernelPromote(atoms);
+  // Same hypermedia contract as handleKernelMint: emit canonical
+  // `urn:cg:action:kernel:*` action IRIs with the apex's urn:pgsl:* IRI as
+  // the target so `act` round-trips through actOnLatticeNode cleanly.
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
     kind: 'promote',
     id: r.apex,
     nextSteps: [
-      { action: 'urn:cg:action:dereference', target: r.apex, method: 'GET' },
-      { action: 'urn:cg:action:decompose',   target: 'urn:cg:tool:decompose', method: 'POST' },
+      { action: 'urn:cg:action:kernel:dereference', target: r.apex, method: 'GET' },
+      { action: 'urn:cg:action:kernel:decompose',   target: r.apex, method: 'POST' },
     ],
   }));
 }
 async function handleKernelDecompose(args: ToolArgs): Promise<string> {
   const iri = String(args['iri'] ?? '') as Parameters<typeof kernelDecompose>[0];
   const r = kernelDecompose(iri);
+  // Decompose constituents are urn:pgsl:* IRIs so the advertised
+  // dereference affordances must use the kernel-prefixed action IRI
+  // for `act` to dispatch through actOnLatticeNode.
   if (r === null) {
     return JSON.stringify(decorateKernelResult({ result: null, iri }, {
       kind: 'decompose',
       id: iri,
       nextSteps: [
-        { action: 'urn:cg:action:dereference', target: iri, method: 'GET' },
+        { action: 'urn:cg:action:kernel:dereference', target: iri, method: 'GET' },
       ],
     }));
   }
@@ -1601,9 +1718,9 @@ async function handleKernelDecompose(args: ToolArgs): Promise<string> {
     kind: 'decompose',
     id: r.apex,
     nextSteps: [
-      { action: 'urn:cg:action:dereference', target: r.left,    method: 'GET' },
-      { action: 'urn:cg:action:dereference', target: r.right,   method: 'GET' },
-      { action: 'urn:cg:action:dereference', target: r.overlap, method: 'GET' },
+      { action: 'urn:cg:action:kernel:dereference', target: r.left,    method: 'GET' },
+      { action: 'urn:cg:action:kernel:dereference', target: r.right,   method: 'GET' },
+      { action: 'urn:cg:action:kernel:dereference', target: r.overlap, method: 'GET' },
     ],
   }));
 }
@@ -2776,7 +2893,7 @@ just demo a publish + discover round-trip on their own pod.`,
 // One Server instance per /mcp request (stateless mode). Wires ListTools
 // and CallTool to the same handler registry used by the REST routes.
 
-function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string; podUrl?: string } | null): Server {
+function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } | null): Server {
   const server = new Server(
     { name: '@interego/mcp-relay', version: '0.3.0' },
     {
@@ -2877,6 +2994,13 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
         args.pod_url = authContext.podUrl
           ?? (authContext.userId ? `${CSS_URL}${authContext.userId}/` : undefined);
       }
+      // Thread the identity-server token through so handlers that need to
+      // resolve the calling user's identity-side profile (display name,
+      // primary agent DID, etc.) can call IDENTITY_URL/me on the user's
+      // behalf without taking another auth round-trip. Handlers MUST treat
+      // this as opaque + non-overridable from the wire (a caller cannot
+      // smuggle their own token in via tools/call arguments — we overwrite).
+      if (authContext.identityToken) args._identity_token = authContext.identityToken;
     }
     try {
       const text = await tool.handler(args);
@@ -4224,9 +4348,9 @@ app.post('/messages', async (req, res) => {
 //   1. req.auth populated by requireBearerAuth (OAuth token verified by provider)
 //   2. Authorization: Bearer <RELAY_MCP_API_KEY> (legacy API key, for curl/scripts)
 //   3. Unauthenticated (if RELAY_MCP_API_KEY unset AND no OAuth token) — open mode
-function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId: string; userId: string; podUrl?: string } | null {
+function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId: string; userId: string; podUrl?: string; identityToken?: string } | null {
   // OAuth-verified request: bearerAuth middleware already set req.auth
-  const reqAuth = (req as express.Request & { auth?: { extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string } } }).auth;
+  const reqAuth = (req as express.Request & { auth?: { extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } } }).auth;
   if (reqAuth?.extra?.agentId && reqAuth.extra.ownerWebId && reqAuth.extra.userId) {
     return {
       agentId: reqAuth.extra.agentId,
@@ -4238,6 +4362,11 @@ function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId
       // with two credentials sharing one canonical pod), the relay must
       // honor the authoritative podUrl — not silently reconstruct from userId.
       ...(reqAuth.extra.podUrl ? { podUrl: reqAuth.extra.podUrl } : {}),
+      // Thread the identity-server-issued bearer token through so handlers
+      // (e.g. handleGetPodStatus) can fetch the calling user's display
+      // name + primary-agent DID from IDENTITY_URL/me without another
+      // auth hop.
+      ...(reqAuth.extra.identityToken ? { identityToken: reqAuth.extra.identityToken } : {}),
     };
   }
   // Legacy API-key path: Authorization: Bearer <RELAY_MCP_API_KEY>
