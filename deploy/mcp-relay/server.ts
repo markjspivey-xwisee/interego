@@ -3804,67 +3804,30 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   //     need rewriting.
   //   - Re-connect from known surface (agent present with correct
   //     encryptionPublicKey): no writes at all. Save the CSS round-trips.
+  //
+  // Concurrency: two OAuth flows for the same user (e.g. simultaneous
+  // logins from Claude Desktop AND Cursor while the pod has no /agents
+  // yet) would both read the empty registry, both build a "first-touch"
+  // profile with their own surface agent, and then write last-wins —
+  // the second write clobbers the first surface. We handle this by
+  // wrapping the read-modify-write in a per-pod mutex (in-process,
+  // sufficient for the single-replica relay) AND by post-write
+  // verification: after the write we re-read /agents, and if the
+  // surface agent we just wrote is missing (because a concurrent
+  // writer clobbered us in the gap between our read and write), we
+  // re-execute the merge with the fresh state. A small backoff +
+  // retry budget bounds the worst case.
   try {
-    const podUrl = authResp.podUrl!;
-    const ownerWebId = authResp.webId! as IRI;
-    const surfaceAgentIri = agentIri as IRI;
-    const userName = authResp.name ?? authResp.userId!;
-    const agentLabel = authResp.agentName ?? `Surface agent ${surfaceAgent}`;
-
-    let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
-    const firstTouch = profile === null;
-    if (!profile) {
-      profile = createOwnerProfile(ownerWebId, userName);
-    }
-    const existing = profile.authorizedAgents.find(a => a.agentId === surfaceAgentIri && !a.revoked);
-
-    let nextProfile: typeof profile | null = null;
-    if (!existing) {
-      // First touch OR new surface for an existing user — append.
-      nextProfile = addAuthorizedAgent(profile, {
-        agentId: surfaceAgentIri,
-        delegatedBy: ownerWebId,
-        label: agentLabel,
-        isSoftwareAgent: true,
-        scope: 'ReadWrite',
-        validFrom: new Date().toISOString(),
-        encryptionPublicKey: relayAgentKey.publicKey,
-      });
-    } else if (existing.encryptionPublicKey !== relayAgentKey.publicKey) {
-      // Re-connect, but the relay's persisted X25519 key has rotated —
-      // patch the entry so cross-pod recipient resolution picks the new key.
-      nextProfile = {
-        ...profile,
-        authorizedAgents: Object.freeze(
-          profile.authorizedAgents.map(a =>
-            a.agentId === surfaceAgentIri && !a.revoked
-              ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
-              : a,
-          ),
-        ),
-      };
-    }
-    // else: known surface, key still valid -> no-op detect, skip both writes.
-
-    if (firstTouch) {
-      // First-touch bootstrap: profile/card AND agents registry must land
-      // together so a Solid client (or this relay's own subsequent calls)
-      // sees a coherent pod. Write the card first — it carries
-      // solid:oidcIssuer + storage and is the document conventional Solid
-      // clients dereference; then the registry, which is what every
-      // Interego cross-pod resolution flow GETs.
-      await putRelayProfileCard({
-        podUrl,
-        userId: authResp.userId!,
-        userName,
-        ownerWebId,
-        identityWebId: authResp.webId!,
-        identityDid: authResp.did,
-      });
-      await writeAgentRegistry(nextProfile ?? profile, podUrl, { fetch: solidFetch });
-    } else if (nextProfile) {
-      await writeAgentRegistry(nextProfile, podUrl, { fetch: solidFetch });
-    }
+    await withPodMutex(authResp.podUrl!, () => bootstrapPodForOAuth({
+      podUrl: authResp.podUrl!,
+      ownerWebId: authResp.webId! as IRI,
+      surfaceAgentIri: agentIri as IRI,
+      userName: authResp.name ?? authResp.userId!,
+      agentLabel: authResp.agentName ?? `Surface agent ${surfaceAgent}`,
+      userId: authResp.userId!,
+      identityWebId: authResp.webId!,
+      identityDid: authResp.did,
+    }));
   } catch (err) {
     // A pod-init failure means the OAuth flow cannot reliably complete —
     // the redirected client would hit /agents or /profile/card and 404 or
@@ -3881,6 +3844,137 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   if (result.state) redirect.searchParams.set('state', result.state);
   res.json({ redirect: redirect.toString() });
 });
+
+// ── Per-pod in-process mutex (FIX A concurrency) ──────────────────
+//
+// Serialises read-modify-write of `<pod>/agents` and `<pod>/profile/card`
+// within a single relay process. Two simultaneous OAuth flows for the
+// same user (e.g. Claude Desktop + Cursor logging in at once on a
+// pristine pod) would otherwise both observe an empty registry and
+// then write last-wins, losing one surface agent. The mutex makes the
+// second flow wait for the first's PUTs to land before it does its own
+// read.
+//
+// This is an in-process mutex — it does NOT cross relay replicas. The
+// relay currently runs single-replica; if multi-replica is ever turned
+// on we would need a CSS-side compare-and-swap (e.g. ETag-based
+// If-Match) or an external lock. The post-write verify-and-merge loop
+// inside `bootstrapPodForOAuth` provides a best-effort safety net even
+// across replicas.
+const podWriteMutexes = new Map<string, Promise<unknown>>();
+
+async function withPodMutex<T>(podUrl: string, fn: () => Promise<T>): Promise<T> {
+  const prev = podWriteMutexes.get(podUrl) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  // Chain so the next caller waits for THIS call's gate, not the prior
+  // one. Errors from prior callers must not propagate to the next caller.
+  podWriteMutexes.set(podUrl, prev.then(() => gate, () => gate));
+  try {
+    await prev.catch(() => undefined);
+    return await fn();
+  } finally {
+    release();
+    // Clean up if we're the last entry in the chain.
+    queueMicrotask(() => {
+      if (podWriteMutexes.get(podUrl) === gate) podWriteMutexes.delete(podUrl);
+    });
+  }
+}
+
+// Maximum number of re-merge attempts when the post-write verify
+// observes that our surface agent isn't in the registry (concurrent
+// writer clobbered us between our read and our write). Three attempts
+// is enough for any reasonable burst — beyond that we surface an
+// error rather than spinning indefinitely.
+const POD_BOOTSTRAP_MAX_ATTEMPTS = 3;
+
+async function bootstrapPodForOAuth(params: {
+  podUrl: string;
+  ownerWebId: IRI;
+  surfaceAgentIri: IRI;
+  userName: string;
+  agentLabel: string;
+  userId: string;
+  identityWebId: string;
+  identityDid?: string | undefined;
+}): Promise<void> {
+  const {
+    podUrl,
+    ownerWebId,
+    surfaceAgentIri,
+    userName,
+    agentLabel,
+    userId,
+    identityWebId,
+    identityDid,
+  } = params;
+
+  for (let attempt = 1; attempt <= POD_BOOTSTRAP_MAX_ATTEMPTS; attempt++) {
+    let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+    const firstTouch = profile === null;
+    if (!profile) profile = createOwnerProfile(ownerWebId, userName);
+    const existing = profile.authorizedAgents.find(
+      a => a.agentId === surfaceAgentIri && !a.revoked,
+    );
+
+    if (existing && existing.encryptionPublicKey === relayAgentKey.publicKey) {
+      // Re-connect from known surface with current key — nothing to do.
+      return;
+    }
+
+    const nextProfile = existing
+      ? {
+          ...profile,
+          authorizedAgents: Object.freeze(
+            profile.authorizedAgents.map(a =>
+              a.agentId === surfaceAgentIri && !a.revoked
+                ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
+                : a,
+            ),
+          ),
+        }
+      : addAuthorizedAgent(profile, {
+          agentId: surfaceAgentIri,
+          delegatedBy: ownerWebId,
+          label: agentLabel,
+          isSoftwareAgent: true,
+          scope: 'ReadWrite',
+          validFrom: new Date().toISOString(),
+          encryptionPublicKey: relayAgentKey.publicKey,
+        });
+
+    if (firstTouch) {
+      await putRelayProfileCard({
+        podUrl,
+        userId,
+        userName,
+        ownerWebId,
+        identityWebId,
+        identityDid,
+      });
+    }
+    await writeAgentRegistry(nextProfile, podUrl, { fetch: solidFetch });
+
+    // Post-write verify: re-read and confirm our surface agent landed.
+    // If a concurrent writer (different replica, or anything outside
+    // this process's mutex) clobbered our write, the surface agent
+    // won't be there — back off briefly and retry the merge.
+    const verifyProfile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+    const landed = verifyProfile?.authorizedAgents.some(
+      a => a.agentId === surfaceAgentIri && !a.revoked,
+    );
+    if (landed) return;
+    if (attempt === POD_BOOTSTRAP_MAX_ATTEMPTS) {
+      throw new Error(
+        `Post-write verify failed: ${surfaceAgentIri} missing from ${podUrl}agents after ${attempt} attempts (concurrent writer)`,
+      );
+    }
+    // Short backoff before re-merge — gives the concurrent writer
+    // time to finish so we read a stable state next iteration.
+    await new Promise(r => setTimeout(r, 100 * attempt));
+  }
+}
 
 // ── Pod-side /profile/card writer (FIX A) ─────────────────────────
 //
