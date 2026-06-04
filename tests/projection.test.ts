@@ -5,13 +5,16 @@
 import { describe, it, expect } from 'vitest';
 import {
   ContextDescriptor,
-  toTurtle,
   toJsonLdString,
-  toTripleAnnotationTurtle,
   toTripleAnnotationDocument,
+  toTripleAnnotationTurtle,
+  toTurtle,
   validate,
 } from '@interego/core';
-import type { IRI, TripleContextAnnotation } from '@interego/core';
+import type {
+  IRI,
+  TripleContextAnnotation,
+} from '@interego/core';
 
 // ═════════════════════════════════════════════════════════════
 //  Projection Facet Builder

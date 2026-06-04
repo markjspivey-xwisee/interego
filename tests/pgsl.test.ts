@@ -12,35 +12,41 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  createPGSL,
-  mintAtom,
-  ingest,
-  pgslResolve,
-  queryNeighbors,
-  latticeStats,
-  fiber,
-  maxLevel,
-  constituents,
-  pullbackSquare,
   ancestorFragments,
+  constituents,
+  ContextDescriptor,
+  countUniquePGSL,
   descendantNodes,
-  latticeMeet,
+  fiber,
   isSubFragment,
-  pgslToTurtle,
+  maxLevel,
   pgslOwlOntology,
   pgslShaclShapes,
+  queryNeighbors,
   sparqlFragmentsAtLevel,
   sparqlFragmentsContaining,
-  sparqlPullbackOf,
   sparqlNeighbors,
-  liftToDescriptor,
-  embedInPGSL,
+  sparqlPullbackOf,
   verifyIntersectionCoherence,
   verifyProvenanceNaturality,
-  countUniquePGSL,
-  ContextDescriptor,
 } from '@interego/core';
-import type { IRI, PGSLInstance, NodeProvenance } from '@interego/core';
+import {
+  createPGSL,
+  embedInPGSL,
+  ingest,
+  latticeMeet,
+  latticeStats,
+  liftToDescriptor,
+  mintAtom,
+  pgslToTurtle,
+  pullbackSquare,
+  resolve as pgslResolve,
+} from '@interego/pgsl';
+import type {
+  IRI,
+  NodeProvenance,
+  PGSLInstance,
+} from '@interego/core';
 
 const TEST_PROV: NodeProvenance = {
   wasAttributedTo: 'did:web:test.example' as IRI,

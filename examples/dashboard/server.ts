@@ -20,7 +20,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { resolve, dirname } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { buildSecurityTxtFromEnv } from '@interego/core';
+import {
+  buildSecurityTxtFromEnv,
+} from '@interego/security-txt';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DASH_PORT = parseInt(process.env['PORT'] ?? '4000');

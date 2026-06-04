@@ -16,39 +16,39 @@
  */
 
 import {
-  // PGSL (Layer 1)
-  createPGSL,
-  mintAtom,
-  ingest,
-  embedInPGSL,
-  latticeStats,
-  resolve as pgslResolve,
-  sparqlQueryPGSL,
-  validateAllPGSL,
-  // Context Descriptors (Layer 2)
-  ContextDescriptor,
-  validate,
-  toTurtle,
-  // Composition (Layer 3)
-  union,
-  intersection,
-  restriction,
-  override,
-  // Coherence (Layer 4)
-  verifyCoherence,
   computeCoverage,
-  getCertificates,
-  // Decision Functor (Layer 5)
+  ContextDescriptor,
   extractObservations,
+  getCertificates,
+  intersection,
+  override,
+  resolve as pgslResolve,
+  restriction,
   selectStrategy,
+  sparqlQueryPGSL,
+  toTurtle,
+  union,
+  validate,
+  validateAllPGSL,
+  verifyCoherence,
 } from '@interego/core';
+import {
+  createPGSL,
+  embedInPGSL,
+  ingest,
+  latticeStats,
+  mintAtom,
+} from '@interego/pgsl';
 
 import {
   computeAffordances as computeDecisionAffordances,
   decide as decideFromObservations,
 } from '@interego/core';
 
-import type { IRI, PGSLInstance } from '@interego/core';
+import type {
+  IRI,
+  PGSLInstance,
+} from '@interego/core';
 
 // ── Browser API ─────────────────────────────────────────
 

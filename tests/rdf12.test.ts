@@ -6,11 +6,11 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  detectRdf12Features,
   langString,
   parseLangString,
-  withRdf12VersionDirective,
-  detectRdf12Features,
   RDF12_VERSION_DIRECTIVE,
+  withRdf12VersionDirective,
 } from '@interego/core';
 
 describe('RDF 1.2 — directional language-tagged strings', () => {

@@ -7,13 +7,21 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   ContextDescriptor,
-  publish,
-  discover,
-  subscribe,
-  parseManifest,
 } from '@interego/core';
+import {
+  discover,
+  parseManifest,
+  publish,
+  subscribe,
+} from '@interego/solid';
 
-import type { IRI, ManifestEntry, ContextChangeEvent } from '@interego/core';
+import type {
+  IRI,
+  ManifestEntry,
+} from '@interego/core';
+import type {
+  ContextChangeEvent,
+} from '@interego/solid';
 
 // ── Mock helpers ────────────────────────────────────────────
 

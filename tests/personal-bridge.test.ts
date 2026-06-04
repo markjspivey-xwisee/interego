@@ -12,7 +12,14 @@
 
 import { describe, it, expect } from 'vitest';
 import { tools, bridgeStatus, client, handleMcpRequest } from '../examples/personal-bridge/server.js';
-import { generateKeyPair, importWallet, P2pClient, InMemoryRelay } from '@interego/core';
+import {
+  generateKeyPair,
+  importWallet,
+} from '@interego/core';
+import {
+  InMemoryRelay,
+  P2pClient,
+} from '@interego/p2p';
 
 describe('personal-bridge — tool surface', () => {
   it('bridge_status reports identity and local-first defaults', async () => {

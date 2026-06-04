@@ -77,7 +77,9 @@ import {
   withTransientRetry,
   loadAgentKeypair,
 } from '../dist/index.js';
-import { recordHeartbeatTickIfChanged } from '@interego/core';
+import {
+  recordHeartbeatTickIfChanged,
+} from '@interego/core';
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE

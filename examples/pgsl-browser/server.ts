@@ -17,63 +17,63 @@ import express from 'express';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
-  createPGSL,
-  embedInPGSL,
-  pgslResolve,
-  mintAtom,
-  ingest,
-  latticeStats,
-  latticeMeet,
-  queryNeighbors,
-  discover,
+  allPrefixes,
+  buildSCM,
   computeContainmentAnnotations,
   ContextDescriptor,
-  union,
-  intersection,
-  restriction,
-  override,
-  validate,
-  toTurtle,
-  publish,
-  materializeTriples,
-  executeSparqlString,
-  validateAllPGSL,
-  sparqlQueryPGSL,
-  sparqlFragmentsContaining,
-  // Crypto
-  createWallet,
-  signDescriptor,
-  verifyDescriptorSignature,
-  createDelegation,
-  verifyDelegationSignature,
-  // Causality
-  buildSCM,
-  evaluateCounterfactual,
-  isDSeparated,
-  findBackdoorSet,
-  // Affordance
-  computeCognitiveStrategy,
-  // Ingestion profiles
-  ingestWithProfile,
-  getProfile,
-  // Affordance decorators
   createDefaultRegistry,
+  createDelegation,
+  createWallet,
   decorateNode,
-  // System ontology & virtualized RDF layer
+  evaluateCounterfactual,
+  executeSparqlProtocol,
+  executeSparqlString,
+  findBackdoorSet,
+  getCertificates,
+  getProfile,
+  ingestWithProfile,
+  intersection,
+  isDSeparated,
+  materializeSystem,
+  materializeTriples,
+  override,
+  queryNeighbors,
+  restriction,
+  signDescriptor,
+  sparqlFragmentsContaining,
+  sparqlQueryPGSL,
+  sparqlUpdateHandler,
+  systemDcatCatalog,
+  systemHydraApi,
   systemOntology,
   systemShaclShapes,
-  systemHydraApi,
-  systemDcatCatalog,
-  allPrefixes,
-  materializeSystem,
-  executeSparqlProtocol,
-  writeBackTriples,
-  sparqlUpdateHandler,
-  systemToTurtle,
   systemToJsonLd,
-  getCertificates,
-  buildSecurityTxtFromEnv,
+  systemToTurtle,
+  toTurtle,
+  union,
+  validate,
+  validateAllPGSL,
+  verifyDelegationSignature,
+  verifyDescriptorSignature,
+  writeBackTriples,
 } from '@interego/core';
+import {
+  computeCognitiveStrategy,
+  createPGSL,
+  embedInPGSL,
+  ingest,
+  latticeMeet,
+  latticeStats,
+  mintAtom,
+  resolve as pgslResolve,
+} from '@interego/pgsl';
+import {
+  buildSecurityTxtFromEnv,
+} from '@interego/security-txt';
+import {
+  discover,
+  publish,
+} from '@interego/solid';
 
 import {
   ObserverAAT, AnalystAAT, ExecutorAAT, ArbiterAAT, ArchivistAAT, FullAccessAAT,
@@ -92,8 +92,14 @@ import {
 // Get the xAPI profile for direct transform calls
 const xapiProfile = getProfile('xapi')!;
 import type {
-  IRI, PGSLInstance, TokenGranularity, ContextDescriptorData, ManifestEntry,
-  Wallet, WalletDelegation, SignedDescriptor,
+  ContextDescriptorData,
+  IRI,
+  ManifestEntry,
+  PGSLInstance,
+  SignedDescriptor,
+  TokenGranularity,
+  Wallet,
+  WalletDelegation,
 } from '@interego/core';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1782,13 +1788,15 @@ app.get('/dump.jsonld', (_req, res) => {
 
 // ── Observatory API: Coherence ──
 import {
-  verifyCoherence,
   computeCoverage,
   extractObservations,
-  computeDecisionAffordances,
   selectStrategy,
-  decideFromObservations,
+  verifyCoherence,
 } from '@interego/core';
+import {
+  computeAffordances as computeDecisionAffordances,
+  decide as decideFromObservations,
+} from '@interego/pgsl';
 
 app.post('/api/coherence/check', (req, res) => {
   const { agents } = req.body as { agents?: string[] };

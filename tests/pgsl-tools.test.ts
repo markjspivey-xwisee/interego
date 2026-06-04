@@ -1,17 +1,25 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  createPGSL,
-  ingest,
-  materializeTriples,
-  getToolDefinitions,
-  parseToolCalls,
   executeToolCall,
   formatToolPrompt,
   formatToolResult,
+  getToolDefinitions,
+  materializeTriples,
+  parseToolCalls,
   runToolLoop,
 } from '@interego/core';
-import type { PGSLInstance, ToolContext, ToolCall } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  createPGSL,
+  ingest,
+} from '@interego/pgsl';
+import type {
+  PGSLInstance,
+  ToolCall,
+  ToolContext,
+} from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 describe('PGSL LLM Tools', () => {
   let pgsl: PGSLInstance;

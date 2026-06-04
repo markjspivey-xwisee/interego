@@ -1,31 +1,34 @@
 import { describe, it, expect } from 'vitest';
 import {
-  sha256,
-  cryptoComputeCid,
-  pinToIpfs,
+  ContextDescriptor,
+  createAgentToken,
+  createDelegation,
   createIpfsAnchor,
-  pinPgslFragment,
-  pinDescriptor,
+  createSiweMessage,
   createWallet,
-  importWallet,
+  cryptoComputeCid,
   exportPrivateKey,
+  formatSiweMessage,
   getNostrPubkey,
+  importWallet,
+  pinDescriptor,
+  pinPgslFragment,
+  pinToIpfs,
   schnorrSign,
   schnorrVerify,
+  sha256,
   sha256Hex,
-  createDelegation,
-  verifyDelegationSignature,
   signDescriptor,
-  verifyDescriptorSignature,
-  createAgentToken,
-  createSiweMessage,
-  formatSiweMessage,
   signSiweMessage,
-  verifySiweSignature,
-  ContextDescriptor,
   toTurtle,
+  verifyDelegationSignature,
+  verifyDescriptorSignature,
+  verifySiweSignature,
 } from '@interego/core';
-import type { IRI, IpfsConfig } from '@interego/core';
+import type {
+  IpfsConfig,
+  IRI,
+} from '@interego/core';
 
 const localIpfsConfig: IpfsConfig = { provider: 'local' };
 

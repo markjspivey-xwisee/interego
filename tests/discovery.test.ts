@@ -9,32 +9,41 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createPGSL, ingest, latticeStats } from '@interego/core';
-import type { PGSLInstance } from '@interego/core';
-import type { DataSource, MarketplaceListing } from '@interego/core';
 import {
-  introspectJson,
-  introspectCsv,
-  introspectRdf,
-  introspectApi,
+  createPGSL,
+  ingest,
+  latticeStats,
+} from '@interego/pgsl';
+import type {
+  PGSLInstance,
+} from '@interego/core';
+import type {
+  DataSource,
+  MarketplaceListing,
+} from '@interego/core';
+import {
   applyIntrospection,
-  createVirtualLayer,
-  registerReference,
-  resolveReference,
-  invalidateCache,
-  virtualLayerStats,
-  generateMetagraph,
-  ingestMetagraph,
-  validateMetagraph,
-  queryMetagraph,
   createMarketplace,
-  registerListing,
-  removeListing,
+  createVirtualLayer,
   discoverByCapability,
   discoverByType,
-  refreshListing,
-  marketplaceToHydra,
+  generateMetagraph,
+  ingestMetagraph,
+  introspectApi,
+  introspectCsv,
+  introspectJson,
+  introspectRdf,
+  invalidateCache,
   marketplaceStats,
+  marketplaceToHydra,
+  queryMetagraph,
+  refreshListing,
+  registerListing,
+  registerReference,
+  removeListing,
+  resolveReference,
+  validateMetagraph,
+  virtualLayerStats,
 } from '@interego/core';
 
 // ── Shared fixtures ──────────────────────────────────────────

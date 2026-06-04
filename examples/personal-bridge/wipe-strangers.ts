@@ -26,8 +26,12 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import nacl from 'tweetnacl';
 import naclUtil from 'tweetnacl-util';
-import { getNostrPubkey } from '@interego/core';
-import type { P2pEvent } from '@interego/core';
+import {
+  getNostrPubkey,
+} from '@interego/core';
+import type {
+  P2pEvent,
+} from '@interego/p2p';
 
 const BRIDGE_KEY = process.env['BRIDGE_KEY'];
 if (!BRIDGE_KEY) {

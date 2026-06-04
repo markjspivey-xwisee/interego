@@ -7,9 +7,9 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  createEncryptedEnvelope,
   deriveEncryptionKeyPair,
   generateKeyPair,
-  createEncryptedEnvelope,
   openEncryptedEnvelope,
 } from '@interego/core';
 

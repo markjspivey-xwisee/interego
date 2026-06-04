@@ -9,14 +9,18 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  createOwnerProfile,
   addAuthorizedAgent,
-  removeAuthorizedAgent,
   createDelegationCredential,
+  createOwnerProfile,
   delegationCredentialToJsonLd,
+  removeAuthorizedAgent,
   verifyDelegation,
 } from '@interego/core';
-import type { IRI, AuthorizedAgentData, OwnerProfileData } from '@interego/core';
+import type {
+  AuthorizedAgentData,
+  IRI,
+  OwnerProfileData,
+} from '@interego/core';
 
 const OWNER = 'https://pod.example/alice/profile#me' as IRI;
 const POD = 'https://pod.example/alice/' as IRI;

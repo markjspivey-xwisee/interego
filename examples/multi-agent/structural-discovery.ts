@@ -7,8 +7,15 @@
  * codebase that nobody explicitly documented.
  */
 
-import { createPGSL, embedInPGSL, latticeStats, pgslResolve } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  createPGSL,
+  embedInPGSL,
+  latticeStats,
+  resolve as pgslResolve,
+} from '@interego/pgsl';
+import type {
+  IRI,
+} from '@interego/core';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 

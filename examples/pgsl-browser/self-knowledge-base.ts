@@ -24,24 +24,29 @@
  */
 
 import {
+  computeCoverage,
+  ContextDescriptor,
+  getCertificates,
+  intersection,
+  resolve as pgslResolve,
+  sparqlQueryPGSL,
+  union,
+  validate,
+  validateAllPGSL,
+  verifyCoherence,
+} from '@interego/core';
+import {
   createPGSL,
   embedInPGSL,
-  mintAtom,
   ingest,
   latticeStats,
-  resolve as pgslResolve,
-  verifyCoherence,
-  computeCoverage,
-  getCertificates,
-  sparqlQueryPGSL,
-  validateAllPGSL,
-  ContextDescriptor,
-  validate,
-  intersection,
-  union,
-} from '@interego/core';
+  mintAtom,
+} from '@interego/pgsl';
 
-import type { IRI, PGSLInstance } from '@interego/core';
+import type {
+  IRI,
+  PGSLInstance,
+} from '@interego/core';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, extname, basename } from 'node:path';
 

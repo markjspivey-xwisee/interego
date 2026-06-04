@@ -26,23 +26,27 @@ import { WebSocket } from 'ws';
 
 import {
   ContextDescriptor,
-  toTurtle,
-  toJsonLdString,
-  validate,
   intersection,
-  publish,
-  discover,
-  subscribe,
+  toJsonLdString,
+  toTurtle,
+  validate,
 } from '@interego/core';
+import {
+  discover,
+  publish,
+  subscribe,
+} from '@interego/solid';
 
 import type {
-  IRI,
   ContextDescriptorData,
-  ManifestEntry,
-  ContextChangeEvent,
   FetchFn,
+  IRI,
+  ManifestEntry,
   WebSocketConstructor,
 } from '@interego/core';
+import type {
+  ContextChangeEvent,
+} from '@interego/solid';
 
 // ── Configuration ───────────────────────────────────────────
 

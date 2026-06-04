@@ -34,17 +34,19 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { WebSocketServer, WebSocket } from 'ws';
 import {
-  InMemoryRelay,
-  WebSocketRelayMirror,
-  P2pClient,
   importWallet,
+} from '@interego/core';
+import {
+  InMemoryRelay,
   isInteregoEvent,
+  KIND_ATTESTATION,
   KIND_DESCRIPTOR,
   KIND_DIRECTORY,
-  KIND_ATTESTATION,
   KIND_ENCRYPTED_SHARE,
+  P2pClient,
   type P2pEvent,
-} from '@interego/core';
+  WebSocketRelayMirror,
+} from '@interego/p2p';
 
 const ALICE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 const BOB_KEY = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';

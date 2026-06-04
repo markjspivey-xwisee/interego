@@ -18,14 +18,14 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  composeFacetTransformations,
   constructOmega,
+  identityFacetTransformation,
+  type IRI,
   makeGeometricMorphism,
   ModalAlgebra,
-  composeFacetTransformations,
-  identityFacetTransformation,
-  type PodView,
-  type IRI,
   type ModalValue,
+  type PodView,
 } from '@interego/core';
 
 // ── Ω (subobject classifier) ──────────────────────────────

@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { Parser } from 'n3';
 import {
-  buildDeployEvent,
   buildAccessChangeEvent,
-  buildWalletRotationEvent,
+  buildDeployEvent,
   buildIncidentEvent,
   buildQuarterlyReviewEvent,
-} from '@interego/core';
+  buildWalletRotationEvent,
+} from '@interego/ops';
 
 const OP = 'did:web:identity.example#operator';
 

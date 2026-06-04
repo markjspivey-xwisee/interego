@@ -1,18 +1,25 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  createPGSL,
-  ingest,
-  validateCorePGSL,
-  validateStructuralPGSL,
-  validateDomainShapes,
-  validateAllPGSL,
   domainShapesToTurtle,
   PGSL_NS,
   PGSLClass,
   PGSLProp,
+  validateAllPGSL,
+  validateCorePGSL,
+  validateDomainShapes,
+  validateStructuralPGSL,
 } from '@interego/core';
-import type { PGSLInstance, ShaclShapeDefinition } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  createPGSL,
+  ingest,
+} from '@interego/pgsl';
+import type {
+  PGSLInstance,
+  ShaclShapeDefinition,
+} from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 describe('PGSL SHACL Validation', () => {
   let pgsl: PGSLInstance;

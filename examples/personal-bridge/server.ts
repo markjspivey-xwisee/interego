@@ -29,18 +29,20 @@ import { resolve, dirname } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
-  InMemoryRelay,
-  FileBackedRelay,
-  P2pClient,
-  WebSocketRelayMirror,
-  isInteregoEvent,
-  importWallet,
   deriveEncryptionKeyPair,
-  type EncryptedShare,
-  type DescriptorAnnouncement,
-  type RelayConnectionStatus,
-  type P2pRelay,
+  importWallet,
 } from '@interego/core';
+import {
+  type DescriptorAnnouncement,
+  type EncryptedShare,
+  FileBackedRelay,
+  InMemoryRelay,
+  isInteregoEvent,
+  P2pClient,
+  type P2pRelay,
+  type RelayConnectionStatus,
+  WebSocketRelayMirror,
+} from '@interego/p2p';
 import { homedir } from 'node:os';
 import { join as pathJoin } from 'node:path';
 import { createHash } from 'node:crypto';

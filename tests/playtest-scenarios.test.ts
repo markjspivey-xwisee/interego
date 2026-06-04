@@ -15,48 +15,50 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  // identity + delegation
-  createOwnerProfile,
   addAuthorizedAgent,
-  removeAuthorizedAgent,
   createDelegationCredential,
-  verifyDelegation,
-  ownerProfileToTurtle,
-  parseOwnerProfile,
-  resolveRecipient,
-  // passport (biography that survives migration)
-  createPassport,
-  recordLifeEvent,
-  stateValue,
-  migrateInfrastructure,
-  demonstratedCapabilities,
-  passportSummary,
-  // E2EE
-  generateKeyPair,
   createEncryptedEnvelope,
+  createOwnerProfile,
+  createWallet,
+  exportPrivateKey,
+  generateKeyPair,
+  getNostrPubkey,
   openEncryptedEnvelope,
   openEncryptedEnvelopeWithHistory,
-  // structural memory
-  createPGSL,
-  ingest,
-  latticeStats,
-  // safety
-  screenForSensitiveContent,
-  shouldBlockOnSensitivity,
-  formatSensitivityWarning,
-  // public-Nostr interop signing
-  getNostrPubkey,
+  ownerProfileToTurtle,
+  parseOwnerProfile,
+  removeAuthorizedAgent,
   schnorrSign,
   schnorrVerify,
   sha256Hex,
-  createWallet,
-  exportPrivateKey,
+  verifyDelegation,
 } from '@interego/core';
+import {
+  createPassport,
+  demonstratedCapabilities,
+  migrateInfrastructure,
+  passportSummary,
+  recordLifeEvent,
+  stateValue,
+} from '@interego/passport';
+import {
+  createPGSL,
+  ingest,
+  latticeStats,
+} from '@interego/pgsl';
+import {
+  formatSensitivityWarning,
+  screenForSensitiveContent,
+  shouldBlockOnSensitivity,
+} from '@interego/privacy';
+import {
+  resolveRecipient,
+} from '@interego/solid';
 import type {
-  IRI,
   AuthorizedAgentData,
-  OwnerProfileData,
   FetchFn,
+  IRI,
+  OwnerProfileData,
 } from '@interego/core';
 
 // ── shared helpers ───────────────────────────────────────────

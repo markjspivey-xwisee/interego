@@ -28,10 +28,15 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  commit, verifyOpening, addCommitments, verifyHomomorphicSum,
-  deriveBlinding, randomBlinding,
-  sampleLaplaceFloat, sampleLaplaceInt,
+  addCommitments,
+  commit,
+  deriveBlinding,
   H_GENERATOR_LABEL,
+  randomBlinding,
+  sampleLaplaceFloat,
+  sampleLaplaceInt,
+  verifyHomomorphicSum,
+  verifyOpening,
 } from '@interego/core';
 import { ristretto255, ristretto255_hasher } from '@noble/curves/ed25519.js';
 

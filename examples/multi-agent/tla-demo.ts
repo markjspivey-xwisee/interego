@@ -35,22 +35,29 @@ import { fileURLToPath } from 'node:url';
 
 import {
   ContextDescriptor,
-  toTurtle,
-  validate,
-  union,
   intersection,
   override,
-  publish,
-  discover,
+  sparqlFragmentsContaining,
+  sparqlQueryPGSL,
+  toTurtle,
+  union,
+  validate,
+  validateAllPGSL,
+} from '@interego/core';
+import {
   createPGSL,
   embedInPGSL,
   latticeStats,
-  sparqlQueryPGSL,
-  sparqlFragmentsContaining,
-  validateAllPGSL,
-} from '@interego/core';
+} from '@interego/pgsl';
+import {
+  discover,
+  publish,
+} from '@interego/solid';
 
-import type { IRI, FetchFn } from '@interego/core';
+import type {
+  FetchFn,
+  IRI,
+} from '@interego/core';
 
 // ── Configuration ───────────────────────────────────────────
 

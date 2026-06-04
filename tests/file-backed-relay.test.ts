@@ -10,11 +10,13 @@ import { join } from 'node:path';
 import { existsSync, unlinkSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import {
-  FileBackedRelay,
-  P2pClient,
   importWallet,
-  KIND_DESCRIPTOR,
 } from '@interego/core';
+import {
+  FileBackedRelay,
+  KIND_DESCRIPTOR,
+  P2pClient,
+} from '@interego/p2p';
 
 const ALICE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
 

@@ -8,13 +8,20 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  resolveHandleToPodUrl,
-  resolveRecipient,
-  resolveRecipients,
   createOwnerProfile,
   ownerProfileToTurtle,
 } from '@interego/core';
-import type { IRI, AuthorizedAgentData, OwnerProfileData, FetchFn } from '@interego/core';
+import {
+  resolveHandleToPodUrl,
+  resolveRecipient,
+  resolveRecipients,
+} from '@interego/solid';
+import type {
+  AuthorizedAgentData,
+  FetchFn,
+  IRI,
+  OwnerProfileData,
+} from '@interego/core';
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
 

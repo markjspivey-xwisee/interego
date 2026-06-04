@@ -14,18 +14,24 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  createPGSL,
-  ingestWithProfile,
   batchIngestWithProfile,
   getProfile,
-  latticeStats,
-  pgslResolve as resolve,
-  sparqlQueryPGSL,
+  ingestWithProfile,
   materializeTriples,
-  sparqlMatchPattern as matchPattern,
+  sparqlQueryPGSL,
   validateAllPGSL,
 } from '@interego/core';
-import type { IRI, PGSLInstance, XapiStatement } from '@interego/core';
+import {
+  createPGSL,
+  latticeStats,
+  matchPattern,
+  resolve,
+} from '@interego/pgsl';
+import type {
+  IRI,
+  PGSLInstance,
+  XapiStatement,
+} from '@interego/core';
 
 // ── Test Data ─────────────────────────────────────────────
 

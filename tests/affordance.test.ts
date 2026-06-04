@@ -1,24 +1,25 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  ContextDescriptor,
-  computeAffordances,
-  createAgentState,
-  assimilateDescriptor,
   addDesire,
+  assimilateDescriptor,
   commitToAffordance,
+  computeAffordances,
+  ContextDescriptor,
+  createAgentState,
   createOODACycle,
-  observe,
-  orient,
-  decide,
-  // OODA's `act` is exported as `oodaAct` from @interego/core — the
-  // bare `act` name is reserved for the kernel's Peircean-Thirdness
-  // substrate verb. See docs/ARCHITECTURAL-FOUNDATIONS.md §11.
-  oodaAct as act,
-  evaluateSurprise,
   createStigmergicField,
+  decide,
+  evaluateSurprise,
+  observe,
+  oodaAct as act,
+  orient,
   updateStigmergicField,
 } from '@interego/core';
-import type { IRI, AgentProfile, Desire } from '@interego/core';
+import type {
+  AgentProfile,
+  Desire,
+  IRI,
+} from '@interego/core';
 
 // ── Test helpers ─────────────────────────────────────────────
 

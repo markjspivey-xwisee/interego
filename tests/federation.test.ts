@@ -3,15 +3,17 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  podDirectoryToTurtle,
-  parsePodDirectory,
-  resolveWebFinger,
+  type IRI,
+  type OwnerProfileData,
   ownerProfileToTurtle,
   parseOwnerProfile,
   type PodDirectoryData,
-  type OwnerProfileData,
-  type IRI,
 } from '@interego/core';
+import {
+  parsePodDirectory,
+  podDirectoryToTurtle,
+  resolveWebFinger,
+} from '@interego/solid';
 import { PodRegistry } from '../mcp-server/pod-registry.js';
 
 // ── PodDirectory tests ──────────────────────────────────────

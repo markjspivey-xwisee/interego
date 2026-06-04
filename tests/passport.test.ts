@@ -3,20 +3,22 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { IRI } from '@interego/core';
-import {
-  createPassport,
-  recordLifeEvent,
-  stateValue,
-  registerOn,
-  migrateInfrastructure,
-  demonstratedCapabilities,
-  activeValues,
-  detectValueDrift,
-  passportToDescriptor,
-  passportSummary,
-  type LifeEvent,
+import type {
+  IRI,
 } from '@interego/core';
+import {
+  activeValues,
+  createPassport,
+  demonstratedCapabilities,
+  detectValueDrift,
+  type LifeEvent,
+  migrateInfrastructure,
+  passportSummary,
+  passportToDescriptor,
+  recordLifeEvent,
+  registerOn,
+  stateValue,
+} from '@interego/passport';
 
 const ALICE = 'urn:agent:alice' as IRI;
 const POD = 'https://pod.example/alice/';

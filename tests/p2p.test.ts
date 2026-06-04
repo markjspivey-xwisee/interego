@@ -25,16 +25,18 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  P2pClient,
-  InMemoryRelay,
-  verifyEvent,
-  importWallet,
   generateKeyPair,
+  importWallet,
+} from '@interego/core';
+import {
+  type DescriptorAnnouncement,
   detectSignatureScheme,
+  InMemoryRelay,
   KIND_DESCRIPTOR,
   KIND_ENCRYPTED_SHARE,
-  type DescriptorAnnouncement,
-} from '@interego/core';
+  P2pClient,
+  verifyEvent,
+} from '@interego/p2p';
 
 // Two well-known test keys (NEVER use for production — these are
 // the Hardhat default mnemonic's first two derived keys, public

@@ -19,13 +19,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   ContextDescriptor,
-  union,
-  intersection,
   type ContextDescriptorData,
-  type IRI,
   type ContextFacetData,
+  intersection,
+  type IRI,
+  union,
 } from '@interego/core';
-import { resetComposedIdCounter } from '@interego/core';
+import {
+  resetComposedIdCounter,
+} from '@interego/core';
 
 function buildDescriptor(
   id: string,

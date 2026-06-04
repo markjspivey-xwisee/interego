@@ -42,26 +42,29 @@ import { join } from 'node:path';
 import { unlinkSync, existsSync } from 'node:fs';
 
 import {
-  // Operational event builders
-  buildIncidentEvent,
-  buildWalletRotationEvent,
-  // Compliance pipeline
+  buildMerkleTree,
+  cryptoComputeCid,
+  generateMerkleProof,
+  importWallet,
+  signDescriptor,
+  type SignedDescriptor,
+  verifyDescriptorSignature,
+  verifyMerkleProof,
+} from '@interego/core';
+import {
+  type AuditableDescriptor,
+  generateFrameworkReport,
+  listValidSignerAddresses,
   loadOrCreateComplianceWallet,
   rotateComplianceWallet,
-  listValidSignerAddresses,
-  generateFrameworkReport,
-  type AuditableDescriptor,
-  // Crypto
-  signDescriptor,
-  verifyDescriptorSignature,
-  cryptoComputeCid,
-  buildMerkleTree,
-  generateMerkleProof,
-  verifyMerkleProof,
-  importWallet,
-  type SignedDescriptor,
+} from '@interego/compliance';
+import {
+  buildIncidentEvent,
+  buildWalletRotationEvent,
+} from '@interego/ops';
+import type {
+  IRI,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
 
 // ── Pretty printing — make the test output read like a story ──
 

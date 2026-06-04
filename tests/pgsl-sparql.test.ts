@@ -1,21 +1,29 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  executeSparqlString,
+  materializeTriples,
+  sparqlFragmentsAtLevel,
+  sparqlFragmentsContaining,
+  sparqlLatticeStats,
+  sparqlNeighbors,
+  sparqlPullbackOf,
+  sparqlQueryPGSL,
+} from '@interego/core';
+import {
   createPGSL,
   ingest,
   latticeStats,
-  materializeTriples,
-  sparqlMatchPattern,
-  executeSparqlString,
-  sparqlQueryPGSL,
-  sparqlFragmentsAtLevel,
-  sparqlFragmentsContaining,
-  sparqlPullbackOf,
-  sparqlNeighbors,
-  sparqlLatticeStats,
+  matchPattern as sparqlMatchPattern,
+} from '@interego/pgsl';
+import {
+  matchPattern,
 } from '@interego/core';
-import { matchPattern } from '@interego/core';
-import type { PGSLInstance } from '@interego/core';
-import type { IRI } from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 describe('PGSL SPARQL Engine', () => {
   let pgsl: PGSLInstance;

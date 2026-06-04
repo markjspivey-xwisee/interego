@@ -14,30 +14,37 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  ContextDescriptor,
-  buildSCM,
-  hasCycle,
-  topologicalSort,
   ancestors,
-  descendants,
-  parents,
-  children,
-  doIntervention,
-  isDSeparated,
+  buildSCM,
   causalPaths,
+  children,
+  ContextDescriptor,
+  descendants,
+  doIntervention,
   evaluateCounterfactual,
-  satisfiesBackdoorCriterion,
   findBackdoorSet,
+  hasCycle,
+  intersection,
+  isDSeparated,
+  parents,
+  satisfiesBackdoorCriterion,
   satisfiesFrontDoorCriterion,
   scmSummary,
-  toTurtle,
   toJsonLdString,
-  validate,
+  topologicalSort,
+  toTurtle,
   union,
-  intersection,
+  validate,
 } from '@interego/core';
-import { resetComposedIdCounter } from '@interego/core';
-import type { IRI, CausalVariable, CausalEdge, StructuralCausalModel } from '@interego/core';
+import {
+  resetComposedIdCounter,
+} from '@interego/core';
+import type {
+  CausalEdge,
+  CausalVariable,
+  IRI,
+  StructuralCausalModel,
+} from '@interego/core';
 
 // ── Helper: Classic confounded SCM ──────────────────────────
 // X ← U → Y, X → Y (U is an unobserved confounder)

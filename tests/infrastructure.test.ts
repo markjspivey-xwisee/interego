@@ -10,48 +10,50 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createPGSL,
-  mintAtom,
-  ingest,
-  pgslResolve,
-  latticeStats,
   embedInPGSL,
-} from '@interego/core';
-import type { IRI } from '@interego/core';
-import type { PGSLInstance, NodeProvenance } from '@interego/core';
-import {
-  // Enclave
-  createEnclaveRegistry,
-  createEnclave,
-  forkEnclave,
-  getEnclave,
-  listEnclaves,
-  freezeEnclave,
-  mergeEnclave,
-  abandonEnclave,
-  enclaveStats,
-  // Checkpoint
-  createCheckpointStore,
-  createCheckpoint,
-  restoreCheckpoint,
-  getCheckpoint,
-  listCheckpoints,
-  diffCheckpoints,
-  checkpointStats,
-  // CRDT
-  createCRDTState,
-  incrementClock,
-  mergeClock,
-  happensBefore,
-  createOp,
-  applyOp,
-  getPendingOps,
-  markSynced,
-  crdtStats,
+  ingest,
+  latticeStats,
+  mintAtom,
+  resolve as pgslResolve,
+} from '@interego/pgsl';
+import type {
+  IRI,
 } from '@interego/core';
 import type {
-  EnclaveRegistry,
+  NodeProvenance,
+  PGSLInstance,
+} from '@interego/core';
+import {
+  abandonEnclave,
+  applyOp,
+  checkpointStats,
+  crdtStats,
+  createCheckpoint,
+  createCheckpointStore,
+  createCRDTState,
+  createEnclave,
+  createEnclaveRegistry,
+  createOp,
+  diffCheckpoints,
+  enclaveStats,
+  forkEnclave,
+  freezeEnclave,
+  getCheckpoint,
+  getEnclave,
+  getPendingOps,
+  happensBefore,
+  incrementClock,
+  listCheckpoints,
+  listEnclaves,
+  markSynced,
+  mergeClock,
+  mergeEnclave,
+  restoreCheckpoint,
+} from '@interego/core';
+import type {
   CheckpointStore,
   CRDTState,
+  EnclaveRegistry,
   VectorClock,
 } from '@interego/core';
 

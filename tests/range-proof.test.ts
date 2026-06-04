@@ -19,10 +19,15 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  proveBit, verifyBit,
-  proveRange, verifyRange,
+  proveBit,
+  proveRange,
+  verifyBit,
+  verifyRange,
 } from '@interego/core';
-import { commit, randomBlinding } from '@interego/core';
+import {
+  commit,
+  randomBlinding,
+} from '@interego/core';
 
 describe('range-proof: Chaum-Pedersen OR for {0, 1}', () => {
   it('honest 0: proveBit + verifyBit accepts', () => {

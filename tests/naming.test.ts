@@ -10,16 +10,26 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  buildNameAttestation,
-  resolveName,
-  namesFor,
-  defaultNameTrustPolicy,
-  resolveIdentifier,
-  directoryNameIndex,
-  podDirectoryToTurtle,
   parsePodDirectory,
+  podDirectoryToTurtle,
+  resolveIdentifier,
+} from '@interego/solid';
+import {
+  buildNameAttestation,
+  defaultNameTrustPolicy,
+  directoryNameIndex,
+  namesFor,
+  resolveName,
+} from '@interego/solid/naming';
+import type {
+  FetchFn,
+  IRI,
+  PodDirectoryData,
 } from '@interego/core';
-import type { IRI, NamingConfig, NameCandidate, FetchFn, PodDirectoryData } from '@interego/core';
+import type {
+  NameCandidate,
+  NamingConfig,
+} from '@interego/solid/naming';
 
 const FOAF_NICK = 'http://xmlns.com/foaf/0.1/nick';
 const ALICE_DID = 'did:web:pod.example:users:alice' as IRI;

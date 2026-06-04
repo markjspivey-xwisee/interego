@@ -14,10 +14,10 @@
 
 import { describe, it, expect } from 'vitest';
 import type {
-  IRI,
   AccessControlPolicyData,
   ContextDescriptorData,
   ContextFacetData,
+  IRI,
 } from '@interego/core';
 // ABAC primitives now live in `@interego/abac`; importing directly
 // keeps the unprefixed names (`evaluate`, `PolicyContext`) in scope

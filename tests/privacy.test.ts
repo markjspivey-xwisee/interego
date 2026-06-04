@@ -4,10 +4,10 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  screenForSensitiveContent,
   formatSensitivityWarning,
+  screenForSensitiveContent,
   shouldBlockOnSensitivity,
-} from '@interego/core';
+} from '@interego/privacy';
 
 // Test fixtures are built via runtime concatenation so the literal strings
 // in source don't trip GitHub's secret-scanner push protection. The

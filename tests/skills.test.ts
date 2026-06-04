@@ -9,15 +9,21 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  parseSkillMd,
-  emitSkillMd,
-  skillBundleToDescriptor,
   descriptorGraphToSkillBundle,
   descriptorGraphToSkillMd,
+  emitSkillMd,
+  parseSkillMd,
   type SkillBundle,
+  skillBundleToDescriptor,
+} from '@interego/skills';
+import type {
+  IRI,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
-import { parseTrig, findSubjectsOfType, readStringValue } from '@interego/core';
+import {
+  findSubjectsOfType,
+  parseTrig,
+  readStringValue,
+} from '@interego/core';
 
 const AUTHOR = 'did:web:alice.example' as IRI;
 

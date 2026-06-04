@@ -7,18 +7,20 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { unlinkSync, existsSync } from 'node:fs';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 import {
+  type AuditableDescriptor,
   checkComplianceInputs,
-  generateFrameworkReport,
-  walkLineage,
   FRAMEWORK_CONTROLS,
-  loadOrCreateComplianceWallet,
-  rotateComplianceWallet,
+  generateFrameworkReport,
   importComplianceWallet,
   listValidSignerAddresses,
-  type AuditableDescriptor,
-} from '@interego/core';
+  loadOrCreateComplianceWallet,
+  rotateComplianceWallet,
+  walkLineage,
+} from '@interego/compliance';
 
 describe('checkComplianceInputs', () => {
   it('passes when all requirements met', () => {

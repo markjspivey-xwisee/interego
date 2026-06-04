@@ -22,18 +22,22 @@
 import { describe, it, expect } from 'vitest';
 import {
   ContextDescriptor,
-  toTurtle,
-  validate,
-  publish,
-  discover,
-  importWallet,
-  signDescriptor,
-  verifyDescriptorSignature,
   cryptoComputeCid,
-  union,
+  importWallet,
   intersection,
+  signDescriptor,
+  toTurtle,
+  union,
+  validate,
+  verifyDescriptorSignature,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  discover,
+  publish,
+} from '@interego/solid';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── In-memory pod backed by a real-ish fetch handler ─────────
 //

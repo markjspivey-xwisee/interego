@@ -8,20 +8,24 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  parseDate,
-  daysBetween,
-  dateDifference,
-  orderChronologically,
-  countUnique,
-  sumValues,
   averageValues,
+  countUnique,
+  dateDifference,
+  daysBetween,
   extractNumbers,
-  getLatestFact,
   findFirstAfter,
+  getLatestFact,
+  orderChronologically,
+  parseDate,
+  sumValues,
   whichCameFirst,
-  shouldAbstain,
 } from '@interego/core';
-import type { TemporalFact } from '@interego/core';
+import {
+  shouldAbstain,
+} from '@interego/pgsl';
+import type {
+  TemporalFact,
+} from '@interego/core';
 
 describe('parseDate', () => {
   it('parses ISO dates', () => {

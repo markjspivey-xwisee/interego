@@ -28,22 +28,27 @@
  */
 
 import {
-  createPGSL,
-  embedInPGSL,
-  latticeStats,
-  pgslResolve,
-  verifyCoherence,
   computeCoverage,
   getCertificates,
   getCoherenceStatus,
-  sparqlQueryPGSL,
   sparqlFragmentsContaining,
+  sparqlQueryPGSL,
   validateAllPGSL,
-  mintAtom,
-  ingest,
+  verifyCoherence,
 } from '@interego/core';
+import {
+  createPGSL,
+  embedInPGSL,
+  ingest,
+  latticeStats,
+  mintAtom,
+  resolve as pgslResolve,
+} from '@interego/pgsl';
 
-import type { IRI, PGSLInstance } from '@interego/core';
+import type {
+  IRI,
+  PGSLInstance,
+} from '@interego/core';
 
 // ── Colors & Logging ───────────────────────────────────────
 

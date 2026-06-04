@@ -18,23 +18,34 @@
  */
 
 import {
-  createPGSL, embedInPGSL, latticeStats, pgslResolve,
-  verifyCoherence, computeCoverage, getCertificates,
+  computeCoverage,
+  getCertificates,
   sparqlQueryPGSL,
+  verifyCoherence,
 } from '@interego/core';
+import {
+  createPGSL,
+  embedInPGSL,
+  latticeStats,
+  resolve as pgslResolve,
+} from '@interego/pgsl';
 
 import {
-  extractObservations,
   computeAffordances as computeDecisionAffordances,
-  selectStrategy,
   decide as decideFromObservations,
+  extractObservations,
+  selectStrategy,
 } from '@interego/core';
 
 import {
-  generateMetagraph, ingestMetagraph,
+  generateMetagraph,
+  ingestMetagraph,
 } from '@interego/core';
 
-import type { IRI, PGSLInstance } from '@interego/core';
+import type {
+  IRI,
+  PGSLInstance,
+} from '@interego/core';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 

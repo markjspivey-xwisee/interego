@@ -1,38 +1,36 @@
 import { describe, it, expect } from 'vitest';
 import {
-  // E2E Encryption
-  generateKeyPair,
-  generateContentKey,
-  encryptContent,
-  decryptContent,
-  wrapKeyForRecipient,
-  unwrapKey,
+  buildMerkleTree,
   createEncryptedEnvelope,
+  createSelectiveDisclosure,
+  decryptContent,
+  encryptContent,
+  envelopeFromJson,
+  envelopeToJson,
+  generateContentKey,
+  generateKeyPair,
+  generateMerkleProof,
   openEncryptedEnvelope,
   openEncryptedEnvelopeWithHistory,
-  reEncryptForRecipients,
-  envelopeToJson,
-  envelopeFromJson,
-  // ZK Proofs — the bare `commit` from @interego/core now resolves
-  // to the Pedersen 2-arg commitment; this test wants the zk
-  // chain-hash variant explicitly.
-  zkCommit as commit,
-  verifyCommitment,
   proveConfidenceAboveThreshold,
+  proveDelegationMembership,
+  proveFragmentMembership,
+  proveTemporalOrdering,
+  reEncryptForRecipients,
+  unwrapKey,
+  verifyCommitment,
   verifyConfidenceProof,
   verifyConfidenceProofByReveal,
-  buildMerkleTree,
-  generateMerkleProof,
-  verifyMerkleProof,
-  proveDelegationMembership,
   verifyDelegationMembership,
-  proveTemporalOrdering,
-  verifyTemporalProof,
-  proveFragmentMembership,
   verifyFragmentMembership,
-  createSelectiveDisclosure,
+  verifyMerkleProof,
+  verifyTemporalProof,
+  wrapKeyForRecipient,
+  zkCommit as commit,
 } from '@interego/core';
-import { sha256 } from '@interego/core';
+import {
+  sha256,
+} from '@interego/core';
 
 // ═════════════════════════════════════════════════════════════
 //  E2E Encryption (NaCl / tweetnacl)

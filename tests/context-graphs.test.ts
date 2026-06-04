@@ -7,37 +7,39 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  ContextDescriptor,
-  union,
-  intersection,
-  restriction,
-  override,
-  effectiveContext,
-  validate,
+  askHasContextType,
   assertValid,
-  toTurtle,
-  toJsonLdString,
-  fromJsonLd,
-  toJsonLd,
-  expand,
+  CG,
+  CGClass,
+  CGProp,
   compact,
+  ContextDescriptor,
+  effectiveContext,
+  expand,
+  fromJsonLd,
+  getShaclShapesTurtle,
+  intersection,
+  override,
+  PROV,
   queryContextForGraph,
   queryGraphsAtTime,
   queryGraphsByModalStatus,
-  askHasContextType,
-  getShaclShapesTurtle,
-  CGClass,
-  CGProp,
-  CG,
-  PROV,
+  restriction,
+  toJsonLd,
+  toJsonLdString,
+  toTurtle,
+  union,
+  validate,
 } from '@interego/core';
-import { resetComposedIdCounter } from '@interego/core';
+import {
+  resetComposedIdCounter,
+} from '@interego/core';
 
 import type {
-  IRI,
   ContextDescriptorData,
-  TemporalFacetData,
+  IRI,
   SemioticFacetData,
+  TemporalFacetData,
 } from '@interego/core';
 
 // ── Helpers ──────────────────────────────────────────────────

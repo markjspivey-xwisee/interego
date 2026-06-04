@@ -7,7 +7,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { IRI, ContextDescriptorData } from '@interego/core';
+import type {
+  ContextDescriptorData,
+  IRI,
+} from '@interego/core';
 import {
   effectiveModal,
   temporalAnnotations,

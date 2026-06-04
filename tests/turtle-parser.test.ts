@@ -9,13 +9,15 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  parseTrig,
   findSubjectsOfType,
-  readStringValues,
+  parseTrig,
   readIntegerValue,
   readIriValue,
+  readStringValues,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 const CGH = (l: string) => `https://markjspivey-xwisee.github.io/interego/ns/harness#${l}` as IRI;
 

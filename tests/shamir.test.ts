@@ -22,10 +22,10 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  splitSecret,
-  reconstructSecret,
   evaluateAt,
+  reconstructSecret,
   type ShamirShare,
+  splitSecret,
 } from '@interego/core';
 
 const L = 7237005577332262213973186563042994240857116359379907606001950938285454250989n;

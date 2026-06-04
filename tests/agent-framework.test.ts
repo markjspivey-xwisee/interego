@@ -1,50 +1,46 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  // AAT built-in types
-  ObserverAAT,
+  addMessage,
+  addRule,
   AnalystAAT,
-  ExecutorAAT,
   ArbiterAAT,
   ArchivistAAT,
-  FullAccessAAT,
-  // AAT Registry
-  createAATRegistry,
-  registerAAT,
-  getAAT,
-  // AAT filtering & validation
-  filterAffordancesByAAT,
-  validateAction,
-  // Deontic Policy Engine
-  createPolicyEngine,
-  addRule,
-  removeRule,
-  evaluatePolicy,
-  defaultPolicies,
-  // PROV Action Tracing
-  createTraceStore,
-  recordTrace,
-  getTraces,
-  traceToTurtle,
-  wrapWithTracing,
-  // Personal Broker
-  createPersonalBroker,
-  startConversation,
-  addMessage,
-  getMemoryStats,
-  setPresence,
-  // AAT Decorator
   createAATDecorator,
-  // PGSL
-  createPGSL,
+  createAATRegistry,
+  createPersonalBroker,
+  createPolicyEngine,
+  createTraceStore,
+  defaultPolicies,
+  evaluatePolicy,
+  ExecutorAAT,
+  filterAffordancesByAAT,
+  FullAccessAAT,
+  getAAT,
+  getMemoryStats,
+  getTraces,
+  ObserverAAT,
+  recordTrace,
+  registerAAT,
+  removeRule,
+  setPresence,
+  startConversation,
+  traceToTurtle,
+  validateAction,
+  wrapWithTracing,
 } from '@interego/core';
+import {
+  createPGSL,
+} from '@interego/pgsl';
 import type {
   AbstractAgentType,
-  PolicyRule,
-  PolicyContext,
-  ProvTrace,
   DecoratedAffordance,
+  PolicyContext,
+  PolicyRule,
+  ProvTrace,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── Test helpers ──────────────────────────────────────────────
 

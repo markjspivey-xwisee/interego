@@ -10,18 +10,20 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { IRI } from '@interego/core';
-import {
-  createRegistry,
-  registerAgent,
-  refreshReputation,
-  queryEntries,
-  federateLookup,
-  aggregateReputation,
-  registryToDescriptor,
-  DEFAULT_AGGREGATION_POLICY,
-  type AttestationInput,
+import type {
+  IRI,
 } from '@interego/core';
+import {
+  aggregateReputation,
+  type AttestationInput,
+  createRegistry,
+  DEFAULT_AGGREGATION_POLICY,
+  federateLookup,
+  queryEntries,
+  refreshReputation,
+  registerAgent,
+  registryToDescriptor,
+} from '@interego/registry';
 
 const NOW = '2026-04-24T12:00:00Z';
 

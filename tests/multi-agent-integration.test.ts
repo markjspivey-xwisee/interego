@@ -9,40 +9,89 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  createPGSL, mintAtom, ingest, latticeStats,
   resolve as pgslResolve,
 } from '@interego/core';
-import { verifyCoherence, computeCoverage, getCertificates } from '@interego/core';
-import type { IRI } from '@interego/core';
-import type { PGSLInstance } from '@interego/core';
+import {
+  createPGSL,
+  ingest,
+  latticeStats,
+  mintAtom,
+} from '@interego/pgsl';
+import {
+  computeCoverage,
+  getCertificates,
+  verifyCoherence,
+} from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
+import type {
+  PGSLInstance,
+} from '@interego/core';
 
 // Agent framework
 import {
-  ObserverAAT, AnalystAAT, ExecutorAAT, ArbiterAAT, FullAccessAAT,
-  createAATRegistry, registerAAT, filterAffordancesByAAT, validateAction,
-  createPolicyEngine, addRule, evaluate as evaluatePolicy, defaultPolicies,
-  createTraceStore, recordTrace, getTraces,
-  createPersonalBroker, startConversation, addMessage, getMemoryStats,
+  addMessage,
+  addRule,
+  AnalystAAT,
+  ArbiterAAT,
   createAATDecorator,
+  createAATRegistry,
+  createPersonalBroker,
+  createPolicyEngine,
+  createTraceStore,
+  defaultPolicies,
+  evaluate as evaluatePolicy,
+  ExecutorAAT,
+  filterAffordancesByAAT,
+  FullAccessAAT,
+  getMemoryStats,
+  getTraces,
+  ObserverAAT,
+  recordTrace,
+  registerAAT,
+  startConversation,
+  validateAction,
 } from '@interego/core';
 import type {
-  PolicyRule, TraceStore, ProvTrace, PersonalBroker,
+  PersonalBroker,
+  PolicyRule,
+  ProvTrace,
+  TraceStore,
 } from '@interego/core';
 
 // Infrastructure
 import {
-  createEnclaveRegistry, createEnclave, forkEnclave, freezeEnclave,
-  mergeEnclave, enclaveStats,
-  createCheckpointStore, createCheckpoint, restoreCheckpoint, diffCheckpoints,
-  createCRDTState, incrementClock, createOp, applyOp, getPendingOps, markSynced,
+  applyOp,
+  createCheckpoint,
+  createCheckpointStore,
+  createCRDTState,
+  createEnclave,
+  createEnclaveRegistry,
+  createOp,
+  diffCheckpoints,
+  enclaveStats,
+  forkEnclave,
+  freezeEnclave,
+  getPendingOps,
+  incrementClock,
+  markSynced,
+  mergeEnclave,
+  restoreCheckpoint,
 } from '@interego/core';
 
 // Discovery
 import {
-  introspectJson, applyIntrospection,
-  createMarketplace, registerListing, discoverByCapability,
-  generateMetagraph, ingestMetagraph, validateMetagraph, queryMetagraph,
+  applyIntrospection,
   createIntrospectionAgent,
+  createMarketplace,
+  discoverByCapability,
+  generateMetagraph,
+  ingestMetagraph,
+  introspectJson,
+  queryMetagraph,
+  registerListing,
+  validateMetagraph,
 } from '@interego/core';
 
 // Decision functor — the bare `decide` from @interego/core is the
@@ -50,18 +99,25 @@ import {
 // `decide` is exported separately as `decideFromObservations` to
 // avoid that collision.
 import {
-  extractObservations,
   computeAffordances as computeDecisionAffordances,
+  extractObservations,
   selectStrategy,
-  decideFromObservations,
 } from '@interego/core';
+import {
+  decide as decideFromObservations,
+} from '@interego/pgsl';
 
 // Decorators
 import {
-  createDefaultRegistry, decorateNode, registerDecorator,
   coreSystemDecorator,
+  createDefaultRegistry,
+  decorateNode,
+  registerDecorator,
 } from '@interego/core';
-import type { DecoratorContext, DecoratedAffordance } from '@interego/core';
+import type {
+  DecoratedAffordance,
+  DecoratorContext,
+} from '@interego/core';
 
 // ── Helpers ──────────────────────────────────────────────────
 

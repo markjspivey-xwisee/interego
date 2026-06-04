@@ -14,10 +14,10 @@
 import { describe, it, expect } from 'vitest';
 import { Parser } from 'n3';
 import {
-  loadOntology,
+  getOntologyManifest,
   loadFullOntology,
   loadFullShapes,
-  getOntologyManifest,
+  loadOntology,
   ONTOLOGY_MANIFEST,
   type OntologyName,
 } from '@interego/core';

@@ -1,13 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import {
-  createPGSL,
-  embedInPGSL,
-  verifyCoherence,
   computeCoverage,
   getCertificates,
   getCoherenceStatus,
+  verifyCoherence,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  createPGSL,
+  embedInPGSL,
+} from '@interego/pgsl';
+import type {
+  IRI,
+} from '@interego/core';
 
 describe('Coherence Verification', () => {
   function makePgsl(provAgent: string) {

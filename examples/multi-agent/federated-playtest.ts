@@ -22,41 +22,89 @@
  */
 
 import {
-  createPGSL, embedInPGSL, mintAtom, ingest, latticeStats,
-  pgslResolve, ingestWithProfile,
-  ContextDescriptor, validate, publish, discover, toTurtle,
-  verifyCoherence, computeCoverage, getCertificates,
-  createWallet, signDescriptor, createDelegation,
-  union, intersection,
+  computeCoverage,
+  ContextDescriptor,
+  createDelegation,
+  createWallet,
+  getCertificates,
+  ingestWithProfile,
+  intersection,
+  signDescriptor,
+  toTurtle,
+  union,
+  validate,
+  verifyCoherence,
 } from '@interego/core';
+import {
+  createPGSL,
+  embedInPGSL,
+  ingest,
+  latticeStats,
+  mintAtom,
+  resolve as pgslResolve,
+} from '@interego/pgsl';
+import {
+  discover,
+  publish,
+} from '@interego/solid';
 
 import {
-  ObserverAAT, AnalystAAT, ExecutorAAT, FullAccessAAT,
-  createPolicyEngine, addRule, defaultPolicies, evaluate as evaluatePolicy,
-  createTraceStore, recordTrace, getTraces, traceToTurtle,
-  createPersonalBroker, startConversation, addMessage, getMemoryStats,
+  addMessage,
+  addRule,
+  AnalystAAT,
   createAATDecorator,
+  createPersonalBroker,
+  createPolicyEngine,
+  createTraceStore,
+  defaultPolicies,
+  evaluate as evaluatePolicy,
+  ExecutorAAT,
+  FullAccessAAT,
+  getMemoryStats,
+  getTraces,
+  ObserverAAT,
+  recordTrace,
+  startConversation,
+  traceToTurtle,
 } from '@interego/core';
 
 import {
-  createEnclaveRegistry, createEnclave, freezeEnclave, mergeEnclave,
-  createCheckpointStore, createCheckpoint, diffCheckpoints,
-  createCRDTState, createOp, applyOp, getPendingOps, markSynced, crdtStats,
+  applyOp,
+  crdtStats,
+  createCheckpoint,
+  createCheckpointStore,
+  createCRDTState,
+  createEnclave,
+  createEnclaveRegistry,
+  createOp,
+  diffCheckpoints,
+  freezeEnclave,
+  getPendingOps,
+  markSynced,
+  mergeEnclave,
 } from '@interego/core';
 
 import {
-  createMarketplace, registerListing, discoverByCapability, marketplaceStats,
-  generateMetagraph, ingestMetagraph,
+  createMarketplace,
+  discoverByCapability,
+  generateMetagraph,
+  ingestMetagraph,
+  marketplaceStats,
+  registerListing,
 } from '@interego/core';
 
 import {
-  extractObservations,
   computeAffordances as computeDecisionAffordances,
-  selectStrategy,
   decide as decideFromObservations,
+  extractObservations,
+  selectStrategy,
 } from '@interego/core';
 
-import type { IRI, PGSLInstance, FetchFn } from '@interego/core';
+import type {
+  FetchFn,
+  IRI,
+  PGSLInstance,
+} from '@interego/core';
 
 // ── Config ─────────────────────────────────────────────
 

@@ -25,29 +25,33 @@ import { fileURLToPath } from 'node:url';
 
 import {
   ContextDescriptor,
-  toTurtle,
-  toJsonLdString,
-  validate,
-  union,
   intersection,
-  restriction,
   override,
-  publish,
-  discover,
-  createPGSL,
-  embedInPGSL,
-  latticeStats,
-  latticeMeet,
-  pgslResolve,
-  sparqlQueryPGSL,
+  restriction,
   sparqlFragmentsContaining,
+  sparqlQueryPGSL,
+  toJsonLdString,
+  toTurtle,
+  union,
+  validate,
   validateAllPGSL,
 } from '@interego/core';
+import {
+  createPGSL,
+  embedInPGSL,
+  latticeMeet,
+  latticeStats,
+  resolve as pgslResolve,
+} from '@interego/pgsl';
+import {
+  discover,
+  publish,
+} from '@interego/solid';
 
 import type {
-  IRI,
   ContextDescriptorData,
   FetchFn,
+  IRI,
 } from '@interego/core';
 
 // ── Configuration ───────────────────────────────────────────

@@ -3,15 +3,17 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { IRI } from '@interego/core';
-import {
-  proposeAmendment,
-  vote,
-  tryRatify,
-  communityModal,
-  forkConstitution,
-  DEFAULT_RULES,
+import type {
+  IRI,
 } from '@interego/core';
+import {
+  communityModal,
+  DEFAULT_RULES,
+  forkConstitution,
+  proposeAmendment,
+  tryRatify,
+  vote,
+} from '@interego/constitutional';
 
 const ALICE = 'urn:agent:alice' as IRI;
 

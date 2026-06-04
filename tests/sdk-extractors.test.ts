@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
-  extract,
   detectFormat,
+  extract,
+} from '@interego/extractors';
+import {
   ContextGraphsSDK,
-} from '@interego/core';
+} from '@interego/solid';
 
 // ═════════════════════════════════════════════════════════════
 //  Format Detection

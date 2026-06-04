@@ -9,8 +9,8 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  normalizePublishInputs,
   extractRevocationConditions,
+  normalizePublishInputs,
   stripStringsAndComments,
 } from '@interego/core';
 

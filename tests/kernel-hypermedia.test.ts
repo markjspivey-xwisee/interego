@@ -14,21 +14,24 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  mint,
   compose,
-  promote,
-  restrict,
-  extend,
+  ContextDescriptor,
   decompose,
   decorateKernelResult,
   decorateShim,
+  extend,
   hydraAffordance,
   hydraEntryPoint,
   KERNEL_JSONLD_CONTEXT,
   KERNEL_RESULT_SHAPES,
-  ContextDescriptor,
+  mint,
+  promote,
+  restrict,
 } from '@interego/core';
-import type { ContextDescriptorData, IRI } from '@interego/core';
+import type {
+  ContextDescriptorData,
+  IRI,
+} from '@interego/core';
 
 const HYDRA = 'http://www.w3.org/ns/hydra/core#';
 const CG = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
