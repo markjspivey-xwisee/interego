@@ -55,12 +55,9 @@ COPY deploy/mcp-relay/package.json ./package.json.template
 # tarballs we just packed instead of workspace specifiers. The
 # workspace symlinks don't carry across image boundaries.
 #
-# Post substrate-vs-vertical split: the relay imports directly from
-# the package that owns each symbol (core / solid / pgsl / compliance
-# / privacy / security-txt). We install ONLY those tarballs, not all
-# 15. The compat re-export in @interego/core still works at runtime
-# for the small number of callers that haven't migrated yet, but the
-# deploy image is the slimmer pinned set.
+# The relay's package.json declares only the leaf packages it
+# directly imports — core / solid / pgsl / compliance / privacy /
+# security-txt / ops. We install exactly those tarballs.
 #
 # Strategy: drop the workspace specifiers from package.json (npm
 # would otherwise reject `*`) then install the tarballs directly so
@@ -74,16 +71,7 @@ RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./packag
       /tarballs/interego-compliance-0.2.0.tgz \
       /tarballs/interego-privacy-0.2.0.tgz \
       /tarballs/interego-security-txt-0.2.0.tgz \
-      /tarballs/interego-ops-0.2.0.tgz \
-      /tarballs/interego-passport-0.2.0.tgz \
-      /tarballs/interego-registry-0.2.0.tgz \
-      /tarballs/interego-p2p-0.2.0.tgz \
-      /tarballs/interego-abac-0.2.0.tgz \
-      /tarballs/interego-connectors-0.2.0.tgz \
-      /tarballs/interego-constitutional-0.2.0.tgz \
-      /tarballs/interego-extractors-0.2.0.tgz \
-      /tarballs/interego-skills-0.2.0.tgz \
-      /tarballs/interego-transactions-0.2.0.tgz
+      /tarballs/interego-ops-0.2.0.tgz
 
 COPY deploy/mcp-relay/tsconfig.json ./
 COPY deploy/mcp-relay/server.ts ./

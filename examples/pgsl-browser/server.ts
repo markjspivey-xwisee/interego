@@ -89,7 +89,7 @@ import {
   createMarketplace, registerListing, removeListing, discoverByCapability,
   discoverByType, marketplaceToHydra, marketplaceStats,
   generateMetagraph, ingestMetagraph, validateMetagraph, queryMetagraph,
-} from '@interego/core/pgsl';
+} from '@interego/pgsl';
 
 // Get the xAPI profile for direct transform calls
 const xapiProfile = getProfile('xapi')!;

@@ -17,7 +17,7 @@ RUN npm run build
 
 RUN mkdir -p /tarballs && \
     cd packages/core && npm pack --pack-destination /tarballs && cd /workspace && \
-    for pkg in pgsl solid abac compliance connectors constitutional extractors ops p2p passport privacy registry security-txt skills transactions; do \
+    for pkg in pgsl solid security-txt; do \
       cd packages/$pkg && npm pack --pack-destination /tarballs && cd /workspace ; \
     done
 
@@ -28,28 +28,17 @@ WORKDIR /app
 
 COPY examples/pgsl-browser/package.json ./package.json.template
 # Drop every @interego/* workspace specifier from the pgsl-browser's
-# package.json, then install ALL workspace tarballs as file: deps so
-# @interego/core's compat re-export resolves whatever the demo + lib
-# happen to reach into (compat re-exports from every vertical).
+# package.json (npm rejects `*` outside a workspace install), then
+# install ONLY the tarballs the browser actually imports.
+# server.ts pulls @interego/core, @interego/pgsl, @interego/solid,
+# @interego/security-txt.
 RUN node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('./package.json.template','utf8'));if(p.dependencies){for(const k of Object.keys(p.dependencies)){if(k.startsWith('@interego/'))delete p.dependencies[k];}}fs.writeFileSync('./package.json',JSON.stringify(p,null,2));" && \
     rm package.json.template && \
     npm install --no-audit --no-fund \
       /tarballs/interego-core-0.2.0.tgz \
       /tarballs/interego-solid-0.2.0.tgz \
       /tarballs/interego-pgsl-0.2.0.tgz \
-      /tarballs/interego-compliance-0.2.0.tgz \
-      /tarballs/interego-privacy-0.2.0.tgz \
-      /tarballs/interego-security-txt-0.2.0.tgz \
-      /tarballs/interego-ops-0.2.0.tgz \
-      /tarballs/interego-passport-0.2.0.tgz \
-      /tarballs/interego-registry-0.2.0.tgz \
-      /tarballs/interego-p2p-0.2.0.tgz \
-      /tarballs/interego-abac-0.2.0.tgz \
-      /tarballs/interego-connectors-0.2.0.tgz \
-      /tarballs/interego-constitutional-0.2.0.tgz \
-      /tarballs/interego-extractors-0.2.0.tgz \
-      /tarballs/interego-skills-0.2.0.tgz \
-      /tarballs/interego-transactions-0.2.0.tgz
+      /tarballs/interego-security-txt-0.2.0.tgz
 
 # esbuild build (per the prior README note: pgsl-browser is a demo;
 # type drift is tolerated; tsc is reserved for the core library).
