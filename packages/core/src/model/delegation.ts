@@ -128,15 +128,18 @@ export function ownerProfileToTurtle(profile: OwnerProfileData): string {
   }
 
   const activeAgents = profile.authorizedAgents.filter(a => !a.revoked);
-  for (let i = 0; i < activeAgents.length; i++) {
-    const a = activeAgents[i]!;
-    const sep = i < activeAgents.length - 1 ? ',' : '';
-    lines.push(`    cg:authorizedAgent <#agent-${encodeURIComponent(a.agentId)}>${sep}`);
-  }
-
-  // Replace trailing comma/nothing with period
   if (activeAgents.length > 0) {
-    lines.push('    .');
+    // Canonical Turtle predicate-object list: a single
+    // `cg:authorizedAgent` predicate followed by comma-separated objects,
+    // closed with `.` since this is the last predicate on the subject.
+    // Repeating the predicate per object (which would still parse but
+    // is non-canonical) trips strict round-trip validators.
+    lines.push('    cg:authorizedAgent');
+    for (let i = 0; i < activeAgents.length; i++) {
+      const a = activeAgents[i]!;
+      const sep = i < activeAgents.length - 1 ? ',' : ' .';
+      lines.push(`        <#agent-${encodeURIComponent(a.agentId)}>${sep}`);
+    }
   } else {
     // No agents — close the subject
     const last = lines.length - 1;

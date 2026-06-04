@@ -642,13 +642,17 @@ function buildPodAgentRegistry(identity: Identity): string {
     return lines.join('\n');
   }
 
+  // Canonical Turtle predicate-object list: a single
+  // `cg:authorizedAgent` predicate followed by comma-separated objects,
+  // closed with `.` since this is the last predicate on the subject.
+  // Mirrors ownerProfileToTurtle so strict parsers round-trip identically.
+  lines.push('    cg:authorizedAgent');
   for (let i = 0; i < agents.length; i++) {
     const a = agents[i]!;
-    const sep = i < agents.length - 1 ? ',' : '';
+    const sep = i < agents.length - 1 ? ',' : ' .';
     const frag = `#agent-${encodeURIComponent(a.id)}`;
-    lines.push(`    cg:authorizedAgent <${frag}>${sep}`);
+    lines.push(`        <${frag}>${sep}`);
   }
-  lines.push('    .');
   lines.push('');
 
   for (const a of agents) {
