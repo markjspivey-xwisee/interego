@@ -2879,14 +2879,21 @@ const DEFAULT_ISSUER = new URL(PUBLIC_BASE_URL || `http://localhost:${PORT}`);
 // both documents before deciding it can use DPoP against this relay.
 const DPOP_SIGNING_ALGS = ['ES256', 'EdDSA'];
 const issuerHref = DEFAULT_ISSUER.href.replace(/\/$/, '');
-app.get('/.well-known/oauth-authorization-server', (_req, res) => {
+app.get('/.well-known/oauth-authorization-server', (req, res) => {
   // RFC 8414 (OAuth Authorization Server Metadata) — the body shape is
   // dictated by the spec, so we keep the canonical fields verbatim
   // and add hypermedia (`@context` + `@type` + `affordances`) as
   // additive linked-data decoration so Hydra-aware clients see the
   // authorize/token/register endpoints as fully Hydra-typed operations.
-  // application/ld+json content type per JSON-LD 1.1 §5.
-  res.type('application/ld+json').json({
+  //
+  // Content-Type: RFC 8414 §3.2 mandates `application/json`. Some MCP
+  // clients (ChatGPT custom connectors among them) reject any other
+  // type — `application/ld+json` triggers a "does not implement OAuth"
+  // error there. Honor Accept: send `application/ld+json` only when
+  // explicitly requested; default to `application/json`. The body is
+  // identical and valid JSON either way (JSON-LD ⊂ JSON).
+  const wantsJsonLd = (req.get('accept') || '').includes('application/ld+json');
+  res.type(wantsJsonLd ? 'application/ld+json' : 'application/json').json({
     '@context': KERNEL_JSONLD_CONTEXT,
     '@id': `${issuerHref}/.well-known/oauth-authorization-server`,
     '@type': ['hydra:Resource', 'urn:cg:oauth:AuthorizationServerMetadata'],
@@ -2931,8 +2938,12 @@ app.get('/.well-known/oauth-authorization-server', (_req, res) => {
     ],
   });
 });
-app.get('/.well-known/oauth-protected-resource', (_req, res) => {
-  res.type('application/ld+json').json({
+app.get('/.well-known/oauth-protected-resource', (req, res) => {
+  // RFC 9728 §3.3 mandates `application/json`. Same Accept-driven
+  // negotiation as the authorization-server metadata above —
+  // application/json by default, application/ld+json only when asked.
+  const wantsJsonLd = (req.get('accept') || '').includes('application/ld+json');
+  res.type(wantsJsonLd ? 'application/ld+json' : 'application/json').json({
     '@context': KERNEL_JSONLD_CONTEXT,
     '@id': `${issuerHref}/.well-known/oauth-protected-resource`,
     '@type': ['hydra:Resource', 'urn:cg:oauth:ProtectedResourceMetadata'],
