@@ -145,8 +145,8 @@ az containerapp create \
   --ingress external \
   --min-replicas 1 \
   --max-replicas 3 \
-  --cpu 0.25 \
-  --memory 0.5Gi \
+  --cpu 1.0 \
+  --memory 2.0Gi \
   --env-vars "CSS_URL=$CSS_INTERNAL_URL" "RELAY_OAUTH_STORE_POD=${CSS_INTERNAL_URL%/}/svc-relay-dcr/" \
   --output none
 
