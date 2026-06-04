@@ -262,18 +262,13 @@ export {
   systemDcatCatalog,
   allPrefixes,
   CG_NS,
-  materializeSystem,
-  executeSparqlProtocol,
-  writeBackTriples,
-  sparqlUpdateHandler,
-  systemToTurtle,
-  systemToJsonLd,
 } from './rdf/index.js';
-export type {
-  SystemState,
-  SparqlProtocolResult,
-  WriteBackResult,
-} from './rdf/index.js';
+// Virtualized RDF layer (materializeSystem / executeSparqlProtocol /
+// systemToTurtle / writeBackTriples / sparqlUpdateHandler + its types)
+// lived here while PGSL was bundled into core. They now live in
+// `@interego/pgsl`. The compat shim re-exports the historical names so
+// existing `import { ... } from '@interego/core'` consumers keep
+// working through the migration.
 
 // ── Validation ───────────────────────────────────────────────
 export {
@@ -299,405 +294,62 @@ export {
 } from './sparql/index.js';
 
 // ── Solid Integration ───────────────────────────────────────
+//
+// The Solid + LDP binding moved out to `@interego/solid`. Historical
+// `import { publish, discover, ... } from '@interego/core'` callers
+// continue to work via the compat shim. New code SHOULD import
+// directly from `@interego/solid`. Substrate-level HTTP types (FetchFn
+// / FetchResponse / WebSocket*) live in `@interego/core/http`; the
+// generic affordance follower lives in `@interego/core/affordance`;
+// withTransientRetry lives in `@interego/core/http`.
+
+// Local re-exports kept here because they're substrate-shaped — used
+// by the kernel + compat. `ManifestEntry` is the substrate's manifest-
+// row shape; `withTransientRetry` and `isTransientNetworkError` are
+// the substrate's transient retry helper; `followAffordance` is the
+// generic affordance follower; the FetchFn family is substrate HTTP.
 export {
-  publish,
-  discover,
-  subscribe,
-  parseManifest,
-  writeAgentRegistry,
-  readAgentRegistry,
-  writeDelegationCredential,
-  verifyAgentDelegation,
-  AGENT_REGISTRY_PATH,
-  CREDENTIALS_PATH,
-  podDirectoryToTurtle,
-  parsePodDirectory,
-  fetchPodDirectory,
-  publishPodDirectory,
-  POD_DIRECTORY_PATH,
-  resolveWebFinger,
-  didWebToUrl,
-  resolveDidWeb,
-  resolveDid,
-  extractPublicKey,
-  findStorageEndpoint,
-  // IPFS Anchoring — solid/ipfs.ts also has a computeCid (async,
-  // signed-descriptor anchor variant). It's exported as
-  // `computeSolidCid` so the bare `computeCid` name resolves to the
-  // sync crypto/ipfs.ts variant that tests + most callers expect.
-  computeCid as computeSolidCid,
-  computeLatticeCids,
-  pinToIPFS,
-  computeDescriptorAnchor,
-  // Zero-Copy Anchor Receipts
-  writeAnchor,
-  writeAnchors,
-  readAnchors,
-  // E2EE envelope fetch
-  fetchGraphContent,
-  // Hypermedia: descriptor -> graph payload link
-  parseDistributionFromDescriptorTurtle,
-  // Cross-pod sharing
-  resolveHandleToPodUrl,
-  resolveRecipient,
-  resolveRecipients,
-  // Shape discovery (§6.5b)
-  resolveShape,
-  listPodShapes,
-  parseShapeIndex,
-  shapeIndexTurtle,
-  POD_SHAPES_PATH,
-  POD_SHAPES_INDEX_PATH,
-  // Progressive discovery (§6.5d)
-  resolveIdentifier,
-  fetchWellKnownAgents,
-  parseAgentsCatalog,
-  agentsCatalogTurtle,
-  WELL_KNOWN_AGENTS_PATH,
-  socialWalk,
-  predictDescriptorUrl,
-  // Transient-network retry (substrate plumbing for fetch wrappers)
   withTransientRetry,
   isTransientNetworkError,
-  // Generic affordance follower (Path A reach-anywhere primitive)
-  followAffordance,
-  DescriptorNotFoundError,
-  AffordanceNotFoundError,
-} from './solid/index.js';
-
+} from './http/index.js';
 export type {
   TransientRetryOptions,
-  FollowAffordanceOptions,
-  FollowAffordanceResult,
-  ResolvedAffordance,
-  AffordanceMethod,
   FetchFn,
   FetchResponse,
   WebSocketLike,
   WebSocketConstructor,
-  PublishResult,
-  PublishOptions,
-  DiscoverFilter,
-  DiscoverOptions,
-  ManifestEntry,
-  ContextChangeEvent,
-  ContextChangeCallback,
-  Subscription,
-  SubscribeOptions,
-  ContextGraphsManifest,
-  RegistryOptions,
-  WebFingerResult,
-  WebFingerLink,
-  DidDocument,
-  VerificationMethod,
-  ServiceEndpoint,
-  DidResolutionResult,
-  IpfsAnchorReceipt,
-  SignatureAnchorReceipt,
-  EncryptionAnchorReceipt,
-  PgslAnchorReceipt,
-  ActivityAnchorReceipt,
-  AnchorReceipt,
-  ShareHandle,
-  ResolvedRecipientPod,
-  ResolveRecipientsOptions,
-  DistributionLink,
-  ResolvedShape,
-  ShapeIndexEntry,
-  DiscoveryResult,
-  DiscoveryTier,
-  AgentCatalogEntry,
-  SocialWalkResult,
-  PodNode,
-  PodEdge,
-  SocialWalkOptions,
-} from './solid/index.js';
+} from './http/index.js';
+export {
+  followAffordance,
+  DescriptorNotFoundError,
+  AffordanceNotFoundError,
+} from './affordance/index.js';
+export type {
+  FollowAffordanceOptions,
+  FollowAffordanceResult,
+  ResolvedAffordance,
+  AffordanceMethod,
+} from './affordance/index.js';
+
+// `ManifestEntry` — substrate-level shape of the .well-known/context-graphs
+// manifest. The Solid binding (`@interego/solid`) writes + reads the
+// manifest; the substrate type is kept here so the kernel + affordance
+// follower can work against rows without the binding.
+export type { ManifestEntry } from './manifest/index.js';
 
 // ── PGSL (Poly-Granular Sequence Lattice) ───────────────────
-export {
-  createPGSL,
-  mintAtom,
-  mintEncryptedAtom,
-  resolveAtomValue,
-  ingest,
-  resolve as pgslResolve,
-  resolve,
-  queryNeighbors,
-  latticeStats,
-  fiber,
-  maxLevel,
-  constituents,
-  pullbackSquare,
-  ancestorFragments,
-  descendantNodes,
-  latticeMeet,
-  isSubFragment,
-  PGSL_NS,
-  PGSLClass,
-  PGSLProp,
-  pgslTurtlePrefixes,
-  nodeToTurtle,
-  pgslToTurtle,
-  pgslOwlOntology,
-  pgslShaclShapes,
-  sparqlFragmentsAtLevel,
-  sparqlFragmentsContaining,
-  sparqlPullbackOf,
-  sparqlNeighbors,
-  sparqlLatticeStats,
-  liftToDescriptor,
-  embedInPGSL,
-  verifyIntersectionCoherence,
-  verifyProvenanceNaturality,
-  structuralRetrieve,
-  atomRetrieve,
-  computeContainmentAnnotations,
-  allContainmentAnnotations,
-  // Entity/relation extraction
-  extractEntities,
-  extractRelations,
-  classifyQuestion,
-  expandEntitiesWithOntology,
-  // Computation (structural date math, counting, aggregation)
-  parseDate,
-  daysBetween,
-  dateDifference,
-  orderChronologically,
-  countUnique,
-  countUniquePGSL,
-  sumValues,
-  averageValues,
-  extractNumbers,
-  getLatestFact,
-  findFirstAfter,
-  whichCameFirst,
-  shouldAbstain,
-  signNode,
-  verifyNodeSignature,
-  // Coherence
-  verifyCoherence,
-  computeCoverage,
-  getCertificates,
-  getCoherenceStatus,
-  // Ingestion profiles
-  registerProfile,
-  getProfile,
-  listProfiles,
-  ingestWithProfile,
-  batchIngestWithProfile,
-  // SPARQL engine
-  createTripleStore,
-  addTriple,
-  addTriples,
-  matchPattern as sparqlMatchPattern,
-  matchPattern,
-  materializeTriples,
-  parseSparql,
-  executeSparql,
-  executeSparqlString,
-  sparqlQueryPGSL,
-  // SHACL validation
-  validateCorePGSL,
-  validateStructuralPGSL,
-  validateDomainShapes,
-  validateAllPGSL,
-  domainShapesToTurtle,
-  // LLM tools
-  getToolDefinitions,
-  parseToolCalls,
-  executeToolCall,
-  formatToolPrompt,
-  formatToolResult,
-  runToolLoop,
-  // Decision functor
-  extractObservations,
-  computeAffordances as computeDecisionAffordances,
-  selectStrategy,
-  decide as decideFromObservations,
-  composeDecisions,
-  // Affordance decorators
-  createDecoratorRegistry,
-  createDefaultRegistry,
-  registerDecorator,
-  removeDecorator,
-  decorateNode,
-  // Static ontology loaders (Node-only — reads docs/ns/*.ttl)
-  loadOntology,
-  loadFullOntology,
-  loadFullShapes,
-  getOntologyManifest,
-  ONTOLOGY_MANIFEST,
-  // Abstract Agent Types (AATs) + policy engine + provenance trace
-  // store + personal broker. Built-in AATs (Observer / Analyst /
-  // Executor / Arbiter / Archivist / FullAccess) + the registry
-  // mechanism that lets a deployment add custom AATs.
-  ObserverAAT,
-  AnalystAAT,
-  ExecutorAAT,
-  ArbiterAAT,
-  ArchivistAAT,
-  FullAccessAAT,
-  createAATRegistry,
-  registerAAT,
-  getAAT,
-  filterAffordancesByAAT,
-  validateAction,
-  createPolicyEngine,
-  addRule,
-  removeRule,
-  evaluatePolicy,
-  evaluatePolicy as evaluate,
-  defaultPolicies,
-  createTraceStore,
-  recordTrace,
-  getTraces,
-  verifyCoherenceTraced,
-  createAgentContext,
-  createPersonalBroker,
-  startConversation,
-  addMessage,
-  getMemoryStats,
-  setPresence,
-  createAATDecorator,
-  traceToTurtle,
-  wrapWithTracing,
-  // Infrastructure — Enclaves, Checkpoints, CRDT
-  createEnclaveRegistry,
-  createEnclave,
-  forkEnclave,
-  getEnclave,
-  listEnclaves,
-  freezeEnclave,
-  mergeEnclave,
-  abandonEnclave,
-  enclaveStats,
-  createCheckpointStore,
-  createCheckpoint,
-  restoreCheckpoint,
-  getCheckpoint,
-  listCheckpoints,
-  diffCheckpoints,
-  checkpointStats,
-  createCRDTState,
-  incrementClock,
-  mergeClock,
-  happensBefore,
-  createOp,
-  applyOp,
-  getPendingOps,
-  markSynced,
-  crdtStats,
-  // Discovery — Introspection, Virtual Layer, Metagraph, Marketplace
-  createIntrospectionAgent,
-  introspectJson,
-  introspectCsv,
-  introspectRdf,
-  introspectApi,
-  applyIntrospection,
-  createVirtualLayer,
-  registerReference,
-  resolveReference,
-  invalidateCache,
-  virtualLayerStats,
-  generateMetagraph,
-  ingestMetagraph,
-  validateMetagraph,
-  queryMetagraph,
-  createMarketplace,
-  registerListing,
-  removeListing,
-  discoverByCapability,
-  discoverByType,
-  refreshListing,
-  marketplaceStats,
-  marketplaceToHydra,
-} from './pgsl/index.js';
-
-export type {
-  OntologyName,
-  OntologyManifestEntry,
-  // Agent framework types
-  AbstractAgentType,
-  AATRegistry,
-  DeonticMode as PgslDeonticMode,
-  PolicyRule,
-  PolicyContext as PgslPolicyContext,
-  PolicyDecision as PgslPolicyDecision,
-  PolicyEngine,
-  ProvTrace,
-  TraceStore,
-  TraceFilter,
-  TracedAffordance,
-  PersonalBroker,
-  Conversation,
-  ConversationMessage,
-  AgentMemory,
-  PresenceStatus,
-} from './pgsl/index.js';
-
-export type {
-  Value,
-  Level,
-  Height,
-  Atom,
-  Fragment,
-  Node as PGSLNode,
-  NodeProvenance,
-  PGSLInstance,
-  Direction,
-  ConstituentMorphism,
-  PullbackSquare,
-  ContainmentAnnotation,
-  ContainmentRole,
-  TokenGranularity,
-  RetrievalResult,
-  RetrievalOptions,
-  // SPARQL engine types
-  Triple,
-  TripleStore,
-  SparqlQuery,
-  SparqlResult,
-  Binding,
-  // SHACL types
-  ShaclViolation,
-  ShaclValidationResult,
-  ShaclShapeDefinition,
-  ShaclPropertyConstraint,
-  // Tool types
-  ToolDefinition,
-  ToolCall,
-  ToolResult,
-  ToolContext,
-  // Coherence types
-  CoherenceStatus,
-  CoherenceCertificate,
-  CoherenceObstruction,
-  CoherenceCoverage,
-  AtomCoherence,
-  // Ingestion profile types
-  IngestionProfile,
-  XapiStatement,
-  LersCredential,
-  RdfTriple,
-  // Decision functor types
-  Affordance as DecisionAffordance,
-  Decision,
-  ObservationSection,
-  DecisionStrategy,
-  DecisionResult,
-  // Decorator types
-  AffordanceDecorator,
-  DecoratorContext,
-  DecoratedAffordance,
-  StructuralSuggestion,
-  DecoratorResult,
-  DecoratorRegistry,
-} from './pgsl/index.js';
+//
+// PGSL is now its own package: `@interego/pgsl`. The kernel's `mint` /
+// `promote` / `decompose` verbs reach the lattice through the registered
+// `LatticeAdapter`; importing `@interego/pgsl` registers the lattice-
+// aware adapter as a side effect. Historical `import { ... } from
+// '@interego/core'` callers for PGSL symbols continue to work via the
+// compat shim (`@interego/core/compat`) while the migration is in
+// flight; new code SHOULD import from `@interego/pgsl` directly.
 
 // ── Affordance Engine ────────────────────────────────────────
 export {
   computeAffordances,
-  computeCognitiveStrategy,
   createAgentState,
   assimilateDescriptor,
   addDesire,
@@ -741,7 +393,6 @@ export type {
   BeliefEntry,
   Desire,
   CommittedAffordance,
-  CognitiveStrategy,
   ReconsiderationTrigger,
   FreeEnergyEvaluation,
   FreeEnergyResponse,
@@ -916,14 +567,10 @@ export type {
 } from './crypto/index.js';
 
 // ── SDK (3-line developer API) ───────────────────────────────
-export { ContextGraphsSDK } from './sdk.js';
-export type {
-  ContextGraphsConfig,
-  PublishOptions as SDKPublishOptions,
-  SearchOptions,
-  SearchResult,
-  PublishResult as SDKPublishResult,
-} from './sdk.js';
+// Moved out to `@interego/solid` — the SDK is convenience over
+// publish/discover/subscribe, which are the Solid binding's surface.
+// `import { ContextGraphsSDK } from '@interego/core'` continues to
+// work via the compat shim.
 
 // ── Per-vertical compositions live in sibling @interego/* packages ──
 //
@@ -1011,26 +658,10 @@ export type {
 } from './kernel/index.js';
 
 // ── Name service (L2 — attestation-based naming) ───────────────────
-// A name is a verifiable attestation (`<did> foaf:nick "alice"`), not a
-// claimed registration. Forward + reverse resolution by federated
-// discovery + a pluggable trust policy. See docs/NAME-SERVICE.md.
-export {
-  buildNameAttestation,
-  attestName,
-  resolveName,
-  namesFor,
-  defaultNameTrustPolicy,
-  directoryNameIndex,
-} from './naming/index.js';
-export type {
-  NamingConfig,
-  AttestNameArgs,
-  AttestNameResult,
-  NameCandidate,
-  ResolveOptions as NameResolveOptions,
-  NameTrustPolicy,
-  NameHint,
-} from './naming/index.js';
+// Moved out to `@interego/solid/naming` (it composes against the
+// Solid binding's publish + discover). The compat shim re-exports the
+// historical names so `import { resolveName, namesFor, ... } from
+// '@interego/core'` keeps working.
 
 // ── HTTP plumbing (substrate-level — FetchFn / fetch resolver / retry) ──
 // Authoritative location for substrate HTTP types + helpers. The solid/

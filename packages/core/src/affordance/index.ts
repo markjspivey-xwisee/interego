@@ -44,8 +44,9 @@ export type {
 } from './types.js';
 
 // Core computation (Gibson + Norman)
-export { computeAffordances, computeCognitiveStrategy } from './compute.js';
-export type { CognitiveStrategy } from './compute.js';
+export { computeAffordances } from './compute.js';
+// `computeCognitiveStrategy` + `CognitiveStrategy` moved to `@interego/pgsl`
+// (cognitive-strategy module) — they consult PGSL retrieval primitives.
 
 // Engine (OODA + BDI + Active Inference + Stigmergy)
 export {

@@ -14,7 +14,7 @@
 import { ethers } from 'ethers';
 import type { IRI } from '../model/types.js';
 import type { CID, IpfsPinResult, IpfsAnchor, IpfsConfig } from './types.js';
-import type { FetchFn } from '../solid/types.js';
+import type { FetchFn } from '../http/types.js';
 
 // ── Content hashing (real SHA-256 via ethers.js) ─────────────
 

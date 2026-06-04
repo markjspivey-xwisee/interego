@@ -44,17 +44,7 @@ export {
   allPrefixes,
   CG_NS,
 } from './system-ontology.js';
-// Virtualized RDF layer (bidirectional)
-export {
-  materializeSystem,
-  executeSparqlProtocol,
-  writeBackTriples,
-  sparqlUpdateHandler,
-  systemToTurtle,
-  systemToJsonLd,
-} from './virtualized-layer.js';
-export type {
-  SystemState,
-  SparqlProtocolResult,
-  WriteBackResult,
-} from './virtualized-layer.js';
+// The virtualized RDF layer (`materializeSystem` / `executeSparqlProtocol`
+// / `systemToTurtle`...) used to live here. It depends on PGSL and now
+// lives in `@interego/pgsl`. The exports above remain unchanged for the
+// substrate's own Turtle / TriG / JSON-LD work.

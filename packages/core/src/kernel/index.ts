@@ -58,8 +58,40 @@ import {
   DescriptorNotFoundError,
   AffordanceNotFoundError,
 } from '../affordance/follow.js';
-import { fetchGraphContent, parseManifest } from '../solid/client.js';
+// `fetchGraphContent` and `parseManifest` live in `@interego/solid` post-
+// substrate-split. The kernel loads them via dynamic import so the
+// substrate package doesn't compile-time depend on the Solid binding —
+// preserves the substrate-vs-vertical split. The dynamic import is
+// resolved at runtime against the workspace symlink (vitest) or the
+// installed dep (production). If `@interego/solid` isn't reachable,
+// `dereference` surfaces a clear error pointing at the missing package.
 import { parseTrig } from '../rdf/turtle-parser.js';
+
+interface SolidModule {
+  fetchGraphContent: (iri: string, options?: unknown) => Promise<{
+    content: string | null;
+    mediaType: string;
+    encrypted?: boolean;
+  }>;
+  parseManifest: (turtle: string) => readonly import('../manifest/types.js').ManifestEntry[];
+}
+
+let _solidModule: SolidModule | null = null;
+
+async function loadSolidLazy(): Promise<SolidModule> {
+  if (_solidModule) return _solidModule;
+  const dyn = Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
+  try {
+    const mod = await dyn('@interego/solid') as SolidModule;
+    _solidModule = mod;
+    return mod;
+  } catch (err) {
+    throw new Error(
+      '@interego/solid is required for kernel.dereference. Install @interego/solid alongside @interego/core.',
+      { cause: err },
+    );
+  }
+}
 import { getDefaultFetch } from '../http/fetch.js';
 import { withTransientRetry } from '../http/retry.js';
 import type { FetchFn } from '../http/types.js';
@@ -276,6 +308,7 @@ export async function dereference(iri: string, options?: DereferenceOptions): Pr
 
   // Generic graph / descriptor / envelope path.
   try {
+    const { fetchGraphContent } = await loadSolidLazy();
     const r = await fetchGraphContent(iri, {
       ...(options?.fetch ? { fetch: options.fetch } : {}),
       ...(options?.recipientKeyPair ? { recipientKeyPair: options.recipientKeyPair } : {}),
@@ -351,6 +384,7 @@ async function dereferenceManifest(
   }
 
   const body = await response.text();
+  const { parseManifest, fetchGraphContent } = await loadSolidLazy();
   const entries = parseManifest(body);
   const contentType = response.headers?.get('content-type') ?? 'text/turtle';
 

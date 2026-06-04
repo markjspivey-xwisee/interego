@@ -57,6 +57,10 @@
       "import": "./dist/http/index.js",
       "types": "./dist/http/index.d.ts"
     },
+    "./manifest": {
+      "import": "./dist/manifest/index.js",
+      "types": "./dist/manifest/index.d.ts"
+    },
     "./lattice": {
       "import": "./dist/lattice/index.js",
       "types": "./dist/lattice/index.d.ts"
@@ -107,7 +111,9 @@
     "@interego/registry": "*",
     "@interego/security-txt": "*",
     "@interego/skills": "*",
-    "@interego/transactions": "*"
+    "@interego/transactions": "*",
+    "@interego/pgsl": "*",
+    "@interego/solid": "*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

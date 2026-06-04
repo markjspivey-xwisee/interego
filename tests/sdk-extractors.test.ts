@@ -127,31 +127,32 @@ describe('SDK', () => {
     cg.close();
   });
 
-  it('ingests content into PGSL lattice', () => {
-    const cg = new ContextGraphsSDK({ podUrl: 'https://example.com/alice/' });
-    const uri = cg.ingest('Hello world from the SDK');
+  it('ingests content into PGSL lattice', async () => {
+    // PGSL convenience methods moved off the SDK with the substrate
+    // split (PGSL is now `@interego/pgsl`). Use the package directly.
+    const { createPGSL, embedInPGSL, resolve: pgslResolve, latticeStats } = await import('@interego/pgsl');
+    const pgsl = createPGSL({ wasAttributedTo: 'urn:agent:test', generatedAtTime: new Date().toISOString() });
+    const uri = embedInPGSL(pgsl, 'Hello world from the SDK');
     expect(uri).toContain('urn:pgsl:fragment');
 
-    const resolved = cg.resolve(uri);
+    const resolved = pgslResolve(pgsl, uri);
     expect(resolved).toBe('Hello world from the SDK');
 
-    const stats = cg.stats();
+    const stats = latticeStats(pgsl);
     expect(stats.atoms).toBe(5); // Hello, world, from, the, SDK
     expect(stats.totalNodes).toBeGreaterThan(5);
-    cg.close();
   });
 
-  it('computes PGSL meet between two ingestions', () => {
-    const cg = new ContextGraphsSDK({ podUrl: 'https://example.com/alice/' });
-    const a = cg.ingest('context graphs enable federated knowledge sharing');
-    const b = cg.ingest('federated knowledge sharing across autonomous agents');
+  it('computes PGSL meet between two ingestions', async () => {
+    const { createPGSL, embedInPGSL, latticeMeet, resolve: pgslResolve } = await import('@interego/pgsl');
+    const pgsl = createPGSL({ wasAttributedTo: 'urn:agent:test', generatedAtTime: new Date().toISOString() });
+    const a = embedInPGSL(pgsl, 'context graphs enable federated knowledge sharing');
+    const b = embedInPGSL(pgsl, 'federated knowledge sharing across autonomous agents');
 
-    const meet = cg.meet(a, b);
+    const meet = latticeMeet(pgsl, a, b);
     expect(meet).not.toBeNull();
-    const content = cg.resolve(meet!);
+    const content = pgslResolve(pgsl, meet!);
     expect(content).toBe('federated knowledge sharing');
-
-    cg.close();
   });
 
   it('search returns empty for non-matching query', async () => {

@@ -1,0 +1,35 @@
+{
+  "name": "@interego/solid",
+  "version": "0.2.0",
+  "description": "Solid + LDP binding for the Interego substrate — publish / discover / subscribe over Solid Notifications, manifest parsing, agent registry, delegation credentials, WebFinger, DID:web resolution, IPFS anchoring, shape discovery, naming (L2 attestation-based name service). The kernel's dereference verb composes against this binding.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./naming": {
+      "import": "./dist/naming.js",
+      "types": "./dist/naming.d.ts"
+    }
+  },
+  "files": ["dist/", "src/", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist/"
+  },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@interego/core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

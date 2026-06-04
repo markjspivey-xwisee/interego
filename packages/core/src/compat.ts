@@ -266,3 +266,146 @@ export type {
   SkillToDescriptorOptions,
   DescriptorBundle as SkillDescriptorBundle,
 } from '@interego/skills';
+
+// ── Solid (substrate-vs-vertical split: Solid binding lives in its own package now) ──
+// Historical `import { publish, discover, parseManifest, … } from
+// '@interego/core'` callers continue to resolve through this re-export.
+// New code SHOULD import from `@interego/solid` directly.
+//
+// `computeLatticeCids` lives in both `@interego/pgsl` (sync, in-process)
+// and `@interego/solid` (async, IPFS-anchor variant). The pgsl one wins
+// for the bare name — it's what callers historically got — and the
+// solid variant is re-exported as `computeSolidCid` plus its own name
+// preserved via direct import.
+export type {
+  // Solid binding result + option shapes (re-exported so callers can
+  // explicitly name them without naming the conflicting symbols).
+  PublishResult,
+  PublishOptions,
+  DiscoverFilter,
+  DiscoverOptions,
+  ContextChangeEvent,
+  ContextChangeCallback,
+  Subscription,
+  SubscribeOptions,
+  ContextGraphsManifest,
+  RegistryOptions,
+  WebFingerResult,
+  WebFingerLink,
+  DidDocument,
+  VerificationMethod,
+  ServiceEndpoint,
+  DidResolutionResult,
+  IpfsAnchorReceipt,
+  SignatureAnchorReceipt,
+  EncryptionAnchorReceipt,
+  PgslAnchorReceipt,
+  ActivityAnchorReceipt,
+  AnchorReceipt,
+  ShareHandle,
+  ResolvedRecipientPod,
+  ResolveRecipientsOptions,
+  DistributionLink,
+  ResolvedShape,
+  ShapeIndexEntry,
+  DiscoveryResult,
+  DiscoveryTier,
+  AgentCatalogEntry,
+  SocialWalkResult,
+  PodNode,
+  PodEdge,
+  SocialWalkOptions,
+  ContextGraphsConfig,
+  PublishOptions as SDKPublishOptions,
+  SearchOptions,
+  SearchResult,
+  PublishResult as SDKPublishResult,
+} from '@interego/solid';
+export {
+  publish,
+  discover,
+  subscribe,
+  parseManifest,
+  writeAgentRegistry,
+  readAgentRegistry,
+  writeDelegationCredential,
+  verifyAgentDelegation,
+  AGENT_REGISTRY_PATH,
+  CREDENTIALS_PATH,
+  podDirectoryToTurtle,
+  parsePodDirectory,
+  fetchPodDirectory,
+  publishPodDirectory,
+  POD_DIRECTORY_PATH,
+  resolveWebFinger,
+  didWebToUrl,
+  resolveDidWeb,
+  resolveDid,
+  extractPublicKey,
+  findStorageEndpoint,
+  computeCid as computeSolidCid,
+  pinToIPFS,
+  computeDescriptorAnchor,
+  writeAnchor,
+  writeAnchors,
+  readAnchors,
+  fetchGraphContent,
+  parseDistributionFromDescriptorTurtle,
+  resolveHandleToPodUrl,
+  resolveRecipient,
+  resolveRecipients,
+  resolveShape,
+  listPodShapes,
+  parseShapeIndex,
+  shapeIndexTurtle,
+  POD_SHAPES_PATH,
+  POD_SHAPES_INDEX_PATH,
+  resolveIdentifier,
+  fetchWellKnownAgents,
+  parseAgentsCatalog,
+  agentsCatalogTurtle,
+  WELL_KNOWN_AGENTS_PATH,
+  socialWalk,
+  predictDescriptorUrl,
+  ContextGraphsSDK,
+} from '@interego/solid';
+export {
+  buildNameAttestation,
+  attestName,
+  resolveName,
+  namesFor,
+  defaultNameTrustPolicy,
+  directoryNameIndex,
+} from '@interego/solid/naming';
+export type {
+  NamingConfig,
+  AttestNameArgs,
+  AttestNameResult,
+  NameCandidate,
+  ResolveOptions as NameResolveOptions,
+  NameTrustPolicy,
+  NameHint,
+} from '@interego/solid/naming';
+
+// ── PGSL (substrate-vs-vertical split: PGSL lives in its own package now) ──
+// Importing this side-effect-installs the lattice-aware adapter into the
+// kernel, so historical callers that minted via `@interego/core` continue
+// to see PGSL behavior for `mint` / `promote` / `decompose`.
+export * from '@interego/pgsl';
+
+// Aliased re-exports — preserve the prior monolithic-core API surface
+// where a PGSL symbol was renamed at the core-package boundary.
+export {
+  matchPattern as sparqlMatchPattern,
+  resolve as pgslResolve,
+  computeAffordances as computeDecisionAffordances,
+  decide as decideFromObservations,
+  evaluatePolicy as evaluate,
+} from '@interego/pgsl';
+export type {
+  Affordance as DecisionAffordance,
+  Node as PGSLNode,
+  DeonticMode as PgslDeonticMode,
+  PolicyContext as PgslPolicyContext,
+  PolicyDecision as PgslPolicyDecision,
+} from '@interego/pgsl';

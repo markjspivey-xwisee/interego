@@ -1,0 +1,31 @@
+{
+  "name": "@interego/pgsl",
+  "version": "0.2.0",
+  "description": "PGSL — Grothendieck-fibration realization of the Interego substrate's structural lattice. Lattice-aware adapter for the kernel's mint/promote/decompose verbs; structural retrieval, SPARQL engine, SHACL validation, agent framework, ontology loaders. Importing this package registers a PGSL-backed LatticeAdapter with @interego/core as a side effect.",
+  "author": "Mark Spivey",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist/", "src/", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist/"
+  },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@interego/core": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

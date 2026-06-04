@@ -24,8 +24,9 @@
  */
 
 import type { IRI, ContextDescriptorData, CompositionOperator } from '../model/types.js';
-import type { ManifestEntry } from '../solid/types.js';
-import type { Level } from '../pgsl/types.js';
+import type { ManifestEntry } from '../manifest/types.js';
+import type { LatticeLevel as Level } from '../lattice/adapter.js';
+export type { LatticeLevel as Level } from '../lattice/adapter.js';
 
 // ── Holon ────────────────────────────────────────────────────
 

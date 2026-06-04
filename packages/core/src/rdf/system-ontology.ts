@@ -8,13 +8,19 @@
  * decisions, Hydra operations, DCAT federation, and PROV-O alignment.
  */
 
-import { PGSL_NS } from '../pgsl/rdf.js';
 import {
   RDF, RDFS, XSD, OWL, PROV, SHACL, ACL, DCAT, HYDRA, DPROD, FOAF, DCT,
 } from './namespaces.js';
 
 // ── Namespace Constants ─────────────────────────────────────
 
+/**
+ * PGSL namespace IRI. Inlined here (rather than imported from the PGSL
+ * package) because `rdf/system-ontology` is a substrate-level module
+ * and the substrate cannot depend on `@interego/pgsl`. The PGSL package
+ * exports the same constant — they MUST stay in sync.
+ */
+export const PGSL_NS  = 'https://markjspivey-xwisee.github.io/interego/ns/pgsl#' as const;
 export const CG_NS    = 'https://markjspivey-xwisee.github.io/interego/ns/cg#' as const;
 export const WAC_NS   = ACL;
 export const HYDRA_NS = HYDRA;
