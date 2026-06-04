@@ -484,6 +484,116 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<
   rebuildIndexesForUser(userId, methods);
 }
 
+// ── Pod-side WebID profile/card mirror ───────────────────────
+//
+// The identity server's canonical WebID document lives at
+// `${BASE_URL}/users/<userId>/profile` (see buildWebIdProfile +
+// app.get('/users/:id/profile')). Conventional Solid clients
+// (Penny, Inrupt's @inrupt/solid-client, NSS-derived profile
+// dereferencers, ...) instead expect a `<pod>/profile/card`
+// document whose `<#me>` declares `solid:oidcIssuer` and
+// `solid:storage`. By mirroring the canonical document onto the
+// pod at first-touch registration, the pod becomes a self-
+// sufficient Solid profile target — a client that knows only the
+// pod URL can dereference `<pod>/profile/card#me`, follow
+// `solid:oidcIssuer` to find this identity server, and proceed
+// with auth. The card cross-references the identity-side
+// canonical document via `rdfs:seeAlso` so the two round-trip.
+//
+// The card is denormalised state — the single source of truth
+// remains the in-memory identities map (and, derivatively, the
+// identity-side /users/:id/profile route). Any time a new
+// per-surface agent is minted (ensureSurfaceAgent), the card is
+// rewritten so the `cg:authorizedAgent` list stays in sync with
+// the agents registry.
+
+function podProfileCardUrl(userId: string): string {
+  return `${CSS_URL}${userId}/profile/card`;
+}
+
+function buildPodProfileCard(identity: Identity): string {
+  const cardUrl = podProfileCardUrl(identity.id);
+  const podUrl = `${CSS_URL}${identity.id}/`;
+  const canonicalWebId = `${BASE_URL}/users/${identity.id}/profile#me`;
+  const host = new URL(BASE_URL).host;
+
+  const agents = [...identities.values()].filter(i => i.type === 'agent' && i.owner === identity.id);
+
+  return [
+    `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
+    `@prefix solid: <http://www.w3.org/ns/solid/terms#> .`,
+    `@prefix pim: <http://www.w3.org/ns/pim/space#> .`,
+    `@prefix cg: <${ONTOLOGY_URL}> .`,
+    `@prefix prov: <http://www.w3.org/ns/prov#> .`,
+    `@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .`,
+    ``,
+    `<${cardUrl}#me>`,
+    `    a foaf:Person ;`,
+    `    foaf:name "${identity.name}" ;`,
+    `    solid:oidcIssuer <${BASE_URL}> ;`,
+    `    solid:storage <${podUrl}> ;`,
+    `    pim:storage <${podUrl}> ;`,
+    ...(agents.length > 0 ? [
+      `    cg:authorizedAgent`,
+      ...agents.map((a, i) => {
+        const sep = i < agents.length - 1 ? ',' : ';';
+        return `        <${BASE_URL}/agents/${a.id}/profile#agent>${sep}`;
+      }),
+    ] : []),
+    `    rdfs:seeAlso <${canonicalWebId}>, <did:web:${host}:users:${identity.id}> .`,
+    ``,
+    ...agents.map(a => [
+      `<${BASE_URL}/agents/${a.id}/profile#agent>`,
+      `    a cg:AuthorizedAgent, prov:SoftwareAgent ;`,
+      `    rdfs:label "${a.name}" ;`,
+      `    cg:agentIdentity <did:web:${host}:agents:${a.id}> ;`,
+      `    cg:delegatedBy <${cardUrl}#me> ;`,
+      `    cg:scope "${a.scope ?? 'ReadWrite'}" .`,
+      ``,
+    ].join('\n')),
+  ].join('\n');
+}
+
+async function putPodProfileCard(userId: string): Promise<void> {
+  const identity = identities.get(userId);
+  if (!identity || identity.type !== 'user') {
+    // Nothing to mirror — caller usually invoked this fire-and-forget
+    // for a surface-agent mint that happens to race with user teardown.
+    return;
+  }
+  const url = podProfileCardUrl(userId);
+  // Ensure the pod's /profile/ container exists first (idempotent) — same
+  // dance putPodAuthMethods does for the user container itself.
+  try {
+    await fetch(`${CSS_URL}${userId}/`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'text/turtle',
+        'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+      },
+      body: '',
+    });
+  } catch { /* best-effort */ }
+  try {
+    await fetch(`${CSS_URL}${userId}/profile/`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'text/turtle',
+        'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+      },
+      body: '',
+    });
+  } catch { /* best-effort */ }
+  const r = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/turtle' },
+    body: buildPodProfileCard(identity),
+  });
+  if (!r.ok && r.status !== 205) {
+    throw new Error(`PUT ${url} failed: ${r.status} ${r.statusText}`);
+  }
+}
+
 function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
   const base = emptyAuthMethods(userId);
   if (!raw || typeof raw !== 'object') return base;
@@ -1527,6 +1637,14 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       res.status(500).json({ error: `Failed to persist wallet to pod: ${(err as Error).message}` });
       return;
     }
+    // Mirror the canonical WebID document onto the pod at /profile/card so
+    // conventional Solid clients (Penny, @inrupt/solid-client, ...) can
+    // dereference the pod alone without knowing about the identity server.
+    // Fire-and-forget — registration must not block on this; the card is
+    // denormalised state that surface-agent mints will rewrite anyway.
+    putPodProfileCard(user.id).catch(err =>
+      log(`WARN: profile/card mirror failed for ${user.id}: ${(err as Error).message}`),
+    );
     log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-wallet (authenticated) path — append if not already bound.
@@ -1796,6 +1914,15 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     res.status(500).json({ error: `Failed to persist passkey to pod: ${(err as Error).message}` });
     return;
   }
+  // Mirror the canonical WebID document onto the pod at /profile/card so
+  // conventional Solid clients can dereference the pod alone. Only on
+  // first-touch registration (add-device flows don't need a re-mirror —
+  // ensureSurfaceAgent will rewrite the card if a new surface appears).
+  if (!ch.addDeviceUserId) {
+    putPodProfileCard(targetUserId).catch(err =>
+      log(`WARN: profile/card mirror failed for ${targetUserId}: ${(err as Error).message}`),
+    );
+  }
   log(`WebAuthn credential registered for ${targetUserId} (mode=${ch.addDeviceUserId ? 'add-device' : ch.bootstrapUserId ? 'bootstrap' : 'derive'})`);
 
   res.json(await issueTokenResponse(user, surfaceAgent));
@@ -2064,6 +2191,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       res.status(500).json({ error: `Failed to persist DID to pod: ${(err as Error).message}` });
       return;
     }
+    // Mirror the canonical WebID document onto the pod at /profile/card so
+    // conventional Solid clients can dereference the pod alone without
+    // knowing about the identity server.
+    putPodProfileCard(user.id).catch(err =>
+      log(`WARN: profile/card mirror failed for ${user.id}: ${(err as Error).message}`),
+    );
     log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-did (authenticated) path — append if not already bound.
@@ -2135,6 +2268,11 @@ app.post('/try', tryProvisionLimiter, async (_req, res) => {
     res.status(503).json({ error: `Could not provision pod: ${(err as Error).message}` });
     return;
   }
+  // Mirror the canonical WebID document onto the pod at /profile/card so
+  // conventional Solid clients can dereference the try-it pod alone too.
+  putPodProfileCard(userId).catch(err =>
+    log(`WARN: profile/card mirror failed for ${userId}: ${(err as Error).message}`),
+  );
   const tokenResponse = await issueTokenResponse(identities.get(userId)!);
   const mcpConfigSnippet = JSON.stringify({
     mcpServers: {
@@ -2188,6 +2326,14 @@ function ensureSurfaceAgent(user: Identity, surfaceAgent: string | undefined): I
         .map(p => p.charAt(0).toUpperCase() + p.slice(1))
         .join(' ');
       seedIdentity(surfaceAgentId, 'agent', `${label} (${user.name})`, user.id, 'ReadWrite');
+      // A new per-surface agent appeared in the in-memory map — rewrite
+      // the pod's profile/card so the `cg:authorizedAgent` list stays in
+      // sync with the in-memory truth. Fire-and-forget; the canonical
+      // /users/:id/profile endpoint is still served from the in-memory
+      // map, so token issuance does not block on the pod write.
+      putPodProfileCard(user.id).catch(err =>
+        log(`WARN: profile/card mirror failed for ${user.id} after surface-agent mint: ${(err as Error).message}`),
+      );
       return identities.get(surfaceAgentId)!;
     }
   }
