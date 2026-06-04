@@ -342,6 +342,17 @@ const PUBLIC_TOOLS = new Set([
   'verify_agent',
 ]);
 
+// Kernel verbs — the 8 substrate primitives. Every other entry in
+// TOOLS is a thin-facade compatibility shim that internally composes
+// these. Used by /.well-known/operations to classify each affordance
+// as 'kernel-verb' vs 'thin-facade' so hypermedia clients can prefer
+// the substrate surface where appropriate. Single source of truth —
+// keep in sync with the kernel-verb block at the top of TOOLS.
+const KERNEL_VERBS = new Set([
+  'mint', 'dereference', 'compose', 'act',
+  'restrict', 'extend', 'promote', 'decompose',
+]);
+
 interface AuthResult {
   authenticated: boolean;
   userId?: string;
@@ -3093,7 +3104,106 @@ app.get('/.well-known/oauth-protected-resource', (req, res) => {
         method: 'GET',
         returns: 'urn:cg:type:HydraCollection',
       },
+      {
+        // /.well-known/operations — typed substrate-operation catalog
+        // (8 kernel verbs + every thin-facade shim) as cg:Affordance
+        // entries. Lets a hypermedia client walk discovery → catalog →
+        // shape → invocation without an MCP client. See FIX 4 in the
+        // survey plan; the underlying route remains POST /mcp (or
+        // POST /tool/:name for the REST shortcut), the catalog only
+        // publishes WHAT exists and WHERE to send it.
+        '@type': ['cg:Affordance', 'hydra:Operation'],
+        action: 'urn:cg:action:operations:catalog',
+        target: `${issuerHref}/.well-known/operations`,
+        method: 'GET',
+        returns: 'urn:cg:type:OperationsCatalog',
+      },
     ],
+  });
+});
+
+// ── /.well-known/operations — substrate-operation catalog ──
+//
+// FIX 4 from the survey: publish a discoverable Hydra collection of
+// every named substrate operation (8 kernel verbs + each thin-facade
+// MCP tool) so HTTP-only / hypermedia clients can reach the same
+// surface MCP clients see. One source of truth (the in-process TOOLS
+// registry + TOOL_SCHEMAS), two access paths (MCP JSON-RPC at /mcp,
+// hypermedia at /.well-known/operations + /tool/:name).
+//
+// Invocation contract: client GETs this catalog → picks an
+// affordance by matching its `action` IRI / description → dereferences
+// `expects` (a SHACL shape served from /.well-known/shacl-shapes) for
+// the payload contract → POSTs to `target` (== /tool/<name>) with the
+// validated payload + Bearer + DPoP headers. The existing
+// app.post('/tool/:name', …) dispatcher handles the rest — no new
+// route. kernel.act() callers can use the same catalog uniformly:
+// act({descriptorUrl: '<base>/.well-known/operations', actionIri:
+// 'urn:cg:action:<name>'}, payload).
+app.get('/.well-known/operations', (req, res) => {
+  // Same Accept-driven negotiation as the OAuth metadata documents:
+  // application/json by default (max-compat with non-JSON-LD clients),
+  // application/ld+json only when explicitly requested. Body is the
+  // same JSON either way (JSON-LD ⊂ JSON).
+  const wantsJsonLd = (req.get('accept') || '').includes('application/ld+json');
+  const base = `${req.protocol}://${req.get('host') ?? ''}`;
+  const catalogId = `${base}/.well-known/operations`;
+  // Schema lookup by name — used to surface input/output schema IRIs
+  // pointing into /.well-known/shacl-shapes (one shape per tool name).
+  const schemaByName = new Map<string, typeof TOOL_SCHEMAS[number]>(
+    TOOL_SCHEMAS.map(t => [t.name, t])
+  );
+  // Enumerate from the runtime tool registry so the catalog can never
+  // drift from the actual /mcp surface. We classify each entry as
+  // 'kernel-verb' (the 8 substrate primitives) vs 'thin-facade' (every
+  // named shim that ultimately composes through to the kernel).
+  // bandaid-parallel-state / bandaid-kernel-bypass entries are *not*
+  // in TOOLS at all on this relay, so by construction the catalog
+  // only publishes the surface a hypermedia client should reach for.
+  const members = Object.entries(TOOLS).map(([name, { description }]) => {
+    const schema = schemaByName.get(name);
+    const classification = KERNEL_VERBS.has(name) ? 'kernel-verb' : 'thin-facade';
+    const authRequired = AUTH_REQUIRED_TOOLS.has(name);
+    const shapeIri = `urn:cg:shape:input:${name}`;
+    const returnsIri = `urn:cg:shape:output:${name}`;
+    const title = schema && typeof (schema as { annotations?: { title?: string } }).annotations?.title === 'string'
+      ? (schema as { annotations: { title: string } }).annotations.title
+      : name;
+    return {
+      '@id': `urn:cg:operation:${name}`,
+      '@type': ['cg:Affordance', 'hydra:Operation'],
+      action: `urn:cg:action:${name}`,
+      // REST shortcut — POST to /tool/:name is dispatched by the
+      // existing handler at app.post('/tool/:name', …) which routes
+      // by toolName through the same TOOLS registry.
+      target: `${base}/tool/${name}`,
+      method: 'POST',
+      title,
+      description,
+      expects: shapeIri,
+      returns: returnsIri,
+      classification,
+      // Hydra header expectations — Authorization is only required
+      // for write tools (AUTH_REQUIRED_TOOLS); DPoP is always
+      // optional but advertised so clients know they MAY bind their
+      // token. RFC 9449 §5.1 + RFC 9728 §3.2 capability echo.
+      'hydra:expectsHeader': [
+        { 'hydra:headerName': 'Authorization', 'hydra:required': authRequired },
+        { 'hydra:headerName': 'DPoP',          'hydra:required': false },
+      ],
+      // Pointer into the SHACL shapes graph served by
+      // /.well-known/shacl-shapes — clients dereference this to learn
+      // the payload contract before POSTing.
+      'sh:nodeShape': `${base}/.well-known/shacl-shapes#${shapeIri}`,
+    };
+  });
+  res.type(wantsJsonLd ? 'application/ld+json' : 'application/json').json({
+    '@context': KERNEL_JSONLD_CONTEXT,
+    '@id': catalogId,
+    '@type': ['hydra:Collection', 'urn:cg:type:OperationsCatalog'],
+    conformsToShape: 'urn:cg:shape:OperationsCatalog',
+    'hydra:totalItems': members.length,
+    'hydra:member': members,
   });
 });
 
@@ -3496,6 +3606,7 @@ app.get('/', (req, res) => {
       { name: 'inbox',            target: '/inbox?pod=<url>',                method: 'GET',  description: 'What\'s new on a pod (consumer-friendly framing of /audit/events).' },
       { name: 'oauth-as-meta',    target: '/.well-known/oauth-authorization-server', method: 'GET', description: 'OAuth 2.0 Authorization Server Metadata (RFC 8414) + Hydra.' },
       { name: 'oauth-pr-meta',    target: '/.well-known/oauth-protected-resource',    method: 'GET', description: 'OAuth Protected Resource Metadata (RFC 9728) + Hydra.' },
+      { name: 'operations',       target: '/.well-known/operations',         method: 'GET',  description: 'Typed substrate-operation catalog — 8 kernel verbs + every thin-facade shim as cg:Affordance entries (FIX 4).' },
       { name: 'shacl-shapes',     target: '/.well-known/shacl-shapes',       method: 'GET',  description: 'SHACL shapes graph this relay\'s responses conform to.' },
       { name: 'health',           target: '/health',                         method: 'GET',  description: 'Relay liveness probe.' },
     ],
@@ -4368,5 +4479,6 @@ app.listen(PORT, () => {
   log(`  POST /mcp                                     MCP Streamable HTTP (OAuth-gated)`);
   log(`  GET  /.well-known/oauth-authorization-server  OAuth metadata`);
   log(`  GET  /.well-known/oauth-protected-resource    Resource metadata`);
+  log(`  GET  /.well-known/operations                  Substrate-operation catalog`);
   log(`  */authorize /token /register /revoke           OAuth endpoints (SDK)`);
 });
