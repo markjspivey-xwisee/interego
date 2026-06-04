@@ -358,6 +358,48 @@ jobs:
             echo "Latest active revision: $LATEST"
           fi
 
+      # Relay-specific env wiring. The relay needs to know:
+      #   - CSS_URL                 — already set at provision time; re-asserted for idempotence
+      #   - RELAY_OAUTH_STORE_POD   — the service-account pod URL where the
+      #                               relay persists its OAuth Dynamic Client
+      #                               Registration records. MUST NOT be any
+      #                               human user's pod. CSS auto-creates the
+      #                               container on first PUT, so this pod
+      #                               does not need to exist before the relay
+      #                               starts writing to it.
+      # FQDNs are looked up from the live container apps so renaming an
+      # app keeps this working — same pattern as the dashboard / identity steps.
+      - name: Wire relay env vars
+        if: steps.decide.outputs.build == 'true' && matrix.image == 'interego-relay'
+        run: |
+          CSS_FQDN=$(az containerapp show --name interego-css --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          az containerapp update \
+            --name interego-relay \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --set-env-vars \
+              "CSS_URL=https://$CSS_FQDN/" \
+              "RELAY_OAUTH_STORE_POD=https://$CSS_FQDN/svc-relay-dcr/" \
+            --output none
+          # Same Multiple-vs-Single revision-mode handling as the dashboard
+          # / identity steps: in Multiple mode an env-var update creates a
+          # new revision that ingress won't serve until traffic is
+          # explicitly shifted.
+          MODE=$(az containerapp show --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.activeRevisionsMode" -o tsv)
+          echo "activeRevisionsMode=$MODE"
+          if [ "$MODE" = "Multiple" ]; then
+            az containerapp ingress traffic set \
+              --name interego-relay \
+              --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+              --revision-weight latest=100 \
+              --output none
+            LATEST=$(az containerapp show --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.latestRevisionName" -o tsv)
+            az containerapp revision list --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "[?name!='$LATEST' && properties.active].name" -o tsv | while read -r rev; do
+              [ -z "$rev" ] && continue
+              az containerapp revision deactivate --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --revision "$rev" --output none || true
+            done
+            echo "Latest active revision: $LATEST"
+          fi
+
       - name: Summary
         if: always()
         run: |

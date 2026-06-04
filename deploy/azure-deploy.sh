@@ -9,6 +9,10 @@ ENV_NAME="${CG_ENV_NAME:-context-graphs-env}"
 CSS_APP="interego-css"
 DASHBOARD_APP="interego-dashboard"
 RELAY_APP="interego-relay"
+# Maintainer pod slug — pod path the browser/observatory open by default.
+# Defaults to the reference deployment's seeded `markj` user; operators
+# override CG_POD_NAME to point the surfaces at their own seeded pod.
+POD_NAME="${CG_POD_NAME:-markj}"
 
 echo "=== Interego Azure Deployment ==="
 echo "Resource Group: $RESOURCE_GROUP"
@@ -143,7 +147,7 @@ az containerapp create \
   --max-replicas 3 \
   --cpu 0.25 \
   --memory 0.5Gi \
-  --env-vars "CSS_URL=$CSS_INTERNAL_URL" \
+  --env-vars "CSS_URL=$CSS_INTERNAL_URL" "RELAY_OAUTH_STORE_POD=${CSS_INTERNAL_URL%/}/svc-relay-dcr/" \
   --output none
 
 RELAY_FQDN=$(az containerapp show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
@@ -174,7 +178,7 @@ az containerapp create \
   --max-replicas 2 \
   --cpu 0.25 \
   --memory 0.5Gi \
-  --env-vars "CSS_URL=$CSS_INTERNAL_URL" "PORT=5000" "POD_NAME=markj" "CLEAN=1" \
+  --env-vars "CSS_URL=$CSS_INTERNAL_URL" "PORT=5000" "POD_NAME=$POD_NAME" "CLEAN=1" \
   --output none
 
 BROWSER_FQDN=$(az containerapp show --name "$BROWSER_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)

@@ -203,6 +203,25 @@ const RELAY_DEFAULT_SURFACE_AGENT = process.env['RELAY_DEFAULT_SURFACE_AGENT']
   ?? process.env['RELAY_SURFACE_AGENT']   // legacy env name
   ?? 'mcp-client';
 
+// Maintainer pod slug — the pod that backs the legacy API-key identity.
+// No default: shipping a real human's userId (`markj`) as the fallback
+// silently impersonated him for any script that knew the shared key.
+// Operators who enable the API-key path (RELAY_MCP_API_KEY set) MUST also
+// set RELAY_MAINTAINER_POD_NAME to a userId they control; the startup
+// check below throws otherwise. Stays a slug (pod path segment), not a
+// full URL — composes against CSS_URL / IDENTITY_URL. Audit endpoints
+// derive the target pod from the `?pod=` query param, not from this var.
+const RELAY_MAINTAINER_POD_NAME = process.env['RELAY_MAINTAINER_POD_NAME'] ?? '';
+if (RELAY_MCP_API_KEY && !RELAY_MAINTAINER_POD_NAME) {
+  throw new Error(
+    'RELAY_MCP_API_KEY is set but RELAY_MAINTAINER_POD_NAME is not. ' +
+    'The legacy API-key path needs a user identity to attribute writes to; ' +
+    'pick a userId for your deployment (e.g. an ops account you control, ' +
+    'NOT a real end user) and set RELAY_MAINTAINER_POD_NAME=<that-id>. ' +
+    'To disable the API-key path entirely, unset RELAY_MCP_API_KEY.',
+  );
+}
+
 // Best-effort client-name → surface-slug mapping. We match on a
 // lowercased, trimmed version of `client_name` so small spelling
 // variations all collapse to the same slug. Keep the slug in the
@@ -2769,15 +2788,18 @@ function checkMcpApiKey(req: express.Request): { ok: true; authContext: { agentI
   if (!safeEqual(token, RELAY_MCP_API_KEY)) {
     return { ok: false, error: 'Invalid MCP API key' };
   }
-  // Legacy API-key path carries the default markj identity. Keep the agent
-  // ID distinct from per-user OAuth-issued tokens so attributions stay
-  // readable in prov:wasAssociatedWith.
+  // Legacy API-key path carries the maintainer-pod identity from
+  // RELAY_MAINTAINER_POD_NAME. The startup guard above ensures this var
+  // is non-empty whenever RELAY_MCP_API_KEY is set, so this branch always
+  // mints an operator-configured identity (no silent default-to-`markj`).
+  // Keep the agent ID distinct from per-user OAuth-issued tokens so
+  // attributions stay readable in prov:wasAssociatedWith.
   return {
     ok: true,
     authContext: {
-      agentId: 'urn:agent:anthropic:relay-apikey:markj',
-      ownerWebId: `${IDENTITY_URL}/users/markj/profile#me`,
-      userId: 'markj',
+      agentId: `urn:agent:anthropic:relay-apikey:${RELAY_MAINTAINER_POD_NAME}`,
+      ownerWebId: `${IDENTITY_URL}/users/${RELAY_MAINTAINER_POD_NAME}/profile#me`,
+      userId: RELAY_MAINTAINER_POD_NAME,
     },
   };
 }
@@ -3473,7 +3495,15 @@ app.get('/inbox', async (req, res) => {
 });
 
 app.get('/audit/events', async (req, res) => {
-  const podUrl = (req.query.pod as string | undefined) ?? `${CSS_URL}markj/`;
+  const podUrl = req.query.pod as string | undefined;
+  if (!podUrl) {
+    res.status(400).json({
+      error: 'pod_required',
+      title: 'pod query parameter required',
+      detail: 'GET /audit/events?pod=https://your-pod.example/me/ — supplies the pod URL to audit. The relay does not know which pod is "yours" unless you tell it.',
+    });
+    return;
+  }
   const since = req.query.since as string | undefined;
   const until = req.query.until as string | undefined;
   try {
@@ -3502,9 +3532,17 @@ app.get('/audit/events', async (req, res) => {
 
 app.get('/audit/lineage', async (req, res) => {
   const descriptorUrl = req.query.descriptor as string | undefined;
-  const podUrl = (req.query.pod as string | undefined) ?? `${CSS_URL}markj/`;
+  const podUrl = req.query.pod as string | undefined;
   if (!descriptorUrl) {
     res.status(400).json({ error: 'descriptor query param required' });
+    return;
+  }
+  if (!podUrl) {
+    res.status(400).json({
+      error: 'pod_required',
+      title: 'pod query parameter required',
+      detail: 'GET /audit/lineage?descriptor=<url>&pod=https://your-pod.example/me/ — supplies the pod URL to walk lineage on. The relay does not know which pod is "yours" unless you tell it.',
+    });
     return;
   }
   try {
@@ -3587,7 +3625,15 @@ app.get('/audit/compliance/:framework', async (req, res) => {
     res.status(400).json({ error: `unknown framework; must be one of eu-ai-act / nist-rmf / soc2` });
     return;
   }
-  const podUrl = (req.query.pod as string | undefined) ?? `${CSS_URL}markj/`;
+  const podUrl = req.query.pod as string | undefined;
+  if (!podUrl) {
+    res.status(400).json({
+      error: 'pod_required',
+      title: 'pod query parameter required',
+      detail: 'GET /audit/compliance/:framework?pod=https://your-pod.example/me/ — supplies the pod URL to generate the report from. The relay does not know which pod is "yours" unless you tell it.',
+    });
+    return;
+  }
   const auditPeriod = req.query.from && req.query.to
     ? { from: req.query.from as string, to: req.query.to as string }
     : undefined;

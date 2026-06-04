@@ -115,16 +115,23 @@ function ensureTrailingSlash(s: string): string {
 }
 
 /**
- * Maintainer's pod URL — where the OAuth client registrations are
- * stored. Defaults to `${CSS_URL}markj/` (the maintainer's pod on the
- * existing CSS deployment), overridable via RELAY_OAUTH_STORE_POD.
+ * Service-account pod URL — where the relay's OAuth client registrations
+ * (DCR records) are stored. Defaults to `${CSS_URL}svc-relay-dcr/` — a
+ * dedicated service-account container that is NOT any human user's pod.
+ * CSS auto-creates the parent container on first PUT, so this pod does
+ * not need to exist before the relay's first write. Overridable via
+ * RELAY_OAUTH_STORE_POD (e.g. to point at an external storage pod).
+ *
+ * Historical note: this defaulted to `${CSS_URL}markj/` (the maintainer's
+ * personal pod). That conflated the relay's operational state with a
+ * human user's pod — see the change that moved this default off `markj/`.
  */
 export function resolveMaintainerPodUrl(cssUrl: string): string {
   const fromEnv = process.env['RELAY_OAUTH_STORE_POD'];
   if (fromEnv && fromEnv.trim().length > 0) {
     return ensureTrailingSlash(fromEnv.trim());
   }
-  return `${ensureTrailingSlash(cssUrl)}markj/`;
+  return `${ensureTrailingSlash(cssUrl)}svc-relay-dcr/`;
 }
 
 /**

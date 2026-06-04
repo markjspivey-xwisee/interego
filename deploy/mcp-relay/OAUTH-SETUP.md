@@ -189,6 +189,13 @@ export INTEREGO_IDENTITY_URL=https://your-identity-host/
 export INTEREGO_CSS_URL=https://your-css-host/
 export INTEREGO_OAUTH_BASE_URL=https://your-relay-host/
 
+# Optional — service-account pod URL where the relay persists its OAuth
+# Dynamic Client Registration records. Defaults to
+# `${CSS_URL}svc-relay-dcr/`. MUST NOT point at any human user's pod;
+# CSS auto-creates the container on first PUT, so the pod does not need
+# to exist before the relay starts writing to it.
+# export RELAY_OAUTH_STORE_POD=https://your-css-host/svc-relay-dcr/
+
 npm start
 ```
 
