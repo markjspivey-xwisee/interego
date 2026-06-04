@@ -569,10 +569,59 @@ async function discoverUsersFromCSS(): Promise<string[]> {
 function hydrateFromAuthMethods(m: AuthMethods): void {
   if (identities.has(m.userId)) return;
   seedIdentity(m.userId, 'user', m.name);
-  const agentId = m.agentId ?? `claude-mobile-${m.userId}`;
+  // Hydration runs at boot when the in-memory identities map is empty and
+  // we're recovering shells from pods. If the pod's auth-methods.jsonld
+  // explicitly names an agent, honour it. Otherwise seed the surface-neutral
+  // placeholder `mcp-client-<userId>` — the relay's ensureSurfaceAgent() will
+  // mint the real per-surface agent (chatgpt-<userId>, claude-code-vscode-<userId>,
+  // claude-mobile-<userId>, etc.) on top when an actual client connects.
+  // Never default to a Claude-specific slug here: not every user came in via
+  // a Claude surface, and a stale `claude-mobile-<userId>` would mis-label
+  // descriptors written by the placeholder agent before the surface agent appears.
+  const agentId = m.agentId ?? `mcp-client-${m.userId}`;
   if (!identities.has(agentId)) {
-    seedIdentity(agentId, 'agent', `Claude Mobile (${m.name})`, m.userId, 'ReadWrite');
+    seedIdentity(agentId, 'agent', `MCP client (${m.name})`, m.userId, 'ReadWrite');
   }
+}
+
+/**
+ * Compute the default agent ID + display label for a first-touch registration.
+ *
+ * If the caller supplied a `surfaceAgent` hint (forwarded by the relay's
+ * /oauth/verify handler — see deploy/mcp-relay/server.ts:bodyWithSurface),
+ * mint `<surface>-<userId>` directly so the very first agent on the pod is
+ * the real per-surface one (chatgpt-<userId>, claude-code-vscode-<userId>,
+ * cursor-<userId>, etc.) and no claude-* placeholder gets written first.
+ *
+ * If no hint is given, fall back to the surface-neutral generic that /try
+ * already uses (`mcp-client-<userId>` / 'MCP client (<name>)'). The relay's
+ * ensureSurfaceAgent() will still mint the real per-surface agent on top
+ * once an actual client connects.
+ *
+ * Critical invariant: NEVER hardcode `claude-mobile-` or any other Claude
+ * surface as the default. Users who register via the ChatGPT, Cursor, or
+ * any other connector must not be silently stamped with a Claude-flavored
+ * agent on their pod.
+ */
+function defaultAgentForRegistration(
+  userId: string,
+  displayName: string,
+  surfaceAgent: string | undefined,
+): { agentId: string; label: string } {
+  if (surfaceAgent) {
+    const label = surfaceAgent
+      .split('-')
+      .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+      .join(' ');
+    return {
+      agentId: `${surfaceAgent}-${userId}`,
+      label: `${label} (${displayName})`,
+    };
+  }
+  return {
+    agentId: `mcp-client-${userId}`,
+    label: `MCP client (${displayName})`,
+  };
 }
 
 // Rebuild all indexes from pod scans. Uses LDP discovery on CSS so users
@@ -1464,12 +1513,12 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     if (!identities.has(targetUserId)) {
       const displayName = String(name ?? targetUserId);
       seedIdentity(targetUserId, 'user', displayName);
-      const defaultAgentId = `claude-mobile-${targetUserId}`;
-      seedIdentity(defaultAgentId, 'agent', `Claude Mobile (${displayName})`, targetUserId, 'ReadWrite');
+      const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+      seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
     }
     user = identities.get(targetUserId)!;
     const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
-      ?? `claude-mobile-${targetUserId}`;
+      ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
     const methods = emptyAuthMethods(user.id, user.name, agentId);
     methods.walletAddresses.push(recoveredAddress);
     try {
@@ -1478,7 +1527,7 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       res.status(500).json({ error: `Failed to persist wallet to pod: ${(err as Error).message}` });
       return;
     }
-    log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress}`);
+    log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-wallet (authenticated) path — append if not already bound.
     const methods = await readAuthMethods(user.id);
@@ -1721,8 +1770,9 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
   // Make sure the user has a default agent to issue tokens for.
   const hasAgent = [...identities.values()].some(i => i.type === 'agent' && i.owner === targetUserId);
   if (!hasAgent) {
-    const defaultAgentId = `claude-mobile-${targetUserId}`;
-    seedIdentity(defaultAgentId, 'agent', `Claude Mobile (${displayName})`, targetUserId, 'ReadWrite');
+    const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+    seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
+    log(`First-time WebAuthn registration: ${targetUserId} defaultAgent=${def.agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   }
 
   const methods = await readAuthMethods(targetUserId);
@@ -1990,12 +2040,12 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     if (!identities.has(targetUserId)) {
       const displayName = String(name ?? targetUserId);
       seedIdentity(targetUserId, 'user', displayName);
-      const defaultAgentId = `claude-mobile-${targetUserId}`;
-      seedIdentity(defaultAgentId, 'agent', `Claude Mobile (${displayName})`, targetUserId, 'ReadWrite');
+      const def = defaultAgentForRegistration(targetUserId, displayName, surfaceAgent);
+      seedIdentity(def.agentId, 'agent', def.label, targetUserId, 'ReadWrite');
     }
     user = identities.get(targetUserId)!;
     const agentId = [...identities.values()].find(i => i.type === 'agent' && i.owner === targetUserId)?.id
-      ?? `claude-mobile-${targetUserId}`;
+      ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
     const methods = emptyAuthMethods(user.id, user.name, agentId);
     methods.didKeys.push({
       did,
@@ -2014,7 +2064,7 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       res.status(500).json({ error: `Failed to persist DID to pod: ${(err as Error).message}` });
       return;
     }
-    log(`First-time DID registration: ${targetUserId} did=${did}`);
+    log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-did (authenticated) path — append if not already bound.
     const methods = await readAuthMethods(user.id);
@@ -2675,8 +2725,19 @@ app.get('/me', async (req, res) => {
     });
     return;
   }
-  // Find the user's primary agent (first agent owned by them).
-  const primaryAgent = [...identities.values()].find(i => i.type === 'agent' && i.owner === userId);
+  // Resolve the *session's* agent — the one this bearer token was issued for —
+  // rather than picking whichever agent appears first in identities.values().
+  // Map insertion order is unstable across hydrate/rebuild paths and would
+  // otherwise return a stale placeholder (e.g. mcp-client-<userId>) even after
+  // the relay minted a real per-surface agent (chatgpt-<userId>, etc.) on top.
+  const sessionAgentId = tr.record!.agentId;
+  let primaryAgent = identities.get(sessionAgentId);
+  if (!primaryAgent || primaryAgent.type !== 'agent' || primaryAgent.owner !== userId) {
+    // Token's agent record is gone (post-restart hydration miss, manual
+    // revocation, etc.) — fall back to any agent owned by this user so
+    // /me stays useful for re-enrollment hints.
+    primaryAgent = [...identities.values()].find(i => i.type === 'agent' && i.owner === userId);
+  }
   // Pod URL derives from the user's canonical id (deployment convention).
   const did = `did:web:${new URL(BASE_URL).host.replace(/:.*$/, '')}:users:${userId}`;
   const webId = `${BASE_URL.replace(/\/$/, '')}/users/${userId}/profile#me`;
