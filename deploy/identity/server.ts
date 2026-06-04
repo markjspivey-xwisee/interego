@@ -292,12 +292,22 @@ function podAuthMethodsUrl(userId: string): string {
   return `${CSS_URL}${userId}/auth-methods.jsonld`;
 }
 
-async function fetchPodAuthMethods(userId: string): Promise<AuthMethods> {
+async function fetchPodAuthMethods(
+  userId: string,
+  opts: { createIfMissing?: boolean } = {},
+): Promise<AuthMethods> {
+  const { createIfMissing = true } = opts;
   const url = podAuthMethodsUrl(userId);
   try {
     const r = await fetch(url, { headers: { 'Accept': 'application/ld+json' } });
     if (r.status === 404) {
-      // First touch — pod has no file yet; write an empty one so the caller
+      if (!createIfMissing) {
+        // Caller is doing passive discovery (index rebuild) — don't materialize
+        // an empty file just because the container exists. That would turn every
+        // service-pod / inert pim:Storage shell into a phantom user on every restart.
+        throw new Error('404 (createIfMissing=false)');
+      }
+      // First touch from an active auth flow — write an empty file so the caller
       // can append to it without racing other writers.
       const empty = emptyAuthMethods(userId);
       await putPodAuthMethods(userId, empty);
@@ -440,11 +450,21 @@ async function rebuildAllIndexes(): Promise<void> {
   const discoveredUserIds = await discoverUsersFromCSS();
   const allUserIds = [...new Set([...seededUserIds, ...discoveredUserIds])];
   log(`Rebuilding credential indexes from ${allUserIds.length} pod(s) (seeded=${seededUserIds.length} discovered=${discoveredUserIds.length})...`);
-  let ok = 0, fail = 0;
+  let ok = 0, skipped = 0, fail = 0;
   await Promise.all(allUserIds.map(async (uid) => {
     try {
-      const m = await fetchPodAuthMethods(uid);
-      // Hydrate in-memory shell so downstream token issuance works
+      // Passive rebuild — read what's there, don't materialize empty
+      // auth-methods files for pods that aren't users. A pod container
+      // existing on CSS does not by itself make its name a user identity;
+      // a credential file must already be present.
+      const m = await fetchPodAuthMethods(uid, { createIfMissing: false });
+      if (!m.walletAddresses.length && !m.webAuthnCredentials.length && !m.didKeys.length) {
+        // No credentials registered yet — skip hydration. Either the pod
+        // belongs to a service (svc-*, the relay's DCR store) or it's an
+        // inert pim:Storage shell left over from a deletion.
+        skipped++;
+        return;
+      }
       hydrateFromAuthMethods(m);
       authMethodsCache.set(uid, { value: m, fetchedAt: Date.now() });
       rebuildIndexesForUser(uid, m);
@@ -453,7 +473,7 @@ async function rebuildAllIndexes(): Promise<void> {
       fail++;
     }
   }));
-  log(`Index rebuild: ${ok} pod(s) OK, ${fail} failed. users=${identities.size} wallets=${walletIndex.size} webauthn=${credentialIndex.size} dids=${didIndex.size}`);
+  log(`Index rebuild: ${ok} pod(s) OK, ${skipped} skipped (no credentials), ${fail} failed. users=${identities.size} wallets=${walletIndex.size} webauthn=${credentialIndex.size} dids=${didIndex.size}`);
 }
 
 // Seed with markj + agents. No passwords, no secrets — identities only
