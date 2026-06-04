@@ -3775,6 +3775,60 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
     return;
   }
 
+  // Defensive backstop for identity-server's eager-init: ensure the
+  // surface-specific agent is present in /<userId>/agents with the
+  // relay's X25519 public key so cross-pod share_with resolution finds
+  // it as a recipient immediately. Identity already mirrors the
+  // registry on first-touch + ensureSurfaceAgent, but identity has no
+  // access to the relay's X25519 keypair (relayAgentKey lives in the
+  // relay process). This block patches the freshly-written entry with
+  // `encryptionPublicKey: relayAgentKey.publicKey` and, in the worst
+  // case where identity's write is still in flight, creates the entry
+  // itself. Idempotent: if the entry already exists with the right
+  // key, no write happens.
+  //
+  // Fire-and-forget — the OAuth redirect must not block on a slow CSS
+  // write. The relay's publish_context auto-registration path remains
+  // as a third backstop.
+  (async () => {
+    try {
+      const podUrl = authResp.podUrl!;
+      const ownerWebId = authResp.webId! as IRI;
+      const surfaceAgentIri = agentIri as IRI;
+      let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+      if (!profile) {
+        profile = createOwnerProfile(ownerWebId);
+      }
+      const existing = profile.authorizedAgents.find(a => a.agentId === surfaceAgentIri && !a.revoked);
+      if (!existing) {
+        profile = addAuthorizedAgent(profile, {
+          agentId: surfaceAgentIri,
+          delegatedBy: ownerWebId,
+          label: `Surface agent ${surfaceAgent}`,
+          isSoftwareAgent: true,
+          scope: 'ReadWrite',
+          validFrom: new Date().toISOString(),
+          encryptionPublicKey: relayAgentKey.publicKey,
+        });
+        await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
+      } else if (existing.encryptionPublicKey !== relayAgentKey.publicKey) {
+        const updated = {
+          ...profile,
+          authorizedAgents: Object.freeze(
+            profile.authorizedAgents.map(a =>
+              a.agentId === surfaceAgentIri && !a.revoked
+                ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
+                : a,
+            ),
+          ),
+        };
+        await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
+      }
+    } catch (err) {
+      log(`WARN: /oauth/verify could not sync surface agent ${agentIri} to ${authResp.podUrl}/agents: ${(err as Error).message}`);
+    }
+  })();
+
   const redirect = new URL(result.redirectUri);
   redirect.searchParams.set('code', result.code);
   if (result.state) redirect.searchParams.set('state', result.state);

@@ -594,6 +594,109 @@ async function putPodProfileCard(userId: string): Promise<void> {
   }
 }
 
+// ── /<userId>/agents registry ───────────────────────────────
+//
+// The canonical owner-profile / agent-registry document the
+// substrate's verifyDelegation and resolveRecipients flows GET
+// from `<pod>/agents`. Mirrored from the in-memory identities map
+// so a brand-new user has a populated /agents at first-touch
+// registration — no more lazy-init solely via the relay's
+// publish_context auto-registration.
+//
+// Eager init matters because cross-pod share_with resolution reads
+// /agents to discover recipient X25519 keys; without this file the
+// share fails silently for any user who has never published.
+//
+// Idempotent: each call rewrites the file from the current map
+// (so a per-surface mint via ensureSurfaceAgent triggers a fresh
+// write that includes every active agent for the user).
+//
+// Mirrors the cg:AuthorizedAgent shape used by
+// @interego/core's ownerProfileToTurtle so downstream parsers
+// (readAgentRegistry / parseOwnerProfile) stay compatible.
+function podAgentRegistryUrl(userId: string): string {
+  return `${CSS_URL}${userId}/agents`;
+}
+
+function buildPodAgentRegistry(identity: Identity): string {
+  const cardUrl = podProfileCardUrl(identity.id);
+  const ownerWebId = `${cardUrl}#me`;
+  const host = new URL(BASE_URL).host;
+  const agents = [...identities.values()].filter(i => i.type === 'agent' && i.owner === identity.id);
+  const now = new Date().toISOString();
+
+  const lines: string[] = [];
+  lines.push('@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .');
+  lines.push('@prefix foaf: <http://xmlns.com/foaf/0.1/> .');
+  lines.push('@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .');
+  lines.push('@prefix prov: <http://www.w3.org/ns/prov#> .');
+  lines.push('');
+  lines.push(`<${ownerWebId}> a foaf:Person ;`);
+  lines.push(`    foaf:name "${identity.name}" ;`);
+
+  if (agents.length === 0) {
+    // Close the subject with no agent links.
+    const last = lines.length - 1;
+    lines[last] = lines[last]!.replace(/ ;$/, ' .');
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  for (let i = 0; i < agents.length; i++) {
+    const a = agents[i]!;
+    const sep = i < agents.length - 1 ? ',' : '';
+    const frag = `#agent-${encodeURIComponent(a.id)}`;
+    lines.push(`    cg:authorizedAgent <${frag}>${sep}`);
+  }
+  lines.push('    .');
+  lines.push('');
+
+  for (const a of agents) {
+    const frag = `#agent-${encodeURIComponent(a.id)}`;
+    const agentDid = `did:web:${host}:agents:${a.id}`;
+    lines.push(`<${frag}> a cg:AuthorizedAgent, prov:SoftwareAgent ;`);
+    lines.push(`    cg:agentIdentity <${agentDid}> ;`);
+    lines.push(`    cg:delegatedBy <${ownerWebId}> ;`);
+    lines.push(`    cg:scope cg:${a.scope ?? 'ReadWrite'} ;`);
+    lines.push(`    cg:validFrom "${a.createdAt}"^^xsd:dateTime ;`);
+    lines.push(`    cg:registeredAt "${now}"^^xsd:dateTime ;`);
+    lines.push(`    foaf:name "${a.name}" .`);
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+async function putPodAgentRegistry(userId: string): Promise<void> {
+  const identity = identities.get(userId);
+  if (!identity || identity.type !== 'user') {
+    // Same fire-and-forget guard as putPodAuthMethods / putPodProfileCard.
+    return;
+  }
+  const url = podAgentRegistryUrl(userId);
+  // Ensure the pod container exists (idempotent) — same dance as the
+  // sibling pod writers. The /agents document lives directly under the
+  // user pod root, so no nested container creation is needed.
+  try {
+    await fetch(`${CSS_URL}${userId}/`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'text/turtle',
+        'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+      },
+      body: '',
+    });
+  } catch { /* best-effort */ }
+  const r = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/turtle' },
+    body: buildPodAgentRegistry(identity),
+  });
+  if (!r.ok && r.status !== 205) {
+    throw new Error(`PUT ${url} failed: ${r.status} ${r.statusText}`);
+  }
+}
+
 function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
   const base = emptyAuthMethods(userId);
   if (!raw || typeof raw !== 'object') return base;
@@ -1645,6 +1748,15 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     putPodProfileCard(user.id).catch(err =>
       log(`WARN: profile/card mirror failed for ${user.id}: ${(err as Error).message}`),
     );
+    // Eager-init /<userId>/agents so verifyDelegation + cross-pod share_with
+    // resolution find a populated registry even before the user's first
+    // publish_context (which previously was the only thing that wrote it
+    // via the relay's lazy auto-registration backstop). Fire-and-forget —
+    // the registry is denormalised state and ensureSurfaceAgent will
+    // rewrite it on every new surface-agent mint.
+    putPodAgentRegistry(user.id).catch(err =>
+      log(`WARN: agents registry init failed for ${user.id}: ${(err as Error).message}`),
+    );
     log(`First-time SIWE registration: ${targetUserId} wallet=${recoveredAddress} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-wallet (authenticated) path — append if not already bound.
@@ -1922,6 +2034,10 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     putPodProfileCard(targetUserId).catch(err =>
       log(`WARN: profile/card mirror failed for ${targetUserId}: ${(err as Error).message}`),
     );
+    // Eager-init /<userId>/agents — see SIWE first-touch comment above.
+    putPodAgentRegistry(targetUserId).catch(err =>
+      log(`WARN: agents registry init failed for ${targetUserId}: ${(err as Error).message}`),
+    );
   }
   log(`WebAuthn credential registered for ${targetUserId} (mode=${ch.addDeviceUserId ? 'add-device' : ch.bootstrapUserId ? 'bootstrap' : 'derive'})`);
 
@@ -2197,6 +2313,10 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     putPodProfileCard(user.id).catch(err =>
       log(`WARN: profile/card mirror failed for ${user.id}: ${(err as Error).message}`),
     );
+    // Eager-init /<userId>/agents — see SIWE first-touch comment above.
+    putPodAgentRegistry(user.id).catch(err =>
+      log(`WARN: agents registry init failed for ${user.id}: ${(err as Error).message}`),
+    );
     log(`First-time DID registration: ${targetUserId} did=${did} defaultAgent=${agentId} (surfaceHint=${surfaceAgent ?? 'none'})`);
   } else {
     // Add-did (authenticated) path — append if not already bound.
@@ -2327,12 +2447,19 @@ function ensureSurfaceAgent(user: Identity, surfaceAgent: string | undefined): I
         .join(' ');
       seedIdentity(surfaceAgentId, 'agent', `${label} (${user.name})`, user.id, 'ReadWrite');
       // A new per-surface agent appeared in the in-memory map — rewrite
-      // the pod's profile/card so the `cg:authorizedAgent` list stays in
-      // sync with the in-memory truth. Fire-and-forget; the canonical
-      // /users/:id/profile endpoint is still served from the in-memory
-      // map, so token issuance does not block on the pod write.
+      // the pod's profile/card AND the pod's agents registry so the
+      // `cg:authorizedAgent` list stays in sync with the in-memory truth.
+      // Both writes are fire-and-forget; the canonical /users/:id/profile
+      // endpoint is still served from the in-memory map, so token
+      // issuance does not block on either. The agents-registry write is
+      // what makes the per-surface agent immediately addressable for
+      // verifyDelegation + cross-pod share_with recipient resolution,
+      // without waiting for the relay's publish_context backstop.
       putPodProfileCard(user.id).catch(err =>
         log(`WARN: profile/card mirror failed for ${user.id} after surface-agent mint: ${(err as Error).message}`),
+      );
+      putPodAgentRegistry(user.id).catch(err =>
+        log(`WARN: agents registry mirror failed for ${user.id} after surface-agent mint: ${(err as Error).message}`),
       );
       return identities.get(surfaceAgentId)!;
     }
