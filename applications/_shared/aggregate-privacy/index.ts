@@ -41,27 +41,50 @@
  * Cleanly composes existing primitives — no new ontology terms.
  */
 
-import { buildMerkleTree, generateMerkleProof, verifyMerkleProof, type MerkleProof } from '@interego/core';
-import { sha256 } from '@interego/core';
 import {
-  pedersenCommit as commit, addCommitments, verifyHomomorphicSum, sampleLaplaceInt,
-  deriveBlinding, randomBlinding,
+  buildMerkleTree,
+  generateMerkleProof,
+  type MerkleProof,
+  verifyMerkleProof,
+} from '@interego/core';
+import {
+  sha256,
+} from '@interego/core';
+import {
+  addCommitments,
+  deriveBlinding,
+  pedersenCommit as commit,
   type PedersenCommitment,
+  randomBlinding,
+  sampleLaplaceInt,
+  verifyHomomorphicSum,
 } from '@interego/core';
 import {
   reconstructSecret,
   type ShamirShare,
 } from '@interego/core';
 import {
-  splitSecretWithCommitments, filterVerifiedShares,
-  type FeldmanCommitments, type VerifiableShamirShare,
+  type FeldmanCommitments,
+  filterVerifiedShares,
+  splitSecretWithCommitments,
+  type VerifiableShamirShare,
 } from '@interego/core';
 import {
-  proveRange, verifyRange,
   type PedersenRangeProof as RangeProof,
+  proveRange,
+  verifyRange,
 } from '@interego/core';
-import { ContextDescriptor, publish, discover } from '@interego/core';
-import type { IRI, ManifestEntry } from '@interego/core';
+import {
+  ContextDescriptor,
+} from '@interego/core';
+import {
+  discover,
+  publish,
+} from '@interego/solid';
+import type {
+  IRI,
+  ManifestEntry,
+} from '@interego/core';
 import { verifyMessage } from 'ethers';
 import { ristretto255 } from '@noble/curves/ed25519.js';
 
@@ -1435,8 +1458,10 @@ export function verifyCommitteeMatchesAuthorization(args: {
 // keys, e.g., during a regulator audit).
 
 import {
-  createEncryptedEnvelope, openEncryptedEnvelope,
-  type EncryptedEnvelope, type EncryptionKeyPair,
+  createEncryptedEnvelope,
+  type EncryptedEnvelope,
+  type EncryptionKeyPair,
+  openEncryptedEnvelope,
 } from '@interego/core';
 
 export interface EncryptedShareDistribution {
@@ -1800,8 +1825,13 @@ export class EpsilonBudget {
 // is a plain typed object that can be serialized into a normal
 // ContextDescriptor's graph content.
 
-import { signMessageRaw, recoverMessageSigner } from '@interego/core';
-import type { Wallet } from '@interego/core';
+import {
+  recoverMessageSigner,
+  signMessageRaw,
+} from '@interego/core';
+import type {
+  Wallet,
+} from '@interego/core';
 
 /**
  * Canonical serialization of an EpsilonBudget for signing. Stable

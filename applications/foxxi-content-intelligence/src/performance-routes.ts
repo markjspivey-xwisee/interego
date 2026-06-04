@@ -54,7 +54,9 @@ import {
 } from './outcome-descriptor-publisher.js';
 import { FederationOutcomeLoader, parseFederationPods } from './federation-outcome-loader.js';
 import { bridgeAuthor, signAsBridge, withPublishLock } from './bridge-signer.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── JSON-LD context bound at the top of every linked-data response. ───
 // Resolves the prefixes used in @type / facets / affordances so a

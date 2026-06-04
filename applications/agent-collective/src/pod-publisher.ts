@@ -14,15 +14,23 @@
  *   - Audit entries (ac:CrossAgentAuditEntry) live in human owner's pod
  */
 
-import { ContextDescriptor, publish, discover } from '@interego/core';
-import { createHash } from 'node:crypto';
-import type { IRI } from '@interego/core';
 import {
-  parseTrig,
+  ContextDescriptor,
+} from '@interego/core';
+import {
+  discover,
+  publish,
+} from '@interego/solid';
+import { createHash } from 'node:crypto';
+import type {
+  IRI,
+} from '@interego/core';
+import {
   findSubjectsOfType,
-  readStringValues,
+  parseTrig,
   readIntegerValue,
   readIriValue,
+  readStringValues,
 } from '@interego/core';
 
 const AC_NS = 'https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#';

@@ -28,12 +28,16 @@ import {
   recordCrossAgentAudit,
 } from '../src/pod-publisher.js';
 import {
-  P2pClient,
-  InMemoryRelay,
-  importWallet,
   generateKeyPair,
+  importWallet,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  InMemoryRelay,
+  P2pClient,
+} from '@interego/p2p';
+import type {
+  IRI,
+} from '@interego/core';
 
 const AZURE_CSS_BASE = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const TEST_POD_BASE = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;

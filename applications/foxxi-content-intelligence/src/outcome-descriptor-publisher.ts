@@ -24,23 +24,34 @@
  * invalidated on every write.
  */
 
-import { publish, createPGSL, mintAtom, assertValid } from '@interego/core';
+import {
+  assertValid,
+} from '@interego/core';
+import {
+  createPGSL,
+  mintAtom,
+} from '@interego/pgsl';
+import {
+  publish,
+} from '@interego/solid';
 import { verifyMessage } from 'ethers';
 import type {
+  AccessControlFacetData,
+  AgentFacetData,
   ContextDescriptorData,
   ContextFacetData,
-  IRI,
-  FetchFn,
-  PublishResult,
-  PGSLInstance,
-  TemporalFacetData,
-  ProvenanceFacetData,
-  AgentFacetData,
-  AccessControlFacetData,
-  SemioticFacetData,
-  TrustFacetData,
   FederationFacetData,
+  FetchFn,
+  IRI,
+  PGSLInstance,
+  ProvenanceFacetData,
+  SemioticFacetData,
+  TemporalFacetData,
+  TrustFacetData,
 } from '@interego/core';
+import type {
+  PublishResult,
+} from '@interego/solid';
 import { createHash, randomUUID } from 'node:crypto';
 
 // ── Foxxi vocabulary (composes the L1 cg:/pgsl: + ac:/amta: verticals) ──

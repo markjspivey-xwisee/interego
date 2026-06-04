@@ -26,10 +26,14 @@ import {
   ContextDescriptor,
   toTurtle,
   validate,
+} from '@interego/core';
+import {
   createPGSL,
   mintAtom,
+} from '@interego/pgsl';
+import type {
+  IRI,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
 
 // ── DIDs / IRIs ───────────────────────────────────────────────────────
 

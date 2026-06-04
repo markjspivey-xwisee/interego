@@ -33,9 +33,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   extract,
+} from '@interego/extractors';
+import {
   createPGSL,
   mintAtom,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 // ── Real SCORM 1.2-flavored HTML lesson content ──────────────────────
 //

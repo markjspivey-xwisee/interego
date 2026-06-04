@@ -23,8 +23,15 @@
  *   - React admin + dashboard UIs
  */
 
-import { ContextDescriptor, publish } from '@interego/core';
-import { mintAtom } from '@interego/core';
+import {
+  ContextDescriptor,
+} from '@interego/core';
+import {
+  publish,
+} from '@interego/solid';
+import {
+  mintAtom,
+} from '@interego/pgsl';
 import {
   buildAttestedAggregateResult,
   buildAttestedHomomorphicDistribution,
@@ -37,7 +44,9 @@ import {
   type ParticipationHit,
 } from '../../_shared/aggregate-privacy/index.js';
 import { createHash } from 'node:crypto';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ─────────────────────────────────────────────────────────────────────
 //  Common config + helpers

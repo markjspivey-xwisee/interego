@@ -29,7 +29,9 @@ import {
   toTurtle,
   validate,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── DIDs / IRIs used across the cycle ────────────────────────────────
 

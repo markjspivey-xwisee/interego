@@ -11,7 +11,10 @@
     "dev": "tsx server.ts"
   },
   "dependencies": {
+    "@interego/compliance": "*",
     "@interego/core": "*",
+    "@interego/ops": "*",
+    "@interego/solid": "*",
     "express": "^4.21.0"
   },
   "devDependencies": {

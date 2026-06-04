@@ -37,9 +37,11 @@ import {
 } from '../../_shared/scorm/index.js';
 import {
   extract,
+} from '@interego/extractors';
+import {
   createPGSL,
   mintAtom,
-} from '@interego/core';
+} from '@interego/pgsl';
 
 // ── Fixtures: build real SCORM zips in-memory ────────────────────────
 

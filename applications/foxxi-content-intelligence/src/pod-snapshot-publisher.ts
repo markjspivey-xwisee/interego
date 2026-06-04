@@ -27,20 +27,29 @@
  * because that's the natural unit of their state.
  */
 
-import { publish, createPGSL, mintAtom, withTransientRetry } from '@interego/core';
+import {
+  withTransientRetry,
+} from '@interego/core';
+import {
+  createPGSL,
+  mintAtom,
+} from '@interego/pgsl';
+import {
+  publish,
+} from '@interego/solid';
 import type {
+  AccessControlFacetData,
+  AgentFacetData,
   ContextDescriptorData,
   ContextFacetData,
-  IRI,
-  FetchFn,
-  PGSLInstance,
-  TemporalFacetData,
-  ProvenanceFacetData,
-  AgentFacetData,
-  AccessControlFacetData,
-  SemioticFacetData,
-  TrustFacetData,
   FederationFacetData,
+  FetchFn,
+  IRI,
+  PGSLInstance,
+  ProvenanceFacetData,
+  SemioticFacetData,
+  TemporalFacetData,
+  TrustFacetData,
 } from '@interego/core';
 import { createHash } from 'node:crypto';
 import { bridgeDid, signAsBridge, withPublishLock } from './bridge-signer.js';

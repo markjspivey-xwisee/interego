@@ -21,9 +21,16 @@
  *     biographical record) but ALSO require explicitDecisionNotMade.
  */
 
-import { ContextDescriptor, publish } from '@interego/core';
+import {
+  ContextDescriptor,
+} from '@interego/core';
+import {
+  publish,
+} from '@interego/solid';
 import { createHash, randomUUID } from 'node:crypto';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 export interface PublishConfig {
   readonly podUrl: string;

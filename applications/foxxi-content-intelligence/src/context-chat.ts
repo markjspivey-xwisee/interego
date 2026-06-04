@@ -44,7 +44,9 @@
  */
 
 import type { Express, Request, Response } from 'express';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 import { tenantIdOf, type TenantId } from './tenant-context.js';
 import { _publishedCourses, _publishedJobAids } from './content-delivery.js';
 import { listStoredStatements } from './xapi-lrs.js';

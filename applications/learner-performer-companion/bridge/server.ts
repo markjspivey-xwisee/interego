@@ -35,7 +35,9 @@ import {
   type AggregateCohortQueryArgs, type ProjectToLrsArgs,
 } from '../src/institutional-publisher.js';
 import { publishCohortParticipation } from '../../_shared/aggregate-privacy/index.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 interface PodCtx { podUrl: string; userDid: IRI }
 

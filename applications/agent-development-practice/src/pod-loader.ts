@@ -6,8 +6,15 @@
  * evolution steps, constraints, capability evolution events.
  */
 
-import { discover, withTransientRetry } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  withTransientRetry,
+} from '@interego/core';
+import {
+  discover,
+} from '@interego/solid';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── Typed records ────────────────────────────────────────────────────
 

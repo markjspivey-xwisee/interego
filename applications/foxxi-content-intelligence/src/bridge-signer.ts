@@ -26,7 +26,11 @@
  */
 
 import { createHash } from 'node:crypto';
-import { loadAgentKeypair, type AgentKeypair, type AgentWallet } from '@interego/core';
+import {
+  type AgentKeypair,
+  type AgentWallet,
+  loadAgentKeypair,
+} from '@interego/passport';
 
 // Cache the resolved keypair so the bridge has a single identity for
 // the lifetime of the process. The first caller mints (or loads) it

@@ -27,7 +27,10 @@
  * no L1/L2/L3 ontology change.
  */
 
-import type { ContextDescriptorData, IRI } from '@interego/core';
+import type {
+  ContextDescriptorData,
+  IRI,
+} from '@interego/core';
 import type { ChannelRendering, DeliveryChannel } from './content-channels.js';
 
 export interface ChannelWebhook {

@@ -42,8 +42,12 @@
  */
 
 import { createHash } from 'node:crypto';
-import { withTransientRetry } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  withTransientRetry,
+} from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 import type { FoxxiCourseContent } from './course-qa.js';
 
 // ─────────────────────────────────────────────────────────────────────

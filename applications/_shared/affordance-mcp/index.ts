@@ -17,7 +17,9 @@
  * surfaces derive from there. Single source of truth.
  */
 
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── Types ─────────────────────────────────────────────────────────────
 

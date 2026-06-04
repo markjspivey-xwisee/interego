@@ -31,7 +31,9 @@ import {
   recognizeCapabilityEvolution,
 } from '../src/pod-publisher.js';
 import { loadProbeCycle } from '../src/pod-loader.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 const AZURE_CSS_BASE = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const TEST_POD_BASE = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;

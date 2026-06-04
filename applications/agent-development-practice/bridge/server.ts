@@ -24,7 +24,9 @@ import {
   recognizeCapabilityEvolution,
 } from '../src/pod-publisher.js';
 import { loadProbeCycle } from '../src/pod-loader.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 interface Ctx { podUrl: string; operatorDid: IRI }
 function ctx(args: Record<string, unknown>): Ctx {

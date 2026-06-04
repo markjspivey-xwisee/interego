@@ -5,7 +5,21 @@
   "description": "Reference bridge for the agent-collective vertical (NOT first-party — example use case).",
   "type": "module",
   "main": "dist/server.js",
-  "scripts": { "build": "tsc", "start": "node dist/server.js", "dev": "tsx server.ts" },
-  "dependencies": { "@interego/core": "*", "express": "^4.21.0" },
-  "devDependencies": { "@types/express": "^5.0.0", "@types/node": "^22.0.0", "tsx": "^4.0.0", "typescript": "^5.7.0" }
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx server.ts"
+  },
+  "dependencies": {
+    "@interego/core": "*",
+    "@interego/p2p": "*",
+    "@interego/solid": "*",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
 }

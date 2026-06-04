@@ -15,8 +15,15 @@
  * substrate enforces aggregate privacy without needing extra plumbing.
  */
 
-import { discover, withTransientRetry } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  withTransientRetry,
+} from '@interego/core';
+import {
+  discover,
+} from '@interego/solid';
+import type {
+  IRI,
+} from '@interego/core';
 import type { OutcomeRecord, CauseKey } from './performance-calibration.js';
 import { verifySignature } from './outcome-descriptor-publisher.js';
 

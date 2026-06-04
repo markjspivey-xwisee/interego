@@ -25,14 +25,18 @@
 import { describe, it, expect } from 'vitest';
 import {
   ContextDescriptor,
+  generateKeyPair,
+  importWallet,
   toTurtle,
   validate,
-  P2pClient,
-  InMemoryRelay,
-  importWallet,
-  generateKeyPair,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  InMemoryRelay,
+  P2pClient,
+} from '@interego/p2p';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── Stable test wallets (repeatable signatures across runs) ──────────
 

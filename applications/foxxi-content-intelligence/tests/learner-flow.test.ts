@@ -25,7 +25,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { discoverAssignedCourses, type FoxxiAdminPayload } from '../src/enrollment.js';
 import { askCourseQuestion, type FoxxiCourseContent } from '../src/course-qa.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 const IMPORTED = join(import.meta.dirname ?? '', '..', 'imported');
 

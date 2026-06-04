@@ -25,10 +25,19 @@
  * mask a publish failure.
  */
 
-import { discover, fetchGraphContent } from '@interego/core';
-import type { ManifestEntry } from '@interego/core';
-import type { IRI } from '@interego/core';
-import type { EncryptionKeyPair } from '@interego/core';
+import {
+  discover,
+  fetchGraphContent,
+} from '@interego/solid';
+import type {
+  ManifestEntry,
+} from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
+import type {
+  EncryptionKeyPair,
+} from '@interego/core';
 import { TENANT_TYPES, deriveAdminKeyPair } from './tenant-publisher.js';
 
 // ── Cache ─────────────────────────────────────────────────────

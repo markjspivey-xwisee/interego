@@ -27,7 +27,10 @@
  *     question, return null. Do NOT make something up.
  */
 
-import type { IRI, ContextDescriptorData } from '@interego/core';
+import type {
+  ContextDescriptorData,
+  IRI,
+} from '@interego/core';
 
 // ── Wallet model (a minimal in-memory shape; production = SPARQL) ────
 
@@ -356,7 +359,9 @@ function composeDisplayText(
 
 // ── Convert to an lpc:CitedResponse descriptor (auditable in pod) ────
 
-import { ContextDescriptor } from '@interego/core';
+import {
+  ContextDescriptor,
+} from '@interego/core';
 
 /**
  * Materialize a CitedAnswer as an lpc:CitedResponse descriptor that

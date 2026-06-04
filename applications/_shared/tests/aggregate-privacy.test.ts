@@ -80,8 +80,13 @@ import {
   type ParticipationHit,
   type CommittedContribution,
 } from '../aggregate-privacy/index.js';
-import { createWallet, signMessageRaw } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  createWallet,
+  signMessageRaw,
+} from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 import { Wallet } from 'ethers';
 
 const COHORT = 'urn:lpc:cohort:aws-saa-q2-2026' as IRI;

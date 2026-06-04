@@ -13,10 +13,17 @@
  * traceable.
  */
 
-import { ContextDescriptor, publish } from '@interego/core';
+import {
+  ContextDescriptor,
+} from '@interego/core';
+import {
+  publish,
+} from '@interego/solid';
 import { LrsClient, type LrsClientConfig, type XapiStatement } from './lrs-client.js';
 import { createHash } from 'node:crypto';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 export interface PodPublishConfig {
   readonly podUrl: string;

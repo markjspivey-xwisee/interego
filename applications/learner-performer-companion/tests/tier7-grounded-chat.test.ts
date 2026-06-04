@@ -46,9 +46,16 @@ import {
   type GroundingAtom,
 } from '../src/grounded-answer.js';
 import { unwrapScormPackage, launchableLessons } from '../../_shared/scorm/index.js';
-import { extract, validate } from '@interego/core';
+import {
+  validate,
+} from '@interego/core';
+import {
+  extract,
+} from '@interego/extractors';
 import AdmZip from 'adm-zip';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── Fixture wallet (real content end-to-end) ─────────────────────────
 

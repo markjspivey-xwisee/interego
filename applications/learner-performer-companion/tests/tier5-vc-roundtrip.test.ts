@@ -36,12 +36,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   ContextDescriptor,
-  toTurtle,
-  signDescriptor,
-  verifyDescriptorSignature,
   importWallet,
+  signDescriptor,
+  toTurtle,
+  verifyDescriptorSignature,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── Stable test wallets ──────────────────────────────────────────────
 

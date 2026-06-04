@@ -43,7 +43,9 @@ import {
 } from '../src/operator-publisher.js';
 import { AdapterRegistry, type NavigationVerb } from '../source-adapters/index.js';
 import { webAdapter } from '../source-adapters/web.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 function ctx(args: Record<string, unknown>): PodCtx {
   const podUrl = (args['pod_url'] as string | undefined) ?? process.env['OWM_DEFAULT_POD_URL'];

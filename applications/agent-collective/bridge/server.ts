@@ -21,7 +21,9 @@ import {
   bundleTeachingPackage,
   recordCrossAgentAudit,
 } from '../src/pod-publisher.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 interface Ctx { podUrl: string; authoringAgentDid: IRI }
 function ctx(args: Record<string, unknown>): Ctx {

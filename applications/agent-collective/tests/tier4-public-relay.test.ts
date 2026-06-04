@@ -29,13 +29,15 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  InMemoryRelay,
-  WebSocketRelayMirror,
-  P2pClient,
-  importWallet,
   generateKeyPair,
-  KIND_DESCRIPTOR,
+  importWallet,
 } from '@interego/core';
+import {
+  InMemoryRelay,
+  KIND_DESCRIPTOR,
+  P2pClient,
+  WebSocketRelayMirror,
+} from '@interego/p2p';
 
 const RELAY_URL = process.env['RUN_PUBLIC_RELAY'];
 

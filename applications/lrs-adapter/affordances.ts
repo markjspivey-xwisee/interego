@@ -8,7 +8,9 @@
  */
 
 import type { Affordance } from '../_shared/affordance-mcp/index.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 const LRS_AFFORDANCES: ReadonlyArray<Affordance> = [
   {

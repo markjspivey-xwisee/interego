@@ -34,7 +34,9 @@ import {
   publishCoursePackage,
   type TenantPublishConfig,
 } from '../src/tenant-publisher.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

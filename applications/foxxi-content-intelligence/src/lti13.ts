@@ -44,7 +44,9 @@ import { createHash, createHmac, randomUUID, createPrivateKey, createPublicKey, 
 import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
 import { tenantOrUsers, type OrUser } from './oneroster.js';
 import { listCmi5Courses } from './cmi5-lms.js';
-import { withTransientRetry } from '@interego/core';
+import {
+  withTransientRetry,
+} from '@interego/core';
 
 // ── Config ──────────────────────────────────────────────────────────
 

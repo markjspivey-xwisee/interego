@@ -25,7 +25,9 @@ import {
   toTurtle,
   validate,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── Translation helpers under test ───────────────────────────────────
 

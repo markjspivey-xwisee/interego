@@ -20,7 +20,9 @@ import {
   projectDescriptorToLrs,
 } from '../src/pod-publisher.js';
 import { LrsClient } from '../src/lrs-client.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 interface PodCtx { podUrl: string; userDid: IRI }
 function podCtx(args: Record<string, unknown>): PodCtx {

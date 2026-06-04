@@ -21,11 +21,15 @@
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import {
   ContextDescriptor,
-  publish,
-  parseManifest,
   toTurtle,
 } from '@interego/core';
-import type { IRI } from '@interego/core';
+import {
+  parseManifest,
+  publish,
+} from '@interego/solid';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── Config ────────────────────────────────────────────────────────────
 

@@ -31,20 +31,27 @@
  * semantics; everything else uses PodKeyValueStore directly.
  */
 
-import { publish, discover, createPGSL, mintAtom } from '@interego/core';
+import {
+  createPGSL,
+  mintAtom,
+} from '@interego/pgsl';
+import {
+  discover,
+  publish,
+} from '@interego/solid';
 import type {
+  AccessControlFacetData,
+  AgentFacetData,
   ContextDescriptorData,
   ContextFacetData,
-  IRI,
-  FetchFn,
-  PGSLInstance,
-  TemporalFacetData,
-  ProvenanceFacetData,
-  AgentFacetData,
-  AccessControlFacetData,
-  SemioticFacetData,
-  TrustFacetData,
   FederationFacetData,
+  FetchFn,
+  IRI,
+  PGSLInstance,
+  ProvenanceFacetData,
+  SemioticFacetData,
+  TemporalFacetData,
+  TrustFacetData,
 } from '@interego/core';
 import { createHash } from 'node:crypto';
 

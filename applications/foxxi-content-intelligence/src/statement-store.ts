@@ -28,7 +28,9 @@
 import { promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { withTransientRetry } from '@interego/core';
+import {
+  withTransientRetry,
+} from '@interego/core';
 import { PodStatementStore } from './pod-statement-store.js';
 
 export interface StoredStatement {

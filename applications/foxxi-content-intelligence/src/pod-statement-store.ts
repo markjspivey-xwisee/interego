@@ -18,20 +18,27 @@
  * env vars).
  */
 
-import { publish, discover, createPGSL, mintAtom } from '@interego/core';
+import {
+  createPGSL,
+  mintAtom,
+} from '@interego/pgsl';
+import {
+  discover,
+  publish,
+} from '@interego/solid';
 import type {
+  AccessControlFacetData,
+  AgentFacetData,
   ContextDescriptorData,
   ContextFacetData,
-  TemporalFacetData,
-  ProvenanceFacetData,
-  AgentFacetData,
-  AccessControlFacetData,
-  SemioticFacetData,
-  TrustFacetData,
   FederationFacetData,
-  IRI,
   FetchFn,
+  IRI,
   PGSLInstance,
+  ProvenanceFacetData,
+  SemioticFacetData,
+  TemporalFacetData,
+  TrustFacetData,
 } from '@interego/core';
 import { createHash } from 'node:crypto';
 import {

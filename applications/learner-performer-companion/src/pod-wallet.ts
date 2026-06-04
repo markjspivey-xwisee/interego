@@ -16,7 +16,14 @@
  *     applies (verbatim citation, no confabulation, tamper detection)
  */
 
-import { discover, fetchGraphContent, parseManifest, withTransientRetry } from '@interego/core';
+import {
+  withTransientRetry,
+} from '@interego/core';
+import {
+  discover,
+  fetchGraphContent,
+  parseManifest,
+} from '@interego/solid';
 import { createHash } from 'node:crypto';
 import type {
   UserWallet,
@@ -26,7 +33,9 @@ import type {
   LearningExperience,
   GroundingAtom,
 } from './grounded-answer.js';
-import type { IRI } from '@interego/core';
+import type {
+  IRI,
+} from '@interego/core';
 
 // ── Types ─────────────────────────────────────────────────────────────
 
