@@ -326,16 +326,75 @@ jobs:
             echo "- _Advisory tier — failure does not block the workflow._" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  # FIX 12: publish → dereference round-trip self-test.
+  #
+  # Asserts the publish → dereference → plaintext-recovery invariant
+  # end-to-end against the live deployed relay. Catches regressions of
+  # bug #3 (share-with-author — publish_context dropped the author's
+  # own X25519 key from the envelope recipient set when share_with was
+  # non-empty) and bug #4 (decrypt-path — kernel.dereference returned
+  # `status: encrypted-no-key` for envelopes the relay's session key
+  # could decrypt). The other scenarios above cover composition algebra,
+  # modal-status drift, sybil resistance, etc. — none of them exercise
+  # publish_context → dereference plaintext recovery from the AUTHOR's
+  # perspective, which is exactly the path those bugs broke.
+  #
+  # Required tier: a failure here gates the workflow. The script is
+  # standalone (Node 22 builtins only — fetch, node:crypto), so unlike
+  # the matrix scenarios above it does NOT depend on the `build` job's
+  # workspace tarball.
+  publish-deref-roundtrip:
+    name: publish-deref-roundtrip
+    runs-on: ubuntu-latest
+    needs: gate
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Run round-trip self-test
+        id: run
+        env:
+          RELAY_URL: https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io
+          RUN_TAG: ci-${{ env.RUN_TAG }}-publish-deref-roundtrip
+        run: |
+          mkdir -p logs
+          set -o pipefail
+          node scripts/test-publish-deref-roundtrip.mjs 2>&1 | tee logs/publish-deref-roundtrip.log
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: log-publish-deref-roundtrip
+          path: logs/publish-deref-roundtrip.log
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### publish-deref-roundtrip (required)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Outcome:** ${{ steps.run.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Gate:** required — failure blocks the workflow" >> "$GITHUB_STEP_SUMMARY"
+
   # Workflow-level aggregate. Succeeds iff every REQUIRED scenario job
-  # succeeded. Advisory failures pass through. This is the job that
-  # branch-protection rules should reference, not the individual
-  # scenario jobs (matrix job names include the scenario, which makes
-  # them unstable as required-check identifiers).
+  # succeeded AND the publish-deref-roundtrip job succeeded. Advisory
+  # failures pass through. This is the job that branch-protection rules
+  # should reference, not the individual scenario jobs (matrix job
+  # names include the scenario, which makes them unstable as
+  # required-check identifiers).
   required-suite:
     name: Required suite
     runs-on: ubuntu-latest
-    needs: scenario
-    if: always() && needs.scenario.result != 'cancelled'
+    needs: [scenario, publish-deref-roundtrip]
+    if: always() && needs.scenario.result != 'cancelled' && needs.publish-deref-roundtrip.result != 'cancelled'
     steps:
       - name: Evaluate required tier
         run: |
@@ -345,10 +404,17 @@ jobs:
           # 'skipped' is also fine — that's the Vigil scenario when
           # nobody opted in.
           R='${{ needs.scenario.result }}'
-          echo "Aggregate scenario result: $R"
-          if [ "$R" = "success" ]; then
-            echo "All required scenarios passed."
+          P='${{ needs.publish-deref-roundtrip.result }}'
+          echo "Aggregate scenario result:        $R"
+          echo "publish-deref-roundtrip result:   $P"
+          if [ "$R" = "success" ] && [ "$P" = "success" ]; then
+            echo "All required scenarios + publish-deref-roundtrip passed."
             exit 0
           fi
-          echo "::error::At least one required scenario failed."
+          if [ "$P" != "success" ]; then
+            echo "::error::publish-deref-roundtrip failed — publish → dereference round-trip is broken."
+          fi
+          if [ "$R" != "success" ]; then
+            echo "::error::At least one required scenario failed."
+          fi
           exit 1
