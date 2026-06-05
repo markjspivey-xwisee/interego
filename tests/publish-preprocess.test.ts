@@ -49,22 +49,24 @@ describe('stripStringsAndComments', () => {
 });
 
 describe('normalizePublishInputs — modal-status default', () => {
-  it('defaults to Hypothetical / 0.7 when modalStatus + confidence are unset', () => {
-    // Pin the principled default: an agent calling publish_context
-    // without explicit modal status is recording an inference, so the
-    // substrate marks the claim as tentative. Compliance / verified
-    // paths set Asserted explicitly via their builders and are
-    // unaffected. Flipping this back to Asserted would silently re-open
-    // the "drift to Asserted for safety" failure mode that the MCP
-    // server's own guidance warns against.
+  it('defaults to Asserted / 0.85 when modalStatus + confidence are unset', () => {
+    // Pin the principled default: an explicit publish_context call is
+    // semantically an Assertion — the caller stepped over the screening
+    // + auto-supersede gates to commit a claim. The user-facing docs
+    // (docs/FIRST-HOUR.md, docs/AGENT-INTEGRATION-GUIDE.md, the path-5
+    // Hermes provider doc) and the L2 integration shims
+    // (integrations/openclaw-memory, integrations/hermes-memory) all
+    // encode the same intent: a publish lands as Asserted at 0.85.
+    // Callers recording inferred-but-uncommitted observations must pass
+    // Hypothetical explicitly.
     const result = normalizePublishInputs({});
-    expect(result.semiotic.modalStatus).toBe('Hypothetical');
-    expect(result.semiotic.epistemicConfidence).toBe(0.7);
-    expect(result.semiotic.groundTruth).toBeUndefined(); // three-valued
+    expect(result.semiotic.modalStatus).toBe('Asserted');
+    expect(result.semiotic.epistemicConfidence).toBe(0.85);
+    expect(result.semiotic.groundTruth).toBe(true); // Asserted → groundTruth = true
   });
 
   it('still honors explicit modal status', () => {
-    expect(normalizePublishInputs({ modalStatus: 'Asserted' }).semiotic.modalStatus).toBe('Asserted');
+    expect(normalizePublishInputs({ modalStatus: 'Hypothetical' }).semiotic.modalStatus).toBe('Hypothetical');
     expect(normalizePublishInputs({ modalStatus: 'Counterfactual' }).semiotic.modalStatus).toBe('Counterfactual');
   });
 });

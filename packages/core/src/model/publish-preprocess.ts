@@ -33,23 +33,29 @@ import type { IRI, ModalStatus, RevocationConditionData } from './types.js';
 
 export interface PublishInputs {
   /**
-   * Semiotic modal status — defaults to `'Hypothetical'` when unset.
+   * Semiotic modal status — defaults to `'Asserted'` when unset.
    *
-   * Most callers of `publish_context` are agents recording an inference
-   * (a memory note, a derived claim, an action result). The substrate's
-   * own published MCP guidance is explicit: *"don't drift to 'Asserted
-   * for safety'... USE Hypothetical DEFAULT for inferences."* A
-   * Hypothetical default makes the safe thing the easy thing —
-   * compliance-grade and human-verified callers always set
-   * `modalStatus: 'Asserted'` explicitly via their builders, so they
-   * are unaffected.
+   * An explicit `publish_context` call is semantically an Assertion:
+   * the caller stepped over the auto-supersede + screening gates to
+   * commit a claim to the record. The user-facing docs
+   * (docs/FIRST-HOUR.md, docs/AGENT-INTEGRATION-GUIDE.md,
+   * docs/integrations/path-5-hermes-memory-provider.md) and the L2
+   * integration shims (integrations/openclaw-memory,
+   * integrations/hermes-memory) all encode the same intent: a publish
+   * lands as Asserted at 0.85. Callers recording an inferred-but-
+   * uncommitted observation MUST pass `modalStatus: 'Hypothetical'`
+   * explicitly. The screening preflight + the explicit-call-required
+   * gate mitigate the historical "drift to Asserted for safety"
+   * concern — an LLM that doesn't actively choose to publish_context
+   * won't accidentally Assert anything.
    */
   readonly modalStatus?: ModalStatus;
   /**
    * Caller-supplied epistemic confidence `[0.0, 1.0]`. Defaults to
-   * `0.7` — high enough that the claim isn't ignored, low enough that
-   * the affordance engine still gates `apply` / `forward` on a stricter
-   * confidence (≥ 0.8) per the Hypothetical-with-caution rule.
+   * `0.85` — paired with the Asserted default for an explicit publish.
+   * Hypothetical callers should pass a lower value (the L2 shims use
+   * 0.5) so the affordance engine still gates `apply` / `forward` on
+   * a stricter confidence threshold.
    */
   readonly confidence?: number;
   /** Raw Turtle graph content — mined for cross-descriptor mirrors. */
@@ -77,12 +83,14 @@ export interface PreprocessedPublish {
  * publish inputs. Returns a struct the builder can use directly.
  */
 export function normalizePublishInputs(inputs: PublishInputs): PreprocessedPublish {
-  // Default to Hypothetical / 0.7 — see `PublishInputs.modalStatus` docs.
-  // Compliance + human-verified callers set Asserted explicitly via their
-  // builders; agent-driven publish paths (the common case) get a safe
-  // tentative claim that downstream affordances gate appropriately.
-  const modalStatus: ModalStatus = inputs.modalStatus ?? 'Hypothetical';
-  const epistemicConfidence = inputs.confidence ?? 0.7;
+  // Default to Asserted / 0.85 — see `PublishInputs.modalStatus` docs.
+  // An explicit publish_context call is semantically an Assertion (the
+  // caller chose to commit a claim to the record). Callers recording
+  // an inferred-but-uncommitted observation must pass Hypothetical
+  // explicitly; the L2 integration shims and user-facing docs all
+  // encode this same intent.
+  const modalStatus: ModalStatus = inputs.modalStatus ?? 'Asserted';
+  const epistemicConfidence = inputs.confidence ?? 0.85;
 
   let groundTruth: boolean | undefined;
   if (modalStatus === 'Asserted' || modalStatus === 'Quoted') groundTruth = true;
