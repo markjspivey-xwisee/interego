@@ -1303,11 +1303,77 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
 
 // ── Federation Tool Handlers ────────────────────────────────
 
-// Simple in-memory pod registry for the relay
-const knownPods: Map<string, { url: string; label?: string; owner?: string; via: string }> = new Map();
+// Simple in-memory pod registry for the relay.
+// `via` tracks how a pod entry got into our view of the federation:
+//   'manual'    — explicitly added via add_pod
+//   'directory' — imported from a published pod directory
+//   'webfinger' — resolved via WebFinger lookup
+//   'self'      — synthetic per-call projection of the calling
+//                 bearer's own pod (NEVER persisted to knownPods —
+//                 see selfPodEntry()). 'self' wins on URL collisions
+//                 so users see their own pod as their own pod even
+//                 if a directory import previously listed it.
+type KnownPodVia = 'manual' | 'directory' | 'webfinger' | 'self';
+const knownPods: Map<string, { url: string; label?: string; owner?: string; via: KnownPodVia }> = new Map();
+
+// Resolve the calling user's OWN pod URL from the auth-context-
+// injected args, INDEPENDENT of args.pod_url (which on tools like
+// add_pod is the *candidate* pod the caller passed, not the caller's
+// own pod). Order of resolution:
+//   1. identity-server /me (cached, source of truth — survives
+//      preferred-pod overlays where userId may not match pod path)
+//   2. CSS_URL + pod_name (the userId) — the bootstrap convention
+//      identity follows when no overlay is set
+// Returns undefined when the bearer didn't yield either signal
+// (unauthenticated /mcp call with RELAY_MCP_API_KEY unset).
+async function selfPodUrl(args: ToolArgs): Promise<string | undefined> {
+  const identityToken = args._identity_token as string | undefined;
+  if (identityToken) {
+    const me = await fetchIdentityMe(identityToken);
+    if (me?.userId) return `${CSS_URL}${me.userId}/`;
+  }
+  const userId = args.pod_name as string | undefined;
+  if (userId) return `${CSS_URL}${userId}/`;
+  return undefined;
+}
+
+// Build the per-call synthetic 'self' entry for the calling user's
+// own pod from the auth-context-injected args. Returns undefined if
+// the bearer didn't yield a pod URL (e.g. unauthenticated /mcp call
+// when RELAY_MCP_API_KEY is unset). Best-effort resolves the display
+// name via the per-user identity cache; falls back to pod_name (the
+// userId) for the same reason bootstrapPod falls back when
+// identity is unreachable. This is a presentation-layer projection
+// — never persisted to knownPods, so it stays correct across user
+// switches on a shared relay instance.
+async function selfPodEntry(args: ToolArgs): Promise<{ url: string; label?: string; owner?: string; via: KnownPodVia } | undefined> {
+  const url = await selfPodUrl(args);
+  if (!url) return undefined;
+  const owner = args.owner_webid as string | undefined;
+  const userId = args.pod_name as string | undefined;
+  let label: string | undefined;
+  const identityToken = args._identity_token as string | undefined;
+  if (identityToken) {
+    const me = await fetchIdentityMe(identityToken);
+    label = me?.displayName ?? me?.userId ?? userId;
+  } else {
+    label = userId;
+  }
+  return { url, label, owner, via: 'self' };
+}
+
+// Merge the synthetic 'self' entry on top of the persisted knownPods
+// values. 'self' is always first; URL collisions are de-duped with
+// 'self' winning (so a user who imported a directory that listed
+// their own pod still sees it labelled as their own).
+async function knownPodsWithSelf(args: ToolArgs): Promise<Array<{ url: string; label?: string; owner?: string; via: KnownPodVia }>> {
+  const self = await selfPodEntry(args);
+  const others = [...knownPods.values()].filter(p => !self || p.url !== self.url);
+  return self ? [self, ...others] : others;
+}
 
 async function handleDiscoverAll(args: ToolArgs): Promise<string> {
-  const pods = [...knownPods.values()];
+  const pods = await knownPodsWithSelf(args);
   if (pods.length === 0) {
     return JSON.stringify({ message: 'No known pods. Use add_pod or discover_directory first.' });
   }
@@ -1331,12 +1397,27 @@ async function handleDiscoverAll(args: ToolArgs): Promise<string> {
   return JSON.stringify({ pods: results.length, results });
 }
 
-async function handleListKnownPods(_args: ToolArgs): Promise<string> {
-  return JSON.stringify([...knownPods.values()]);
+async function handleListKnownPods(args: ToolArgs): Promise<string> {
+  return JSON.stringify(await knownPodsWithSelf(args));
 }
 
 async function handleAddPod(args: ToolArgs): Promise<string> {
+  // add_pod takes the candidate pod URL explicitly — the auth-context
+  // injection of args.pod_url here is the CALLER's own pod, not the
+  // pod being added. The add_pod tool uses a separate `pod_url`
+  // argument convention (see TOOLS schema), so we read `args.pod_url`
+  // here but treat the auth-context-derived self pod as the dedupe
+  // anchor. NB: in practice the injection at server.ts:3168 overwrites
+  // pod_url only when the wire request omitted it; an add_pod call
+  // without an explicit pod_url is malformed — we still de-shim here
+  // for the case where the caller passes their own pod URL by mistake.
   const url = args.pod_url as string;
+  const self = await selfPodEntry(args);
+  if (self && self.url === url) {
+    // Silently dedupe — adding your own pod is a no-op since
+    // list_known_pods + discover_directory project it via 'self'.
+    return JSON.stringify({ added: false, url, total: knownPods.size, reason: 'self' });
+  }
   knownPods.set(url, {
     url,
     label: args.label as string | undefined,
@@ -1364,13 +1445,27 @@ async function handleDiscoverDirectory(args: ToolArgs): Promise<string> {
       via: 'directory',
     });
   }
-  return JSON.stringify({ imported: directory.entries.length, added, total: knownPods.size });
+  // Return the merged view including the calling user's own pod
+  // — addresses the "directory listing of my pods does not include
+  // my own pod" surprise. We do NOT persist self into knownPods
+  // (it is projected per-call from the bearer); we just include it
+  // in the returned `pods` array for caller convenience. `added`
+  // remains a count of newly-persisted directory entries.
+  const pods = await knownPodsWithSelf(args);
+  return JSON.stringify({ imported: directory.entries.length, added, total: knownPods.size, pods });
 }
 
 async function handlePublishDirectory(args: ToolArgs): Promise<string> {
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
-  const entries: PodDirectoryEntry[] = [...knownPods.values()].map(p => ({
+  // Seed the calling user's own pod as the FIRST entry in the
+  // published directory so a downstream consumer reading it sees
+  // the owner pod before any peers. The self entry is projected
+  // from the bearer's identity (not persisted to knownPods); we
+  // de-dup by URL with self winning over any peer entry that
+  // happened to also list the same pod URL.
+  const pods = await knownPodsWithSelf(args);
+  const entries: PodDirectoryEntry[] = pods.map(p => ({
     podUrl: p.url as IRI,
     owner: p.owner as IRI | undefined,
     label: p.label,
@@ -1421,8 +1516,13 @@ async function handleUnsubscribeFromPod(args: ToolArgs): Promise<string> {
   return JSON.stringify({ unsubscribed: true, pod: podUrl, remaining: subscriptions.size });
 }
 
-async function handleSubscribeAll(_args: ToolArgs): Promise<string> {
-  const pods = [...knownPods.values()];
+async function handleSubscribeAll(args: ToolArgs): Promise<string> {
+  // Include the calling user's own pod in the subscription set —
+  // a user "subscribing to all" reasonably expects events from
+  // their own pod too (notifications about their own publishes
+  // are useful for cross-surface mirroring). Self is projected
+  // per-call; de-duped on URL against persisted peers.
+  const pods = await knownPodsWithSelf(args);
   let subscribed = 0;
   let skipped = 0;
   let failed = 0;
