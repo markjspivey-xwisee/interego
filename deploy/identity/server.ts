@@ -26,15 +26,6 @@
 
 import express from 'express';
 import * as crypto from 'node:crypto';
-import { ethers } from 'ethers';
-import {
-  generateRegistrationOptions,
-  verifyRegistrationResponse,
-  generateAuthenticationOptions,
-  verifyAuthenticationResponse,
-  type VerifiedRegistrationResponse,
-  type VerifiedAuthenticationResponse,
-} from '@simplewebauthn/server';
 import { corsMiddleware } from './cors-allowlist.js';
 import {
   lookupWebFingerIdentity,
@@ -42,12 +33,59 @@ import {
   applyWebFingerRelFilter,
   parseWebFingerResource,
 } from './webfinger.js';
+import {
+  getCachedParsedDid,
+  setCachedParsedDid,
+  getOrCreateEd25519VerifyKey,
+} from './did-parse.js';
+import { startTiming, logTiming, timingEnabled } from './timing.js';
+
+// ── Lazy heavy imports ──────────────────────────────────────
+//
+// Per cold-start profiling, the eager top-of-file imports of `ethers`
+// (~250-450ms parse + ~5MB of JS) and `@simplewebauthn/server` (~150-300ms
+// + CBOR/COSE-key/asn1.js transitive deps) ran on every module load even
+// when the very first request was /auth/did, which uses neither. We
+// replace the eager imports with a singleton-promise loader per
+// dependency so the first call into a SIWE or WebAuthn handler pays the
+// load cost ONCE, and /auth/did / /try / /tokens never pay it at all.
+//
+// The same handlers `await` the loader directly — no change to wire
+// shape, no change to handler return value.
+
+type EthersModule = typeof import('ethers');
+type WebAuthnModule = typeof import('@simplewebauthn/server');
+// Reduce noise — these are the symbols we actually use from each module.
+type VerifiedRegistrationResponse = Awaited<
+  ReturnType<WebAuthnModule['verifyRegistrationResponse']>
+>;
+type VerifiedAuthenticationResponse = Awaited<
+  ReturnType<WebAuthnModule['verifyAuthenticationResponse']>
+>;
+
+let _ethersPromise: Promise<EthersModule> | null = null;
+function loadEthers(): Promise<EthersModule> {
+  return (_ethersPromise ??= import('ethers'));
+}
+
+let _webauthnPromise: Promise<WebAuthnModule> | null = null;
+function loadWebAuthn(): Promise<WebAuthnModule> {
+  return (_webauthnPromise ??= import('@simplewebauthn/server'));
+}
 
 // ── Config ──────────────────────────────────────────────────
 
 const PORT = parseInt(process.env['PORT'] ?? '8090');
 const BASE_URL = process.env['BASE_URL'] ?? `http://localhost:${PORT}`;
 const CSS_URL = process.env['CSS_URL'] ?? 'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io/';
+// Hoist these once at module load so hot-path handlers don't re-parse
+// the same URL on every request (per-request `new URL(BASE_URL).host` was
+// showing up on every issueTokenResponse, did-doc build, agent registry
+// write, etc.). Constructing `new URL()` is ~5µs each but it ran a dozen
+// times per /auth/did call.
+const BASE_URL_HOST = new URL(BASE_URL).host;
+const BASE_URL_HOST_NO_PORT = BASE_URL_HOST.replace(/:.*$/, '');
+const BASE_URL_HOSTNAME = new URL(BASE_URL).hostname;
 // The sibling MCP relay — surfaced on the landing page so agent
 // operators can copy it into their MCP client without hunting.
 const RELAY_URL = (process.env['RELAY_URL'] ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
@@ -941,6 +979,46 @@ async function rebuildAllIndexes(): Promise<void> {
   log(`Index rebuild: ${ok} pod(s) OK, ${skipped} skipped (no credentials), ${fail} failed. users=${identities.size} wallets=${walletIndex.size} webauthn=${credentialIndex.size} dids=${didIndex.size}`);
 }
 
+/**
+ * Promise-cached initial-rebuild handle.
+ *
+ * The original boot code called `rebuildAllIndexes().catch(...)` fire-
+ * and-forget from inside app.listen(). The first /auth/did request
+ * that landed before the Promise.all settled raced the index rebuild
+ * and missed didIndex — forcing the slow first-time-registration
+ * branch (and a ~2.5s putPodAuthMethods CSS round-trip) on a user
+ * whose credentials WERE actually on file, just not loaded yet.
+ *
+ * Hoisting the Promise here lets handlers Promise.race it against a
+ * small timeout (~50ms) before falling through — a returning user
+ * whose index just hasn't loaded yet hits the warm path; a genuinely
+ * new user is unaffected because the index has nothing to give them
+ * either way.
+ *
+ * The /auth/did handler is the only one that races the rebuild today
+ * (it's the cold-start outlier per profiling). SIWE and WebAuthn
+ * handlers don't bother awaiting it because the cold-start cost there
+ * is dominated by ethers / webauthn lazy-load, not the index race.
+ */
+let initialIndexReady: Promise<void> | null = null;
+function startInitialIndexRebuild(): Promise<void> {
+  return (initialIndexReady ??= rebuildAllIndexes().catch(err => {
+    log(`WARN: initial index rebuild failed: ${(err as Error).message}`);
+  }));
+}
+
+function awaitInitialIndexWithBudget(budgetMs: number): Promise<void> {
+  // If the rebuild hasn't started yet (test harness skipping boot), the
+  // race resolves immediately on the timeout — the handler falls through
+  // to its normal lookup path. Production starts the promise in app.listen.
+  const ready = initialIndexReady;
+  if (!ready) return Promise.resolve();
+  return Promise.race([
+    ready,
+    new Promise<void>(resolve => setTimeout(resolve, budgetMs)),
+  ]);
+}
+
 // Seed with markj + agents. No passwords, no secrets — identities only
 // exist to reserve names and mint DID documents. Auth is wired up after
 // seeding via the user's own wallet / passkey / DID key registration.
@@ -1030,7 +1108,7 @@ function consumeChallenge(nonce: string, purpose?: Challenge['purpose']): Challe
 // passkey dance at relay, relay verifies at identity) set WEBAUTHN_RP_*
 // consistently on both sides so the RP ID is stable.
 
-const RP_ID = process.env['WEBAUTHN_RP_ID'] ?? new URL(BASE_URL).hostname;
+const RP_ID = process.env['WEBAUTHN_RP_ID'] ?? BASE_URL_HOSTNAME;
 const RP_NAME = process.env['WEBAUTHN_RP_NAME'] ?? 'Interego';
 const RP_ORIGIN = process.env['WEBAUTHN_RP_ORIGIN'] ?? BASE_URL;
 
@@ -1822,7 +1900,8 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
 
   let recoveredAddress: string;
   try {
-    recoveredAddress = (await ethers.verifyMessage(message, signature)).toLowerCase();
+    const { ethers } = await loadEthers();
+    recoveredAddress = (ethers.verifyMessage(message, signature)).toLowerCase();
   } catch (err) {
     res.status(401).json({
       error: `SIWE signature verification failed: ${(err as Error).message}`,
@@ -2044,6 +2123,7 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
   // page on this server's own domain, or the relay's /authorize page).
   const rp = resolveRp(req);
 
+  const { generateRegistrationOptions } = await loadWebAuthn();
   const options = await generateRegistrationOptions({
     rpName: RP_NAME,
     rpID: rp.rpId,
@@ -2112,6 +2192,7 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
 
   let verification: VerifiedRegistrationResponse;
   try {
+    const { verifyRegistrationResponse } = await loadWebAuthn();
     verification = await verifyRegistrationResponse({
       response,
       expectedChallenge,
@@ -2260,6 +2341,7 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
 
   let verification: VerifiedAuthenticationResponse;
   try {
+    const { verifyAuthenticationResponse } = await loadWebAuthn();
     verification = await verifyAuthenticationResponse({
       response,
       expectedChallenge,
@@ -2321,6 +2403,7 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
  * }
  */
 app.post('/auth/did', authEnrollLimiter, async (req, res) => {
+  const requestStart = timingEnabled() ? startTiming() : 0;
   const {
     did, nonce, signature,
     name,
@@ -2338,10 +2421,20 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     return;
   }
 
-  // Resolve public key
+  // Resolve public key — cache the parse result keyed by the DID string.
+  // did:key is content-addressed (the public key is encoded INTO the DID),
+  // so a given did:key string can never refer to a different key — TTL is
+  // process lifetime. base58btc decode runs ~30 LOC of hand-rolled
+  // arithmetic per character that's redundant after the first call.
   let publicKeyRaw: Buffer;
   let didKeyFormat: 'base58btc' | 'base64url-legacy' | null = null;
-  if (did.startsWith('did:key:z') && did.length > 10) {
+  const parseStart = timingEnabled() ? startTiming() : 0;
+  const cached = getCachedParsedDid(did);
+  if (cached) {
+    publicKeyRaw = cached.publicKeyRaw;
+    didKeyFormat = cached.format;
+    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'hit' });
+  } else if (did.startsWith('did:key:z') && did.length > 10) {
     // Per W3C did:key spec: 'z' + base58btc(0xed 0x01 || rawKey32) for
     // Ed25519. We accept the spec form first and the legacy
     // 'z' + base64url(rawKey32) shape this server originally emitted as
@@ -2354,18 +2447,22 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     }
     publicKeyRaw = parsed.publicKey;
     didKeyFormat = parsed.format;
+    setCachedParsedDid(did, publicKeyRaw, didKeyFormat);
+    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: didKeyFormat });
   } else if (publicKeyMultibase?.startsWith('z')) {
     // Caller-supplied publicKeyMultibase for non-did:key DIDs (did:web, etc.).
     // Try W3C base58btc-with-multicodec first; fall back to the legacy
     // base64url form for back-compat.
     const encoded = publicKeyMultibase.slice(1);
     let resolved: Buffer | null = null;
+    let resolvedFormat: 'base58btc' | 'base64url-legacy' | null = null;
     try {
       const decoded = base58btcDecode(encoded);
       if (decoded.length === 34
         && decoded[0] === ED25519_MULTICODEC[0]
         && decoded[1] === ED25519_MULTICODEC[1]) {
         resolved = Buffer.from(decoded.subarray(2));
+        resolvedFormat = 'base58btc';
       }
     } catch { /* fall through */ }
     if (!resolved) {
@@ -2373,15 +2470,20 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
         const legacy = Buffer.from(encoded, 'base64url');
         if (legacy.length >= 32) {
           resolved = Buffer.from(legacy.subarray(legacy.length - 32));
+          resolvedFormat = 'base64url-legacy';
           log(`[did-key-legacy] accepted base64url-encoded publicKeyMultibase for ${did}; client should migrate to W3C base58btc encoding`);
         }
       } catch { /* fall through */ }
     }
-    if (!resolved) {
+    if (!resolved || !resolvedFormat) {
       res.status(400).json({ error: 'Could not decode publicKeyMultibase — tried W3C base58btc(0xed 0x01 || key) and legacy base64url(rawKey); neither yielded a 32-byte Ed25519 public key' });
       return;
     }
     publicKeyRaw = resolved;
+    // Cache the parsed result for did:web too — TTL is 60s per the
+    // did-parse module so a rotated did:web key still surfaces quickly.
+    setCachedParsedDid(did, publicKeyRaw, resolvedFormat);
+    if (timingEnabled()) logTiming('did-parse', parseStart, { did: did.slice(0, 24), cache: 'miss', format: resolvedFormat, source: 'multibase' });
   } else {
     res.status(400).json({ error: 'Supply publicKeyMultibase alongside non-did:key DIDs' });
     return;
@@ -2393,15 +2495,19 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     res.setHeader('Warning', '299 - "did:key base64url encoding is deprecated; migrate to W3C base58btc multicodec format"');
   }
 
-  // Verify Ed25519 signature over the nonce
+  // Verify Ed25519 signature over the nonce.
+  //
+  // crypto.createPublicKey(...) does ~30ms of native work on the first
+  // call in the process (lazy-loads OpenSSL EVP_PKEY + ed25519 curve
+  // params) and ~0.3ms thereafter. The KeyObject is immutable, so we
+  // cache it keyed on hex(publicKeyRaw) — every subsequent /auth/did
+  // for the same DID skips the SPKI assembly + KeyObject build entirely.
+  const verifyStart = timingEnabled() ? startTiming() : 0;
   try {
     const sig = Buffer.from(signature, 'base64url');
-    const spki = Buffer.concat([
-      Buffer.from('302a300506032b6570032100', 'hex'), // Ed25519 SPKI prefix
-      publicKeyRaw,
-    ]);
-    const verifyKey = crypto.createPublicKey({ key: spki, format: 'der', type: 'spki' });
+    const verifyKey = getOrCreateEd25519VerifyKey(publicKeyRaw);
     const ok = crypto.verify(null, Buffer.from(nonce, 'utf8'), verifyKey, sig);
+    if (timingEnabled()) logTiming('did-verify', verifyStart, { ok });
     if (!ok) {
       res.status(401).json({ error: 'Ed25519 signature verification failed' });
       return;
@@ -2411,9 +2517,23 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     return;
   }
 
+  // If the initial pod-index rebuild hasn't settled yet, give it a small
+  // budget before we look up `did` in didIndex. Without this race the
+  // very first /auth/did after a container restart misses didIndex,
+  // falls into the first-time-registration branch, and pays a ~2.5s
+  // CSS PUT cost — even though the user's credential is already on
+  // the pod and the rebuild was about to load it. The budget is small
+  // enough to be invisible on warm hits and saves multiple seconds on
+  // the boot-race case.
+  if (!didIndex.has(did)) {
+    await awaitInitialIndexWithBudget(50);
+  }
+
   // Returning user via DID index — no user-claim needed.
+  const indexLookupStart = timingEnabled() ? startTiming() : 0;
   let userId = didIndex.get(did);
   let user = userId ? identities.get(userId) : undefined;
+  if (timingEnabled()) logTiming('did-index-lookup', indexLookupStart, { hit: !!user });
 
   // Authenticated add-did: bearer token binds this DID to the caller.
   if (!user) {
@@ -2426,6 +2546,13 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       }
     }
   }
+
+  // Canonical W3C base58btc-with-multicodec encoding of the raw 32-byte
+  // Ed25519 key the server actually verified against. Computed ONCE here
+  // (hoisted from two prior didKeys.push sites) — encodeEd25519Multibase
+  // does a base58btc encode loop on every call. Reused below for both
+  // first-time registration and add-did paths.
+  const canonicalPublicKeyMultibase = encodeEd25519Multibase(publicKeyRaw);
 
   if (!user) {
     let targetUserId: string;
@@ -2460,21 +2587,18 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     const methods = emptyAuthMethods(user.id, user.name, agentId);
     methods.didKeys.push({
       did,
-      // Always persist the canonical W3C base58btc-with-multicodec form,
-      // even if the caller supplied a legacy base64url-encoded multibase
-      // string — `publicKeyRaw` already holds the raw 32-byte key the
-      // server actually verified the nonce signature against (parser path
-      // normalised it). New entries on the pod are W3C-spec from day one.
-      publicKeyMultibase: encodeEd25519Multibase(publicKeyRaw),
+      publicKeyMultibase: canonicalPublicKeyMultibase,
       keyType: 'Ed25519VerificationKey2020',
       createdAt: new Date().toISOString(),
     });
+    const podWriteStart = timingEnabled() ? startTiming() : 0;
     try {
       await putPodAuthMethods(user.id, methods);
     } catch (err) {
       res.status(500).json({ error: `Failed to persist DID to pod: ${(err as Error).message}` });
       return;
     }
+    if (timingEnabled()) logTiming('did-pod-write', podWriteStart, { branch: 'first-time' });
     // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
     // Single authoritative pod-side writer is the relay's /oauth/verify
     // handler. See SIWE first-touch comment above for background.
@@ -2485,26 +2609,27 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
     if (!methods.didKeys.some(k => k.did === did)) {
       methods.didKeys.push({
         did,
-        // Always persist the canonical W3C base58btc-with-multicodec form,
-      // even if the caller supplied a legacy base64url-encoded multibase
-      // string — `publicKeyRaw` already holds the raw 32-byte key the
-      // server actually verified the nonce signature against (parser path
-      // normalised it). New entries on the pod are W3C-spec from day one.
-      publicKeyMultibase: encodeEd25519Multibase(publicKeyRaw),
+        publicKeyMultibase: canonicalPublicKeyMultibase,
         keyType: 'Ed25519VerificationKey2020',
         createdAt: new Date().toISOString(),
       });
+      const podWriteStart = timingEnabled() ? startTiming() : 0;
       try {
         await putPodAuthMethods(user.id, methods);
       } catch (err) {
         res.status(500).json({ error: `Failed to persist DID to pod: ${(err as Error).message}` });
         return;
       }
+      if (timingEnabled()) logTiming('did-pod-write', podWriteStart, { branch: 'add-did' });
       log(`DID ${did} linked to existing user ${user.id}`);
     }
   }
 
-  res.json(await issueTokenResponse(user, surfaceAgent));
+  const tokenStart = timingEnabled() ? startTiming() : 0;
+  const tokenResponse = await issueTokenResponse(user, surfaceAgent);
+  if (timingEnabled()) logTiming('did-issue-token', tokenStart);
+  if (timingEnabled()) logTiming('did-total', requestStart);
+  res.json(tokenResponse);
 });
 
 // ── Try-it provisioning (no signup, ephemeral identity) ─────
@@ -2627,7 +2752,7 @@ function ensureSurfaceAgent(user: Identity, surfaceAgent: string | undefined): I
 async function issueTokenResponse(user: Identity, surfaceAgent?: string): Promise<Record<string, unknown>> {
   const agent = ensureSurfaceAgent(user, surfaceAgent);
   const tokenRecord = await issueToken(user.id, agent.id, agent.scope ?? 'ReadWrite');
-  const host = new URL(BASE_URL).host;
+  const host = BASE_URL_HOST;
   // Summarise registered auth methods from cache (stale ok — this is just
   // a UI hint, not security-critical).
   const cached = authMethodsCache.get(user.id)?.value;
@@ -2965,6 +3090,7 @@ app.post('/siwe/verify', async (req, res) => {
 
   // Verify the signature using ethers.js — real ECDSA recovery
   try {
+    const { ethers } = await loadEthers();
     const recovered = ethers.verifyMessage(message, signature);
     if (recovered.toLowerCase() !== walletAddress) {
       res.status(401).json({ valid: false, error: `Signature mismatch: expected ${walletAddress}, recovered ${recovered.toLowerCase()}` });
@@ -3079,6 +3205,7 @@ app.post('/wallet/link', async (req, res) => {
 
   // Verify the SIWE signature with real ECDSA recovery
   try {
+    const { ethers } = await loadEthers();
     const recovered = ethers.verifyMessage(siweMessage, signature);
     if (recovered.toLowerCase() !== (walletAddress as string).toLowerCase()) {
       res.status(401).json({ error: `Signature mismatch: expected ${walletAddress}, recovered ${recovered}` });
@@ -3209,7 +3336,7 @@ app.get('/me', async (req, res) => {
     primaryAgent = [...identities.values()].find(i => i.type === 'agent' && i.owner === userId);
   }
   // Pod URL derives from the user's canonical id (deployment convention).
-  const did = `did:web:${new URL(BASE_URL).host.replace(/:.*$/, '')}:users:${userId}`;
+  const did = `did:web:${BASE_URL_HOST_NO_PORT}:users:${userId}`;
   const webId = `${BASE_URL.replace(/\/$/, '')}/users/${userId}/profile#me`;
   res.json({
     userId,
@@ -3218,7 +3345,7 @@ app.get('/me', async (req, res) => {
     displayName: user.name,
     primaryAgentId: primaryAgent?.id ?? null,
     primaryAgentDid: primaryAgent
-      ? `did:web:${new URL(BASE_URL).host.replace(/:.*$/, '')}:agents:${primaryAgent.id}`
+      ? `did:web:${BASE_URL_HOST_NO_PORT}:agents:${primaryAgent.id}`
       : null,
     podHint: `${BASE_URL.replace('-identity.', '-css.').replace(/\/$/, '')}/${userId}/`,
     enrolledAt: user.createdAt,
@@ -4178,6 +4305,56 @@ async function connectMetaMask() {
 </html>`);
 });
 
+// ── Cold-path pre-warm ──────────────────────────────────────
+//
+// Several node:crypto + undici code paths lazy-load their underlying
+// native modules on the very first call in the process — adding latency
+// (3-100ms each) to the first user-facing request that hits them.
+// Doing one throwaway call here, after app.listen has fired, warms each
+// path so the first real /auth/did call finds them already initialised.
+//
+// Specifically warmed:
+//   * crypto.createHmac SHA-256          (signPayload + parseAndVerifySignature)
+//   * crypto.createPublicKey + crypto.verify on a synthetic Ed25519
+//     keypair                            (verify path in /auth/did)
+//   * crypto.createHash SHA-256          (deriveUserIdFromDid)
+//   * undici Agent + TCP/TLS pool to CSS (HEAD probe — no auth, no body)
+//
+// Failures are swallowed: every code path has a per-request fallback,
+// pre-warm is a latency optimisation not a correctness requirement.
+function prewarmColdPaths(): void {
+  try {
+    // HMAC-SHA256 — token signing path.
+    crypto.createHmac('sha256', TOKEN_SIGNING_KEY).update('prewarm').digest();
+    // SHA-256 — userId derivation path.
+    crypto.createHash('sha256').update('prewarm').digest();
+    // Ed25519 createPublicKey + verify — /auth/did hot path. Use a tiny
+    // throwaway keypair so OpenSSL's EVP_PKEY + ed25519 curve params init.
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+    const sig = crypto.sign(null, Buffer.from('prewarm'), privateKey);
+    crypto.verify(null, Buffer.from('prewarm'), publicKey, sig);
+  } catch (err) {
+    log(`WARN: prewarm crypto failed (non-fatal): ${(err as Error).message}`);
+  }
+  // Warm the undici TCP/TLS pool to CSS_URL with a HEAD request. Even
+  // a 404/405 response is enough to construct the Agent + dial+TLS.
+  // Fire-and-forget — we don't want to block boot on CSS reachability.
+  void (async () => {
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 5000);
+      try {
+        await fetch(CSS_URL, { method: 'HEAD', signal: ac.signal });
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      // CSS unreachable at boot is fine — the real handler will surface
+      // a useful error if/when an /auth/did call actually needs to write.
+    }
+  })();
+}
+
 // ── Start ───────────────────────────────────────────────────
 
 app.listen(PORT, () => {
@@ -4204,7 +4381,15 @@ app.listen(PORT, () => {
   // Rebuild credential indexes from existing pod data so users who registered
   // before this container restarted are still reachable without re-enrolling.
   // Non-blocking — health checks come up immediately, indexes populate async.
-  rebuildAllIndexes().catch(err => log(`WARN: initial index rebuild failed: ${(err as Error).message}`));
+  // The promise is cached at module scope so /auth/did can Promise.race
+  // against a small timeout before its didIndex.get() — see
+  // awaitInitialIndexWithBudget().
+  startInitialIndexRebuild();
+
+  // Pre-warm cold-start surfaces — each runs lazily in node:crypto / undici
+  // on the very first use, adding ~3-100ms to the first request that hits it.
+  // Doing them here lets the first /auth/did skip the warm-up costs entirely.
+  prewarmColdPaths();
 
   // Janitor — periodic safety net for E2E test users left behind after a
   // crashed run. The Playwright passkey suite calls /users/me/delete in

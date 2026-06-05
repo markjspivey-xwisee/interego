@@ -20,6 +20,8 @@ COPY deploy/identity/tsconfig.json ./
 COPY deploy/identity/server.ts ./
 COPY deploy/identity/cors-allowlist.ts ./
 COPY deploy/identity/webfinger.ts ./
+COPY deploy/identity/did-parse.ts ./
+COPY deploy/identity/timing.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────
