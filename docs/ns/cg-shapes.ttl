@@ -195,3 +195,49 @@ cg:AgentProvenanceConsistencyShape a sh:NodeShape ;
             }
         """
     ] .
+
+# ──────────────────────────────────────────────────────────────
+#  6. Distribution — visibility / encryption consistency
+#
+#  cg:visibility classifies the audience for the affordance's payload:
+#    public  ↔ cg:encrypted MUST be false  (plaintext readable by any
+#                                            authenticated user via
+#                                            foaf:Agent acl:Read)
+#    shared  ↔ cg:encrypted MUST be true   (JOSE envelope wrapped to
+#                                            the pod's authorized agents
+#                                            plus optional share_with)
+#    private ↔ cg:encrypted MUST be true   (JOSE envelope wrapped to the
+#                                            publishing agent only)
+#
+#  Prevents a descriptor claiming "public" while shipping ciphertext
+#  (no anonymous reader can decrypt) or claiming "shared"/"private"
+#  while shipping plaintext (the audience-class promise is silently
+#  violated). cg:visibility is optional — when absent, the shape is
+#  inert and existing pre-visibility descriptors continue to pass.
+#  Only one of the three legal string values is permitted.
+# ──────────────────────────────────────────────────────────────
+cg:VisibilityShape a sh:NodeShape ;
+    sh:targetClass cg:Affordance ;
+    sh:property [
+        sh:path cg:visibility ;
+        sh:datatype xsd:string ;
+        sh:in ( "public" "shared" "private" ) ;
+        sh:maxCount 1 ;
+        sh:message "cg:visibility MUST be one of \"public\", \"shared\", or \"private\" (functional property — at most one value per distribution)."
+    ] ;
+    sh:sparql [
+        sh:message "cg:visibility consistency: \"public\" requires cg:encrypted=false; \"shared\" and \"private\" require cg:encrypted=true." ;
+        sh:prefixes cg: ;
+        sh:select """
+            PREFIX cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>
+            SELECT $this ?visibility ?encrypted WHERE {
+              $this cg:visibility ?visibility .
+              $this cg:encrypted ?encrypted .
+              FILTER (
+                ( ?visibility = "public"  && ?encrypted != false ) ||
+                ( ?visibility = "shared"  && ?encrypted != true  ) ||
+                ( ?visibility = "private" && ?encrypted != true  )
+              )
+            }
+        """
+    ] .

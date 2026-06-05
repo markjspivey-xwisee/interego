@@ -546,6 +546,9 @@ export async function publish(
     encrypted: encryptedFlag,
     encryptionAlgorithm: encryptedFlag ? 'X25519-XSalsa20-Poly1305' : undefined,
     recipientCount: options.encrypt?.recipients.length,
+    visibility: options.visibility,
+    descriptorId: descriptor.id,
+    relayBaseUrl: options.relayBaseUrl,
   });
   const descriptorWithDistribution = descriptorTurtle.trimEnd() + '\n\n' + distributionBlock + '\n';
   await withTransientRetry(async () => {
@@ -756,6 +759,9 @@ function buildDistributionBlock(d: {
   encrypted: boolean;
   encryptionAlgorithm?: string;
   recipientCount?: number;
+  visibility?: 'public' | 'shared' | 'private';
+  descriptorId?: string;
+  relayBaseUrl?: string;
 }): string {
   const actionIRI = d.encrypted ? 'cg:canDecrypt' : 'cg:canFetchPayload';
   const returnsClass = d.encrypted ? 'cg:EncryptedGraphEnvelope' : 'cg:GraphPayload';
@@ -778,7 +784,38 @@ function buildDistributionBlock(d: {
   if (d.encrypted && typeof d.recipientCount === 'number') {
     lines.push(`    ; cg:recipientCount ${d.recipientCount}`);
   }
+  // Visibility is the audience-class signal for consumers (and for ACL
+  // writers that mirror it onto the pod). Default-omitted preserves the
+  // historical wire format for `shared` graphs; only emit when caller
+  // declared `public` or `private` so older parsers don't trip on an
+  // unknown predicate.
+  if (d.visibility === 'public' || d.visibility === 'private') {
+    lines.push(`    ; cg:visibility "${d.visibility}"`);
+  }
   lines.push(`] .`);
+
+  // Second affordance: cg:renderView. Server-side plaintext projection
+  // for thin clients (no X25519 keypair) that hold a bearer token. Only
+  // emitted when the payload is encrypted AND the publisher supplied a
+  // relay base URL — without one we'd have no projection endpoint to
+  // point at. cg:canDecrypt above remains the point-of-fetch path for
+  // clients holding a recipient key; cg:renderView is the asymmetric
+  // counterpart for thin clients. See cg.ttl `cg:renderView`.
+  if (d.encrypted && d.relayBaseUrl && d.descriptorId) {
+    const relayBase = d.relayBaseUrl.replace(/\/$/, '');
+    const renderTarget = `${relayBase}/render/${encodeURIComponent(d.descriptorId)}`;
+    lines.push('');
+    lines.push('# ── Affordance (cg:renderView — server-side projection for thin clients) ──');
+    lines.push(`<> cg:affordance [`);
+    lines.push(`    a cg:Affordance, cgh:Affordance, hydra:Operation ;`);
+    lines.push(`    cg:action cg:renderView ;`);
+    lines.push(`    hydra:method "GET" ;`);
+    lines.push(`    hydra:target <${renderTarget}> ;`);
+    lines.push(`    hydra:returns cg:GraphPayload ;`);
+    lines.push(`    hydra:title "Render plaintext projection of encrypted graph (relay unwraps for authorized bearer)" ;`);
+    lines.push(`    dcat:mediaType "text/turtle"`);
+    lines.push(`] .`);
+  }
   return lines.join('\n');
 }
 
@@ -787,6 +824,12 @@ export interface DistributionLink {
   readonly mediaType: string;
   readonly encrypted: boolean;
   readonly encryptionAlgorithm?: string;
+  /**
+   * Audience class declared on the affordance via `cg:visibility`. Absent
+   * when the descriptor predates the visibility extension (treat as
+   * `'shared'` for backwards compatibility).
+   */
+  readonly visibility?: 'public' | 'shared' | 'private';
 }
 
 /**
@@ -811,6 +854,7 @@ export function parseDistributionFromDescriptorTurtle(turtle: string): Distribut
   const mediaTypeMatch = block.match(/dcat:mediaType\s+"([^"]+)"/);
   const encryptedMatch = block.match(/cg:encrypted\s+(true|false)/);
   const algoMatch = block.match(/cg:encryptionAlgorithm\s+"([^"]+)"/);
+  const visibilityMatch = block.match(/cg:visibility\s+"(public|shared|private)"/);
   if (!accessUrlMatch || !mediaTypeMatch) return null;
   const result: DistributionLink = {
     accessURL: accessUrlMatch[1]!,
@@ -818,6 +862,10 @@ export function parseDistributionFromDescriptorTurtle(turtle: string): Distribut
     encrypted: encryptedMatch?.[1] === 'true',
   };
   if (algoMatch) (result as { encryptionAlgorithm?: string }).encryptionAlgorithm = algoMatch[1];
+  if (visibilityMatch) {
+    (result as { visibility?: 'public' | 'shared' | 'private' }).visibility =
+      visibilityMatch[1] as 'public' | 'shared' | 'private';
+  }
   return result;
 }
 

@@ -95,6 +95,33 @@ export interface PublishOptions {
   };
 
   /**
+   * Audience class of the published payload. Affects the distribution
+   * block (`cg:visibility`, `cg:encrypted`) and is intended to be paired
+   * with an ACL writer at the caller for `public`.
+   *
+   * - `public`  — no envelope; plaintext payload; descriptor advertises
+   *               `cg:visibility "public"` and `cg:encrypted false`.
+   *               Callers should also grant `acl:Read` to
+   *               `acl:agentClass foaf:Agent` on the payload + descriptor.
+   * - `shared`  — envelope to the caller-supplied recipient set
+   *               (current behavior). Default when omitted.
+   * - `private` — envelope to the author's agent only. share_with-style
+   *               co-recipients should be dropped by the caller.
+   */
+  readonly visibility?: 'public' | 'shared' | 'private';
+
+  /**
+   * Optional relay base URL (no trailing slash). When set AND the
+   * publish is encrypted, the emitted distribution block carries a
+   * SECOND affordance — `cg:renderView` — whose hydra:target is
+   * `<relayBaseUrl>/render/<encodeURIComponent(descriptor.id)>`. Thin
+   * clients (no X25519 keypair) follow that link with a bearer token
+   * to receive server-side-unwrapped plaintext Turtle. cg:canDecrypt
+   * remains the point-of-fetch path for clients that hold the key.
+   */
+  readonly relayBaseUrl?: string;
+
+  /**
    * Maximum permitted graph payload size in bytes. Default 4 MiB.
    * publish() throws before serialization if the named-graph content
    * exceeds this — keeps pathological inputs (multi-GB serialization,

@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   ContextDescriptor,
+  generateKeyPair,
 } from '@interego/core';
 import {
   discover,
@@ -279,6 +280,88 @@ describe('publish', () => {
     });
 
     expect(urls[0]).toContain('my-graphs/');
+  });
+
+  // ── visibility: 'public' | 'shared' | 'private' ────────────────
+  //
+  // Audience-class signal in the descriptor's affordance block.
+  // 'public' MUST NOT encrypt and MUST emit cg:visibility "public" +
+  // cg:encrypted false, even when no encrypt option is passed. 'private'
+  // looks the same on the wire as a 1-recipient envelope but advertises
+  // its narrower intent via cg:visibility "private". 'shared' (and an
+  // omitted value) preserve historical descriptor output — no
+  // cg:visibility predicate is emitted, so legacy parsers stay happy.
+  it('emits cg:visibility "public" + cg:encrypted false when visibility="public"', async () => {
+    const writes: { url: string; body?: string }[] = [];
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = init?.method ?? 'GET';
+      if (method === 'PUT') writes.push({ url: urlStr, body: init?.body as string });
+      if (method === 'GET' && urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: 404, ok: false });
+      }
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+
+    await publish(testDescriptor(), '<urn:s> <urn:p> <urn:o>.', 'https://alice.pod/', {
+      fetch: mockFetch,
+      visibility: 'public',
+    });
+
+    const graphPut = writes.find(w => w.url.endsWith('-graph.trig'))!;
+    expect(graphPut).toBeDefined();           // plaintext TriG, NOT .envelope.jose.json
+    const descPut = writes.find(w => w.url.endsWith('.ttl') && !w.url.includes('manifest'))!;
+    expect(descPut.body).toContain('cg:encrypted false');
+    expect(descPut.body).toContain('cg:visibility "public"');
+  });
+
+  it('encrypts and emits cg:visibility "private" when visibility="private"', async () => {
+    const writes: { url: string; body?: string }[] = [];
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = init?.method ?? 'GET';
+      if (method === 'PUT') writes.push({ url: urlStr, body: init?.body as string });
+      if (method === 'GET' && urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: 404, ok: false });
+      }
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const author = generateKeyPair();
+    await publish(testDescriptor(), '<urn:s> <urn:p> <urn:o>.', 'https://alice.pod/', {
+      fetch: mockFetch,
+      visibility: 'private',
+      encrypt: { recipients: [author.publicKey], senderKeyPair: author },
+    });
+
+    const graphPut = writes.find(w => w.url.endsWith('.envelope.jose.json'))!;
+    expect(graphPut).toBeDefined();           // envelope written (ciphertext on the pod)
+    const descPut = writes.find(w => w.url.endsWith('.ttl') && !w.url.includes('manifest'))!;
+    expect(descPut.body).toContain('cg:encrypted true');
+    expect(descPut.body).toContain('cg:visibility "private"');
+  });
+
+  it('omits cg:visibility for shared (default) to preserve historical descriptor format', async () => {
+    const writes: { url: string; body?: string }[] = [];
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = init?.method ?? 'GET';
+      if (method === 'PUT') writes.push({ url: urlStr, body: init?.body as string });
+      if (method === 'GET' && urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: 404, ok: false });
+      }
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+
+    await publish(testDescriptor(), '<urn:s> <urn:p> <urn:o>.', 'https://alice.pod/', {
+      fetch: mockFetch,
+      // visibility omitted → default 'shared'; no per-graph envelope without
+      // encrypt option, so cg:encrypted is false but visibility predicate
+      // is intentionally NOT emitted for back-compat with pre-fix parsers.
+    });
+
+    const descPut = writes.find(w => w.url.endsWith('.ttl') && !w.url.includes('manifest'))!;
+    expect(descPut.body).not.toContain('cg:visibility');
   });
 });
 

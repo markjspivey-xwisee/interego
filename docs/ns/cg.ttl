@@ -584,6 +584,13 @@ cg:recipientCount a owl:DatatypeProperty , owl:FunctionalProperty ;
     rdfs:range xsd:nonNegativeInteger ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
+cg:visibility a owl:DatatypeProperty , owl:FunctionalProperty ;
+    rdfs:label "visibility" ;
+    rdfs:comment "Audience class of the distribution's payload: 'public' (plaintext; the resource grants acl:Read to acl:agentClass foaf:Agent so any authenticated user can dereference), 'shared' (JOSE envelope wrapped to the pod's authorized agents plus any per-graph share_with recipients — historical default), or 'private' (envelope wrapped to the publishing agent ONLY; even other authorized agents on the same pod cannot decrypt). Discoverable metadata so clients can branch their dereference path without first attempting decryption. When equal to 'public', cg:encrypted MUST be false; when 'shared' or 'private', cg:encrypted MUST be true." ;
+    rdfs:domain dcat:Distribution ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
 # ── Identity / Auth properties ────────────────────────────────
 
 cg:walletAddress a owl:DatatypeProperty , owl:FunctionalProperty ;
@@ -845,6 +852,10 @@ cg:canFetchPayload a cg:Affordance ;
 cg:canDecrypt a cg:Affordance ;
     rdfs:label "Can Decrypt" ;
     rdfs:comment "The declared graph payload is encrypted; clients whose X25519 key is in the envelope's recipient list can decrypt locally. The cg:encryptionAlgorithm on the dcat:Distribution tells clients which KDF / AEAD pair to use. Only present when the Distribution is encrypted.".
+
+cg:renderView a cg:Affordance ;
+    rdfs:label "Render View" ;
+    rdfs:comment "Server-side projection of an encrypted graph payload into authorized plaintext. The hydra:target points at a relay endpoint (typically `<relayBase>/render/<descriptorIri>`); the relay verifies the caller's bearer token, confirms the caller (or an agent the caller delegates) is in the descriptor's envelope recipient set, server-side unwraps the JOSE envelope using the relay's per-agent X25519 private key, and returns the named-graph payload as plaintext Turtle / TriG. Companion to cg:canDecrypt: cg:canDecrypt is the point-of-fetch semantic (client unwraps locally with their own key); cg:renderView is the projection semantic for thin clients (mobile, browser, downstream agents) that hold a bearer token but no X25519 keypair. Both affordances may coexist on the same Distribution — clients pick whichever path their runtime supports.".
 
 cg:canAudit a cg:Affordance ;
     rdfs:label "Can Audit" ;
