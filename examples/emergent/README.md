@@ -12,7 +12,7 @@ full run costs $0 in API spend; the only cost is wall clock and pod
 storage at the deployed CSS.
 
 The CI workflow that drives this suite lives at
-[`.github/workflows/emergent-suite.yml`](../../.github/workflows/emergent-suite.yml).
+[`.github/workflows/nightly-emergent.yml`](../../.github/workflows/nightly-emergent.yml).
 
 ## Running a scenario locally
 
@@ -137,7 +137,7 @@ never collide on `.well-known/context-graphs`.
    - Exit 0 on full success; exit 1 with `got vs. expected` on the
      first failed assertion.
 
-2. Add a row to [`emergent-suite.yml`](../../.github/workflows/emergent-suite.yml)'s
+2. Add a row to [`nightly-emergent.yml`](../../.github/workflows/nightly-emergent.yml)'s
    matrix:
 
    ```yaml

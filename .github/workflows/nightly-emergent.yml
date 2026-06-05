@@ -61,7 +61,7 @@ permissions:
 concurrency:
   # Don't cancel in-progress runs — the suite is observational, and a
   # half-finished run still leaves diagnostic artifacts attached.
-  group: emergent-suite-${{ github.ref }}
+  group: nightly-emergent-${{ github.ref }}
   cancel-in-progress: false
 
 env:
