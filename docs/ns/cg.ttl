@@ -1322,6 +1322,46 @@ cg:Holon a owl:Class ;
     rdfs:comment "A dereferenceable IRI together with its level + kind in the substrate (atom / fragment / descriptor / manifest / opaque). The atomic unit kernel verbs operate on." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
 
+# ─── PGSL lattice holon subtypes ───────────────────────────────
+#
+# The kernel emits these substrate types in dereference responses
+# (packages/core/src/kernel/index.ts:364–367) — they reify the
+# level-0 vs level-N distinction in the PGSL Grothendieck-fibration
+# lattice as first-class typed subclasses of cg:Holon.
+
+cg:Atom a owl:Class ;
+    rdfs:subClassOf cg:Holon ;
+    rdfs:label "Atom"@en ;
+    rdfs:comment "PGSL level-0 holon — a content-addressed scalar value forming the base of the lattice. Has no internal composition; its cg:value produces its content-address URI."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:Fragment a owl:Class ;
+    rdfs:subClassOf cg:Holon ;
+    rdfs:label "Fragment"@en ;
+    rdfs:comment "PGSL level-N (N>=1) holon — a typed-hyperedge composition over constituent cg:Atoms or lower-level cg:Fragments referenced through cg:items."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:level a owl:DatatypeProperty ;
+    rdfs:domain cg:Holon ;
+    rdfs:range xsd:nonNegativeInteger ;
+    rdfs:label "level"@en ;
+    rdfs:comment "PGSL fibration level — 0 for cg:Atom, N>=1 for cg:Fragment composed over level-(N-1) constituents."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:value a owl:DatatypeProperty ;
+    rdfs:domain cg:Holon ;
+    rdfs:range xsd:string ;
+    rdfs:label "value"@en ;
+    rdfs:comment "Recursive string projection of a holon's content — for cg:Atom, the scalar value that produces the atom's content-address URI; for cg:Fragment, the concatenated projection of its items."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:items a owl:ObjectProperty ;
+    rdfs:domain cg:Fragment ;
+    rdfs:range cg:Holon ;
+    rdfs:label "items"@en ;
+    rdfs:comment "Ordered references to the constituents of a cg:Fragment — lower-level cg:Atoms or cg:Fragments composed at this level."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
 cg:HolonShape a sh:NodeShape ;
     rdfs:label "Holon SHACL shape" ;
     sh:targetClass cg:Holon ;
