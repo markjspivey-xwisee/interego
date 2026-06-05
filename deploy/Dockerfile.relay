@@ -81,6 +81,7 @@ COPY deploy/mcp-relay/oauth-token-store.ts ./
 COPY deploy/mcp-relay/dpop.ts ./
 COPY deploy/mcp-relay/cors-allowlist.ts ./
 COPY deploy/mcp-relay/federation-store.ts ./
+COPY deploy/mcp-relay/url-rewrite.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────
