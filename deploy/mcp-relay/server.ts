@@ -4576,7 +4576,7 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
     return;
   }
 
-  // FIX A: relay is now the single authoritative pod-side writer for
+  // FIX A: relay is the single authoritative pod-side writer for
   // /<userId>/profile/card AND /<userId>/agents. Identity-server's old
   // eager-init writes are removed; two writers were racing on every OAuth
   // completion, producing CSS file-backend HTTP 500s on the second OAuth
@@ -4584,58 +4584,81 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   // window for any client that hit /agents or /profile/card immediately
   // after the OAuth code came back.
   //
-  // This block runs SYNCHRONOUSLY before /oauth/verify returns — no more
-  // fire-and-forget. The OAuth code is only handed back once both pod
-  // documents are HTTP 2xx, so any client hitting the pod right after
-  // authorization sees populated documents instead of 404 / 500.
+  // FIX B (this block): the OAuth response NO LONGER awaits the pod
+  // bootstrap. Identity auth has already succeeded and the authorization
+  // code has already been minted by oauthProvider.completePendingAuthorization
+  // above — the client only needs the redirect URL to complete the OAuth
+  // dance. Bootstrap is dispatched as a fire-and-forget under the SAME
+  // per-pod mutex (`podWriteMutexes`) that the lazy-init path at
+  // ensurePodInitialized() takes, so the contract holds:
   //
-  // Idempotency:
-  //   - First-touch (no /agents yet on this pod): write both /profile/card
-  //     AND /agents as the initial pod bootstrap.
-  //   - Subsequent surface add (registry present, surface agent missing):
-  //     append the surface agent to /agents. /profile/card already points
-  //     to /agents for the canonical authorizedAgent list, so it does not
-  //     need rewriting.
-  //   - Re-connect from known surface (agent present with correct
-  //     encryptionPublicKey): no writes at all. Save the CSS round-trips.
+  //   - If the user's first MCP tool call arrives AFTER background
+  //     bootstrap finishes, the .then(bootstrappedPods.add) below makes
+  //     ensurePodInitialized's Layer-1 Set fast-path absorb the call with
+  //     zero added latency.
+  //   - If the tool call arrives DURING background bootstrap, its
+  //     ensurePodInitialized → withPodMutex(podUrl, ...) queues behind
+  //     the in-flight call on the SAME mutex key and proceeds once it
+  //     releases — worst-case the original bootstrap latency lands on
+  //     the first tool call instead of on the OAuth response.
+  //   - If background bootstrap fails (CSS down etc.), bootstrappedPods
+  //     is intentionally NOT populated and the next pod-aware tool call
+  //     re-runs the bootstrap via ensurePodInitialized's HEAD probe +
+  //     mutex path. This is exactly what lazy-init was designed for
+  //     (see the comment at ~5071). We log at ERROR level so operators
+  //     can correlate slow first tool calls with failed deferred
+  //     bootstraps.
+  //   - The 502-on-bootstrap-failure of the prior implementation is
+  //     dropped: the OAuth code is already valid, the redirect is
+  //     already in flight, and forcing the client to retry the verify
+  //     step would invalidate a perfectly good authorization.
   //
-  // Concurrency: two OAuth flows for the same user (e.g. simultaneous
-  // logins from Claude Desktop AND Cursor while the pod has no /agents
-  // yet) would both read the empty registry, both build a "first-touch"
-  // profile with their own surface agent, and then write last-wins —
-  // the second write clobbers the first surface. We handle this by
-  // wrapping the read-modify-write in a per-pod mutex (in-process,
-  // sufficient for the single-replica relay) AND by post-write
-  // verification: after the write we re-read /agents, and if the
-  // surface agent we just wrote is missing (because a concurrent
-  // writer clobbered us in the gap between our read and write), we
-  // re-execute the merge with the fresh state. A small backoff +
-  // retry budget bounds the worst case.
-  try {
-    await withPodMutex(authResp.podUrl!, () => bootstrapPod({
-      podUrl: authResp.podUrl!,
-      ownerWebId: authResp.webId! as IRI,
-      surfaceAgentIri: agentIri as IRI,
-      userName: authResp.name ?? authResp.userId!,
-      agentLabel: authResp.agentName ?? `Surface agent ${surfaceAgent}`,
-      userId: authResp.userId!,
-      identityWebId: authResp.webId!,
-      identityDid: authResp.did,
-    }));
-  } catch (err) {
-    // A pod-init failure means the OAuth flow cannot reliably complete —
-    // the redirected client would hit /agents or /profile/card and 404 or
-    // get a stale view. Return 502 so the client retries the verify step
-    // rather than silently issuing the OAuth code over a broken pod.
-    const msg = `Pod bootstrap failed for ${authResp.podUrl}: ${(err as Error).message}`;
-    log(`ERROR: /oauth/verify ${msg}`);
-    res.status(502).json({ error: msg });
-    return;
-  }
-
+  // Idempotency of bootstrapPod itself is unchanged:
+  //   - First-touch: write both /profile/card AND /agents.
+  //   - Surface add: append the surface agent to /agents.
+  //   - Re-connect from known surface: no writes at all.
+  //
+  // Concurrency across simultaneous OAuth flows for the same pod is
+  // still handled by the same in-process mutex + post-write
+  // verify-and-merge loop inside bootstrapPod.
   const redirect = new URL(result.redirectUri);
   redirect.searchParams.set('code', result.code);
   if (result.state) redirect.searchParams.set('state', result.state);
+
+  // Dispatch background bootstrap BEFORE responding so the mutex slot
+  // is reserved before any racing tool call's ensurePodInitialized can
+  // observe an unguarded podUrl.
+  const podUrlForBg = authResp.podUrl!;
+  log(`bootstrap_deferred pod=${podUrlForBg} agent=${agentIri} userId=${authResp.userId}`);
+  void withPodMutex(podUrlForBg, () => bootstrapPod({
+    podUrl: podUrlForBg,
+    ownerWebId: authResp.webId! as IRI,
+    surfaceAgentIri: agentIri as IRI,
+    userName: authResp.name ?? authResp.userId!,
+    agentLabel: authResp.agentName ?? `Surface agent ${surfaceAgent}`,
+    userId: authResp.userId!,
+    identityWebId: authResp.webId!,
+    identityDid: authResp.did,
+  }))
+    .then(() => {
+      // CRITICAL: populate the Set so any tool call that arrives AFTER
+      // background bootstrap completes hits ensurePodInitialized's
+      // Layer-1 fast-path with zero mutex wait and zero HEAD probe.
+      bootstrappedPods.add(podUrlForBg);
+      try {
+        log(`bootstrap_deferred_ok pod=${podUrlForBg}`);
+      } catch { /* never let log() crash a fire-and-forget */ }
+    })
+    .catch(err => {
+      // ERROR level (not WARN) — operators need this to correlate
+      // user-visible empty-pod symptoms with deferred-bootstrap failure.
+      // bootstrappedPods is intentionally NOT populated on failure so
+      // ensurePodInitialized re-runs on the next pod-aware tool call.
+      try {
+        log(`ERROR: background bootstrapPod(${podUrlForBg}) failed: ${(err as Error).message}`);
+      } catch { /* never let log() crash a fire-and-forget */ }
+    });
+
   res.json({ redirect: redirect.toString() });
 });
 
