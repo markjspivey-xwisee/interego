@@ -74,28 +74,60 @@ interface SolidModule {
     encrypted?: boolean;
   }>;
   parseManifest: (turtle: string) => readonly import('../manifest/types.js').ManifestEntry[];
+  parseDistributionFromDescriptorTurtle?: (turtle: string) => {
+    readonly accessURL: string;
+    readonly mediaType: string;
+    readonly encrypted: boolean;
+    readonly encryptionAlgorithm?: string;
+  } | null;
 }
 
 let _solidModule: SolidModule | null = null;
 
+/**
+ * Test-only injection hook for the Solid binding. Vitest's VM context
+ * doesn't support the `Function('s','return import(s)')` dynamic-import
+ * fallback used in production, so tests that exercise `dereference`
+ * inject the module directly. Production code paths still pick up the
+ * binding via the normal dynamic import below.
+ */
+export function setSolidModuleForTests(mod: SolidModule | null): void {
+  _solidModule = mod;
+}
+
 async function loadSolidLazy(): Promise<SolidModule> {
   if (_solidModule) return _solidModule;
-  const dyn = Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
+  // Path 1 — direct dynamic import. Works in standard Node ESM and in
+  // vitest's VM context. TS may try to type-check the import target at
+  // compile time; we silence that with the spec string in a variable.
+  const spec = '@interego/solid';
   try {
-    const mod = await dyn('@interego/solid') as SolidModule;
+    const mod = (await import(spec)) as SolidModule;
     _solidModule = mod;
     return mod;
-  } catch (err) {
-    throw new Error(
-      '@interego/solid is required for kernel.dereference. Install @interego/solid alongside @interego/core.',
-      { cause: err },
-    );
+  } catch {
+    // Path 2 — fall back to the Function-eval trick for runtimes where
+    // the static import was rewritten by a bundler. The Function form
+    // bypasses the bundler entirely and asks the host's `import()`.
+    const dyn = Function('s', 'return import(s)') as (s: string) => Promise<unknown>;
+    try {
+      const mod = await dyn(spec) as SolidModule;
+      _solidModule = mod;
+      return mod;
+    } catch (err) {
+      throw new Error(
+        '@interego/solid is required for kernel.dereference. Install @interego/solid alongside @interego/core.',
+        { cause: err },
+      );
+    }
   }
 }
 import { getDefaultFetch } from '../http/fetch.js';
 import { withTransientRetry } from '../http/retry.js';
 import type { FetchFn } from '../http/types.js';
-import type { EncryptionKeyPair } from '../crypto/encryption.js';
+import type { EncryptionKeyPair, EncryptedEnvelope } from '../crypto/encryption.js';
+import { openEncryptedEnvelope } from '../crypto/encryption.js';
+import { CG } from '../rdf/namespaces.js';
 
 import { extractAffordancesFromTurtle } from './affordance-extraction.js';
 
@@ -274,6 +306,25 @@ export interface DereferenceOptions {
    * Set `false` to keep the call light (one HTTP request total).
    */
   readonly decorateManifest?: boolean;
+  /**
+   * Pod URL to consult first when resolving a `urn:graph:*` IRI. The
+   * substrate's URN-of-graph form is opaque about pod location —
+   * different publishers use different segment conventions
+   * (`urn:graph:<podSlug>:...`, `urn:graph:cg:skill:...`,
+   * `urn:graph:ops:deploy:...`, `urn:graph:audit:...`). Rather than
+   * encode a single segment-to-pod mapping the dereferencer takes a
+   * `podHint` and tries its manifest first; failing that it falls back
+   * to scanning `knownPods`.
+   */
+  readonly podHint?: string;
+  /**
+   * Known pods to scan when a `urn:graph:*` IRI has no `podHint` and
+   * isn't already resolved by the in-process URN→URL cache. Each pod's
+   * `.well-known/context-graphs` manifest is fetched in order; the
+   * first whose `cg:describes` matches the URN wins, and the mapping
+   * is cached for subsequent dereferences.
+   */
+  readonly knownPods?: readonly string[];
 }
 
 const MANIFEST_PATHS = ['/.well-known/context-graphs', '/.well-known/interego', '.well-known/context-graphs'];
@@ -350,6 +401,219 @@ function dereferenceLatticeNode(iri: IRI): DereferenceResult {
 }
 
 /**
+ * Process-local cache of `urn:graph:*` → graph payload URL mappings.
+ * Populated whenever a `urn:graph` resolve walks a pod manifest and
+ * finds the URN's descriptor. Subsequent dereferences for the same URN
+ * skip the manifest scan and go straight to the cached graph URL — the
+ * mapping is content-stable (a urn:graph identifies the same named
+ * graph across federation), so the cache never goes stale within a
+ * process lifetime.
+ */
+const URN_GRAPH_RESOLUTION_CACHE = new Map<string, string>();
+
+/** For tests / runtime flushes — clears the urn:graph → URL cache. */
+export function clearUrnGraphCache(): void {
+  URN_GRAPH_RESOLUTION_CACHE.clear();
+}
+
+/**
+ * Resolve a `urn:graph:*` IRI through a pod's
+ * `.well-known/context-graphs` manifest:
+ *
+ *   1. If the URN is in the in-process cache, fetch the cached graph
+ *      URL directly.
+ *   2. Otherwise scan candidate pods (podHint first, then knownPods)
+ *      for a manifest entry whose `cg:describes` includes the URN.
+ *   3. Fetch the matched descriptor, parse its distribution block to
+ *      recover the `dcat:accessURL` / `hydra:target` of the actual
+ *      graph payload, then fetch that payload.
+ *   4. Cache the URN→URL mapping for future calls and return a
+ *      DereferenceResult shaped consistently with the HTTP path.
+ *
+ * The substrate's URN-of-graph segments are not standardized — different
+ * publishers use different conventions (`urn:graph:<podSlug>:...`,
+ * `urn:graph:cg:skill:...`, `urn:graph:ops:deploy:...`,
+ * `urn:graph:audit:...`). We therefore do NOT try to parse a pod hint
+ * out of the URN itself; the hint (or known-pods scan) is the source
+ * of pod location.
+ */
+async function dereferenceUrnGraph(
+  iri: string,
+  fetchImpl: FetchFn,
+  options: DereferenceOptions | undefined,
+  solid: SolidModule,
+): Promise<DereferenceResult> {
+  // Cache hit — go straight to the resolved graph URL.
+  const cached = URN_GRAPH_RESOLUTION_CACHE.get(iri);
+  if (cached) {
+    return fetchResolvedGraphUrl(iri, cached, fetchImpl, options?.recipientKeyPair);
+  }
+
+  // Build pod candidate list. podHint first (most likely hit), then
+  // any explicitly-supplied known pods, deduplicated.
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const enqueue = (pod: string | undefined): void => {
+    if (!pod) return;
+    const normalized = pod.endsWith('/') ? pod : `${pod}/`;
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      candidates.push(normalized);
+    }
+  };
+  enqueue(options?.podHint);
+  for (const p of options?.knownPods ?? []) enqueue(p);
+
+  if (candidates.length === 0) {
+    return {
+      iri,
+      status: 'not-found',
+      contentType: '',
+      affordances: [],
+    };
+  }
+
+  // Walk each candidate pod's manifest until we find an entry whose
+  // describes[] includes the URN. First match wins.
+  for (const pod of candidates) {
+    const manifestUrl = `${pod}.well-known/context-graphs`;
+    let manifestTurtle: string;
+    try {
+      const resp = await withTransientRetry(() => fetchImpl(manifestUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'text/turtle' },
+      }));
+      if (!resp.ok) continue;
+      manifestTurtle = await resp.text();
+    } catch {
+      continue;
+    }
+
+    const entries = solid.parseManifest(manifestTurtle);
+    const match = entries.find(e => e.describes.includes(iri));
+    if (!match) continue;
+
+    // Fetch the descriptor body to recover its distribution block (the
+    // hypermedia link to the actual graph payload). The descriptor URL
+    // may serve plaintext Turtle OR a TriG bundle — fetchGraphContent
+    // handles either and decrypts on the encrypted-envelope path.
+    let descriptorBody: string;
+    try {
+      const r = await solid.fetchGraphContent(match.descriptorUrl, {
+        fetch: fetchImpl,
+        ...(options?.recipientKeyPair ? { recipientKeyPair: options.recipientKeyPair } : {}),
+      });
+      if (r.content === null && r.encrypted) {
+        return {
+          iri,
+          status: 'encrypted-no-key',
+          contentType: r.mediaType,
+          affordances: [],
+        };
+      }
+      descriptorBody = r.content ?? '';
+    } catch {
+      continue;
+    }
+
+    // Parse the distribution block (cg:affordance / dcat:Distribution /
+    // hydra:Operation) to discover the graph payload URL. If the
+    // descriptor doesn't advertise a distribution, fall back to
+    // returning the descriptor body itself — the descriptor IS a
+    // resolution for the URN even if it doesn't link to a sibling
+    // payload file.
+    const distribution = solid.parseDistributionFromDescriptorTurtle?.(descriptorBody) ?? null;
+    if (!distribution) {
+      URN_GRAPH_RESOLUTION_CACHE.set(iri, match.descriptorUrl);
+      const affordances = extractAffordancesFromTurtle(descriptorBody, match.descriptorUrl);
+      const provenance = readProvenance(descriptorBody);
+      const result: Mutable<DereferenceResult> = {
+        iri,
+        status: 'ok',
+        representation: descriptorBody,
+        contentType: 'text/turtle',
+        affordances,
+      };
+      if (provenance) result.provenance = provenance;
+      return result;
+    }
+
+    URN_GRAPH_RESOLUTION_CACHE.set(iri, distribution.accessURL);
+    return fetchResolvedGraphUrl(iri, distribution.accessURL, fetchImpl, options?.recipientKeyPair);
+  }
+
+  // No candidate pod's manifest carried the URN. Surface a clear
+  // not-found so callers can distinguish "no pod context" from "pod
+  // present but URN not registered".
+  return {
+    iri,
+    status: 'not-found',
+    contentType: '',
+    affordances: [],
+  };
+}
+
+/**
+ * Final-leg fetch for a urn:graph resolution — fetches the graph
+ * payload URL via fetchGraphContent (handles plaintext + encrypted
+ * envelopes uniformly) and shapes the response as a DereferenceResult
+ * keyed against the original urn:graph IRI rather than the underlying
+ * HTTP URL. This preserves caller intent: they asked for the URN, they
+ * get back a result whose `iri` field IS the URN.
+ */
+async function fetchResolvedGraphUrl(
+  urnIri: string,
+  graphUrl: string,
+  fetchImpl: FetchFn,
+  recipientKeyPair?: EncryptionKeyPair,
+): Promise<DereferenceResult> {
+  try {
+    const { fetchGraphContent } = await loadSolidLazy();
+    const r = await fetchGraphContent(graphUrl, {
+      fetch: fetchImpl,
+      ...(recipientKeyPair ? { recipientKeyPair } : {}),
+    });
+    if (r.content === null && r.encrypted) {
+      return {
+        iri: urnIri,
+        status: 'encrypted-no-key',
+        contentType: r.mediaType,
+        affordances: [],
+      };
+    }
+    const representation = r.content ?? '';
+    const affordances = extractAffordancesFromTurtle(representation, urnIri);
+    const provenance = readProvenance(representation);
+    const result: Mutable<DereferenceResult> = {
+      iri: urnIri,
+      status: 'ok',
+      representation,
+      contentType: r.mediaType,
+      affordances,
+    };
+    if (provenance) result.provenance = provenance;
+    return result;
+  } catch (err) {
+    const message = (err as Error).message ?? String(err);
+    if (/HTTP 404|HTTP 410|404 Not Found|410 Gone/i.test(message)) {
+      return {
+        iri: urnIri,
+        status: 'not-found',
+        contentType: '',
+        affordances: [],
+        httpStatus: /410/.test(message) ? 410 : 404,
+      };
+    }
+    return {
+      iri: urnIri,
+      status: 'error',
+      contentType: '',
+      affordances: [],
+    };
+  }
+}
+
+/**
  * `dereference(iri)` — resolve an IRI to its current representation,
  * its embedded affordances, and any lightweight provenance carried in
  * the body.
@@ -376,6 +640,18 @@ export async function dereference(iri: string, options?: DereferenceOptions): Pr
   // callable — this closes the contract for the lattice URI scheme.
   if (iri.startsWith('urn:pgsl:')) {
     return dereferenceLatticeNode(iri as IRI);
+  }
+
+  // urn:graph:* path — look up the URN in a pod manifest (podHint or
+  // knownPods scan), follow the matched descriptor's distribution to the
+  // actual graph payload, and return that as the resolution. This closes
+  // the substrate's hypermedia contract for the urn:graph URI scheme:
+  // minted manifest entries advertise dereference against urn:graph:*
+  // targets, and without this branch those affordances would fall
+  // through to an impossible HTTP fetch on the URN string itself.
+  if (iri.startsWith('urn:graph:')) {
+    const solid = await loadSolidLazy();
+    return dereferenceUrnGraph(iri, fetchImpl, options, solid);
   }
 
   // Manifest path — walk the pod and surface affordances per entry.

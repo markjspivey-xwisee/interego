@@ -614,6 +614,8 @@ export {
   decompose,
   extractAffordancesFromTurtle,
   resetKernelState,
+  clearUrnGraphCache,
+  setSolidModuleForTests,
   decorateKernelResult,
   decorateShim,
   hydraAffordance,
