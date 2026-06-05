@@ -51,6 +51,11 @@ import { Readable } from 'stream';
 const PORT = Number(process.env.PORT ?? 8080);
 const CSS_INTERNAL_URL = process.env.CSS_INTERNAL_URL
   ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+// Public origin of THIS gate. Returned as ACAO when the request Origin
+// is off-list — browsers refuse to read it because no off-list caller
+// has that origin.
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/+$/, '');
 // CSS validates that incoming requests' Host header matches its
 // configured CSS_BASE_URL ("outside the configured identifier space"
 // errors otherwise). When the gate connects to CSS at an internal
@@ -75,6 +80,88 @@ if (!IDENTITY_URL) {
 }
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+// ── CORS allowlist ─────────────────────────────────────────────────
+//
+// Same posture as deploy/mcp-relay/cors-allowlist.ts and
+// deploy/identity/cors-allowlist.ts (kept inline here because css-gate
+// is stdlib-only — no TS build, no shared package dependency). See the
+// mcp-relay copy for the full rationale. Summary:
+//   - Reflect Origin only if it appears on a static allowlist.
+//   - Otherwise serve THIS gate's own FQDN as ACAO (a browser caller
+//     never matches its own origin against ours, so the response is
+//     unreadable cross-origin).
+//   - Never set `Access-Control-Allow-Credentials: true`.
+//   - Reject `Origin: null` (sandboxed iframes / file://).
+//   - Vary: Origin on every response so caches do not leak cross-origin
+//     responses to off-list peers.
+
+const SIBLING_DEPLOYMENT_ORIGINS = [
+  'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-foxxi-scorm-player.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+];
+const BROWSER_MCP_CLIENT_ORIGINS = [
+  'https://claude.ai',
+  'https://chatgpt.com',
+  'https://chat.openai.com',
+];
+const LOCALHOST_DEV_PORTS = [3000, 4000, 5000, 8080, 8090, 8094, 9999];
+
+function normalizeOrigin(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  try {
+    const u = new URL(raw.trim());
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return null;
+  }
+}
+
+function buildCorsAllowlist() {
+  const out = new Set();
+  const add = (o) => { const n = normalizeOrigin(o); if (n) out.add(n); };
+  add(PUBLIC_BASE_URL);
+  SIBLING_DEPLOYMENT_ORIGINS.forEach(add);
+  BROWSER_MCP_CLIENT_ORIGINS.forEach(add);
+  for (const port of LOCALHOST_DEV_PORTS) {
+    add(`http://localhost:${port}`);
+    add(`http://127.0.0.1:${port}`);
+  }
+  const envRaw = process.env.RELAY_CORS_ALLOWLIST;
+  if (envRaw) for (const piece of envRaw.split(',')) add(piece);
+  return out;
+}
+
+const CORS_ALLOWLIST = buildCorsAllowlist();
+const GATE_OWN_ORIGIN = normalizeOrigin(PUBLIC_BASE_URL)
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+
+export function corsHeadersFor(originHeader) {
+  const norm = normalizeOrigin(originHeader);
+  // Origin: null (sandboxed iframes / file://) is NEVER allowed even if
+  // someone foolishly adds 'null' to the env allowlist — that combination
+  // is the classic credentialed cross-origin attack vector.
+  const allowed = Boolean(originHeader)
+    && originHeader !== 'null'
+    && norm
+    && CORS_ALLOWLIST.has(norm);
+  return {
+    'Access-Control-Allow-Origin': allowed ? norm : GATE_OWN_ORIGIN,
+    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE',
+    'Access-Control-Allow-Headers': 'Accept, Content-Type, Authorization',
+    'Vary': 'Origin',
+    // Deliberately no Access-Control-Allow-Credentials.
+  };
+}
 
 // Timing-safe string compare so wrong-key attempts don't leak length.
 function safeEqual(a, b) {
@@ -205,9 +292,23 @@ function firstPathSegment(reqUrl) {
 const server = createServer(async (req, res) => {
   const method = (req.method ?? 'GET').toUpperCase();
 
+  // CORS headers attached to every response (including errors + preflight).
+  // Computed once per request from the Origin header so an off-list
+  // browser caller cannot read the response body.
+  const corsHeaders = corsHeadersFor(req.headers['origin']);
+
+  // CORS preflight: short-circuit. We don't proxy OPTIONS upstream — CSS
+  // doesn't need to see it, and answering here lets a browser do its
+  // pre-write probe even when WRITE_SECRET is unknown to the client.
+  if (method === 'OPTIONS') {
+    res.writeHead(204, corsHeaders);
+    res.end();
+    return;
+  }
+
   // Health: anyone can hit /healthz on the gate itself (does NOT proxy).
   if (req.url === '/healthz') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', ...corsHeaders });
     res.end(JSON.stringify({
       ok: true,
       gating: 'writes-only',
@@ -224,6 +325,7 @@ const server = createServer(async (req, res) => {
       res.writeHead(401, {
         'Content-Type': 'application/json',
         'WWW-Authenticate': 'Bearer realm="interego-css-gate"',
+        ...corsHeaders,
       });
       res.end(JSON.stringify({
         error: 'anonymous writes denied',
@@ -245,6 +347,7 @@ const server = createServer(async (req, res) => {
         res.writeHead(verified.status ?? 401, {
           'Content-Type': 'application/json',
           'WWW-Authenticate': 'Bearer realm="interego-css-gate"',
+          ...corsHeaders,
         });
         res.end(JSON.stringify({
           error: 'invalid bearer',
@@ -257,7 +360,7 @@ const server = createServer(async (req, res) => {
       if (seg !== userId) {
         // Cross-pod write attempt. The verified user owns
         // `/<userId>/...` only.
-        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.writeHead(403, { 'Content-Type': 'application/json', ...corsHeaders });
         res.end(JSON.stringify({
           error: 'cross-pod write denied',
           detail: `bearer is scoped to userId="${userId}" but request targets path segment "${seg ?? '(root)'}"; user bearers can only write to /<userId>/...`,
@@ -318,14 +421,17 @@ const server = createServer(async (req, res) => {
     });
   } catch (err) {
     console.error('[css-gate] upstream fetch failed:', err.message);
-    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.writeHead(502, { 'Content-Type': 'application/json', ...corsHeaders });
     res.end(JSON.stringify({ error: 'upstream CSS unreachable', detail: err.message }));
     return;
   }
 
-  // Mirror response back to the client.
+  // Mirror response back to the client. Layer CORS over whatever
+  // upstream CSS returned — CSS does not know about our allowlist, and
+  // our headers take precedence (the spread comes after).
   const responseHeaders = {};
   upstreamRes.headers.forEach((v, k) => { responseHeaders[k] = v; });
+  Object.assign(responseHeaders, corsHeaders);
   res.writeHead(upstreamRes.status, responseHeaders);
   if (upstreamRes.body) {
     Readable.fromWeb(upstreamRes.body).pipe(res);

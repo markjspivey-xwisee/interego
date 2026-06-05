@@ -12,6 +12,6 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["server.ts"],
+  "include": ["server.ts", "cors-allowlist.ts"],
   "exclude": ["node_modules", "dist"]
 }

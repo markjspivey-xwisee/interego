@@ -57,6 +57,7 @@ import {
   athFromAccessToken,
   reconstructRequestUrl,
 } from './dpop.js';
+import { corsMiddleware } from './cors-allowlist.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
@@ -3416,40 +3417,34 @@ app.use(express.json());
 // Login form POSTs x-www-form-urlencoded; OAuth token endpoint does too.
 app.use(express.urlencoded({ extended: false }));
 
-// CORS: deliberately open origin, deliberately bounded by OAuth.
+// CORS: explicit allowlist, never wildcard. See cors-allowlist.ts for the
+// full rationale. Summary:
 //
-// Why `Access-Control-Allow-Origin: *`:
-//   The MCP relay is consumed by browser-based clients (claude.ai
-//   custom connectors, OpenAI plugin runtime, Cursor's web shell,
-//   etc.) whose origins we do not enumerate or want to. The OAuth
-//   2.1 + DCR flow already gates every state-changing call: the
-//   browser obtains a bearer token only after the user authenticates
-//   against THEIR pod's identity, and the bearer is bound to a
-//   per-user agent IRI. CORS-open + OAuth-gated is the standard
-//   pattern for MCP / OpenAPI services that serve browser clients.
+//   - The legacy `Access-Control-Allow-Origin: *` posture was safe TODAY
+//     (bearer-token auth on every state-changing call, no cookies) but
+//     fragile: any future middleware that sets
+//     `Access-Control-Allow-Credentials: true` would silently turn the
+//     wildcard into a credentialed cross-origin read hole.
+//   - The allowlist is composed from this relay's own FQDN, all sibling
+//     deployment FQDNs (identity, dashboard, css-gate, pgsl-browser,
+//     acme-id, foxxi-*), the browser-based MCP client hosts we actually
+//     serve (https://claude.ai, https://chatgpt.com, https://chat.openai.com),
+//     localhost dev ports, and the RELAY_CORS_ALLOWLIST env-var extension.
+//   - For unknown origins we serve THIS relay's own FQDN as ACAO so a
+//     browser caller cannot read the response (its origin never matches
+//     ours). We never emit Access-Control-Allow-Credentials.
+//   - `Origin: null` (sandboxed iframes, file://) is rejected.
 //
-// What this would not work for:
-//   Cookie-based session auth. We don't use cookies; bearer tokens
-//   in the Authorization header are required. Without that header
-//   no request authenticates.
-//
-// What's still risk-bounded:
-//   /audit/* endpoints are read-only public audit metadata (per
-//   the comments at their declaration). /health is intentionally
-//   public. /x402/price/:podName is public price discovery. Every
-//   tool call that mutates state requires `verifyBearerToken`.
-//
-// Do NOT tighten this without re-validating that browser-based MCP
-// clients still work — specifically claude.ai's custom-connector
-// preflight + OpenAI's plugin runtime. Audit-relevant: this is an
-// intentional design choice, not an oversight.
-app.use((_req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, DELETE');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, mcp-session-id, mcp-protocol-version');
-  res.setHeader('Access-Control-Expose-Headers', 'mcp-session-id, mcp-protocol-version');
-  next();
-});
+// Audit-relevant: tightening from `*` to an allowlist is the deliberate
+// fix to issue `cors`. Adding a new browser-based MCP client host: extend
+// BROWSER_MCP_CLIENT_ORIGINS in cors-allowlist.ts (or set
+// RELAY_CORS_ALLOWLIST at deploy time for a transient addition).
+app.use(corsMiddleware({
+  ownOrigin: PUBLIC_BASE_URL || `http://localhost:${PORT}`,
+  allowMethods: 'GET, POST, OPTIONS, DELETE',
+  allowHeaders: 'Content-Type, Authorization, mcp-session-id, mcp-protocol-version, DPoP',
+  exposeHeaders: 'mcp-session-id, mcp-protocol-version',
+}));
 
 // ── OAuth Routes ────────────────────────────────────────────
 // mcpAuthRouter wires: /.well-known/oauth-authorization-server,

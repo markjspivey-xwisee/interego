@@ -35,6 +35,7 @@ import {
   type VerifiedRegistrationResponse,
   type VerifiedAuthenticationResponse,
 } from '@simplewebauthn/server';
+import { corsMiddleware } from './cors-allowlist.js';
 
 // ── Config ──────────────────────────────────────────────────
 
@@ -1282,12 +1283,16 @@ function buildWebIdProfile(identity: Identity): string {
 const app = express();
 app.use(express.json());
 
-app.use((_req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Accept, Content-Type, Authorization');
-  next();
-});
+// CORS: explicit allowlist, never wildcard. See cors-allowlist.ts for the
+// full rationale (the same fix is applied in deploy/mcp-relay/server.ts).
+// Unknown origins receive THIS service's own FQDN as ACAO so a browser
+// caller cannot read the response cross-origin, and we NEVER emit
+// Access-Control-Allow-Credentials: true.
+app.use(corsMiddleware({
+  ownOrigin: BASE_URL,
+  allowMethods: 'GET, POST, OPTIONS',
+  allowHeaders: 'Accept, Content-Type, Authorization',
+}));
 
 // ── Per-IP rate limiting (auth endpoints) ──────────────────────────
 //
