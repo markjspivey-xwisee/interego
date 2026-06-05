@@ -42,20 +42,32 @@
  *   CSS_HOST_HEADER  — Host header to forward to CSS.
  *   USER_BEARER_CACHE_TTL_MS — verified-token cache TTL (default 60000).
  *   UPSTREAM_POOL_CONNECTIONS — undici Pool size per upstream origin
- *                               (default 16). Each connection multiplexes
- *                               many h2 streams concurrently.
+ *                               (default 16). On h1 (the default) each
+ *                               connection is one in-flight request at a
+ *                               time; on h2 (UPSTREAM_ALLOW_H2=1) each
+ *                               connection multiplexes many streams.
  *   UPSTREAM_REQUEST_BUFFER   — when "1" / "true", buffer request bodies
  *                               before forwarding (legacy behavior; kept
  *                               as an escape hatch). Default is streaming
- *                               via undici over ALPN-negotiated h2.
+ *                               via undici over the pooled connection.
+ *   UPSTREAM_ALLOW_H2          — when "1" / "true", enable ALPN-negotiated
+ *                               HTTP/2 on the upstream Pool. Default false.
+ *                               Container Apps' internal envoy ALPN-advertises
+ *                               h2 but RST_STREAMs requests under sustained
+ *                               load (observed as ECONNRESET storms against
+ *                               the gate's pool while the relay — which uses
+ *                               h1 via fetch — stays healthy against the same
+ *                               upstream). Forcing h1 matches the relay's
+ *                               working path; flip this knob on once envoy
+ *                               h2 is wire-confirmed healthy.
  *
- * Upstream transport: undici Pool with allowH2 = true. ALPN-negotiated h2
- * against Container Apps' internal envoy eliminates the ECONNRESET storms
- * that the previous raw https.request path produced under load, and the
- * pool keeps connections warm across requests. undici's low-level Pool API
- * does NOT enforce fetch's forbidden-headers list, so we can set the Host
- * header explicitly — which is the entire reason the previous version had
- * to drop to raw https.request in the first place.
+ * Upstream transport: undici Pool over HTTP/1.1 by default (allowH2=false).
+ * The pool keeps connections warm across requests so a chatty client
+ * (Foxxi bridge writing one descriptor per affordance call) does not pay
+ * TLS cost per request. undici's low-level Pool API does NOT enforce
+ * fetch's forbidden-headers list, so we can set the Host header explicitly
+ * — which is the entire reason the previous version had to drop to raw
+ * https.request in the first place.
  */
 
 import { createServer } from 'http';
@@ -82,6 +94,13 @@ const USER_BEARER_CACHE_TTL_MS = Number(process.env.USER_BEARER_CACHE_TTL_MS ?? 
 const UPSTREAM_POOL_CONNECTIONS = Number(process.env.UPSTREAM_POOL_CONNECTIONS ?? 16);
 const UPSTREAM_REQUEST_BUFFER = (process.env.UPSTREAM_REQUEST_BUFFER ?? '').toLowerCase() === 'true'
   || process.env.UPSTREAM_REQUEST_BUFFER === '1';
+// Default: HTTP/1.1 only. See header comment + the ECONNRESET-vs-h2
+// isolation notes. Container Apps' envoy ALPN-advertises h2 but RST_STREAMs
+// pooled h2 streams under sustained load, while the same envoy serves h1
+// happily — the relay (fetch, h1) is the working proof. Flip via env var
+// once the upstream is wire-confirmed healthy on h2.
+const UPSTREAM_ALLOW_H2 = (process.env.UPSTREAM_ALLOW_H2 ?? '').toLowerCase() === 'true'
+  || process.env.UPSTREAM_ALLOW_H2 === '1';
 
 if (!WRITE_SECRET) {
   console.error('[css-gate] WRITE_SECRET env var is required');
@@ -295,14 +314,16 @@ async function verifyUserBearer(token) {
 // (CSS_INTERNAL_URL), but keying by origin keeps the structure tidy in
 // case a future split routes some paths to a different backend.
 //
-// allowH2: true — ALPN negotiation prefers h2 when the server offers it
-// (Container Apps' envoy does), which fixes the ECONNRESET storms the
-// previous https.request path saw under sustained load. h2 multiplexes
-// many requests over one connection, so the pool size is small.
+// allowH2 defaults to FALSE so the pool speaks HTTP/1.1 only and the
+// underlying TLS socket ALPN-advertises http/1.1 only. Rationale: against
+// Container Apps' internal envoy, ALPN-negotiated h2 produced sustained
+// ECONNRESET storms on this pool, while the relay (Node fetch, h1 only)
+// kept working against the same envoy. Forcing h1 matches the relay's
+// working path. Flip UPSTREAM_ALLOW_H2=1 once envoy h2 is verified.
 //
 // keepAliveTimeout * keepAliveMaxTimeout — keep idle connections warm
 // long enough that a chatty client (Foxxi bridge writing one descriptor
-// per affordance call) doesn't pay TLS+ALPN cost per request.
+// per affordance call) doesn't pay TLS cost per request.
 const upstreamPools = new Map();
 
 export function _getUpstreamPool(originUrl) {
@@ -314,7 +335,7 @@ export function _getUpstreamPool(originUrl) {
   if (!pool) {
     pool = new Pool(origin, {
       connections: UPSTREAM_POOL_CONNECTIONS,
-      allowH2: true,
+      allowH2: UPSTREAM_ALLOW_H2,
       keepAliveTimeout: 60_000,
       keepAliveMaxTimeout: 600_000,
       // Generous header timeout — CSS occasionally takes a beat under

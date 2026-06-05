@@ -158,6 +158,42 @@ az containerapp update \
   --set-env-vars "CSS_BASE_URL=$CSS_INTERNAL_URL" \
   --output none
 
+# ── CSS ingress transport: explicit HTTP/1.1 ──
+# Container Apps' default ingress transport is "Auto", which ALPN-advertises
+# h2 alongside h1 on the public 443 side. Against this envoy, pooled h2
+# produced sustained ECONNRESET storms in the gate's undici Pool, while the
+# relay (Node fetch, h1) stayed healthy against the same upstream. Pinning
+# the ingress to Http makes envoy advertise http/1.1 only, matching the
+# relay's working path. Safe for the relay (it already speaks h1). The gate
+# also defaults to allowH2=false in server.mjs; if that knob is ever
+# flipped on (UPSTREAM_ALLOW_H2=1), revisit this transport pin first.
+echo ">>> Pinning CSS ingress transport to HTTP/1.1..."
+az containerapp ingress update \
+  --name "$CSS_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --transport http \
+  --output none
+
+# ── Gate CSS_HOST_HEADER: match the upstream SNI ──
+# The gate dials CSS at the internal hostname over TLS; envoy on the CSS
+# side terminates that TLS and routes by SNI. The Host header forwarded to
+# envoy/CSS MUST also match the internal hostname, otherwise envoy resets
+# the stream (SNI ≠ Host mismatch) before CSS sees the request — observed
+# as ECONNRESET on every gate forward. CSS_BASE_URL is the internal FQDN
+# (see the long comment above that decision), so issuing a public-FQDN
+# Host here is also the opposite of what CSS wants. Once CSS_BASE_URL
+# flips back to the gate's public FQDN, this needs to flip too.
+if [ -n "$CSS_GATE_FQDN" ]; then
+  CSS_INTERNAL_HOST="${CSS_INTERNAL_URL#https://}"
+  CSS_INTERNAL_HOST="${CSS_INTERNAL_HOST%/}"
+  echo ">>> Setting gate CSS_HOST_HEADER to internal CSS host ($CSS_INTERNAL_HOST)..."
+  az containerapp update \
+    --name "$CSS_GATE_APP" \
+    --resource-group "$RESOURCE_GROUP" \
+    --set-env-vars "CSS_HOST_HEADER=$CSS_INTERNAL_HOST" \
+    --output none
+fi
+
 # ── 6. Deploy Dashboard ──────────────────────────────────────
 echo ">>> Deploying Dashboard..."
 az containerapp create \

@@ -1,11 +1,14 @@
 # ────────────────────────────────────────────────────────────
 #  CSS write-gate — small Node reverse proxy fronting the CSS pod server.
 #
-#  Transport: undici Pool with ALPN-negotiated h2 against the upstream.
-#  Replaces the previous raw https.request path that produced ECONNRESET
-#  storms against Container Apps' internal envoy under load. Streaming
-#  bodies are forwarded as-is; the UPSTREAM_REQUEST_BUFFER=1 env var keeps
-#  the legacy buffered-body behavior available as an escape hatch.
+#  Transport: undici Pool over HTTP/1.1 by default (allowH2=false). Against
+#  Container Apps' internal envoy, ALPN-negotiated h2 produced ECONNRESET
+#  storms under sustained load on this pool while the relay (Node fetch,
+#  h1) kept working against the same envoy — so we match the relay's
+#  working path. Flip UPSTREAM_ALLOW_H2=1 to re-enable h2 once the upstream
+#  is wire-confirmed healthy. Streaming bodies are forwarded as-is; the
+#  UPSTREAM_REQUEST_BUFFER=1 env var keeps the legacy buffered-body
+#  behavior available as an escape hatch.
 #
 #  Write-gating model:
 #    - GET/HEAD/OPTIONS pass through anonymously (reads stay zero-trust at
