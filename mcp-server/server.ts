@@ -2900,8 +2900,12 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
     }
     case 'dereference': {
       const { iri, decorate_manifest } = args as { iri: string; decorate_manifest?: boolean };
+      // Pass the local agent key so envelopes addressed to this agent's
+      // X25519 public key round-trip to plaintext. Matches the existing
+      // pattern used by `get_descriptor` / `publish_context` below.
       const r = await kernelDereference(iri, {
         fetch: solidFetch,
+        recipientKeyPair: agentKeyPair,
         ...(decorate_manifest === false ? { decorateManifest: false } : {}),
       });
       // The affordances extracted from the representation already live
@@ -2951,8 +2955,12 @@ async function dispatchKernelVerb(verb: string, args: Record<string, unknown>): 
             method: (a.method ?? 'POST'),
             ...(a.media_type ? { mediaType: a.media_type } : {}),
           };
+      // Pass `recipientKeyPair` so a `cg:canDecrypt` affordance returns
+      // plaintext when this agent is in the envelope's recipient set.
+      // Non-recipients fall through and see the raw envelope as today.
       const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], a.payload, {
         fetch: solidFetch,
+        recipientKeyPair: agentKeyPair,
         ...(a.authorization ? { authorization: a.authorization } : {}),
       });
       const decorated = decorateKernelResult(r as unknown as Record<string, unknown>, {

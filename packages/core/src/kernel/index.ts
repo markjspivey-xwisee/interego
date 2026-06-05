@@ -686,6 +686,53 @@ export interface ActOptions {
   readonly fetch?: FetchFn;
   /** Forwarded `Authorization` header value (e.g. `"Bearer <token>"`). */
   readonly authorization?: string;
+  /**
+   * Recipient keypair for transparent unwrap of `cg:canDecrypt`
+   * affordances. When the resolved affordance carries `cg:action
+   * cg:canDecrypt`, `act` performs the underlying HTTP fetch as usual,
+   * then opens the returned envelope against this keypair and surfaces
+   * the plaintext as the `body`. Without the key the raw envelope JSON
+   * is returned (so existing decrypt-on-client callers still work). */
+  readonly recipientKeyPair?: EncryptionKeyPair;
+}
+
+// The set of cg:action IRIs (and their prefixed equivalents) that mean
+// "GET an encrypted envelope and unwrap it for the recipient." Kept as
+// constants rather than an inline string-match so the substrate's
+// E2EE/hypermedia contract has a single source of truth.
+const CAN_DECRYPT_ACTION_IRIS: ReadonlySet<string> = new Set([
+  `${CG}canDecrypt`,
+  'cg:canDecrypt',
+  // Defensive: callers occasionally over-IRI-prefix the action.
+  `urn:cg:action:${CG}canDecrypt`,
+]);
+
+function isCanDecryptAction(action: string | undefined): boolean {
+  if (!action) return false;
+  return CAN_DECRYPT_ACTION_IRIS.has(action);
+}
+
+/**
+ * Attempt to interpret `body` as an X25519-XSalsa20-Poly1305 envelope
+ * and unwrap it for `recipientKeyPair`. Returns the plaintext on
+ * success, `null` when the keypair is not a recipient (or unwrap
+ * fails), and `undefined` when `body` is not a recognisable envelope
+ * (caller should fall through and surface the body as-is).
+ */
+function tryUnwrapEnvelopeBody(
+  body: string,
+  recipientKeyPair: EncryptionKeyPair,
+): string | null | undefined {
+  let env: EncryptedEnvelope;
+  try {
+    env = JSON.parse(body) as EncryptedEnvelope;
+  } catch {
+    return undefined;
+  }
+  if (!env || env.algorithm !== 'X25519-XSalsa20-Poly1305' || !Array.isArray(env.wrappedKeys)) {
+    return undefined;
+  }
+  return openEncryptedEnvelope(env, recipientKeyPair);
 }
 
 /**
@@ -788,6 +835,23 @@ export async function act(
       return r;
     });
     const responseBody = await response.text();
+    // cg:canDecrypt semantics: the GET fetches an envelope; the kernel's
+    // contract is to surface its plaintext to authorized recipients. If
+    // the caller supplied a recipientKeyPair AND we recognize an
+    // envelope shape, unwrap before returning. Non-recipients see the
+    // raw envelope JSON (current behavior).
+    if (isCanDecryptAction(affordance.action) && options?.recipientKeyPair) {
+      const plaintext = tryUnwrapEnvelopeBody(responseBody, options.recipientKeyPair);
+      if (typeof plaintext === 'string') {
+        return {
+          status: response.status,
+          statusText: response.statusText,
+          contentType: affordance.mediaType ?? 'text/turtle',
+          body: plaintext,
+          affordance,
+        };
+      }
+    }
     return {
       status: response.status,
       statusText: response.statusText,
@@ -814,6 +878,19 @@ export async function act(
     ...(result.affordance.mediaType ? { mediaType: result.affordance.mediaType } : {}),
     fromDescriptor: affordance.descriptorUrl,
   };
+  // cg:canDecrypt semantics — see the symmetrical branch above.
+  if (isCanDecryptAction(resolved.action) && options?.recipientKeyPair) {
+    const plaintext = tryUnwrapEnvelopeBody(result.body, options.recipientKeyPair);
+    if (typeof plaintext === 'string') {
+      return {
+        status: result.status,
+        statusText: result.statusText,
+        contentType: resolved.mediaType ?? 'text/turtle',
+        body: plaintext,
+        affordance: resolved,
+      };
+    }
+  }
   return {
     status: result.status,
     statusText: result.statusText,

@@ -508,6 +508,18 @@ export function parseTrig(src: string): ParsedDocument {
     const subject = key.startsWith('_:') ? { bnode: key.slice(2) } : (key as IRI);
     subjects.push({ subject, properties });
   }
+  // Surface inline blank-node subjects (the `[ a Foo ; p o ]` object-position
+  // form) as document-level subjects too. Without this, callers using
+  // `findSubjectsOfType` to locate, say, a `cg:Affordance` declared inline
+  // (the canonical hypermedia descriptor shape — see
+  // `buildDistributionBlock()` in @interego/solid) would see zero hits even
+  // though the parser captured the inline block's properties. This change
+  // makes the parser's subject view consistent with what real Turtle/TriG
+  // descriptors carry and is required for `extractAffordancesFromTurtle`
+  // and `followAffordance` to find inline-typed affordances.
+  for (const [id, properties] of state.bnodeProperties) {
+    subjects.push({ subject: { bnode: id }, properties });
+  }
 
   return { prefixes: state.prefixes, subjects };
 }

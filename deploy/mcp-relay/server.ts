@@ -1873,11 +1873,17 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   const authorization = args.authorization as string | undefined;
   if (!descriptorUrl) throw new Error('invoke_affordance: descriptor_url is required');
   if (!actionIri) throw new Error('invoke_affordance: action_iri is required');
+  // Pass `recipientKeyPair` so `cg:canDecrypt` affordances return
+  // plaintext to authorized recipients (the relay's session agent is in
+  // the envelope's recipient set whenever it published or was added as
+  // a share target). Non-recipients fall through and see the raw
+  // envelope as today.
   const result = await kernelAct(
     { descriptorUrl, actionIri },
     payload,
     {
       fetch: solidFetch,
+      recipientKeyPair: relayAgentKey,
       ...(authorization ? { authorization } : {}),
     },
   );
@@ -1916,7 +1922,17 @@ async function handleKernelMint(args: ToolArgs): Promise<string> {
 async function handleKernelDereference(args: ToolArgs): Promise<string> {
   const iri = String(args['iri'] ?? '');
   const decorateManifest = args['decorate_manifest'] !== false;
-  const r = await kernelDereference(iri, { fetch: solidFetch, decorateManifest });
+  // Pass `recipientKeyPair` so envelopes addressed to the relay's agent
+  // round-trip to plaintext for the calling user — mirrors the existing
+  // handleGetDescriptor pattern. Without this, every encrypted target
+  // returns `status: 'encrypted-no-key'` even though the relay holds the
+  // wrapped key (the calling agent is in the recipient set by virtue of
+  // being a delegate of the pod owner who published).
+  const r = await kernelDereference(iri, {
+    fetch: solidFetch,
+    decorateManifest,
+    recipientKeyPair: relayAgentKey,
+  });
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
     kind: 'dereference',
     id: iri,
@@ -1949,8 +1965,13 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
         method: (args['method'] as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | undefined) ?? 'POST',
         ...(args['media_type'] ? { mediaType: args['media_type'] as string } : {}),
       };
+  // Pass the relay's session key as recipient so a `cg:canDecrypt`
+  // affordance returns plaintext when the relay's agent is in the
+  // envelope's recipient set. Non-recipients fall through and see the
+  // raw envelope as today.
   const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], args['payload'], {
     fetch: solidFetch,
+    recipientKeyPair: relayAgentKey,
     ...(authorization ? { authorization } : {}),
   });
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
