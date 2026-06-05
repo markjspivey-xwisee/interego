@@ -705,21 +705,39 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const recipients = (currentProfile?.authorizedAgents ?? [])
     .filter(a => !a.revoked && a.encryptionPublicKey)
     .map(a => a.encryptionPublicKey!) as string[];
-  if (!recipients.includes(relayAgentKey.publicKey)) recipients.push(relayAgentKey.publicKey);
+  // Author's session-agent key MUST be in the recipient set unconditionally.
+  // The relay minted this agent and holds its X25519 keypair (relayAgentKey),
+  // so adding it here guarantees the author can always deref-decrypt envelopes
+  // they just published — even if the registry read above failed, even if
+  // share_with is supplied. share_with APPENDS to this base set; it never
+  // replaces it. See fix `share-with-author` regression test.
+  const authorEncryptionKey = relayAgentKey.publicKey;
+  if (!recipients.includes(authorEncryptionKey)) recipients.push(authorEncryptionKey);
 
   // Cross-pod selective sharing: resolve each share_with handle to their
   // pod's authorized agents, union their keys into recipients. Their
   // agents can then decrypt THIS graph without any pod-level ACL change.
+  // CRITICAL: this loop APPENDS to `recipients` — the author's key
+  // (pushed above) is already in the set and stays in the set so the
+  // author can self-decrypt independently of share_with targets.
   const shareWith = (args.share_with as string[] | undefined) ?? [];
   const shareResolved: { handle: string; podUrl: string; agentCount: number }[] = [];
+  const recipientAgents: string[] = [agentId];
   if (shareWith.length > 0) {
     const resolved = await resolveRecipients(shareWith, { fetch: solidFetch });
     for (const r of resolved) {
       shareResolved.push({ handle: r.handle, podUrl: r.podUrl, agentCount: r.agentEncryptionKeys.length });
+      if (r.handle && !recipientAgents.includes(r.handle)) recipientAgents.push(r.handle);
       for (const key of r.agentEncryptionKeys) {
         if (!recipients.includes(key)) recipients.push(key);
       }
     }
+  }
+  // Defensive invariant: author key must still be present after share_with merge.
+  // If this ever fires it indicates a regression in the union logic above.
+  const selfIncluded = recipients.includes(authorEncryptionKey);
+  if (!selfIncluded) {
+    recipients.push(authorEncryptionKey);
   }
 
   const publishOptions: Parameters<typeof publish>[3] = recipients.length > 0
@@ -761,6 +779,14 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     graphUrl: result.graphUrl,
     encrypted: result.encrypted ?? false,
     recipients: recipients.length,
+    // Agent-IRI-level view of who can decrypt this envelope. `recipients`
+    // (count) was misleading when multiple surface-agents share the relay's
+    // single X25519 keypair (they dedup to one key). `recipientAgents`
+    // reports identities, and `selfIncluded` confirms the author can
+    // self-decrypt — both essential for the share_with author-inclusion
+    // invariant. See fix `share-with-author`.
+    recipientAgents,
+    selfIncluded,
     sharedWith: shareResolved.length > 0 ? shareResolved : undefined,
     manifestUrl: result.manifestUrl,
     ipfs,

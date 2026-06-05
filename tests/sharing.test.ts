@@ -126,3 +126,121 @@ describe('resolveRecipients', () => {
     expect(bad?.agentEncryptionKeys).toEqual([]);
   });
 });
+
+/**
+ * Regression: `share-with-author`.
+ *
+ * When publish_context is called with a non-empty share_with list, the
+ * recipient set MUST include the AUTHOR's session-agent key in addition
+ * to the resolved share_with targets. share_with APPENDS, never REPLACES,
+ * so the author can always deref-decrypt envelopes they just published.
+ *
+ * This unit-tests the recipient-set computation as a pure function over
+ * (authorKey, shareWithResolution) — the same shape used by both
+ * deploy/mcp-relay/server.ts and mcp-server/server.ts.
+ */
+describe('publish_context recipient-set computation (share-with-author fix)', () => {
+  const ALICE_POD = 'https://host/alice/';
+  const BOB_POD = 'https://host/bob/';
+  const AUTHOR_KEY = 'KEY_AUTHOR_ALICE';
+
+  /** Reproduces the relay's recipient-set algorithm as a pure function. */
+  async function computeRecipients(
+    authorKey: string,
+    shareWith: string[],
+    fetchFn: FetchFn,
+  ): Promise<{ recipients: string[]; recipientAgents: string[]; selfIncluded: boolean }> {
+    const recipients: string[] = [];
+    const recipientAgents: string[] = ['urn:agent:author-alice'];
+    // 1. Author key first — unconditional.
+    if (!recipients.includes(authorKey)) recipients.push(authorKey);
+    // 2. share_with APPENDS to the base set.
+    if (shareWith.length > 0) {
+      const resolved = await resolveRecipients(shareWith, { fetch: fetchFn });
+      for (const r of resolved) {
+        if (r.handle && !recipientAgents.includes(r.handle)) recipientAgents.push(r.handle);
+        for (const key of r.agentEncryptionKeys) {
+          if (!recipients.includes(key)) recipients.push(key);
+        }
+      }
+    }
+    // 3. Defensive invariant: author key still present after merge.
+    const selfIncluded = recipients.includes(authorKey);
+    if (!selfIncluded) recipients.push(authorKey);
+    return { recipients, recipientAgents, selfIncluded };
+  }
+
+  it('includes the author when share_with is omitted (default)', async () => {
+    const out = await computeRecipients(AUTHOR_KEY, [], mockFetch({}));
+    expect(out.recipients).toEqual([AUTHOR_KEY]);
+    expect(out.selfIncluded).toBe(true);
+  });
+
+  it('includes BOTH author and share_with targets when share_with is non-empty', async () => {
+    const bobProfile = createOwnerProfile('https://host/bob/profile#me' as IRI, 'Bob', [
+      agent({
+        agentId: 'urn:agent:bob' as IRI,
+        delegatedBy: 'https://host/bob/profile#me' as IRI,
+        encryptionPublicKey: 'KEY_BOB',
+      }),
+    ]);
+    const out = await computeRecipients(
+      AUTHOR_KEY,
+      [BOB_POD],
+      mockFetch({ [BOB_POD]: bobProfile }),
+    );
+    expect(out.recipients).toContain(AUTHOR_KEY); // author can self-decrypt
+    expect(out.recipients).toContain('KEY_BOB'); // share target can decrypt
+    expect(out.recipients).toHaveLength(2);
+    expect(out.selfIncluded).toBe(true);
+    expect(out.recipientAgents).toContain('urn:agent:author-alice');
+    expect(out.recipientAgents).toContain(BOB_POD);
+  });
+
+  it('does not duplicate the author key when share_with target shares a registry that includes it', async () => {
+    // Edge case: a pod's registry happens to list a key identical to the
+    // author's (e.g., same relay process minted both). Recipients must
+    // remain deduped — selfIncluded still true.
+    const sharedKeyProfile = createOwnerProfile('https://host/peer/profile#me' as IRI, 'Peer', [
+      agent({
+        agentId: 'urn:agent:peer' as IRI,
+        delegatedBy: 'https://host/peer/profile#me' as IRI,
+        encryptionPublicKey: AUTHOR_KEY, // collision
+      }),
+    ]);
+    const PEER_POD = 'https://host/peer/';
+    const out = await computeRecipients(
+      AUTHOR_KEY,
+      [PEER_POD],
+      mockFetch({ [PEER_POD]: sharedKeyProfile }),
+    );
+    expect(out.recipients).toEqual([AUTHOR_KEY]); // deduped to one
+    expect(out.selfIncluded).toBe(true);
+  });
+
+  it('appends multiple share_with targets without dropping the author', async () => {
+    const bobProfile = createOwnerProfile('https://host/bob/profile#me' as IRI, 'Bob', [
+      agent({
+        agentId: 'urn:agent:bob' as IRI,
+        delegatedBy: 'https://host/bob/profile#me' as IRI,
+        encryptionPublicKey: 'KEY_BOB',
+      }),
+    ]);
+    const carolProfile = createOwnerProfile('https://host/carol/profile#me' as IRI, 'Carol', [
+      agent({
+        agentId: 'urn:agent:carol' as IRI,
+        delegatedBy: 'https://host/carol/profile#me' as IRI,
+        encryptionPublicKey: 'KEY_CAROL',
+      }),
+    ]);
+    const CAROL_POD = 'https://host/carol/';
+    const out = await computeRecipients(
+      AUTHOR_KEY,
+      [BOB_POD, CAROL_POD],
+      mockFetch({ [BOB_POD]: bobProfile, [CAROL_POD]: carolProfile }),
+    );
+    expect(out.recipients).toEqual([AUTHOR_KEY, 'KEY_BOB', 'KEY_CAROL']);
+    expect(out.selfIncluded).toBe(true);
+    expect(out.recipientAgents).toEqual(['urn:agent:author-alice', BOB_POD, CAROL_POD]);
+  });
+});

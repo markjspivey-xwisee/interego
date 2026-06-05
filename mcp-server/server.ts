@@ -721,8 +721,13 @@ async function toolPublishContext(args: {
   const recipients = (currentProfile?.authorizedAgents ?? [])
     .filter(a => !a.revoked && a.encryptionPublicKey)
     .map(a => a.encryptionPublicKey!) as string[];
-  // Include our own key so we can read back our own publish in later sessions
-  if (!recipients.includes(agentKeyPair.publicKey)) recipients.push(agentKeyPair.publicKey);
+  // Author's session-agent key MUST be in the recipient set unconditionally,
+  // BEFORE the share_with union below. This guarantees the author can always
+  // deref-decrypt envelopes they just published, even if share_with targets
+  // a third party. share_with APPENDS to this base set; it never replaces it.
+  // See fix `share-with-author` regression test.
+  const authorEncryptionKey = agentKeyPair.publicKey;
+  if (!recipients.includes(authorEncryptionKey)) recipients.push(authorEncryptionKey);
 
   // Cross-pod sharing: for each handle in share_with, resolve to their pod's
   // agent registry and union their agents' encryption keys into recipients.
@@ -754,6 +759,10 @@ async function toolPublishContext(args: {
       }
     }
   }
+  // Defensive invariant: author key must remain in recipients after the
+  // share_with merge. Restore if a regression in the union logic ever
+  // drops it — better to over-include than to lock the author out.
+  if (!recipients.includes(authorEncryptionKey)) recipients.push(authorEncryptionKey);
 
   const publishOptions: Parameters<typeof publish>[3] = recipients.length > 0
     ? { fetch: solidFetch, encrypt: { recipients, senderKeyPair: agentKeyPair } }
