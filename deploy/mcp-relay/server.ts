@@ -3194,6 +3194,61 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
         : authContext.agentId;
       if (bareSessionId) args._session_agent_id = bareSessionId;
     }
+
+    // ── Lazy pod-init middleware (FIX A) ─────────────────────
+    // Self-heal bearers issued before the OAuth-side eager bootstrap:
+    // on the first MCP call for a (pod, relay-process) pair, run the
+    // SAME bootstrap helper that /oauth/verify uses, behind the SAME
+    // per-pod mutex. The HEAD-based idempotency check inside
+    // ensurePodInitialized makes every subsequent call free.
+    //
+    // For tools that materially depend on /agents + /profile/card
+    // (POD_AWARE_TOOLS) we AWAIT — those handlers will produce a
+    // misleading result against an empty pod. For everything else
+    // (mint, dereference of urn:pgsl:*, kernel verbs on the lattice,
+    // ping, etc.) we fire the bootstrap as a best-effort warm-up so
+    // the next call lands on a populated pod with zero added latency
+    // on THIS call.
+    //
+    // Failure handling: best-effort by default. The exception is the
+    // strict-DPoP environment, where AUTH_REQUIRED_TOOLS calls bubble
+    // the bootstrap error to the tool handler shell so the client gets
+    // a clear failure rather than a silent half-init write.
+    if (authContext && authContext.podUrl && authContext.ownerWebId && authContext.userId) {
+      const podAware = POD_AWARE_TOOLS.has(name);
+      const strictRequired = RELAY_REQUIRE_DPOP && AUTH_REQUIRED_TOOLS.has(name);
+      const initAuthCtx = {
+        podUrl: authContext.podUrl,
+        agentId: authContext.agentId,
+        ownerWebId: authContext.ownerWebId,
+        userId: authContext.userId,
+        ...(authContext.identityToken ? { identityToken: authContext.identityToken } : {}),
+      };
+      if (podAware) {
+        try {
+          await ensurePodInitialized(initAuthCtx);
+        } catch (err) {
+          if (strictRequired) {
+            return {
+              content: [{ type: 'text' as const, text: `Error: pod bootstrap failed for ${authContext.podUrl}: ${(err as Error).message}` }],
+              isError: true,
+            };
+          }
+          // Best-effort: log + let the tool proceed; reads degrade
+          // gracefully, writes surface their own underlying error.
+          log(`WARN: ensurePodInitialized(${authContext.podUrl}) failed for tool ${name}: ${(err as Error).message}`);
+        }
+      } else {
+        // Fire-and-forget warm-up — do not add latency to lattice /
+        // kernel-verb tools that don't read pod state. Swallow the
+        // promise rejection; the next pod-aware call retries via the
+        // (failure-not-cached) Set logic.
+        void ensurePodInitialized(initAuthCtx).catch((err: Error) => {
+          log(`WARN: background ensurePodInitialized(${authContext.podUrl}) failed: ${err.message}`);
+        });
+      }
+    }
+
     try {
       const text = await tool.handler(args);
       return { content: [{ type: 'text' as const, text }] };
@@ -3818,7 +3873,7 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
   // re-execute the merge with the fresh state. A small backoff +
   // retry budget bounds the worst case.
   try {
-    await withPodMutex(authResp.podUrl!, () => bootstrapPodForOAuth({
+    await withPodMutex(authResp.podUrl!, () => bootstrapPod({
       podUrl: authResp.podUrl!,
       ownerWebId: authResp.webId! as IRI,
       surfaceAgentIri: agentIri as IRI,
@@ -3859,7 +3914,7 @@ app.post('/oauth/verify', oauthVerifyLimiter, async (req, res) => {
 // relay currently runs single-replica; if multi-replica is ever turned
 // on we would need a CSS-side compare-and-swap (e.g. ETag-based
 // If-Match) or an external lock. The post-write verify-and-merge loop
-// inside `bootstrapPodForOAuth` provides a best-effort safety net even
+// inside `bootstrapPod` provides a best-effort safety net even
 // across replicas.
 const podWriteMutexes = new Map<string, Promise<unknown>>();
 
@@ -3889,7 +3944,11 @@ async function withPodMutex<T>(podUrl: string, fn: () => Promise<T>): Promise<T>
 // error rather than spinning indefinitely.
 const POD_BOOTSTRAP_MAX_ATTEMPTS = 3;
 
-async function bootstrapPodForOAuth(params: {
+// Renamed from `bootstrapPodForOAuth` — the helper is now ingress-agnostic
+// and called from BOTH /oauth/verify AND the lazy CallTool middleware
+// (ensurePodInitialized). Behavior is unchanged; only the name changed
+// to drop the misleading "ForOAuth" suffix.
+async function bootstrapPod(params: {
   podUrl: string;
   ownerWebId: IRI;
   surfaceAgentIri: IRI;
@@ -3974,6 +4033,118 @@ async function bootstrapPodForOAuth(params: {
     // time to finish so we read a stable state next iteration.
     await new Promise(r => setTimeout(r, 100 * attempt));
   }
+}
+
+// ── Lazy pod-init for already-authenticated tool calls (FIX A) ────
+//
+// Background: /oauth/verify is the canonical first-write entry point
+// for `<pod>/agents` + `<pod>/profile/card`. But bearer tokens that
+// were issued BEFORE the eager OAuth-side bootstrap shipped are still
+// in the wild — those callers have a valid token but a pod that was
+// never initialized (no /agents, no /profile/card), so any tool that
+// reads the registry returns "no agent" and any tool that writes
+// fails its first-line auth check. The fix is self-healing on first
+// MCP call: when a CallToolRequest comes in with auth context that
+// resolves a podUrl, we lazily run the SAME bootstrap helper used by
+// /oauth/verify, behind the SAME per-pod mutex, gated by a cheap
+// HEAD-based idempotency check so the cost is one round-trip per
+// (pod, relay-process) pair across the relay's lifetime.
+//
+// Idempotency: two layers.
+//   (1) `bootstrappedPods` Set — populated on confirmed success (HEAD
+//       200 or successful bootstrap). O(1) hit cost, no network. The
+//       fast path that absorbs every call after the first.
+//   (2) On Set miss: HEAD <podUrl>agents. 200 → another replica /
+//       process already initialized — record + skip. 404 → take the
+//       mutex, re-check the Set inside the mutex (double-checked
+//       locking against concurrent in-process callers), then bootstrap.
+// No TTL — pod-init is monotonic. The Set is intentionally NOT
+// populated on bootstrap FAILURE so a transient 5xx does not poison
+// subsequent calls.
+//
+// Failure mode: lazy init is best-effort. If bootstrap throws we log
+// at warn level and let the tool call proceed; reads degrade
+// gracefully (discover_context returns []), writes surface their own
+// underlying error. The single exception is the strict-DPoP environment
+// (RELAY_REQUIRE_DPOP=true) combined with an AUTH_REQUIRED_TOOLS call —
+// there we honor the strict guarantee and rethrow so the tool handler
+// surfaces a clear error rather than silently writing to a half-init pod.
+const bootstrappedPods = new Set<string>();
+
+// Tools that materially depend on `<pod>/agents` and/or
+// `<pod>/profile/card` existing before they run — these AWAIT the
+// lazy init. Reads (discover/list/status) need /agents for the
+// registry-derived identity claims; writes (publish/register/revoke/
+// publish_directory) need the registry for their first-line auth
+// check. Everything else (mint, dereference, compose, act, restrict,
+// extend, promote, decompose, pgsl_* lattice ops, kernel verbs that
+// operate purely on lattice atoms, ping, etc.) does NOT need pod
+// state pre-init — for those we kick off the bootstrap as a
+// best-effort fire-and-forget so the NEXT call lands on a warm pod
+// without paying any latency on THIS call.
+const POD_AWARE_TOOLS = new Set<string>([
+  // Writes — first-line auth reads /agents
+  'publish_context', 'register_agent', 'revoke_agent', 'publish_directory',
+  // Reads that materialize over /agents or /profile/card
+  'discover_context', 'discover_all', 'get_descriptor',
+  'get_pod_status', 'list_known_pods', 'verify_agent',
+  'subscribe_to_pod', 'unsubscribe_from_pod',
+  'add_pod', 'remove_pod', 'discover_directory', 'resolve_webfinger',
+]);
+
+async function ensurePodInitialized(
+  authContext: { podUrl?: string; agentId: string; ownerWebId: string; userId: string; identityToken?: string },
+): Promise<void> {
+  const podUrl = authContext.podUrl;
+  if (!podUrl) return;
+  // Layer 1: in-process fast-path. After a confirmed success on this
+  // process this is O(1) Set.has — no network.
+  if (bootstrappedPods.has(podUrl)) return;
+
+  // Layer 2: HEAD probe. A 200 means another replica/process beat us
+  // to it — record + skip. A 404 means first-touch and we proceed to
+  // the mutex-guarded bootstrap. Anything else (5xx, network) we treat
+  // as "unknown" and attempt the bootstrap; bootstrap itself is
+  // idempotent (existing-agent re-connect path is a no-op write).
+  try {
+    const head = await solidFetch(`${podUrl}agents`, { method: 'HEAD' });
+    if (head.status === 200) {
+      bootstrappedPods.add(podUrl);
+      return;
+    }
+  } catch {
+    // Network blip — fall through to the bootstrap attempt. The mutex
+    // + bootstrap-internal retries cope with transient CSS issues.
+  }
+
+  // Mutex-guarded bootstrap. The same `podWriteMutexes` map used by
+  // the OAuth verify path — serialises lazy init AND OAuth init on
+  // the SAME per-pod key, so a tool call racing an OAuth completion
+  // for the same user does not double-write the registry.
+  await withPodMutex(podUrl, async () => {
+    // Double-checked locking: a concurrent in-process call may have
+    // landed the Set entry while we were waiting on the mutex.
+    if (bootstrappedPods.has(podUrl)) return;
+    // Fallback labels mirror the OAuth-verify path when identity
+    // is unreachable / cache-cold: userName=userId, agentLabel
+    // synthesized from the bare agent slug.
+    const bareAgentSlug = authContext.agentId.startsWith('did:web:')
+      ? (authContext.agentId.split(':').pop() ?? authContext.agentId)
+      : authContext.agentId;
+    await bootstrapPod({
+      podUrl,
+      ownerWebId: authContext.ownerWebId as IRI,
+      surfaceAgentIri: authContext.agentId as IRI,
+      userName: authContext.userId,
+      agentLabel: `Surface agent ${bareAgentSlug}`,
+      userId: authContext.userId,
+      identityWebId: authContext.ownerWebId,
+    });
+    bootstrappedPods.add(podUrl);
+    // On throw: do NOT add to bootstrappedPods so next call retries;
+    // the throw propagates so the caller can decide whether to mask
+    // (best-effort path) or surface (strict-DPoP write path).
+  });
 }
 
 // ── Pod-side /profile/card writer (FIX A) ─────────────────────────
