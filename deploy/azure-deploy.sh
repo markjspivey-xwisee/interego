@@ -270,6 +270,52 @@ BROWSER_FQDN=$(az containerapp show --name "$BROWSER_APP" --resource-group "$RES
 echo "    Browser:       https://$BROWSER_FQDN"
 echo "    Observatory:   https://$BROWSER_FQDN/observatory"
 
+# ── 9. Gate↔Relay token-introspection shared secret ────────────
+#
+# FIX B: the relay's OAuth flow mints opaque random-hex access tokens
+# the identity server has never seen and cannot verify. When a browser
+# / MCP client presents one of those tokens directly to the css-gate
+# (e.g. a curl PUT to <pod>/<userId>/foo), the gate's existing
+# identity-only verifier rejects it with 401 "identity returned 401".
+#
+# To fix that without sharing the relay's signing key or stuffing
+# tokens into a shared store, we add POST /verify-token on the relay
+# (token introspection RPC) and a fallback in the gate that hits it
+# when identity returns 200+valid:false. Both sides authenticate the
+# RPC itself with a shared secret carried in Authorization: Bearer.
+#
+# This block generates a fresh secret if either app is missing one
+# (and they don't already share the same value), then sets the same
+# value on BOTH apps. Idempotent — re-running with both env vars
+# already aligned is a no-op (`az containerapp update` is convergent).
+if [ -n "$CSS_GATE_FQDN" ]; then
+  echo ">>> Configuring gate↔relay introspection secret..."
+  GATE_SECRET=$(az containerapp show --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" \
+    --query "properties.template.containers[0].env[?name=='RELAY_INTROSPECTION_SECRET'].value | [0]" -o tsv 2>/dev/null || true)
+  RELAY_SECRET=$(az containerapp show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
+    --query "properties.template.containers[0].env[?name=='RELAY_INTROSPECTION_SECRET'].value | [0]" -o tsv 2>/dev/null || true)
+  if [ -n "$GATE_SECRET" ] && [ "$GATE_SECRET" = "$RELAY_SECRET" ]; then
+    INTROSPECT_SECRET="$GATE_SECRET"
+    echo "    introspection secret already aligned on both apps (no change)"
+  else
+    # Generate a 64-char hex secret. openssl is available on the build
+    # image; node fallback in case it isn't.
+    INTROSPECT_SECRET=$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+    echo "    generated new 64-char introspection secret; syncing to both apps"
+  fi
+
+  az containerapp update --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
+    --set-env-vars "RELAY_INTROSPECTION_SECRET=$INTROSPECT_SECRET" \
+    --output none
+  az containerapp update --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" \
+    --set-env-vars "RELAY_INTROSPECTION_SECRET=$INTROSPECT_SECRET" "RELAY_VERIFY_URL=https://$RELAY_FQDN" \
+    --output none
+  echo "    relay     : RELAY_INTROSPECTION_SECRET set"
+  echo "    css-gate  : RELAY_INTROSPECTION_SECRET + RELAY_VERIFY_URL=https://$RELAY_FQDN set"
+else
+  echo ">>> Skipping gate↔relay introspection secret config — $CSS_GATE_APP not deployed."
+fi
+
 # ── Done ──────────────────────────────────────────────────────
 echo ""
 echo "=== Deployment Complete ==="

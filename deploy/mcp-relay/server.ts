@@ -16,7 +16,7 @@
 
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { WebSocket } from 'ws';
 
@@ -202,6 +202,28 @@ const IDENTITY_URL = process.env['IDENTITY_URL'] ?? 'http://localhost:8090';
 // RELAY_MCP_API_KEY still works as a legacy fallback for tooling that can
 // set an Authorization header directly (local curl, scripts).
 const RELAY_MCP_API_KEY = process.env['RELAY_MCP_API_KEY'] ?? '';
+
+// Shared secret for the gate-to-relay token-introspection RPC at
+// /verify-token. The css-gate's verifyUserBearer() falls back to this
+// endpoint when identity-server's /tokens/verify rejects the bearer
+// (because the bearer is one of this relay's opaque OAuth access tokens
+// — randomBytes(32).hex strings the identity server has never seen and
+// cannot verify). The gate forwards the inbound user bearer in the
+// request body, the relay introspects it against its in-process
+// accessTokens map, and returns the same { valid, userId, ... } shape
+// the gate already consumes from identity. Bearer-auth on the
+// introspection endpoint itself uses THIS secret, carried in
+// Authorization: Bearer — separate from any user bearer being
+// introspected.
+//
+// MUST be set on production relay deployments where css-gate uses the
+// introspection fallback. Unset => /verify-token returns 503 (the gate
+// then falls back to its existing identity-only path, which still
+// works for identity-server-minted tokens). Same secret MUST be set
+// on the css-gate as RELAY_INTROSPECTION_SECRET; mismatched secrets
+// cause every introspection attempt to fail 401 and the gate rejects
+// every relay-OAuth-bearer write.
+const RELAY_INTROSPECTION_SECRET = process.env['RELAY_INTROSPECTION_SECRET'] ?? '';
 
 // Public base URL of THIS relay (used as the OAuth issuer + resource URL).
 // Must be set in production so the OAuth metadata advertises the correct
@@ -5705,6 +5727,118 @@ app.get('/identity-token', async (req, res) => {
   } catch (err) {
     res.status(401).json({ error: `Invalid access token: ${(err as Error).message}` });
   }
+});
+
+/**
+ * POST /verify-token — gate-to-relay OAuth-bearer introspection RPC.
+ *
+ * Solves a specific cross-service handoff problem:
+ *
+ *   - css-gate's verifyUserBearer() (deploy/css-gate/server.mjs)
+ *     accepts two bearer types on writes: the operator WRITE_SECRET,
+ *     or a per-user bearer it verifies against identity-server's POST
+ *     /tokens/verify (which only accepts identity-server-signed tokens).
+ *
+ *   - This relay's OAuth flow mints OPAQUE access tokens
+ *     (randomBytes(32).hex) that live ONLY in this relay's in-process
+ *     `accessTokens` Map. Identity has never seen them and its
+ *     signature verifier always rejects them, so every browser/MCP
+ *     client that authenticated through the relay's OAuth flow and
+ *     presents its access_token directly to the css-gate gets 401
+ *     "identity returned 401" on every write — the exact failure mode
+ *     this endpoint exists to fix.
+ *
+ * Contract:
+ *   - Auth on THIS endpoint:
+ *       Authorization: Bearer <RELAY_INTROSPECTION_SECRET>
+ *     The gate carries the same secret in its own env. Mismatched or
+ *     unset => 503 (config error; gate logs + retries the
+ *     identity-only path).
+ *   - Body: { token: <raw-opaque-access-token-the-gate-received> }
+ *   - Response shape MATCHES identity-server's /tokens/verify so the
+ *     gate's existing cache + path-scope check work unchanged:
+ *       200 { valid: true,  userId, agentId, ownerWebId, podUrl,
+ *             scope, expiresAt, clientId }
+ *       200 { valid: false, reason }   (token unknown / expired)
+ *       400 on missing/invalid body
+ *       401 on missing/invalid introspection secret
+ *       503 when RELAY_INTROSPECTION_SECRET is unset on this relay
+ *
+ * Security notes:
+ *   - 200 + valid:false (not 401) for unknown tokens — distinguishes
+ *     "you the gate aren't authorized to ask" from "the user's token
+ *     isn't live" so the gate caches the right outcome.
+ *   - The introspection secret is a SHARED password between gate and
+ *     relay. Rotate it via az containerapp update --set-env-vars on
+ *     both apps together; the relay drops in-flight requests on env
+ *     reload but the gate's cache TTL bounds the window where stale
+ *     introspections leak.
+ *   - DPoP cnf.jkt binding is NOT enforced here. The gate isn't an
+ *     audience for the client's DPoP proof (the proof's htu is the
+ *     gate URL, not /mcp), so the relay's introspection report stops
+ *     short of asserting key-binding. The token's freshness + the
+ *     gate's path-scope check are the trust bar at the gate boundary.
+ */
+app.post('/verify-token', async (req, res) => {
+  // Config sanity. If the operator forgot to set the shared secret on
+  // this relay, fail closed with 503 so the gate can fall back to its
+  // identity-only path without thinking the introspection said
+  // "valid:false".
+  if (!RELAY_INTROSPECTION_SECRET) {
+    res.status(503).json({
+      valid: false,
+      reason: 'RELAY_INTROSPECTION_SECRET not configured on relay; token introspection disabled',
+    });
+    return;
+  }
+
+  // Gate auth: the gate's introspection request itself carries the
+  // shared secret as its bearer. We use a timing-safe compare so a
+  // wrong-secret probe doesn't leak the correct length character by
+  // character.
+  const auth = req.headers.authorization ?? '';
+  if (!auth.startsWith('Bearer ')) {
+    res.status(401).json({ valid: false, reason: 'introspection bearer required' });
+    return;
+  }
+  const presented = auth.slice(7);
+  const a = Buffer.from(presented, 'utf8');
+  const b = Buffer.from(RELAY_INTROSPECTION_SECRET, 'utf8');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    res.status(401).json({ valid: false, reason: 'introspection bearer rejected' });
+    return;
+  }
+
+  // Body: { token: string }. The gate forwards the raw user bearer
+  // verbatim — we never see the gate's caller, only the token they
+  // presented.
+  const body = req.body as { token?: unknown } | undefined;
+  const token = body && typeof body.token === 'string' ? body.token : null;
+  if (!token) {
+    res.status(400).json({ valid: false, reason: 'request body must be { token: string }' });
+    return;
+  }
+
+  const intro = oauthProvider.introspectAccessToken(token);
+  if (!intro) {
+    // 200 + valid:false (NOT 401) — matches identity-server's
+    // /tokens/verify shape so the gate can cache this as a definitive
+    // "not a relay token" miss instead of treating it as transport
+    // failure.
+    res.status(200).json({ valid: false, reason: 'token not found or expired' });
+    return;
+  }
+
+  res.status(200).json({
+    valid: true,
+    userId: intro.userId,
+    agentId: intro.agentId,
+    ownerWebId: intro.ownerWebId,
+    podUrl: intro.podUrl,
+    scope: intro.scope.join(' '),
+    expiresAt: intro.expiresAt,
+    clientId: intro.clientId,
+  });
 });
 
 /**

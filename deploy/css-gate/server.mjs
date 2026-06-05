@@ -35,9 +35,18 @@
  * Env vars:
  *   WRITE_SECRET     — operator bearer (required).
  *   IDENTITY_URL     — identity server base URL for /tokens/verify
- *                      (required for per-user bearer path; if unset,
- *                      ONLY the operator bearer works and per-user
- *                      writes 401).
+ *                      (primary per-user-bearer verifier; if unset,
+ *                      identity-signed tokens won't be accepted but
+ *                      the relay-introspection fallback below still
+ *                      works on its own).
+ *   RELAY_VERIFY_URL — MCP relay base URL for /verify-token (fallback
+ *                      verifier for the relay's opaque OAuth access
+ *                      tokens, which identity-server can't verify).
+ *                      Unset => fallback DISABLED.
+ *   RELAY_INTROSPECTION_SECRET — shared secret the gate carries on
+ *                      its outbound /verify-token call; MUST match
+ *                      the same env var on the relay. Required when
+ *                      RELAY_VERIFY_URL is set.
  *   CSS_INTERNAL_URL — upstream CSS.
  *   CSS_HOST_HEADER  — Host header to forward to CSS.
  *   USER_BEARER_CACHE_TTL_MS — verified-token cache TTL (default 60000).
@@ -90,6 +99,27 @@ const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL
 const CSS_HOST_HEADER = process.env.CSS_HOST_HEADER ?? null;
 const WRITE_SECRET = process.env.WRITE_SECRET;
 const IDENTITY_URL = (process.env.IDENTITY_URL ?? '').replace(/\/+$/, '');
+// MCP relay base URL — used as a SECOND verification source for
+// per-user bearers. The relay's OAuth flow mints opaque random-hex
+// access tokens that identity-server has never seen and cannot
+// verify (parseAndVerifySignature() rejects them outright). For those
+// tokens, the gate falls back to POST {RELAY_VERIFY_URL}/verify-token,
+// which returns the same { valid, userId, ... } shape this gate
+// already consumes from identity-server. Try identity FIRST (cheaper,
+// also works for purely-identity flows like the dashboard), then the
+// relay; this avoids a round-trip for the common identity-server
+// case. Both endpoints share the SAME cache, keyed by the raw token,
+// so a token verified by either path is hot on the second hit.
+//
+// Unset => relay fallback DISABLED; only identity-server tokens work.
+// Operator WRITE_SECRET path is unaffected by either env var.
+const RELAY_VERIFY_URL = (process.env.RELAY_VERIFY_URL ?? '').replace(/\/+$/, '');
+// Shared secret the gate carries on its outbound /verify-token call
+// to the relay. The relay rejects any introspection request that
+// doesn't carry this exact bearer. MUST match the relay's
+// RELAY_INTROSPECTION_SECRET; mismatch => every relay-OAuth-bearer
+// write returns 401 here.
+const RELAY_INTROSPECTION_SECRET = process.env.RELAY_INTROSPECTION_SECRET ?? '';
 const USER_BEARER_CACHE_TTL_MS = Number(process.env.USER_BEARER_CACHE_TTL_MS ?? 60_000);
 const UPSTREAM_POOL_CONNECTIONS = Number(process.env.UPSTREAM_POOL_CONNECTIONS ?? 16);
 const UPSTREAM_REQUEST_BUFFER = (process.env.UPSTREAM_REQUEST_BUFFER ?? '').toLowerCase() === 'true'
@@ -107,10 +137,16 @@ if (!WRITE_SECRET) {
   process.exit(1);
 }
 
-if (!IDENTITY_URL) {
+if (!IDENTITY_URL && !(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET)) {
   console.warn(
-    '[css-gate] IDENTITY_URL is not set — per-user bearer writes will be rejected. ' +
-    'Only the operator WRITE_SECRET bearer will be accepted.',
+    '[css-gate] neither IDENTITY_URL nor (RELAY_VERIFY_URL + RELAY_INTROSPECTION_SECRET) is set — ' +
+    'per-user bearer writes will be rejected. Only the operator WRITE_SECRET bearer will be accepted.',
+  );
+}
+if (RELAY_VERIFY_URL && !RELAY_INTROSPECTION_SECRET) {
+  console.warn(
+    '[css-gate] RELAY_VERIFY_URL is set but RELAY_INTROSPECTION_SECRET is empty — ' +
+    'relay introspection fallback is DISABLED (the relay would reject our unauthenticated probes).',
   );
 }
 
@@ -243,61 +279,148 @@ function cacheSet(token, value) {
 }
 
 /**
- * Verify a per-user bearer against identity-server /tokens/verify.
+ * Inner helper: probe ONE verification source. Returns:
+ *   { kind: 'valid',    userId, agentId?, scope? }
+ *   { kind: 'invalid',  reason }    — source authoritatively rejected
+ *   { kind: 'unknown',  reason }    — source returned valid:false WITHOUT
+ *                                     claiming jurisdiction (the gate
+ *                                     should try the next source)
+ *   { kind: 'transport',reason }    — source unreachable / 5xx; don't
+ *                                     cache, optionally try next source
+ *
+ * The kind=unknown vs kind=invalid distinction matters because
+ * identity-server returns 200 + { valid:false } for tokens it doesn't
+ * recognize OR tokens it recognizes-but-rejects, and we can't tell
+ * those apart at this layer. We treat ALL identity 200+invalid replies
+ * as kind=unknown so the relay fallback gets a chance; if the relay
+ * also rejects, we cache invalid and return 401.
+ */
+async function probeVerifySource(url, token, opts = {}) {
+  const { bearer } = opts;
+  let resp;
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+    resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ token }),
+    });
+  } catch (err) {
+    return { kind: 'transport', reason: `${url} unreachable: ${err.message}` };
+  }
+  if (resp.status >= 500) {
+    return { kind: 'transport', reason: `${url} returned ${resp.status}` };
+  }
+  if (resp.status === 401 || resp.status === 403) {
+    // The verifier rejected US (the gate), not the token. This is a
+    // config error — the secret/headers we sent are wrong. Treat as
+    // unknown so the next source still gets to weigh in; don't cache.
+    return { kind: 'transport', reason: `${url} rejected gate auth (${resp.status})` };
+  }
+  if (!resp.ok) {
+    // 4xx other than auth: the verifier doesn't recognize this
+    // request shape. Treat as transport so the caller can try the
+    // next source; don't cache.
+    return { kind: 'transport', reason: `${url} returned ${resp.status}` };
+  }
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    return { kind: 'transport', reason: `${url} returned non-JSON` };
+  }
+  if (!data || typeof data !== 'object') {
+    return { kind: 'transport', reason: `${url} returned non-object` };
+  }
+  if (data.valid === true) {
+    if (typeof data.userId !== 'string' || !data.userId) {
+      return { kind: 'invalid', reason: 'verified token has no userId claim' };
+    }
+    return {
+      kind: 'valid',
+      userId: data.userId,
+      agentId: typeof data.agentId === 'string' ? data.agentId : undefined,
+      scope: typeof data.scope === 'string' ? data.scope : undefined,
+    };
+  }
+  return { kind: 'unknown', reason: data.reason ?? 'token not recognized' };
+}
+
+/**
+ * Verify a per-user bearer.
+ *
+ * Tries identity-server's /tokens/verify FIRST (cheap, also covers
+ * the dashboard flow + any direct-to-identity callers). On a miss
+ * (200 + valid:false), falls back to the relay's /verify-token if
+ * RELAY_VERIFY_URL is configured — the relay's opaque OAuth access
+ * tokens live ONLY in the relay's in-process map, so this is the only
+ * way to verify them.
  *
  * Returns { ok: true, userId, agentId?, scope? } on a valid token,
  * or { ok: false, status, reason } on invalid / unreachable.
- *
- * - status: HTTP status the gate should return upstream (401 for
- *   invalid token / unreachable identity, 503 for identity hard-down
- *   when we can distinguish — currently treated as 401 to keep the
- *   surface minimal; callers retry).
  */
 async function verifyUserBearer(token) {
-  if (!IDENTITY_URL) {
-    return { ok: false, status: 401, reason: 'per-user bearers not supported (IDENTITY_URL unset)' };
+  if (!IDENTITY_URL && !RELAY_VERIFY_URL) {
+    return { ok: false, status: 401, reason: 'per-user bearers not supported (no verify URL configured)' };
   }
   const cached = cacheGet(token);
   if (cached) {
     if (cached.valid) return { ok: true, userId: cached.userId, agentId: cached.agentId, scope: cached.scope };
     return { ok: false, status: 401, reason: cached.reason ?? 'invalid token' };
   }
-  let resp;
-  try {
-    resp = await fetch(`${IDENTITY_URL}/tokens/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    });
-  } catch (err) {
-    // Identity unreachable — do NOT cache (transient). 401 to caller.
-    return { ok: false, status: 401, reason: `identity unreachable: ${err.message}` };
+
+  // Track the most informative reason as we walk sources so the
+  // final 401 carries useful detail.
+  let lastReason = 'no verifier accepted this token';
+  let sawTransportFailure = false;
+
+  if (IDENTITY_URL) {
+    const r = await probeVerifySource(`${IDENTITY_URL}/tokens/verify`, token);
+    if (r.kind === 'valid') {
+      cacheSet(token, { valid: true, userId: r.userId, agentId: r.agentId, scope: r.scope });
+      return { ok: true, userId: r.userId, agentId: r.agentId, scope: r.scope };
+    }
+    if (r.kind === 'invalid') {
+      cacheSet(token, { valid: false, reason: r.reason });
+      return { ok: false, status: 401, reason: r.reason };
+    }
+    if (r.kind === 'transport') sawTransportFailure = true;
+    lastReason = r.reason;
   }
-  if (!resp.ok) {
-    // Identity returned non-2xx. Treat as invalid; cache briefly to
-    // throttle. Distinguish from network failure so the cache is
-    // populated.
-    cacheSet(token, { valid: false, reason: `identity ${resp.status}` });
-    return { ok: false, status: 401, reason: `identity returned ${resp.status}` };
+
+  if (RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET) {
+    const r = await probeVerifySource(
+      `${RELAY_VERIFY_URL}/verify-token`,
+      token,
+      { bearer: RELAY_INTROSPECTION_SECRET },
+    );
+    if (r.kind === 'valid') {
+      cacheSet(token, { valid: true, userId: r.userId, agentId: r.agentId, scope: r.scope });
+      return { ok: true, userId: r.userId, agentId: r.agentId, scope: r.scope };
+    }
+    if (r.kind === 'invalid' || r.kind === 'unknown') {
+      // Both identity and relay say no — cache invalid.
+      cacheSet(token, { valid: false, reason: r.reason });
+      return { ok: false, status: 401, reason: r.reason };
+    }
+    if (r.kind === 'transport') sawTransportFailure = true;
+    lastReason = r.reason;
+  } else if (lastReason === 'no verifier accepted this token') {
+    // Identity wasn't tried (unset) and relay fallback isn't
+    // configured — surface that to the caller.
+    lastReason = RELAY_VERIFY_URL
+      ? 'relay introspection secret not configured on gate'
+      : 'identity rejected token and relay fallback disabled';
   }
-  let data;
-  try {
-    data = await resp.json();
-  } catch {
-    return { ok: false, status: 401, reason: 'identity returned non-JSON' };
+
+  // No source said valid. If we ONLY hit transport failures (no
+  // authoritative invalid), don't cache — the next request might
+  // succeed once the verifier is back.
+  if (!sawTransportFailure) {
+    cacheSet(token, { valid: false, reason: lastReason });
   }
-  if (!data.valid) {
-    cacheSet(token, { valid: false, reason: data.reason ?? 'invalid token' });
-    return { ok: false, status: 401, reason: data.reason ?? 'invalid token' };
-  }
-  if (typeof data.userId !== 'string' || !data.userId) {
-    // Defensive: identity reported valid but no userId claim — we
-    // can't path-check, so refuse rather than allow an unscoped write.
-    cacheSet(token, { valid: false, reason: 'verified token has no userId claim' });
-    return { ok: false, status: 401, reason: 'verified token has no userId claim' };
-  }
-  cacheSet(token, { valid: true, userId: data.userId, agentId: data.agentId, scope: data.scope });
-  return { ok: true, userId: data.userId, agentId: data.agentId, scope: data.scope };
+  return { ok: false, status: 401, reason: lastReason };
 }
 
 /**
@@ -454,7 +577,9 @@ const server = createServer(async (req, res) => {
       ok: true,
       gating: 'writes-only',
       upstream: CSS_INTERNAL_URL,
-      perUserBearers: Boolean(IDENTITY_URL),
+      perUserBearers: Boolean(IDENTITY_URL) || Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
+      identityVerify: Boolean(IDENTITY_URL),
+      relayIntrospect: Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
     }));
     return;
   }
@@ -610,11 +735,17 @@ if (process.env.CSS_GATE_AUTOSTART !== '0') server.listen(PORT, () => {
   console.log(`[css-gate] upstream: ${CSS_INTERNAL_URL}`);
   console.log(`[css-gate] write methods (POST/PUT/PATCH/DELETE) require Authorization: Bearer <token>`);
   console.log(`[css-gate]   • Bearer <WRITE_SECRET>             → operator path, any pod path`);
-  if (IDENTITY_URL) {
-    console.log(`[css-gate]   • Bearer <identity-server token>   → per-user path, must target /<userId>/...`);
-    console.log(`[css-gate]   identity verify: ${IDENTITY_URL}/tokens/verify  (cache TTL ${USER_BEARER_CACHE_TTL_MS} ms)`);
+  if (IDENTITY_URL || (RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET)) {
+    console.log(`[css-gate]   • Bearer <per-user token>          → per-user path, must target /<userId>/...`);
+    if (IDENTITY_URL) {
+      console.log(`[css-gate]   identity verify : ${IDENTITY_URL}/tokens/verify  (primary)`);
+    }
+    if (RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET) {
+      console.log(`[css-gate]   relay introspect: ${RELAY_VERIFY_URL}/verify-token  (fallback for OAuth tokens)`);
+    }
+    console.log(`[css-gate]   per-user-bearer cache TTL ${USER_BEARER_CACHE_TTL_MS} ms`);
   } else {
-    console.log(`[css-gate]   • per-user bearers DISABLED (IDENTITY_URL not set)`);
+    console.log(`[css-gate]   • per-user bearers DISABLED (neither IDENTITY_URL nor RELAY_VERIFY_URL+SECRET set)`);
   }
   console.log(`[css-gate] read methods (GET/HEAD/OPTIONS) pass through anonymously`);
 });

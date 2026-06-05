@@ -240,6 +240,40 @@ async function run() {
     ok(!pod.files.has(accessUrl), 'expired-on-verify deletes the backing-store file');
   }
 
+  // 5. introspectAccessToken — gate-to-relay /verify-token RPC primitive
+  {
+    const pod = makeStubPod();
+    const provider = makeProvider(pod);
+    const { access } = await issueToken(provider);
+
+    // Live token → introspection returns the identity claims.
+    const live = provider.introspectAccessToken(access);
+    ok(live !== null, 'introspectAccessToken returns non-null for live token');
+    ok(live?.valid === true, 'introspect: valid:true');
+    ok(live?.userId === IDENTITY.userId, 'introspect: userId matches identity');
+    ok(live?.agentId === IDENTITY.agentId, 'introspect: agentId matches identity');
+    ok(live?.ownerWebId === IDENTITY.ownerWebId, 'introspect: ownerWebId matches identity');
+    ok(live?.podUrl === IDENTITY.podUrl, 'introspect: podUrl matches identity');
+    ok(Array.isArray(live?.scope) && live!.scope.includes('mcp'), 'introspect: scope carries mcp');
+    ok(typeof live?.expiresAt === 'number' && live!.expiresAt > 0, 'introspect: expiresAt set');
+
+    // Unknown token → null (the gate caches valid:false on null).
+    const unknown = provider.introspectAccessToken('definitely-not-a-real-token-' + randomBytes(8).toString('hex'));
+    ok(unknown === null, 'introspectAccessToken returns null for unknown token');
+
+    // Expired token → null + indexes pruned.
+    // @ts-expect-error test seam
+    const info = provider['accessTokens'].get(access);
+    info.expiresAt = Math.floor(Date.now() / 1000) - 10;
+    const expired = provider.introspectAccessToken(access);
+    ok(expired === null, 'introspectAccessToken returns null for expired token');
+    // @ts-expect-error test seam
+    ok(!provider['accessTokens'].has(access), 'introspect: expired token pruned from raw map');
+    // @ts-expect-error test seam
+    ok(!provider['accessTokensBySha'].has(createHash('sha256').update(access).digest('hex')),
+       'introspect: expired token pruned from sha map');
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) {
     for (const f of failures) console.log(`  FAIL: ${f}`);

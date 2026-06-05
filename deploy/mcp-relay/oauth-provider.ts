@@ -246,6 +246,68 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     return this.refreshDpopJkt.get(refreshToken);
   }
 
+  /**
+   * Read-only introspection of a raw access token for cross-service
+   * RPC. Used by /verify-token — the css-gate falls back to this
+   * endpoint when identity-server's parseAndVerifySignature() rejects
+   * the bearer because it was minted by THIS relay's OAuth flow (the
+   * relay's access tokens are opaque randomBytes(32).hex strings the
+   * identity server has never seen and cannot verify).
+   *
+   * Returns the introspection record on a live, non-expired token, or
+   * `null` if the token is unknown / expired. The cnf.jkt binding is
+   * NOT enforced here — the gate is a different audience than /mcp
+   * and is not in a position to validate a DPoP proof against the
+   * inbound caller's keypair (the caller signs DPoP to the gate's URL,
+   * not the relay's). The token's expiry + ownership are the
+   * authorization bar at the gate; per-path scoping happens in the
+   * gate's `firstPathSegment(req.url) === userId` check.
+   *
+   * Side effect: a sha-keyed-only entry (hydrated at startup from the
+   * persistent store without a raw token) gets promoted into the raw
+   * map so the next call is O(1) — same promotion verifyAccessToken
+   * performs on its hot path.
+   */
+  introspectAccessToken(token: string): {
+    valid: true;
+    userId: string;
+    agentId: string;
+    ownerWebId: string;
+    podUrl: string;
+    scope: string[];
+    clientId: string;
+    expiresAt: number;
+  } | null {
+    let info = this.accessTokens.get(token);
+    if (!info) {
+      const sha = InteregoOAuthProvider.sha256Hex(token);
+      const bySha = this.accessTokensBySha.get(sha);
+      if (bySha) {
+        info = { ...bySha, token };
+        this.accessTokens.set(token, info);
+      }
+    }
+    if (!info) return null;
+    if (info.expiresAt && info.expiresAt * 1000 < Date.now()) {
+      // Expired — drop both indexes for hygiene and report miss.
+      this.accessTokens.delete(token);
+      this.accessTokensBySha.delete(InteregoOAuthProvider.sha256Hex(token));
+      return null;
+    }
+    const extra = info.extra;
+    if (!extra?.userId) return null;
+    return {
+      valid: true,
+      userId: extra.userId,
+      agentId: extra.agentId,
+      ownerWebId: extra.ownerWebId,
+      podUrl: extra.podUrl,
+      scope: info.scopes ?? [],
+      clientId: info.clientId,
+      expiresAt: info.expiresAt ?? 0,
+    };
+  }
+
   get clientsStore(): OAuthRegisteredClientsStore {
     return {
       getClient: (clientId) => this.clients.get(clientId),
