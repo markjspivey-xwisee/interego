@@ -1928,10 +1928,21 @@ async function handleKernelDereference(args: ToolArgs): Promise<string> {
   // returns `status: 'encrypted-no-key'` even though the relay holds the
   // wrapped key (the calling agent is in the recipient set by virtue of
   // being a delegate of the pod owner who published).
+  //
+  // For `urn:graph:*` IRIs the kernel needs at least one pod URL to scan
+  // for the URN's descriptor. We supply the caller's own pod first
+  // (`podHint`) and then the union of every pod the relay has learned
+  // about (`knownPods` — the same map that backs list_known_pods +
+  // discover_all). This closes the URN→URL hypermedia leg end-to-end
+  // so callers can deref `urn:graph:*` without first walking a manifest.
+  const podHint = await selfPodUrl(args).catch(() => undefined);
+  const knownPodUrls = Array.from(knownPods.values()).map(e => e.url);
   const r = await kernelDereference(iri, {
     fetch: solidFetch,
     decorateManifest,
     recipientKeyPair: relayAgentKey,
+    ...(podHint ? { podHint } : {}),
+    ...(knownPodUrls.length > 0 ? { knownPods: knownPodUrls } : {}),
   });
   return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
     kind: 'dereference',
