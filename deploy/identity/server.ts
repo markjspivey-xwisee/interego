@@ -36,6 +36,12 @@ import {
   type VerifiedAuthenticationResponse,
 } from '@simplewebauthn/server';
 import { corsMiddleware } from './cors-allowlist.js';
+import {
+  lookupWebFingerIdentity,
+  buildWebFingerJrd,
+  applyWebFingerRelFilter,
+  parseWebFingerResource,
+} from './webfinger.js';
 
 // ── Config ──────────────────────────────────────────────────
 
@@ -2857,39 +2863,72 @@ app.get('/agents/:id/profile', (req, res) => {
 });
 
 // ── WebFinger (RFC 7033) ────────────────────────────────────
+//
+// Discovery endpoint per RFC 7033. PUBLIC: any caller (browser, federation
+// crawler, anonymous bot) may hit this with no auth, so we always emit
+// `Access-Control-Allow-Origin: *` here regardless of the
+// identity-server's normal CORS allowlist. Per RFC 7033 §4.4 the
+// response media type is `application/jrd+json`.
+//
+// Lookup strategy:
+//   1) acct:<handle>@<host> — extract handle.
+//      Also accept the courtesy form https://<host>/users/<id> (and
+//      /agents/<id>) and pull the id from the path.
+//   2) Try identities.get(handle) — the fast path for canonical userIds
+//      like `u-pk-00181cd5dbee`. Confirm type === 'user' or 'agent'.
+//   3) If (2) misses, iterate identities.values() looking for a
+//      case-insensitive identity.name match. Covers the display-name
+//      form (e.g. `acct:johnny@host` resolving to userId `u-pk-…`).
+//   4) Anything still unresolved → 404 with empty body (RFC 7033 §4.2
+//      leaves 404 body unspecified; an empty body is cleaner than the
+//      JSON error blob the previous version emitted, which some
+//      federation crawlers misparse).
+//
+// We answer for ANY host portion of the resource (i.e. no @<host>
+// equality check). We are an OIDC issuer + DID registrar that hosts
+// the canonical record for every userId we know about; refusing to
+// answer because the requester wrote the wrong hostname would just
+// break cross-instance probing.
+
+// Explicit, always-* CORS for WebFinger discovery. The /.well-known/webfinger
+// endpoint is required by RFC 7033 to be publicly readable. We set ACAO=* on
+// both the GET response and the OPTIONS preflight, overriding the
+// `corsMiddleware` allowlist that the rest of the identity server uses.
+function setWebFingerCors(res: express.Response): void {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Accept');
+  res.setHeader('Vary', 'Origin');
+}
+
+app.options('/.well-known/webfinger', (_req, res) => {
+  setWebFingerCors(res);
+  res.status(204).end();
+});
 
 app.get('/.well-known/webfinger', (req, res) => {
-  const resource = req.query.resource as string;
-  if (!resource) { res.status(400).json({ error: 'resource parameter required' }); return; }
-
-  let userId: string | null = null;
-  if (resource.startsWith('acct:')) {
-    const parts = resource.slice(5).split('@');
-    userId = parts[0] ?? null;
-  } else {
-    try {
-      const url = new URL(resource);
-      const match = url.pathname.match(/\/users\/([^/]+)/);
-      if (match) userId = match[1] ?? null;
-    } catch { /* ignore */ }
+  setWebFingerCors(res);
+  const handle = parseWebFingerResource(req.query.resource);
+  if (handle === null) {
+    res.status(400).setHeader('Content-Type', 'application/json');
+    res.json({ error: 'resource parameter required (acct:<handle>@<host>)' });
+    return;
   }
-
-  const identity = userId ? identities.get(userId) : null;
-  if (!identity || identity.type !== 'user') { res.status(404).json({ error: 'Unknown resource' }); return; }
-
-  const host = new URL(BASE_URL).host;
-  res.json({
-    subject: `acct:${identity.id}@${host}`,
-    aliases: [
-      `${BASE_URL}/users/${identity.id}/profile`,
-      `did:web:${host}:users:${identity.id}`,
-    ],
-    links: [
-      { rel: 'http://www.w3.org/ns/solid/terms#storage', href: `${CSS_URL}${identity.id}/` },
-      { rel: 'http://webfinger.net/rel/profile-page', href: `${BASE_URL}/users/${identity.id}/profile` },
-      { rel: 'self', type: 'application/activity+json', href: `${BASE_URL}/users/${identity.id}/profile` },
-    ],
+  const identity = lookupWebFingerIdentity(handle, identities);
+  if (!identity) {
+    // Empty body per RFC 7033 §4.2.
+    res.status(404).end();
+    return;
+  }
+  const jrd = buildWebFingerJrd(identity, {
+    baseUrl: BASE_URL,
+    cssUrl: CSS_URL,
+    requestedHandle: handle,
   });
+  const filtered = applyWebFingerRelFilter(jrd, req.query.rel as undefined | string | string[]);
+  res.setHeader('Content-Type', 'application/jrd+json');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.status(200).send(JSON.stringify(filtered));
 });
 
 // ── List users (for admin/dashboard) ─────────────────────────
