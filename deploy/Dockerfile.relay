@@ -79,6 +79,7 @@ COPY deploy/mcp-relay/oauth-provider.ts ./
 COPY deploy/mcp-relay/oauth-client-store.ts ./
 COPY deploy/mcp-relay/oauth-token-store.ts ./
 COPY deploy/mcp-relay/dpop.ts ./
+COPY deploy/mcp-relay/cors-allowlist.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────
