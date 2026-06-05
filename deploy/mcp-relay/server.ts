@@ -53,6 +53,13 @@ import {
   type OAuthTokenStoreConfig,
 } from './oauth-token-store.js';
 import {
+  loadEntries as loadFederationEntries,
+  saveEntry as saveFederationEntry,
+  removeEntry as removeFederationEntry,
+  type FederationStoreConfig,
+  type FederationEntry,
+} from './federation-store.js';
+import {
   validateDpopJwt,
   athFromAccessToken,
   reconstructRequestUrl,
@@ -73,6 +80,7 @@ import {
   decorateShim,
   dereference as kernelDereference,
   type EncryptionKeyPair,
+  type EncryptedEnvelope,
   extend as kernelExtend,
   followAffordance,
   generateKeyPair,
@@ -83,6 +91,7 @@ import {
   kernelAct,
   mint as kernelMint,
   normalizePublishInputs,
+  openEncryptedEnvelope,
   pinToIpfs,
   promote as kernelPromote,
   removeAuthorizedAgent,
@@ -310,21 +319,49 @@ function surfaceAgentFromClient(clientName: string | undefined): string {
 //   any top-level consumer (mcpAuthRouter, requireBearerAuth) runs.
 let oauthProvider!: InteregoOAuthProvider;
 
-// Org-level IPFS/CDP keys — used as defaults when users don't provide their own
-const ORG_IPFS_PROVIDER = (process.env['IPFS_PROVIDER'] ?? 'local') as 'pinata' | 'web3storage' | 'local';
-const ORG_IPFS_API_KEY = process.env['IPFS_API_KEY'] ?? '';
+// Org-level IPFS/CDP keys — used as defaults when users don't provide their own.
+//
+// Auto-detection: if PINATA_API_KEY or WEB3STORAGE_TOKEN is set in env, the
+// relay defaults to that provider so publishes ACTUALLY pin to a public
+// gateway. Operators no longer need to set IPFS_PROVIDER separately.
+// IPFS_PROVIDER + IPFS_API_KEY remain supported as explicit overrides for
+// legacy deployments. When no key is present at all, we report
+// `local-unpinned` (NOT `local`) — see crypto/ipfs.ts:localPin for why
+// the old `local` label was misleading.
+const ENV_PINATA_KEY = process.env['PINATA_API_KEY'] ?? '';
+const ENV_WEB3STORAGE_KEY = process.env['WEB3STORAGE_TOKEN'] ?? '';
+const ORG_IPFS_PROVIDER: 'pinata' | 'web3storage' | 'local-unpinned' = (() => {
+  const explicit = process.env['IPFS_PROVIDER'];
+  if (explicit === 'pinata' || explicit === 'web3storage') return explicit;
+  if (explicit === 'local' || explicit === 'local-unpinned') return 'local-unpinned';
+  // Auto-detect when no explicit provider is set.
+  if (ENV_PINATA_KEY) return 'pinata';
+  if (ENV_WEB3STORAGE_KEY) return 'web3storage';
+  return 'local-unpinned';
+})();
+const ORG_IPFS_API_KEY = process.env['IPFS_API_KEY']
+  ?? (ORG_IPFS_PROVIDER === 'pinata' ? ENV_PINATA_KEY
+    : ORG_IPFS_PROVIDER === 'web3storage' ? ENV_WEB3STORAGE_KEY
+    : '');
 const ORG_CDP_API_KEY_NAME = process.env['CDP_API_KEY_NAME'] ?? '';
 const ORG_CDP_API_KEY_PRIVATE = process.env['CDP_API_KEY_PRIVATE'] ?? '';
 
 /**
- * Resolve IPFS config: user override (from request headers) > org default > local
+ * Resolve IPFS config: user override (from request headers) > org default >
+ * local-unpinned. A `local-unpinned` provider means we compute a CID for the
+ * content but do NOT upload it; the caller MUST surface that distinction in
+ * its response (see publish_context's `ipfs.warning` field).
  */
-function resolveIpfsConfig(req: any): { provider: 'pinata' | 'web3storage' | 'local'; apiKey: string } {
+function resolveIpfsConfig(req: any): { provider: 'pinata' | 'web3storage' | 'local-unpinned'; apiKey: string } {
   const userProvider = req.headers?.['x-ipfs-provider'] as string | undefined;
   const userKey = req.headers?.['x-ipfs-api-key'] as string | undefined;
 
   if (userProvider && userKey) {
-    return { provider: userProvider as any, apiKey: userKey };
+    const normalized: 'pinata' | 'web3storage' | 'local-unpinned' =
+      userProvider === 'pinata' ? 'pinata'
+      : userProvider === 'web3storage' ? 'web3storage'
+      : 'local-unpinned';
+    return { provider: normalized, apiKey: userKey };
   }
   return { provider: ORG_IPFS_PROVIDER, apiKey: ORG_IPFS_API_KEY };
 }
@@ -802,64 +839,169 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // credential to verify. See the block immediately following the
   // privacy-screen + auto-supersede preprocessing above.
 
-  const currentProfile = await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null);
-  const recipients = (currentProfile?.authorizedAgents ?? [])
-    .filter(a => !a.revoked && a.encryptionPublicKey)
-    .map(a => a.encryptionPublicKey!) as string[];
-  // Author's session-agent key MUST be in the recipient set unconditionally.
-  // The relay minted this agent and holds its X25519 keypair (relayAgentKey),
-  // so adding it here guarantees the author can always deref-decrypt envelopes
-  // they just published — even if the registry read above failed, even if
-  // share_with is supplied. share_with APPENDS to this base set; it never
-  // replaces it. See fix `share-with-author` regression test.
-  const authorEncryptionKey = relayAgentKey.publicKey;
-  if (!recipients.includes(authorEncryptionKey)) recipients.push(authorEncryptionKey);
-
-  // Cross-pod selective sharing: resolve each share_with handle to their
-  // pod's authorized agents, union their keys into recipients. Their
-  // agents can then decrypt THIS graph without any pod-level ACL change.
-  // CRITICAL: this loop APPENDS to `recipients` — the author's key
-  // (pushed above) is already in the set and stays in the set so the
-  // author can self-decrypt independently of share_with targets.
+  // ── Visibility branch ──────────────────────────────────────────
+  //
+  // `visibility` is the explicit audience-class knob. Before this knob
+  // existed, every publish encrypted to whatever recipients the registry
+  // surfaced (plus the author's session-agent key), which meant a
+  // human-readable wiki-style note couldn't actually be written — a
+  // public reader can't be a JOSE envelope recipient, so the payload
+  // would always be opaque to them.
+  //
+  //   - 'public'  → no envelope, plaintext payload, ACL grants
+  //                 acl:Read to acl:agentClass foaf:Agent on descriptor
+  //                 + payload. share_with is ignored (a plaintext graph
+  //                 has no per-recipient routing) and a warn is logged
+  //                 if it was supplied.
+  //   - 'private' → envelope, recipient set = author's session-agent
+  //                 key ONLY. share_with is ignored + warn-logged for
+  //                 the same reason `public` ignores it (the author
+  //                 explicitly opted out of co-recipients).
+  //   - 'shared'  → preserved historical behavior: union(registry agents,
+  //                 author key, share_with-resolved keys).
+  //
+  // Default is 'shared' to keep callers that omit the param wire-compatible.
+  const rawVisibility = args.visibility as string | undefined;
+  const visibility: 'public' | 'shared' | 'private' =
+    rawVisibility === 'public' || rawVisibility === 'private' || rawVisibility === 'shared'
+      ? rawVisibility
+      : 'shared';
   const shareWith = (args.share_with as string[] | undefined) ?? [];
+  if (visibility !== 'shared' && shareWith.length > 0) {
+    log(`WARN: publish_context visibility="${visibility}" ignores share_with (${shareWith.length} handle(s) dropped) — only 'shared' supports per-recipient routing`);
+  }
+
+  const authorEncryptionKey = relayAgentKey.publicKey;
+  let recipients: string[] = [];
   const shareResolved: { handle: string; podUrl: string; agentCount: number }[] = [];
   const recipientAgents: string[] = [agentId];
-  if (shareWith.length > 0) {
-    const resolved = await resolveRecipients(shareWith, { fetch: solidFetch });
-    for (const r of resolved) {
-      shareResolved.push({ handle: r.handle, podUrl: r.podUrl, agentCount: r.agentEncryptionKeys.length });
-      if (r.handle && !recipientAgents.includes(r.handle)) recipientAgents.push(r.handle);
-      for (const key of r.agentEncryptionKeys) {
-        if (!recipients.includes(key)) recipients.push(key);
+
+  if (visibility === 'shared') {
+    const currentProfile = await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null);
+    recipients = (currentProfile?.authorizedAgents ?? [])
+      .filter(a => !a.revoked && a.encryptionPublicKey)
+      .map(a => a.encryptionPublicKey!) as string[];
+    // Author's session-agent key MUST be in the recipient set unconditionally.
+    // The relay minted this agent and holds its X25519 keypair (relayAgentKey),
+    // so adding it here guarantees the author can always deref-decrypt envelopes
+    // they just published — even if the registry read above failed, even if
+    // share_with is supplied. share_with APPENDS to this base set; it never
+    // replaces it. See fix `share-with-author` regression test.
+    if (!recipients.includes(authorEncryptionKey)) recipients.push(authorEncryptionKey);
+
+    // Cross-pod selective sharing: resolve each share_with handle to their
+    // pod's authorized agents, union their keys into recipients. Their
+    // agents can then decrypt THIS graph without any pod-level ACL change.
+    // CRITICAL: this loop APPENDS to `recipients` — the author's key
+    // (pushed above) is already in the set and stays in the set so the
+    // author can self-decrypt independently of share_with targets.
+    if (shareWith.length > 0) {
+      const resolved = await resolveRecipients(shareWith, { fetch: solidFetch });
+      for (const r of resolved) {
+        shareResolved.push({ handle: r.handle, podUrl: r.podUrl, agentCount: r.agentEncryptionKeys.length });
+        if (r.handle && !recipientAgents.includes(r.handle)) recipientAgents.push(r.handle);
+        for (const key of r.agentEncryptionKeys) {
+          if (!recipients.includes(key)) recipients.push(key);
+        }
       }
     }
+    // Defensive invariant: author key must still be present after share_with merge.
+    // If this ever fires it indicates a regression in the union logic above.
+    if (!recipients.includes(authorEncryptionKey)) {
+      recipients.push(authorEncryptionKey);
+    }
+  } else if (visibility === 'private') {
+    // Envelope to author only. The relay still holds the key, so the
+    // author can re-fetch + decrypt later. No one else (not even other
+    // authorized agents on the same pod) can decrypt this payload.
+    recipients = [authorEncryptionKey];
   }
-  // Defensive invariant: author key must still be present after share_with merge.
-  // If this ever fires it indicates a regression in the union logic above.
-  const selfIncluded = recipients.includes(authorEncryptionKey);
-  if (!selfIncluded) {
-    recipients.push(authorEncryptionKey);
-  }
+  // visibility === 'public': recipients stays empty → publish() emits
+  // plaintext TriG; ACL writer below grants foaf:Agent acl:Read.
 
+  const selfIncluded = visibility === 'public' ? true : recipients.includes(authorEncryptionKey);
+
+  // relayBaseUrl is threaded in so encrypted publishes emit a SECOND
+  // affordance — cg:renderView — pointing at this relay's
+  // /render/<descriptorIri> endpoint. Thin clients (no X25519 keypair)
+  // follow that affordance with a bearer token to get plaintext Turtle
+  // server-side. Without a configured public base we omit the renderView
+  // affordance (cg:canDecrypt remains the only path), so behavior is
+  // unchanged for dev runs that don't set PUBLIC_BASE_URL.
+  const publishRelayBase = (PUBLIC_BASE_URL || '').replace(/\/$/, '');
   const publishOptions: Parameters<typeof publish>[3] = recipients.length > 0
-    ? { fetch: solidFetch, encrypt: { recipients, senderKeyPair: relayAgentKey } }
-    : { fetch: solidFetch };
+    ? {
+        fetch: solidFetch,
+        encrypt: { recipients, senderKeyPair: relayAgentKey },
+        visibility,
+        ...(publishRelayBase ? { relayBaseUrl: publishRelayBase } : {}),
+      }
+    : { fetch: solidFetch, visibility };
   const result = await publish(descriptor, args.graph_content as string, podUrl, publishOptions);
 
-  // Pin to IPFS if configured (org-level or user override)
+  // For 'public' visibility, write per-resource .acl entries that
+  // explicitly grant acl:Read to acl:agentClass foaf:Agent on the
+  // descriptor + payload. The /context-graphs/ container ACL already
+  // inherits anonymous Read, but pinning the policy on the leaf
+  // resources keeps the publish self-contained and survives any
+  // future tightening of the parent ACL. Best-effort: log + continue
+  // on failure (the parent ACL still applies).
+  if (visibility === 'public') {
+    await writePublicReadAcl(result.descriptorUrl, ownerWebId as IRI).catch(err =>
+      log(`[publish/public] warn: descriptor .acl PUT failed: ${(err as Error).message}`),
+    );
+    await writePublicReadAcl(result.graphUrl, ownerWebId as IRI).catch(err =>
+      log(`[publish/public] warn: payload .acl PUT failed: ${(err as Error).message}`),
+    );
+  }
+
+  // Pin to IPFS if configured (org-level or user override).
+  //
+  // Honesty about what the CID addresses + whether it's actually pinned:
+  //   - `addresses`: 'ciphertext' when the graph payload was encrypted
+  //     (we hash the JOSE envelope's Turtle — what's actually public on
+  //     the pod), 'plaintext' when no recipients were configured. The
+  //     descriptor turtle itself is always the cleartext index; what
+  //     varies is the payload it links to. We CID the descriptor here,
+  //     so `addresses` reports the descriptor's payload class.
+  //   - `warning`: present iff provider is 'local-unpinned' so consumers
+  //     don't mistake a content-addressed-but-not-uploaded CID for a
+  //     successful pin to a public gateway.
   const ipfsConfig = resolveIpfsConfig(args._req ?? {});
-  let ipfs: { cid?: string; url?: string; provider?: string } = {};
-  if (ipfsConfig.provider !== 'local' && ipfsConfig.apiKey) {
+  const turtle = toTurtle(descriptor);
+  const addresses: 'ciphertext' | 'plaintext' = (result.encrypted ?? false) ? 'ciphertext' : 'plaintext';
+  let ipfs: {
+    cid?: string;
+    url?: string;
+    provider?: string;
+    addresses?: 'ciphertext' | 'plaintext';
+    warning?: string;
+  } = {};
+  if (ipfsConfig.provider !== 'local-unpinned' && ipfsConfig.apiKey) {
     try {
-      const turtle = toTurtle(descriptor);
       const pinResult = await pinToIpfs(turtle, `descriptor-${descriptor.id}`, ipfsConfig, solidFetch);
-      ipfs = { cid: pinResult.cid, url: pinResult.url, provider: pinResult.provider };
+      ipfs = {
+        cid: pinResult.cid,
+        url: pinResult.url,
+        provider: pinResult.provider,
+        addresses,
+        ...(pinResult.warning ? { warning: pinResult.warning } : {}),
+      };
     } catch (err) {
       ipfs = { cid: `error: ${(err as Error).message}` };
     }
   } else {
-    const turtle = toTurtle(descriptor);
-    ipfs = { cid: cryptoComputeCid(turtle), provider: 'local' };
+    // No pinning provider configured: compute the CID locally so the
+    // descriptor still has a content-address, but report `local-unpinned`
+    // and carry a warning so the caller knows it's NOT on a public gateway.
+    const cid = cryptoComputeCid(turtle);
+    ipfs = {
+      cid,
+      url: `ipfs://${cid}`,
+      provider: 'local-unpinned',
+      addresses,
+      warning: '[ipfs] no PINATA_API_KEY / WEB3STORAGE_TOKEN — content is NOT on a public gateway; CID is local-only',
+    };
   }
 
   // Auto-publish pod directory on first write. A pod holding content
@@ -879,6 +1021,9 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     descriptorUrl: result.descriptorUrl,
     graphUrl: result.graphUrl,
     encrypted: result.encrypted ?? false,
+    // Audience-class echoed back so callers can confirm the branch
+    // taken (default 'shared' is the back-compat path).
+    visibility,
     recipients: recipients.length,
     // Agent-IRI-level view of who can decrypt this envelope. `recipients`
     // (count) was misleading when multiple surface-agents share the relay's
@@ -926,7 +1071,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
             // Auto-pin the signature alongside the descriptor when an
             // IPFS provider is configured. Non-fatal on failure.
             const sigIpfsConfig = resolveIpfsConfig(args._req ?? {});
-            if (sigIpfsConfig.provider !== 'local' && sigIpfsConfig.apiKey) {
+            if (sigIpfsConfig.provider !== 'local-unpinned' && sigIpfsConfig.apiKey) {
               try {
                 const sigPin = await pinToIpfs(sigBody, `signature-${descriptor.id}`, sigIpfsConfig, solidFetch);
                 sigIpfsCid = sigPin.cid;
@@ -1449,7 +1594,14 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
 
 // ── Federation Tool Handlers ────────────────────────────────
 
-// Simple in-memory pod registry for the relay.
+// In-memory pod registry for the relay, backed by a persistent
+// federation store on the service-account pod (see
+// `federation-store.ts`). Every mutator (`handleAddPod`,
+// `handleRemovePod`, `handleDiscoverDirectory`,
+// `handleResolveWebfinger`) updates this map AND mirrors to the pod
+// so a container restart recovers the federation rather than dropping
+// every peer.
+//
 // `via` tracks how a pod entry got into our view of the federation:
 //   'manual'    — explicitly added via add_pod
 //   'directory' — imported from a published pod directory
@@ -1460,7 +1612,135 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
 //                 so users see their own pod as their own pod even
 //                 if a directory import previously listed it.
 type KnownPodVia = 'manual' | 'directory' | 'webfinger' | 'self';
-const knownPods: Map<string, { url: string; label?: string; owner?: string; via: KnownPodVia }> = new Map();
+interface KnownPodEntry {
+  url: string;
+  label?: string;
+  owner?: string;
+  via: KnownPodVia;
+  /** ISO-8601 — when this entry first landed in the federation. */
+  addedAt: string;
+}
+const knownPods: Map<string, KnownPodEntry> = new Map();
+
+// Federation store config — same service-account pod the OAuth token
+// store already writes to, under a sibling `federation/` subcontainer.
+// Hydrated at startup below (synchronously into the `knownPods` map)
+// so the first `list_known_pods` after restart already sees every
+// previously-added peer.
+const federationStoreCfg: FederationStoreConfig = {
+  podUrl: oauthStorePodUrl,
+  fetch: solidFetch,
+  log: (msg: string) => log(msg),
+};
+
+// Most recent successful persistence — surfaced in
+// `list_known_pods` so operators can confirm at a glance that the
+// store is being written to. Updated by `persistFederationEntry()`
+// on every successful save; never reset on failure (last-known-good
+// semantics).
+let federationLastPersistedAt: string | null = null;
+
+// Debounce window for the persist sink. add_pod / discover_directory
+// can fire many add events in quick succession; we coalesce into a
+// single PUT per pod URL by replacing any pending timer for that URL
+// with a new one. The actual filesystem write still happens per-URL
+// (each pod has its own file keyed by sha256(url)) so this only
+// elides redundant writes to the SAME URL during the same burst.
+const FEDERATION_PERSIST_DEBOUNCE_MS = 250;
+const _federationPendingWrites: Map<string, NodeJS.Timeout> = new Map();
+
+// Per-URL in-flight write promise. Serializes concurrent writes to
+// the SAME pod URL so a rapid add_pod → remove_pod → add_pod sequence
+// doesn't race on the underlying PUT/DELETE/PUT. Different URLs run
+// in parallel (no shared resource).
+const _federationWriteChain: Map<string, Promise<void>> = new Map();
+
+/**
+ * Serialize writes for a given pod URL. Returns a promise that resolves
+ * when the supplied task finishes; subsequent calls for the same URL
+ * queue behind any in-flight work. Mirrors the `withPodMutex` pattern
+ * used elsewhere in the relay for descriptor writes.
+ */
+function withFederationUrlMutex<T>(podUrl: string, task: () => Promise<T>): Promise<T> {
+  const prior = _federationWriteChain.get(podUrl) ?? Promise.resolve();
+  const next = prior.then(task, task);
+  _federationWriteChain.set(podUrl, next.then(() => undefined, () => undefined));
+  return next;
+}
+
+/**
+ * Schedule a debounced persistence write for `entry`. Replaces any
+ * pending timer for the same URL so a burst of identical add events
+ * collapses to a single PUT. The persist itself runs under
+ * `withFederationUrlMutex` so concurrent writes for the same URL
+ * serialize.
+ */
+function persistFederationEntry(entry: KnownPodEntry): void {
+  if (entry.via === 'self') return;
+  const existing = _federationPendingWrites.get(entry.url);
+  if (existing) clearTimeout(existing);
+  const handle = setTimeout(() => {
+    _federationPendingWrites.delete(entry.url);
+    void withFederationUrlMutex(entry.url, async () => {
+      const persistEntry: FederationEntry = {
+        url: entry.url,
+        via: entry.via,
+        addedAt: entry.addedAt,
+        ...(entry.label !== undefined ? { label: entry.label } : {}),
+        ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
+      };
+      try {
+        await saveFederationEntry(persistEntry, federationStoreCfg);
+        federationLastPersistedAt = new Date().toISOString();
+      } catch (err) {
+        log(`[federation-store] persistFederationEntry(${entry.url}) failed: ${(err as Error).message}`);
+      }
+    });
+  }, FEDERATION_PERSIST_DEBOUNCE_MS);
+  _federationPendingWrites.set(entry.url, handle);
+}
+
+/**
+ * Schedule a removal write. Cancels any pending add for the same URL
+ * (no point persisting an add that's about to be removed) then issues
+ * the DELETE under the same per-URL mutex.
+ */
+function unpersistFederationEntry(podUrl: string): void {
+  const pending = _federationPendingWrites.get(podUrl);
+  if (pending) {
+    clearTimeout(pending);
+    _federationPendingWrites.delete(podUrl);
+  }
+  void withFederationUrlMutex(podUrl, async () => {
+    try {
+      await removeFederationEntry(podUrl, federationStoreCfg);
+      federationLastPersistedAt = new Date().toISOString();
+    } catch (err) {
+      log(`[federation-store] unpersistFederationEntry(${podUrl}) failed: ${(err as Error).message}`);
+    }
+  });
+}
+
+// Hydrate from the federation store. Cold-start safe: a missing
+// container, a transport error, or zero entries all yield an empty
+// load and the relay starts with just the per-call synthetic `self`
+// entry — same legacy behaviour as before persistence existed.
+{
+  const _loaded = await loadFederationEntries(federationStoreCfg);
+  for (const entry of _loaded) {
+    // Defensive: loadEntries already filters via:'self', but double-
+    // check at the insertion point so future writers can't sneak one in.
+    if (entry.via === 'self') continue;
+    knownPods.set(entry.url, {
+      url: entry.url,
+      via: entry.via,
+      addedAt: entry.addedAt,
+      ...(entry.label !== undefined ? { label: entry.label } : {}),
+      ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
+    });
+  }
+  log(`Federation store: pod=${oauthStorePodUrl} loaded=${_loaded.length}`);
+}
 
 // Resolve the calling user's OWN pod URL from the auth-context-
 // injected args, INDEPENDENT of args.pod_url (which on tools like
@@ -1512,7 +1792,7 @@ async function selfPodEntry(args: ToolArgs): Promise<{ url: string; label?: stri
 // values. 'self' is always first; URL collisions are de-duped with
 // 'self' winning (so a user who imported a directory that listed
 // their own pod still sees it labelled as their own).
-async function knownPodsWithSelf(args: ToolArgs): Promise<Array<{ url: string; label?: string; owner?: string; via: KnownPodVia }>> {
+async function knownPodsWithSelf(args: ToolArgs): Promise<Array<{ url: string; label?: string; owner?: string; via: KnownPodVia; addedAt?: string }>> {
   const self = await selfPodEntry(args);
   const others = [...knownPods.values()].filter(p => !self || p.url !== self.url);
   return self ? [self, ...others] : others;
@@ -1544,7 +1824,13 @@ async function handleDiscoverAll(args: ToolArgs): Promise<string> {
 }
 
 async function handleListKnownPods(args: ToolArgs): Promise<string> {
-  return JSON.stringify(await knownPodsWithSelf(args));
+  // Surface `lastPersistedAt` so operators can verify the federation
+  // store is being written through. Null until the first successful
+  // persist (cold-start with zero mutations yet).
+  return JSON.stringify({
+    pods: await knownPodsWithSelf(args),
+    lastPersistedAt: federationLastPersistedAt,
+  });
 }
 
 async function handleAddPod(args: ToolArgs): Promise<string> {
@@ -1564,18 +1850,26 @@ async function handleAddPod(args: ToolArgs): Promise<string> {
     // list_known_pods + discover_directory project it via 'self'.
     return JSON.stringify({ added: false, url, total: knownPods.size, reason: 'self' });
   }
-  knownPods.set(url, {
+  // Preserve the original addedAt on re-adds (operator updates the
+  // label) so the audit trail stays meaningful — first-seen time, not
+  // most-recent-edit time.
+  const existing = knownPods.get(url);
+  const entry: KnownPodEntry = {
     url,
     label: args.label as string | undefined,
     owner: args.owner as string | undefined,
     via: 'manual',
-  });
+    addedAt: existing?.addedAt ?? new Date().toISOString(),
+  };
+  knownPods.set(url, entry);
+  persistFederationEntry(entry);
   return JSON.stringify({ added: true, url, total: knownPods.size });
 }
 
 async function handleRemovePod(args: ToolArgs): Promise<string> {
   const url = args.pod_url as string;
   const removed = knownPods.delete(url);
+  if (removed) unpersistFederationEntry(url);
   return JSON.stringify({ removed, url, total: knownPods.size });
 }
 
@@ -1584,12 +1878,16 @@ async function handleDiscoverDirectory(args: ToolArgs): Promise<string> {
   let added = 0;
   for (const entry of directory.entries) {
     if (!knownPods.has(entry.podUrl)) added++;
-    knownPods.set(entry.podUrl, {
+    const existing = knownPods.get(entry.podUrl);
+    const next: KnownPodEntry = {
       url: entry.podUrl,
       label: entry.label,
       owner: entry.owner,
       via: 'directory',
-    });
+      addedAt: existing?.addedAt ?? new Date().toISOString(),
+    };
+    knownPods.set(entry.podUrl, next);
+    persistFederationEntry(next);
   }
   // Return the merged view including the calling user's own pod
   // — addresses the "directory listing of my pods does not include
@@ -1627,10 +1925,16 @@ async function handlePublishDirectory(args: ToolArgs): Promise<string> {
 async function handleResolveWebfinger(args: ToolArgs): Promise<string> {
   const result = await resolveWebFinger(args.resource as string, { fetch: solidFetch });
   if (result.podUrl) {
-    knownPods.set(result.podUrl, {
+    const existing = knownPods.get(result.podUrl);
+    const entry: KnownPodEntry = {
       url: result.podUrl,
       via: 'webfinger',
-    });
+      addedAt: existing?.addedAt ?? new Date().toISOString(),
+      ...(existing?.label !== undefined ? { label: existing.label } : {}),
+      ...(existing?.owner !== undefined ? { owner: existing.owner } : {}),
+    };
+    knownPods.set(result.podUrl, entry);
+    persistFederationEntry(entry);
   }
   return JSON.stringify(result);
 }
@@ -2290,7 +2594,12 @@ const PUBLISH_CONTEXT_OUTPUT = mcpOutputSchema({
     descriptorUrl: { type: 'string', description: 'URL of the published descriptor .ttl' },
     graphUrl: { type: 'string', description: 'URL of the graph payload (.trig or .envelope.jose.json)' },
     encrypted: { type: 'boolean', description: 'True when the graph was wrapped in a JOSE envelope' },
-    recipients: { type: 'integer', description: 'Number of envelope recipients (includes self)' },
+    visibility: {
+      type: 'string',
+      enum: ['public', 'shared', 'private'],
+      description: 'Audience class actually applied (echoes the input; "shared" when input was omitted).',
+    },
+    recipients: { type: 'integer', description: 'Number of envelope recipients (includes self). 0 when visibility="public".' },
     manifestUrl: { type: 'string', description: 'URL of the pod manifest entry for this descriptor' },
     sharedWith: {
       type: 'array',
@@ -2682,7 +2991,7 @@ const TOOL_SCHEMAS = [
   // ═══════════════════════════════════════════════════════════
   {
     name: 'publish_context',
-    description: 'Compatibility shim — internally composes kernel(compose+act) over a publish affordance plus E2EE/anchoring/compliance plumbing. Publishes a context-annotated knowledge graph (Turtle) to your Solid pod with the full 6-facet descriptor (Temporal, Provenance, Agent, Semiotic, Trust, Federation). Attributes the descriptor to the pod owner and associates it with the calling agent.',
+    description: 'Compatibility shim — internally composes kernel(compose+act) over a publish affordance plus E2EE/anchoring/compliance plumbing. Publishes a context-annotated knowledge graph (Turtle) to your Solid pod with the full 6-facet descriptor (Temporal, Provenance, Agent, Semiotic, Trust, Federation). Attributes the descriptor to the pod owner and associates it with the calling agent. Audience class is set via `visibility`: "public" (plaintext payload + foaf:Agent acl:Read — useful for wiki-style notes or jam:renderView projections), "shared" (default; JOSE envelope to the pod\'s authorized agents plus optional share_with recipients), or "private" (envelope to the calling agent ONLY; share_with ignored).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2694,10 +3003,15 @@ const TOOL_SCHEMAS = [
         valid_until: { type: 'string', description: 'ISO 8601 end of validity (optional)' },
         modal_status: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'], description: 'Semiotic modal status (default: Asserted)' },
         confidence: { type: 'number', description: 'Epistemic confidence 0.0-1.0 (default: 0.85)' },
+        visibility: {
+          type: 'string',
+          enum: ['public', 'shared', 'private'],
+          description: 'Audience class for the published payload. Default "shared". "public" → no envelope; plaintext Turtle written to the pod; the descriptor + payload .acl grants acl:Read to acl:agentClass foaf:Agent (any authenticated user); descriptor advertises cg:visibility "public" and cg:encrypted false. Use for wiki-style notes, jam:renderView projections, or anything the user explicitly wants publicly readable. "shared" (DEFAULT) → JOSE envelope wrapped to the pod\'s authorized agents + author\'s session-agent key + any share_with recipients — historical behavior, preserves wire compat. "private" → envelope to the author\'s session agent ONLY; even other authorized agents on the same pod cannot decrypt. Use for personal scratchpads. share_with is ignored under "public" and "private" (a warn is logged if it was supplied).',
+        },
         share_with: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional list of external identity handles (did:web:..., WebID URLs, or acct:user@host). Each is resolved to its pod, and their authorized agents\' X25519 keys are added as recipients on the envelope — per-graph cross-pod sharing without any pod-level ACL change. Use to share a specific graph with another person while keeping your other graphs private.',
+          description: 'Optional list of external identity handles (did:web:..., WebID URLs, or acct:user@host). Each is resolved to its pod, and their authorized agents\' X25519 keys are added as recipients on the envelope — per-graph cross-pod sharing without any pod-level ACL change. Use to share a specific graph with another person while keeping your other graphs private. NOTE: only honored when visibility is "shared" (the default); ignored + warn-logged under "public" or "private".',
         },
         auto_supersede_prior: {
           type: 'boolean',
@@ -2714,6 +3028,24 @@ const TOOL_SCHEMAS = [
         },
       },
       required: ['graph_iri', 'graph_content'],
+      examples: [
+        {
+          graph_iri: 'urn:graph:markj:public:about',
+          graph_content: '<urn:graph:markj:public:about> a <https://schema.org/AboutPage> ; <http://purl.org/dc/terms/title> "About me" .',
+          visibility: 'public',
+        },
+        {
+          graph_iri: 'urn:graph:markj:notes:20260605',
+          graph_content: '<urn:graph:markj:notes:20260605> <http://purl.org/dc/terms/description> "Team-internal note." .',
+          visibility: 'shared',
+          share_with: ['did:web:alice.example'],
+        },
+        {
+          graph_iri: 'urn:graph:markj:scratchpad:20260605',
+          graph_content: '<urn:graph:markj:scratchpad:20260605> <http://purl.org/dc/terms/description> "Personal scratch — author only." .',
+          visibility: 'private',
+        },
+      ],
     },
     outputSchema: PUBLISH_CONTEXT_OUTPUT,
     annotations: { title: 'Publish context graph', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -4337,6 +4669,41 @@ async function ensurePodAcls(params: {
   }
 }
 
+// Per-resource WAC writer used by `publish_context` with
+// `visibility: "public"`. Pins `acl:Read` for `acl:agentClass foaf:Agent`
+// (any authenticated user) on the leaf resource even if the parent
+// `/context-graphs/` ACL is later tightened. Owner retains full control.
+// Best-effort: any non-2xx is logged by the caller; the parent ACL on
+// `/context-graphs/` still grants the same anonymous read by inheritance.
+async function writePublicReadAcl(targetUrl: string, ownerWebId: IRI): Promise<void> {
+  const aclUrl = `${targetUrl}.acl`;
+  const aclBody = [
+    `@prefix acl: <http://www.w3.org/ns/auth/acl#> .`,
+    `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
+    ``,
+    `<#owner>`,
+    `    a acl:Authorization ;`,
+    `    acl:agent <${ownerWebId}> ;`,
+    `    acl:accessTo <${targetUrl}> ;`,
+    `    acl:mode acl:Read, acl:Write, acl:Control .`,
+    ``,
+    `<#public>`,
+    `    a acl:Authorization ;`,
+    `    acl:agentClass foaf:Agent ;`,
+    `    acl:accessTo <${targetUrl}> ;`,
+    `    acl:mode acl:Read .`,
+    ``,
+  ].join('\n');
+  const resp = await solidFetch(aclUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'text/turtle' },
+    body: aclBody,
+  });
+  if (!resp.ok && resp.status !== 205) {
+    throw new Error(`PUT ${aclUrl} → ${resp.status} ${resp.statusText}`);
+  }
+}
+
 // Pod-root WAC: public Read; owner full control. Default policy applies
 // to children via `acl:default <root>` so the whole pod inherits unless
 // a child container overrides.
@@ -5341,6 +5708,199 @@ app.get('/identity-token', async (req, res) => {
 });
 
 /**
+ * GET /render/:descriptorIri — server-side plaintext projection of an
+ * encrypted graph payload for thin clients (no X25519 keypair).
+ *
+ * Implements the `cg:renderView` affordance pattern: the publisher
+ * emits a second affordance on the descriptor (alongside cg:canDecrypt)
+ * pointing at this endpoint. Holders of a bearer token whose minted
+ * surface-agent is in the descriptor's envelope recipient set follow
+ * that link and receive the decrypted named-graph as `text/turtle`.
+ *
+ *   1. Verify bearer (OAuth access token OR identity-server token).
+ *   2. Resolve `descriptorIri` (URN or URL) to a descriptor URL via
+ *      kernel.dereference using podHint = caller's pod and knownPods.
+ *   3. Fetch the descriptor turtle; parse its Distribution affordance
+ *      to find the envelope URL + encryption status.
+ *   4. Fetch the envelope JSON.
+ *   5. Server-side unwrap using the relay's per-agent X25519 keypair
+ *      (`relayAgentKey`) — the relay holds the recipient key for every
+ *      surface-agent it has minted, so every envelope published through
+ *      this relay (or sharedWith one of its agents) is openable here.
+ *   6. Return plaintext Turtle with `Content-Type: text/turtle`.
+ *
+ * Returns:
+ *   200 text/turtle on success (plaintext projection)
+ *   401 when bearer is missing or invalid
+ *   403 when the relay agent is not in the envelope's recipient set
+ *   404 when the descriptor can't be resolved
+ *   409 when the descriptor's payload is NOT encrypted (no projection
+ *       needed — caller can fetch the payload URL directly via the
+ *       existing cg:canFetchPayload affordance)
+ */
+app.get('/render/:descriptorIri', async (req, res) => {
+  const auth = await verifyBearerToken(req.headers.authorization);
+  if (!auth.authenticated) {
+    res.status(401).type('application/ld+json').json({
+      '@context': KERNEL_JSONLD_CONTEXT,
+      '@type': ['hydra:Status', 'urn:cg:error:Unauthorized'],
+      error: auth.error ?? 'Bearer token required',
+    });
+    return;
+  }
+  const descriptorIri = decodeURIComponent(req.params['descriptorIri'] ?? '');
+  if (!descriptorIri) {
+    res.status(400).type('application/ld+json').json({
+      '@context': KERNEL_JSONLD_CONTEXT,
+      '@type': ['hydra:Status', 'urn:cg:error:BadRequest'],
+      error: 'descriptorIri path segment required',
+    });
+    return;
+  }
+
+  try {
+    // Resolve the descriptor IRI to a fetchable descriptor URL.
+    // Either form works:
+    //   - urn:graph:* — needs podHint + knownPods so the kernel can
+    //     scan manifests
+    //   - https://… — already a URL; we fetch directly
+    let descriptorUrl: string | null = null;
+    if (descriptorIri.startsWith('http://') || descriptorIri.startsWith('https://')) {
+      descriptorUrl = descriptorIri;
+    } else {
+      const podHint = auth.userId ? `${CSS_URL}${auth.userId}/` : undefined;
+      const knownPodUrls = Array.from(knownPods.values()).map(e => e.url);
+      const r = await kernelDereference(descriptorIri, {
+        fetch: solidFetch,
+        decorateManifest: false,
+        recipientKeyPair: relayAgentKey,
+        ...(podHint ? { podHint } : {}),
+        ...(knownPodUrls.length > 0 ? { knownPods: knownPodUrls } : {}),
+      });
+      // kernelDereference returns affordances; the descriptor URL is the
+      // resolved canonical IRI. When it returned a manifest entry (URN
+      // resolution), its `source` field carries the descriptor URL.
+      const rr = r as unknown as { source?: string; manifest?: { source?: string } };
+      descriptorUrl = rr.source ?? rr.manifest?.source ?? null;
+    }
+    if (!descriptorUrl) {
+      res.status(404).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:cg:error:DescriptorNotFound'],
+        error: `Cannot resolve descriptor IRI: ${descriptorIri}`,
+      });
+      return;
+    }
+
+    // Fetch the descriptor and parse its Distribution affordance.
+    const descResp = await solidFetch(descriptorUrl, {
+      headers: { 'Accept': 'text/turtle' },
+    });
+    if (!descResp.ok) {
+      res.status(404).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:cg:error:DescriptorNotFound'],
+        error: `Descriptor GET failed: ${descResp.status} ${descResp.statusText}`,
+        descriptorUrl,
+      });
+      return;
+    }
+    const descTurtle = await descResp.text();
+    const dist = parseDistributionFromDescriptorTurtle(descTurtle);
+    if (!dist) {
+      res.status(404).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:cg:error:NoDistribution'],
+        error: 'Descriptor has no parseable Distribution affordance',
+        descriptorUrl,
+      });
+      return;
+    }
+    if (!dist.encrypted) {
+      res.status(409).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:cg:error:NotEncrypted'],
+        error: 'Payload is not encrypted; cg:renderView is only meaningful for encrypted distributions. Follow the cg:canFetchPayload affordance directly.',
+        accessURL: dist.accessURL,
+      });
+      return;
+    }
+
+    // Fetch the envelope and server-side unwrap.
+    const envResp = await solidFetch(dist.accessURL, {
+      headers: { 'Accept': 'application/jose+json, application/json' },
+    });
+    if (!envResp.ok) {
+      res.status(502).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:cg:error:EnvelopeFetchFailed'],
+        error: `Envelope GET failed: ${envResp.status} ${envResp.statusText}`,
+        envelopeUrl: dist.accessURL,
+      });
+      return;
+    }
+    const envBody = await envResp.text();
+    let envelope: EncryptedEnvelope;
+    try {
+      envelope = JSON.parse(envBody) as EncryptedEnvelope;
+    } catch (err) {
+      res.status(502).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:cg:error:MalformedEnvelope'],
+        error: `Envelope is not valid JSON: ${(err as Error).message}`,
+      });
+      return;
+    }
+    if (!envelope || envelope.algorithm !== 'X25519-XSalsa20-Poly1305' || !Array.isArray(envelope.wrappedKeys)) {
+      res.status(502).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:cg:error:MalformedEnvelope'],
+        error: 'Envelope is not a valid X25519-XSalsa20-Poly1305 JOSE envelope',
+      });
+      return;
+    }
+    // Recipient-set check via wrappedKeys: the relay's per-agent X25519
+    // public key MUST be in the envelope's recipient list for the
+    // unwrap below to succeed. We check explicitly (instead of relying
+    // on openEncryptedEnvelope returning null) so the 403 carries a
+    // clear "you are not a recipient" message rather than a generic
+    // decryption failure — important for thin-client diagnostics.
+    const inRecipientSet = envelope.wrappedKeys.some(
+      wk => wk.recipientPublicKey === relayAgentKey.publicKey,
+    );
+    if (!inRecipientSet) {
+      res.status(403).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:cg:error:NotARecipient'],
+        error: 'Relay agent is not in the envelope recipient set; cannot render plaintext projection.',
+        relayAgentPublicKey: relayAgentKey.publicKey,
+        recipientCount: envelope.wrappedKeys.length,
+      });
+      return;
+    }
+    const plaintext = openEncryptedEnvelope(envelope, relayAgentKey);
+    if (plaintext === null) {
+      res.status(500).type('application/ld+json').json({
+        '@context': KERNEL_JSONLD_CONTEXT,
+        '@type': ['hydra:Status', 'urn:cg:error:UnwrapFailed'],
+        error: 'Relay agent is in recipient set but unwrap failed (key material corrupted?).',
+      });
+      return;
+    }
+    // Return as text/turtle. The envelope body is a TriG document that
+    // wraps the descriptor's prefix block + the named-graph payload —
+    // valid Turtle a thin client can parse without further unwrap.
+    res.status(200).type('text/turtle').send(plaintext);
+  } catch (err) {
+    res.status(500).type('application/ld+json').json({
+      '@context': KERNEL_JSONLD_CONTEXT,
+      '@type': ['hydra:Status', 'urn:cg:error:RenderFailed'],
+      error: `Render failed: ${(err as Error).message}`,
+    });
+  }
+});
+
+/**
  * POST /agents/:agentIri/revoke — remove a non-revoked agent from the
  * calling user's pod agent registry. Bearer-gated via MCP access token;
  * the agent IRI in the path must belong to the token's user's pod.
@@ -5895,7 +6455,15 @@ app.listen(PORT, () => {
   log(`Identity server: ${IDENTITY_URL}`);
   log(`Relay agent key fingerprint (X25519 public): ${fingerprint(relayAgentKey.publicKey)}`);
   log(`CDP API key: ${ORG_CDP_API_KEY_NAME ? `name=${ORG_CDP_API_KEY_NAME} priv-fp=${fingerprint(ORG_CDP_API_KEY_PRIVATE)}` : '<unset>'}`);
-  log(`IPFS: provider=${ORG_IPFS_PROVIDER} api-key-fp=${fingerprint(ORG_IPFS_API_KEY)}`);
+  // Startup banner: be explicit about whether IPFS pinning is actually
+  // active. A `local-unpinned` provider means we compute CIDs but DO NOT
+  // upload — operators should know this on boot, not discover it after
+  // their first publish.
+  if (ORG_IPFS_PROVIDER === 'local-unpinned') {
+    log(`IPFS: local-unpinned (CIDs are computed but NOT retrievable from public gateways; set PINATA_API_KEY or WEB3STORAGE_TOKEN to enable pinning)`);
+  } else {
+    log(`IPFS: ${ORG_IPFS_PROVIDER} (active) api-key-fp=${fingerprint(ORG_IPFS_API_KEY)}`);
+  }
   log(`Endpoints:`);
   log(`  GET  /health                                  Health check`);
   log(`  GET  /tools  |  POST /tool/:name              REST convenience`);

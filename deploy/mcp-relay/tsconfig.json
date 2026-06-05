@@ -12,6 +12,6 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["server.ts", "oauth-provider.ts", "oauth-client-store.ts", "oauth-token-store.ts", "dpop.ts", "cors-allowlist.ts"],
+  "include": ["server.ts", "oauth-provider.ts", "oauth-client-store.ts", "oauth-token-store.ts", "federation-store.ts", "dpop.ts", "cors-allowlist.ts"],
   "exclude": ["node_modules", "dist"]
 }
