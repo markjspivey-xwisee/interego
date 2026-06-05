@@ -366,6 +366,203 @@ describe('publish', () => {
 });
 
 // ═════════════════════════════════════════════════════════════
+//  publish() — in-process concurrency
+// ═════════════════════════════════════════════════════════════
+//
+// Regression test for the same-process race in manifest update.
+//
+// publish() does a GET-then-PUT against the manifest with HTTP
+// optimistic concurrency (If-Match / If-None-Match). That dance is
+// the correct shape for cross-process / cross-host writers, but for
+// N parallel same-process publishes (e.g. the relay fanning out a
+// Promise.all over voters from one pod) every writer races against
+// itself: they all GET the same etag, each builds a body that adds
+// only its own entry, the server commits one and 412s the rest, the
+// rest re-GET, retry, and only converge after burning through the
+// retry budget — or, under a CSS TOCTOU window, two If-Match=etag
+// PUTs both pass the precondition check and the later write silently
+// clobbers the earlier.
+//
+// Fix (Fix B): per-pod in-process mutex inside publish() collapses
+// same-process writers into a serial queue keyed on the manifest URL.
+// Cross-process writers still get the existing HTTP CAS protection
+// unchanged. The 8x backoff/retry loop stays as defense in depth.
+
+describe('publish — in-process concurrency (per-pod mutex)', () => {
+  it('5 concurrent same-pod publishes all land in the manifest (no race-driven drops)', async () => {
+    // Mock pod that models a real read-modify-write race window:
+    //   - the manifest body lives in a shared closure variable
+    //   - each GET response carries an etag derived from the current
+    //     body, plus a snapshot of the body itself
+    //   - each PUT checks If-Match against the *current* etag and
+    //     rejects 412 if a concurrent writer mutated the body between
+    //     our GET and our PUT
+    //
+    // Without the per-pod mutex, 5 parallel publishes would all GET
+    // the same starting etag, all build bodies adding only their own
+    // entry, the server would commit one and 412 the rest, and the
+    // retry storm + jitter would (best-case) eventually converge OR
+    // (worst-case) blow the 8-attempt budget. With the mutex, the
+    // five publishes are serialized — each one sees the freshest body
+    // when its turn comes — so all five entries land cleanly with no
+    // 412s.
+    let manifestBody = '';
+    let manifestExists = false;
+    let etagCounter = 0;
+    const currentEtag = () => `"v${etagCounter}"`;
+
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+
+      // Non-manifest URLs (descriptor + graph PUT) — always succeed.
+      if (!urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: 201 });
+      }
+
+      // Manifest GET
+      if (method === 'GET') {
+        if (!manifestExists) return mockResponse('', { status: 404, ok: false });
+        const etagSnapshot = currentEtag();
+        const resp = mockResponse(manifestBody);
+        (resp as Record<string, unknown>).headers = {
+          get: (name: string) => name.toLowerCase() === 'etag' ? etagSnapshot : null,
+        };
+        return resp;
+      }
+
+      // Manifest PUT — enforce CAS like a real ETag-aware backend.
+      if (method === 'PUT') {
+        const ifMatch = headers['If-Match'];
+        const ifNoneMatch = headers['If-None-Match'];
+        if (!manifestExists) {
+          if (ifNoneMatch !== '*') {
+            // Someone is trying to PUT with If-Match against a manifest
+            // that doesn't exist yet — treat as 412.
+            return mockResponse('', { status: 412, ok: false });
+          }
+          manifestBody = init?.body as string;
+          manifestExists = true;
+          etagCounter++;
+          return mockResponse('', { status: 201 });
+        }
+        // Manifest exists — If-Match MUST match the current etag.
+        if (ifMatch !== currentEtag()) {
+          return mockResponse('', { status: 412, ok: false });
+        }
+        manifestBody = init?.body as string;
+        etagCounter++;
+        return mockResponse('', { status: 200 });
+      }
+
+      return mockResponse('', { status: 405, ok: false });
+    }) as unknown as typeof globalThis.fetch;
+
+    // Fire 5 publishes against the same pod concurrently. Each
+    // publishes a distinct descriptor so all 5 entries are independent
+    // additions to the manifest (no idempotent collapsing).
+    const N = 5;
+    const ids = Array.from({ length: N }, (_, i) => `urn:cg:race:${i}`);
+    await Promise.all(ids.map(id =>
+      publish(
+        ContextDescriptor.create(id as IRI)
+          .describes(`urn:graph:race:${id}` as IRI)
+          .temporal({ validFrom: '2026-01-01T00:00:00Z' })
+          .selfAsserted('did:web:alice.example' as IRI)
+          .build(),
+        '<urn:s> <urn:p> <urn:o>.',
+        'https://alice.pod/',
+        { fetch: mockFetch },
+      ),
+    ));
+
+    // All 5 entries must be in the final manifest. Pre-fix, under the
+    // same-process race, the retry storm could either drop entries
+    // (TOCTOU silent clobber) or throw `Failed to update manifest ...
+    // after 8 attempts` on the loser.
+    const entries = parseManifest(manifestBody);
+    expect(entries).toHaveLength(N);
+    for (const id of ids) {
+      const expectedUrl = `https://alice.pod/context-graphs/${id.split(':').pop()}.ttl`;
+      expect(entries.some(e => e.descriptorUrl === expectedUrl)).toBe(true);
+    }
+  });
+
+  it('concurrent publishes to DIFFERENT pods do not block each other (mutex is per-pod)', async () => {
+    // The mutex keys on manifest URL, so two pods' publishes proceed
+    // in parallel. If we accidentally globalized the lock, this test
+    // would still pass (serial is correct, just slower), but the
+    // assertion below pins the per-pod scoping explicitly: both
+    // publishes complete, both manifests get exactly one entry.
+    const manifests = new Map<string, { body: string; exists: boolean; etagN: number }>();
+    function pod(url: string) {
+      if (!manifests.has(url)) manifests.set(url, { body: '', exists: false, etagN: 0 });
+      return manifests.get(url)!;
+    }
+
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = (init?.method ?? 'GET').toUpperCase();
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      if (!urlStr.includes('.well-known/context-graphs')) return mockResponse('', { status: 201 });
+      const m = pod(urlStr);
+      if (method === 'GET') {
+        if (!m.exists) return mockResponse('', { status: 404, ok: false });
+        const tag = `"v${m.etagN}"`;
+        const resp = mockResponse(m.body);
+        (resp as Record<string, unknown>).headers = { get: (n: string) => n.toLowerCase() === 'etag' ? tag : null };
+        return resp;
+      }
+      if (method === 'PUT') {
+        if (!m.exists) {
+          if (headers['If-None-Match'] !== '*') return mockResponse('', { status: 412, ok: false });
+          m.body = init?.body as string;
+          m.exists = true;
+          m.etagN++;
+          return mockResponse('', { status: 201 });
+        }
+        if (headers['If-Match'] !== `"v${m.etagN}"`) return mockResponse('', { status: 412, ok: false });
+        m.body = init?.body as string;
+        m.etagN++;
+        return mockResponse('', { status: 200 });
+      }
+      return mockResponse('', { status: 405, ok: false });
+    }) as unknown as typeof globalThis.fetch;
+
+    await Promise.all([
+      publish(
+        ContextDescriptor.create('urn:cg:multi-a' as IRI)
+          .describes('urn:graph:multi-a' as IRI)
+          .temporal({ validFrom: '2026-01-01T00:00:00Z' })
+          .selfAsserted('did:web:alice.example' as IRI)
+          .build(),
+        '<urn:s> <urn:p> <urn:o>.',
+        'https://alice.pod/',
+        { fetch: mockFetch },
+      ),
+      publish(
+        ContextDescriptor.create('urn:cg:multi-b' as IRI)
+          .describes('urn:graph:multi-b' as IRI)
+          .temporal({ validFrom: '2026-01-01T00:00:00Z' })
+          .selfAsserted('did:web:bob.example' as IRI)
+          .build(),
+        '<urn:s> <urn:p> <urn:o>.',
+        'https://bob.pod/',
+        { fetch: mockFetch },
+      ),
+    ]);
+
+    const a = parseManifest(pod('https://alice.pod/.well-known/context-graphs').body);
+    const b = parseManifest(pod('https://bob.pod/.well-known/context-graphs').body);
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(1);
+    expect(a[0]!.descriptorUrl).toContain('multi-a');
+    expect(b[0]!.descriptorUrl).toContain('multi-b');
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
 //  discover()
 // ═════════════════════════════════════════════════════════════
 

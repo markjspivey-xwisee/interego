@@ -59,6 +59,18 @@
  *      OAuth path can be added later if we ever see a regression
  *      where deref-without-key starts leaking plaintext.
  *
+ *   E. In-process concurrency floor (FIX B regression cordon). Fire
+ *      N=5 parallel publish_context calls from the SAME OAuth session
+ *      to the SAME pod via Promise.all. Pre-fix-B, the relay's
+ *      in-process publishes raced inside publish()'s read-modify-write
+ *      cycle on .well-known/context-graphs, dropping entries via
+ *      TOCTOU silent-clobber or throwing `Failed to update manifest
+ *      ... after 8 attempts`. Post-fix-B, an in-client per-pod mutex
+ *      serializes same-process writers — cross-process writers keep
+ *      the HTTP CAS dance. Assertion: all N publishes return
+ *      published=true AND all N descriptor URLs are visible from a
+ *      subsequent discover_context call.
+ *
  * Walks the same OAuth 2.1 + PKCE + did:key flow as
  * scripts/test-relay-end-to-end.mjs (DCR → /authorize scrape →
  * challenge → Ed25519 sign → /oauth/verify → /token), then exercises
@@ -558,6 +570,86 @@ async function main() {
     record('8D. unauthenticated reader probe', 'warn', 'skipped (scenario A did not encrypt)');
   }
 
+  // ── Scenario E: in-process concurrency floor (FIX B) ───────
+  // Fire N parallel publish_context calls to the SAME pod from the
+  // SAME OAuth session. Pre-fix-B, the relay's same-process publishes
+  // raced inside the publish() read-modify-write cycle: they all GET
+  // the same manifest etag, each builds a body containing only its
+  // own entry, the server commits one and 412s the rest, the rest
+  // retry, and either (a) drop entries via a CSS TOCTOU silent
+  // clobber or (b) blow the 8-attempt retry budget with
+  // `Failed to update manifest ... after 8 attempts`. Post-fix, the
+  // per-pod in-process mutex inside publish() collapses these into a
+  // serial queue, so all N entries land cleanly.
+  //
+  // Assertion: every parallel publish returns `published: true`, AND
+  // every descriptor URL is subsequently visible from discover_context.
+  console.log('');
+  console.log(`${C.bold}--- Scenario E: ${5} concurrent publishes to one pod all land in the manifest ---${C.reset}`);
+  const N = 5;
+  const concurrentTag = `concurrent-${RUN_TAG}`;
+  const concurrentIris = Array.from({ length: N }, (_, i) => ({
+    graphIri: `urn:graph:concurrent:${concurrentTag}:${i}`,
+    descriptorId: `urn:cg:concurrent:${concurrentTag}:${i}`,
+  }));
+  let concurrentResults;
+  try {
+    concurrentResults = await Promise.all(
+      concurrentIris.map(({ graphIri, descriptorId }, i) =>
+        callTool('publish_context', {
+          graph_iri: graphIri,
+          graph_content: makeSampleTurtle(graphIri).turtle,
+          descriptor_id: descriptorId,
+          modal_status: 'Asserted',
+          confidence: 0.9,
+        }, 1000 + i),
+      ),
+    );
+  } catch (err) {
+    record('8E. concurrent publishes settle', 'fail', `unexpected throw: ${err?.message ?? err}`);
+    return summarize();
+  }
+  const concurrentFailures = concurrentResults
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => !r.ok || r.payload?.published !== true);
+  if (concurrentFailures.length > 0) {
+    record('8E.a all N publishes return published=true', 'fail',
+      `${concurrentFailures.length}/${N} failed: ${concurrentFailures.map(({ r, i }) =>
+        `[${i}] ${r.error ?? JSON.stringify(r.payload).slice(0, 200)}`).join(' | ')}`);
+  } else {
+    record('8E.a all N publishes return published=true', 'pass', `${N}/${N} succeeded`);
+  }
+
+  // Verify every concurrent descriptor is discoverable. Use
+  // discover_context with the run-tag substring so we hit just the
+  // entries from this concurrent batch (not the entire pod).
+  const expectedUrls = concurrentResults
+    .filter(r => r.ok && r.payload?.descriptorUrl)
+    .map(r => r.payload.descriptorUrl);
+  if (expectedUrls.length === N) {
+    const disc = await callTool('discover_context', {}, 1500);
+    if (!disc.ok) {
+      record('8E.b discover_context after concurrent publishes', 'fail', disc.error);
+    } else {
+      const allEntries = Array.isArray(disc.payload?.contexts) ? disc.payload.contexts
+        : Array.isArray(disc.payload) ? disc.payload
+        : Array.isArray(disc.payload?.entries) ? disc.payload.entries
+        : [];
+      const seen = new Set(allEntries.map(e => e.descriptorUrl ?? e.url ?? e.iri).filter(Boolean));
+      const missing = expectedUrls.filter(u => !seen.has(u));
+      if (missing.length > 0) {
+        record('8E.b discover_context after concurrent publishes', 'fail',
+          `${missing.length}/${N} concurrent entries missing from manifest — race-driven drop (FIX B regression): ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '...' : ''}`);
+      } else {
+        record('8E.b discover_context after concurrent publishes', 'pass',
+          `${N}/${N} concurrent entries present in discover_context`);
+      }
+    }
+  } else {
+    record('8E.b discover_context after concurrent publishes', 'warn',
+      `skipped — only ${expectedUrls.length}/${N} publishes returned a descriptorUrl, can't assert discoverability`);
+  }
+
   return summarize();
 }
 
@@ -578,7 +670,7 @@ function summarize(blockedAt) {
   if (blockedAt) {
     console.log(`${C.fail}${C.bold}CONCLUSION:${C.reset} blocked at ${blockedAt}`);
   } else if (failCount === 0) {
-    console.log(`${C.pass}${C.bold}CONCLUSION:${C.reset} publish → dereference round-trip verified for both default + share_with`);
+    console.log(`${C.pass}${C.bold}CONCLUSION:${C.reset} publish → dereference round-trip verified for default + share_with + N-way same-pod concurrency`);
   } else {
     console.log(`${C.fail}${C.bold}CONCLUSION:${C.reset} round-trip BROKEN — ${failCount} required assertion(s) failed`);
   }

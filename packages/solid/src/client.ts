@@ -40,6 +40,68 @@ import { AGENT_REGISTRY_PATH, CREDENTIALS_PATH } from './types.js';
 // ── Constants ───────────────────────────────────────────────
 
 const MANIFEST_PATH = '.well-known/context-graphs';
+
+// ── Per-pod in-process manifest mutex ───────────────────────
+//
+// publish() does a read-modify-write cycle against
+//   ${pod}/.well-known/context-graphs
+// using HTTP optimistic concurrency (If-Match / If-None-Match) with up
+// to 8 backoff retries. That CAS dance is the correct protection
+// against cross-process / cross-host writers, but it is the WRONG tool
+// for in-process concurrent publishes from the same Node process
+// (e.g. a relay handling N parallel cartographer fan-outs or a
+// Promise.all over voters from one pod):
+//
+//   - every writer GETs the same etag
+//   - every writer builds a body that contains only its own entry
+//   - the server commits one writer and 412s the rest
+//   - the rest re-GET, retry, and only converge after burning their
+//     retry budget
+//
+// Under heavy in-process contention this either drops entries (when
+// the post-PUT verify read-back races with another writer's PUT into
+// a false-positive) or throws after maxAttempts=8 (visible as
+// `Failed to update manifest ... after 8 attempts`).
+//
+// Fix: serialize same-process writers to the same pod by chaining
+// their manifest read-modify-write cycles through a per-pod promise
+// queue. A Map<manifestUrl, Promise<void>> at module scope. On entry
+// to the manifest-update block, await the prior promise for this pod
+// (if any) and replace the map entry with the new tail so subsequent
+// callers queue behind us. On exit, if we are the current tail (no
+// one queued behind), delete the entry so the map doesn't grow.
+//
+// This collapses N same-process writers from a retry-storm into a
+// serial queue — each iteration sees the freshest body and no etag
+// fight is needed. Cross-process writers still get the existing HTTP
+// CAS protection unchanged.
+const manifestWriteQueues = new Map<string, Promise<void>>();
+
+async function withManifestLock<T>(
+  manifestUrl: string,
+  body: () => Promise<T>,
+): Promise<T> {
+  const previous = manifestWriteQueues.get(manifestUrl) ?? Promise.resolve();
+  let resolveTail!: () => void;
+  const tail = new Promise<void>((r) => { resolveTail = r; });
+  // Chain so subsequent callers wait for the prior tail AND for us.
+  const newTail = previous.then(() => tail);
+  manifestWriteQueues.set(manifestUrl, newTail);
+  try {
+    // Wait for any prior writer to finish their CAS cycle before we
+    // start ours. We deliberately swallow prior errors — a previous
+    // publish failing should not prevent the next one from starting.
+    await previous.catch(() => undefined);
+    return await body();
+  } finally {
+    resolveTail();
+    // If no one queued behind us, drop the entry so the map doesn't
+    // grow unbounded across the lifetime of the process.
+    if (manifestWriteQueues.get(manifestUrl) === newTail) {
+      manifestWriteQueues.delete(manifestUrl);
+    }
+  }
+}
 const DEFAULT_CONTAINER = 'context-graphs/';
 const TURTLE_CONTENT_TYPE = 'text/turtle';
 const TRIG_CONTENT_TYPE = 'application/trig';
@@ -591,6 +653,11 @@ export async function publish(
   // queue under realistic governance / cartographer-fanout contention.
   const maxAttempts = 8;
   let lastError: string | null = null;
+  // Per-pod in-process serialization (see manifestWriteQueues above):
+  // collapses concurrent same-process writers into a serial queue so
+  // the HTTP CAS dance only has to defend against cross-process races,
+  // not against same-process writers fighting each other.
+  await withManifestLock(manifestUrl, async () => {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let manifestBody: string;
     let etag: string | null = null;
@@ -691,6 +758,7 @@ export async function publish(
       `Failed to update manifest at ${manifestUrl} after ${maxAttempts} attempts: ${lastError}`,
     );
   }
+  }); // end withManifestLock
 
   // 4. Optional: ingest into PGSL lattice for structural indexing
   let pgslUri: string | undefined;
