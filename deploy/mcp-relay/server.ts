@@ -65,6 +65,7 @@ import {
   reconstructRequestUrl,
 } from './dpop.js';
 import { corsMiddleware } from './cors-allowlist.js';
+import { normalizeCssUrl } from './url-rewrite.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
@@ -451,10 +452,50 @@ async function verifyBearerToken(authHeader: string | undefined): Promise<AuthRe
   }
 }
 
+// ── Migration: old public-host → internal-FQDN URL translation ──
+//
+// Pre-migration the CSS pod was reachable at `interego-css.livelysky-<id>...`;
+// the canonical host is now `interego-css.internal.livelysky-<id>...`. A
+// non-trivial number of LIVE descriptors on the markj pod (plus external
+// caches / wallet snapshots / search indexes) still carry the OLD
+// public-host URL in `cg:origin` / `descriptorUrl` / `dcat:accessURL`
+// positions. Dereferencing those would 404 against the now-internal-only
+// host.
+//
+// Strategy: relay-side translation on dereference. The helper lives in
+// `url-rewrite.ts` (pure, side-effect-free, directly unit-testable). It
+// is wired in two places:
+//   1. `solidFetch` (below) — every HTTP read/write the relay performs
+//      goes through this wrapper, so the rewrite catches dereference,
+//      get_descriptor's GET, fetchGraphContent's envelope fetch,
+//      verify_agent's registry walk, kernelAct's affordance follow, etc.
+//   2. The URL-receiving handler entry points (handleKernelDereference,
+//      handleGetDescriptor, handleVerifyAgent, handleKernelAct,
+//      handleInvokeAffordance) so URN→URL hints, decorated affordances,
+//      and logs reflect the canonical target.
+//
+// Migration guarantee: pod content is byte-identical (signatures over the
+// original URL still verify) — we rewrite the HTTP target only, never the
+// bytes. External callers can keep using the old URL; the relay
+// transparently rewrites at the HTTP boundary.
+//
+// Companion: the OLD origin remains on the CORS allowlist (see
+// `cors-allowlist.ts`) so browser callers presenting it as their `Origin`
+// header still receive `Access-Control-Allow-Origin` echoes.
+//
+// (`normalizeCssUrl` is imported alongside the other local helpers at the
+// top of the file.)
+
 // ── Fetch wrapper ───────────────────────────────────────────
 
 const solidFetch: FetchFn = async (url, init) => {
-  const resp = await fetch(url, init as RequestInit);
+  // Rewrite OLD-host CSS URLs at the HTTP boundary so every code path
+  // (kernel dereference, get_descriptor GET, fetchGraphContent envelope
+  // fetch, verify_agent registry walk, kernelAct affordance follow, ...)
+  // transparently follows the canonical internal-FQDN target. See
+  // `url-rewrite.ts` for the matching regex and rewrite rules.
+  const target = normalizeCssUrl(url);
+  const resp = await fetch(target, init as RequestInit);
   return {
     ok: resp.ok,
     status: resp.status,
@@ -1166,7 +1207,10 @@ async function handleDiscoverContext(args: ToolArgs): Promise<string> {
 }
 
 async function handleGetDescriptor(args: ToolArgs): Promise<string> {
-  const url = args.url as string;
+  // Translate legacy public-host CSS URLs at the handler boundary so the
+  // distribution-link parsing / response-body URLs see the canonical
+  // internal-FQDN target. solidFetch ALSO rewrites at the HTTP layer.
+  const url = normalizeCssUrl(args.url as string);
   // Route envelope / TriG URLs through fetchGraphContent so encrypted
   // payloads are transparently decrypted for this relay's agent key (the
   // recipients registered on the pod include us when we published, so
@@ -1586,6 +1630,14 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
 }
 
 async function handleVerifyAgent(args: ToolArgs): Promise<string> {
+  // Translate legacy public-host CSS URLs at the handler boundary so the
+  // delegation walk targets the canonical internal-FQDN. This is the
+  // specific failure case called out in the migration diagnosis:
+  // `verify_agent` against `https://interego-css.livelysky-<id>...
+  // .azurecontainerapps.io/markj/` was returning "No agent registry
+  // found" because that public host no longer serves the canonical pod
+  // tree. solidFetch ALSO rewrites at the HTTP layer.
+  const podUrl = normalizeCssUrl(args.pod_url as string);
   // Pass the verifier so the registry-only path is upgraded to a real
   // cryptographic chain walk: the signed VC at /credentials/<agent>.jsonld
   // is fetched, its proof is checked against the owner's wallet key,
@@ -1593,7 +1645,7 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
   // `CryptographicallyVerified` label is returned.
   const result = await verifyAgentDelegation(
     (args.agent_id as string) as IRI,
-    args.pod_url as string,
+    podUrl,
     { fetch: solidFetch, verifier: delegationVerifier },
   );
   return JSON.stringify(buildVerifyAgentEnvelope(result));
@@ -2359,7 +2411,10 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   // unchanged: descriptor_url + action_iri + payload + authorization
   // map onto the kernel's affordance-resolved form, and the kernel
   // returns the same fields the legacy followAffordance did.
-  const descriptorUrl = args.descriptor_url as string;
+  // Translate legacy public-host CSS URLs at the handler boundary so the
+  // affordance fetch + match targets the canonical internal-FQDN.
+  // solidFetch ALSO rewrites at the HTTP layer.
+  const descriptorUrl = normalizeCssUrl(args.descriptor_url as string);
   const actionIri = args.action_iri as string;
   const payload = (args.payload ?? {}) as Record<string, unknown>;
   const authorization = args.authorization as string | undefined;
@@ -2412,7 +2467,13 @@ async function handleKernelMint(args: ToolArgs): Promise<string> {
   }));
 }
 async function handleKernelDereference(args: ToolArgs): Promise<string> {
-  const iri = String(args['iri'] ?? '');
+  // Translate legacy public-host CSS URLs at the handler boundary so the
+  // kernel sees the canonical internal-FQDN. solidFetch (the kernel's
+  // fetch) ALSO rewrites at the HTTP layer (belt-and-suspenders), but
+  // doing it here means logs / decorated affordances / URN→URL hints
+  // also reflect the canonical target. URN inputs (`urn:graph:*`,
+  // `urn:pgsl:*`) pass through unchanged.
+  const iri = normalizeCssUrl(String(args['iri'] ?? ''));
   const decorateManifest = args['decorate_manifest'] !== false;
   // Pass `recipientKeyPair` so envelopes addressed to the relay's agent
   // round-trip to plaintext for the calling user — mirrors the existing
@@ -2457,14 +2518,19 @@ async function handleKernelCompose(args: ToolArgs): Promise<string> {
   }));
 }
 async function handleKernelAct(args: ToolArgs): Promise<string> {
-  const descriptorUrl = args['descriptor_url'] as string | undefined;
+  // Translate legacy public-host CSS URLs at the handler boundary so the
+  // act-via-descriptor + act-via-affordance paths both target the
+  // canonical internal-FQDN. solidFetch ALSO rewrites at the HTTP layer.
+  const descriptorUrlRaw = args['descriptor_url'] as string | undefined;
+  const descriptorUrl = descriptorUrlRaw ? normalizeCssUrl(descriptorUrlRaw) : undefined;
   const actionIri = args['action_iri'] as string | undefined;
   const authorization = args['authorization'] as string | undefined;
+  const targetRaw = args['target'] as string | undefined;
   const affordance = descriptorUrl && actionIri
     ? { descriptorUrl, actionIri }
     : {
         action: (args['action'] as string | undefined) ?? actionIri ?? '',
-        target: (args['target'] as string | undefined) ?? '',
+        target: targetRaw ? normalizeCssUrl(targetRaw) : '',
         method: (args['method'] as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | undefined) ?? 'POST',
         ...(args['media_type'] ? { mediaType: args['media_type'] as string } : {}),
       };

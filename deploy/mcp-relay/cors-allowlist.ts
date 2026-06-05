@@ -72,7 +72,14 @@ const SIBLING_DEPLOYMENT_ORIGINS: readonly string[] = [
   'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  // CSS pod — BOTH the legacy public-host origin AND the post-migration
+  // canonical internal-FQDN are kept on the allowlist. The relay rewrites
+  // OLD-host URLs to the internal host at the HTTP boundary (see
+  // `server.ts:normalizeCssUrl`), so browser callers still presenting the
+  // OLD origin (cached descriptors / wallet snapshots / third-party
+  // indexes) get a clean CORS echo and dereferences succeed.
   'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io',
