@@ -1709,6 +1709,32 @@ app.post('/register', (_req, res) => {
  */
 app.post('/challenges', challengeLimiter, async (req, res) => {
   const { purpose, userId } = req.body as { purpose?: Challenge['purpose']; userId?: string };
+  // Targeted webauthn-authenticate: when a userId is supplied we MUST
+  // resolve it to a real account with at least one registered passkey
+  // before minting a challenge. Otherwise the relay UI would build a
+  // credentials.get() ceremony with allowCredentials: [] and silently
+  // fall through to the usernameless picker — losing the whole point
+  // of the targeted flow. We return a generic 404 for both "no such
+  // user" and "user exists but has no passkeys" to avoid leaking
+  // existence (the user is on a sign-in page anyway, but cheap
+  // hygiene).
+  if (purpose === 'webauthn-authenticate' && userId) {
+    let methods: AuthMethods | undefined;
+    if (identities.has(userId)) {
+      try {
+        methods = await readAuthMethods(userId, /* allowStale */ true);
+      } catch { /* treat as not-found below */ }
+    }
+    if (!methods || methods.webAuthnCredentials.length === 0) {
+      res.status(404).json({
+        error: 'No passkey found for this userId',
+        title: 'No passkey is registered for that identifier',
+        detail: 'Either the userId does not exist, or the account exists but has no passkey credentials. We do not distinguish between the two on this endpoint to avoid enumeration.',
+        hint: 'Double-check the userId (u-pk-… / u-did-… / u-eth-…) or use the discoverable passkey picker (leave the userId field blank and click Sign in).',
+      });
+      return;
+    }
+  }
   const ch = issueChallenge(purpose, userId);
   // Pin the relying party for WebAuthn-authenticate ceremonies to the
   // origin this challenge was requested from — so /authenticate later
@@ -1722,7 +1748,10 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
   }
   const resp: Record<string, unknown> = { nonce: ch.nonce, expiresAt: new Date(ch.expiresAt).toISOString() };
   if (purpose === 'webauthn-authenticate' && userId) {
-    // Read credentials from the user's pod (stale-while-revalidate cache)
+    // Read credentials from the user's pod (stale-while-revalidate cache).
+    // The pre-check above guarantees readAuthMethods has succeeded and at
+    // least one credential exists, so this branch always emits a
+    // non-empty allowCredentials[].
     const methods = await readAuthMethods(userId, /* allowStale */ true);
     resp.allowCredentials = methods.webAuthnCredentials.map(c => ({
       id: c.id,

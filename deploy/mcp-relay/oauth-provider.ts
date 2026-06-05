@@ -435,6 +435,15 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
   </div>
 
   <div class="method">
+    <h3>Sign in with a known userId</h3>
+    <p>If you already know your Interego userId (starts with <code>u-pk-</code>, <code>u-did-</code>, or <code>u-eth-</code>), enter it here. The OS passkey picker will be narrowed to just that account's keys — useful when you have many passkeys on this device.</p>
+    <p style="margin-top:.3em;color:#7a8aa3;font-size:.85em">Leave blank and use the Passkey "Sign in" button above for the discoverable-credential picker.</p>
+    <input id="uid-userid" type="text" placeholder="u-pk-... / u-did-... / u-eth-..." autocomplete="off" inputmode="latin" spellcheck="false">
+    <button onclick="passkeyLoginScoped()" class="secondary">Sign in with this userId</button>
+    <div id="uid-status" class="status"></div>
+  </div>
+
+  <div class="method">
     <h3>Ethereum wallet (SIWE)</h3>
     <p>Sign in with MetaMask, Coinbase Wallet, or any EIP-1193 provider. For CLI users without a wallet extension, use the DID method below.</p>
     <button onclick="siweLogin()" class="secondary">Connect wallet &amp; sign</button>
@@ -561,6 +570,68 @@ async function passkeyLogin() {
     };
     await submitProof('webauthn-authenticate', { response: resp });
   } catch (e) { setStatus('pk-status', e.message, 'err'); }
+}
+
+// Targeted (scoped) passkey sign-in. The user supplies their known
+// userId (u-pk-… / u-did-… / u-eth-…); the identity server returns
+// the allowCredentials[] for that account so the OS picker shows only
+// those passkeys — typically the single account-labeled entry. Falls
+// back to the usernameless flow if the field is left blank, so the
+// discoverable-credential path stays the default.
+async function passkeyLoginScoped() {
+  const userId = (document.getElementById('uid-userid').value || '').trim();
+  if (!userId) {
+    // Empty input: defer to the discoverable picker so a misclick here
+    // is still useful.
+    return passkeyLogin();
+  }
+  try {
+    setStatus('uid-status', 'Requesting challenge for ' + userId + '...', 'info');
+    const chRes = await fetch(IDENTITY + '/challenges', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purpose: 'webauthn-authenticate', userId: userId }),
+    });
+    const ch = await chRes.json();
+    if (!chRes.ok) {
+      // The server returns a generic "no passkey found" for both
+      // unknown userIds and userIds with zero passkeys (no enumeration).
+      throw new Error(ch.title || ch.error || ('HTTP ' + chRes.status));
+    }
+    if (!ch.nonce) throw new Error(ch.error || 'no challenge');
+    const allow = Array.isArray(ch.allowCredentials) ? ch.allowCredentials : [];
+    if (allow.length === 0) {
+      // Defensive: the server should never get here, but if it does
+      // we refuse to fall through to a discoverable picker — the user
+      // explicitly asked for the targeted flow.
+      throw new Error('No passkeys are registered for that userId.');
+    }
+    const options = {
+      challenge: b64urlToBytes(ch.nonce),
+      allowCredentials: allow.map(function (c) {
+        return {
+          id: b64urlToBytes(c.id),
+          type: c.type || 'public-key',
+          transports: c.transports,
+        };
+      }),
+      userVerification: 'preferred',
+    };
+    setStatus('uid-status', 'Waiting for passkey...', 'info');
+    const cred = await navigator.credentials.get({ publicKey: options });
+    const resp = {
+      id: cred.id,
+      rawId: bytesToB64url(new Uint8Array(cred.rawId)),
+      type: cred.type,
+      response: {
+        authenticatorData: bytesToB64url(new Uint8Array(cred.response.authenticatorData)),
+        clientDataJSON: bytesToB64url(new Uint8Array(cred.response.clientDataJSON)),
+        signature: bytesToB64url(new Uint8Array(cred.response.signature)),
+        userHandle: cred.response.userHandle ? bytesToB64url(new Uint8Array(cred.response.userHandle)) : null,
+      },
+      clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+    };
+    await submitProof('webauthn-authenticate', { response: resp });
+  } catch (e) { setStatus('uid-status', e.message, 'err'); }
 }
 
 // ── SIWE ───────────────────────────────────────────────────
