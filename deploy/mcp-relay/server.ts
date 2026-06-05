@@ -1676,49 +1676,94 @@ function withFederationUrlMutex<T>(podUrl: string, task: () => Promise<T>): Prom
 }
 
 /**
- * Schedule a debounced persistence write for `entry`. Replaces any
- * pending timer for the same URL so a burst of identical add events
- * collapses to a single PUT. The persist itself runs under
- * `withFederationUrlMutex` so concurrent writes for the same URL
- * serialize.
+ * Run the actual persistence write under the per-URL mutex. Returns a
+ * promise that resolves when the PUT completes (success OR transport
+ * failure — best-effort, the in-memory map is the live source of truth).
+ * Updates `federationLastPersistedAt` on success so post-write reads
+ * via `list_known_pods` see the fresh timestamp.
+ *
+ * Shared by both the synchronous (`persistFederationEntry`) and the
+ * debounced (`persistFederationEntryDebounced`) entry points so the
+ * write semantics are identical regardless of caller.
  */
-function persistFederationEntry(entry: KnownPodEntry): void {
-  if (entry.via === 'self') return;
-  const existing = _federationPendingWrites.get(entry.url);
-  if (existing) clearTimeout(existing);
-  const handle = setTimeout(() => {
-    _federationPendingWrites.delete(entry.url);
-    void withFederationUrlMutex(entry.url, async () => {
-      const persistEntry: FederationEntry = {
-        url: entry.url,
-        via: entry.via,
-        addedAt: entry.addedAt,
-        ...(entry.label !== undefined ? { label: entry.label } : {}),
-        ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
-      };
-      try {
-        await saveFederationEntry(persistEntry, federationStoreCfg);
-        federationLastPersistedAt = new Date().toISOString();
-      } catch (err) {
-        log(`[federation-store] persistFederationEntry(${entry.url}) failed: ${(err as Error).message}`);
-      }
-    });
-  }, FEDERATION_PERSIST_DEBOUNCE_MS);
-  _federationPendingWrites.set(entry.url, handle);
+function runFederationPersist(entry: KnownPodEntry): Promise<void> {
+  return withFederationUrlMutex(entry.url, async () => {
+    const persistEntry: FederationEntry = {
+      url: entry.url,
+      via: entry.via,
+      addedAt: entry.addedAt,
+      ...(entry.label !== undefined ? { label: entry.label } : {}),
+      ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
+    };
+    try {
+      await saveFederationEntry(persistEntry, federationStoreCfg);
+      federationLastPersistedAt = new Date().toISOString();
+    } catch (err) {
+      log(`[federation-store] persistFederationEntry(${entry.url}) failed: ${(err as Error).message}`);
+    }
+  });
 }
 
 /**
- * Schedule a removal write. Cancels any pending add for the same URL
- * (no point persisting an add that's about to be removed) then issues
- * the DELETE under the same per-URL mutex.
+ * Immediate, awaitable persistence write for user-facing handlers
+ * (add_pod, single-entry directory adds). Returns a promise that the
+ * caller MUST await before responding to the wire so a container
+ * restart inside the ~300-800ms PUT window doesn't drop the entry.
+ *
+ * If a debounced write for the same URL is already pending, cancel it —
+ * this immediate write supersedes it, and runs under the per-URL mutex
+ * so it still serializes against any concurrent unpersist.
+ *
+ * `via: 'self'` entries are projected per-call from the bearer and
+ * never persisted; we short-circuit those silently.
  */
-function unpersistFederationEntry(podUrl: string): void {
+function persistFederationEntry(entry: KnownPodEntry): Promise<void> {
+  if (entry.via === 'self') return Promise.resolve();
+  const pending = _federationPendingWrites.get(entry.url);
+  if (pending) {
+    clearTimeout(pending);
+    _federationPendingWrites.delete(entry.url);
+  }
+  return runFederationPersist(entry);
+}
+
+/**
+ * Debounced variant for bulk import paths (e.g. discover_directory
+ * fanning out N entries). Coalesces a burst of identical add events
+ * for the same URL into a single PUT after `FEDERATION_PERSIST_DEBOUNCE_MS`.
+ *
+ * Returns a promise that resolves when the eventual write completes,
+ * so the caller can `Promise.allSettled([...])` the entire batch and
+ * await durability before returning. The promise resolves immediately
+ * for `via: 'self'` entries (which are never persisted).
+ */
+function persistFederationEntryDebounced(entry: KnownPodEntry): Promise<void> {
+  if (entry.via === 'self') return Promise.resolve();
+  const existing = _federationPendingWrites.get(entry.url);
+  if (existing) clearTimeout(existing);
+  return new Promise<void>((resolve) => {
+    const handle = setTimeout(() => {
+      _federationPendingWrites.delete(entry.url);
+      runFederationPersist(entry).then(resolve, resolve);
+    }, FEDERATION_PERSIST_DEBOUNCE_MS);
+    _federationPendingWrites.set(entry.url, handle);
+  });
+}
+
+/**
+ * Awaitable removal write. Cancels any pending add for the same URL
+ * (no point persisting an add that's about to be removed) then issues
+ * the DELETE under the same per-URL mutex. Callers MUST await before
+ * responding so a container restart inside the DELETE window doesn't
+ * resurrect the entry.
+ */
+function unpersistFederationEntry(podUrl: string): Promise<void> {
   const pending = _federationPendingWrites.get(podUrl);
   if (pending) {
     clearTimeout(pending);
     _federationPendingWrites.delete(podUrl);
   }
-  void withFederationUrlMutex(podUrl, async () => {
+  return withFederationUrlMutex(podUrl, async () => {
     try {
       await removeFederationEntry(podUrl, federationStoreCfg);
       federationLastPersistedAt = new Date().toISOString();
@@ -1869,20 +1914,34 @@ async function handleAddPod(args: ToolArgs): Promise<string> {
     addedAt: existing?.addedAt ?? new Date().toISOString(),
   };
   knownPods.set(url, entry);
-  persistFederationEntry(entry);
-  return JSON.stringify({ added: true, url, total: knownPods.size });
+  // AWAIT the persist before returning — add_pod is a control-plane
+  // mutator and durability of a single PUT (~300-800ms against an
+  // Azure-hosted CSS) is qualitatively more valuable than the latency
+  // win of fire-and-forget. A container restart inside the old async
+  // window silently dropped the add; awaiting eliminates that gap.
+  await persistFederationEntry(entry);
+  return JSON.stringify({ added: true, url, total: knownPods.size, lastPersistedAt: federationLastPersistedAt });
 }
 
 async function handleRemovePod(args: ToolArgs): Promise<string> {
   const url = args.pod_url as string;
   const removed = knownPods.delete(url);
-  if (removed) unpersistFederationEntry(url);
-  return JSON.stringify({ removed, url, total: knownPods.size });
+  // AWAIT the DELETE before returning so a restart in the unpersist
+  // window doesn't resurrect the entry on next load. Same durability
+  // argument as handleAddPod.
+  if (removed) await unpersistFederationEntry(url);
+  return JSON.stringify({ removed, url, total: knownPods.size, lastPersistedAt: federationLastPersistedAt });
 }
 
 async function handleDiscoverDirectory(args: ToolArgs): Promise<string> {
   const directory = await fetchPodDirectory(args.directory_url as string, { fetch: solidFetch });
   let added = 0;
+  // discover_directory can fan out to many adds, so use the debounced
+  // path to coalesce bursts for the same URL. Collect the per-entry
+  // write promises so we can AWAIT the whole batch before responding —
+  // keeps the post-discover read shape (list_known_pods seeing every
+  // imported entry as persisted) consistent across all three mutators.
+  const pendingWrites: Promise<void>[] = [];
   for (const entry of directory.entries) {
     if (!knownPods.has(entry.podUrl)) added++;
     const existing = knownPods.get(entry.podUrl);
@@ -1894,8 +1953,9 @@ async function handleDiscoverDirectory(args: ToolArgs): Promise<string> {
       addedAt: existing?.addedAt ?? new Date().toISOString(),
     };
     knownPods.set(entry.podUrl, next);
-    persistFederationEntry(next);
+    pendingWrites.push(persistFederationEntryDebounced(next));
   }
+  await Promise.allSettled(pendingWrites);
   // Return the merged view including the calling user's own pod
   // — addresses the "directory listing of my pods does not include
   // my own pod" surprise. We do NOT persist self into knownPods
@@ -1903,7 +1963,7 @@ async function handleDiscoverDirectory(args: ToolArgs): Promise<string> {
   // in the returned `pods` array for caller convenience. `added`
   // remains a count of newly-persisted directory entries.
   const pods = await knownPodsWithSelf(args);
-  return JSON.stringify({ imported: directory.entries.length, added, total: knownPods.size, pods });
+  return JSON.stringify({ imported: directory.entries.length, added, total: knownPods.size, pods, lastPersistedAt: federationLastPersistedAt });
 }
 
 async function handlePublishDirectory(args: ToolArgs): Promise<string> {
@@ -1941,7 +2001,9 @@ async function handleResolveWebfinger(args: ToolArgs): Promise<string> {
       ...(existing?.owner !== undefined ? { owner: existing.owner } : {}),
     };
     knownPods.set(result.podUrl, entry);
-    persistFederationEntry(entry);
+    // AWAIT the persist for parity with add_pod — webfinger resolution
+    // is a single-entry user-facing add, same durability argument.
+    await persistFederationEntry(entry);
   }
   return JSON.stringify(result);
 }

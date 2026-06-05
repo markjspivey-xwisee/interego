@@ -193,6 +193,46 @@ async function run() {
     ok(loaded.length === 0, 'cold-start (empty container) returns empty array');
   }
 
+  // 6. Synchronous-write regression (Fix 8). saveEntry returns a
+  //    Promise<void> that resolves only after the underlying PUT
+  //    completes. Awaiting it MUST leave the file on disk before
+  //    control returns — no setTimeout / debounce window where a
+  //    container restart could drop the add.
+  //
+  //    This is the contract the relay's handleAddPod now relies on
+  //    when it awaits persistFederationEntry(entry) before responding
+  //    to the wire: list_known_pods called immediately after add_pod
+  //    must see lastPersistedAt advanced and the entry durable on disk.
+  {
+    const pod = makeStubPod();
+    const cfg: FederationStoreConfig = { podUrl: POD, fetch: pod.fetch, log: () => {} };
+    const entry: FederationEntry = {
+      url: 'https://sync-write.example/pod/',
+      via: 'manual',
+      addedAt: '2026-06-05T12:00:00.000Z',
+      label: 'SyncWrite',
+    };
+    const expectedKey = `${POD}federation/${sha256Hex(entry.url)}.jsonld`;
+
+    // Precondition: the file isn't there before we await.
+    ok(!pod.files.has(expectedKey), 'precondition: file not yet on disk');
+
+    const writePromise = saveEntry(entry, cfg);
+    // The promise IS awaitable — type signature is Promise<void>.
+    ok(typeof (writePromise as Promise<void>).then === 'function', 'saveEntry returns a thenable');
+    await writePromise;
+
+    // Postcondition (Fix 8 regression): immediately after await, the
+    // file MUST exist. NO setTimeout window, NO debounce gap.
+    ok(pod.files.has(expectedKey), 'file is durable on disk immediately after await (no async window)');
+
+    // And a fresh load (cold-restart sim) must see the entry.
+    const reloaded = await loadEntries(cfg);
+    ok(reloaded.length === 1 && reloaded[0]!.url === entry.url,
+       'restart immediately after await sees the persisted entry');
+    ok(reloaded[0]!.label === 'SyncWrite', 'label persisted in the same sync write');
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) {
     for (const f of failures) console.log(`  FAIL: ${f}`);
