@@ -45,7 +45,8 @@
  * No deps — uses Node 20+ built-in fetch.
  */
 
-import { createServer } from 'http';
+import { createServer, request as httpRequest } from 'http';
+import { request as httpsRequest } from 'https';
 import { Readable } from 'stream';
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -377,67 +378,68 @@ const server = createServer(async (req, res) => {
   }
 
   // Proxy through.
-  const upstreamUrl = `${CSS_INTERNAL_URL.replace(/\/+$/, '')}${req.url}`;
-  // Forward headers. Host header gets explicitly rewritten — to
-  // CSS_HOST_HEADER if set (the public hostname CSS thinks it lives at,
-  // per CSS_BASE_URL), else the host of the internal URL. The former
-  // is required when CSS is behind the gate at an internal hostname
-  // but still has CSS_BASE_URL set to its original public URL — CSS
-  // rejects requests whose Host doesn't match its baseUrl space.
-  const headers = { ...req.headers };
-  try {
-    const u = new URL(CSS_INTERNAL_URL);
-    headers['host'] = CSS_HOST_HEADER ?? u.host;
-  } catch { /* ignore */ }
-
-  // Build the upstream request body: only methods that can have one.
   //
-  // We BUFFER the body instead of streaming via `Readable.toWeb(req)`.
-  // Streaming the duplex='half' request through Node fetch to Azure
-  // Container Apps' ingress hangs for bodies > a few KB and eventually
-  // returns 504 "stream timeout" — the failure mode is consistent for
-  // string-body fetches from the client through here. Buffering keeps
-  // the request a normal HTTP/1.1 PUT with Content-Length, which Azure
-  // proxies cleanly. Trade-off: each request holds its body in memory.
-  // The gate fronts CSS for Interego descriptor / manifest writes —
-  // bounded to descriptor + manifest sizes, well under any sane limit.
+  // We use raw http(s).request instead of Node's fetch() because the
+  // Host header MUST be overridden when forwarding to CSS: CSS computes
+  // request identifiers from the request host + path and rejects with
+  // "outside the configured identifier space" when the host doesn't
+  // match its baseUrl. Node's undici-backed fetch() silently strips
+  // any caller-supplied `host` header (per fetch spec it is a forbidden
+  // header), so an explicit `headers.host = ...` does nothing there.
+  // The Node http/https client honors it.
+  const upstreamUrl = new URL(`${CSS_INTERNAL_URL.replace(/\/+$/, '')}${req.url}`);
+  const hostHeader = CSS_HOST_HEADER ?? upstreamUrl.host;
+
+  // Forward headers. Drop hop-by-hop and the inbound host.
+  const headers = { ...req.headers };
+  delete headers['host'];
+  delete headers['connection'];
+  delete headers['content-length'];
+  delete headers['transfer-encoding'];
+  headers['host'] = hostHeader;
+
+  // Buffer the body for write methods — same rationale as the previous
+  // fetch-based path: Azure Container Apps' ingress hangs on streamed
+  // bodies > a few KB; a normal Content-Length PUT proxies cleanly.
   let upstreamBody;
   if (method !== 'GET' && method !== 'HEAD') {
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     upstreamBody = Buffer.concat(chunks);
-    // Set Content-Length explicitly so fetch doesn't fall back to chunked.
     headers['content-length'] = String(upstreamBody.length);
-    delete headers['transfer-encoding'];
   }
 
-  let upstreamRes;
-  try {
-    upstreamRes = await fetch(upstreamUrl, {
-      method,
-      headers,
-      body: upstreamBody,
-      redirect: 'manual',
-    });
-  } catch (err) {
-    console.error('[css-gate] upstream fetch failed:', err.message);
-    res.writeHead(502, { 'Content-Type': 'application/json', ...corsHeaders });
-    res.end(JSON.stringify({ error: 'upstream CSS unreachable', detail: err.message }));
-    return;
-  }
+  const isHttps = upstreamUrl.protocol === 'https:';
+  const requestFn = isHttps ? httpsRequest : httpRequest;
+  const upstreamReq = requestFn({
+    method,
+    protocol: upstreamUrl.protocol,
+    hostname: upstreamUrl.hostname,
+    port: upstreamUrl.port || (isHttps ? 443 : 80),
+    path: `${upstreamUrl.pathname}${upstreamUrl.search}`,
+    headers,
+  });
 
-  // Mirror response back to the client. Layer CORS over whatever
-  // upstream CSS returned — CSS does not know about our allowlist, and
-  // our headers take precedence (the spread comes after).
-  const responseHeaders = {};
-  upstreamRes.headers.forEach((v, k) => { responseHeaders[k] = v; });
-  Object.assign(responseHeaders, corsHeaders);
-  res.writeHead(upstreamRes.status, responseHeaders);
-  if (upstreamRes.body) {
-    Readable.fromWeb(upstreamRes.body).pipe(res);
-  } else {
-    res.end();
-  }
+  upstreamReq.on('error', (err) => {
+    console.error('[css-gate] upstream request failed:', err.message);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json', ...corsHeaders });
+      res.end(JSON.stringify({ error: 'upstream CSS unreachable', detail: err.message }));
+    } else {
+      res.end();
+    }
+  });
+
+  upstreamReq.on('response', (upstreamRes) => {
+    // Mirror response. Layer CORS over whatever upstream CSS returned.
+    const responseHeaders = { ...upstreamRes.headers };
+    Object.assign(responseHeaders, corsHeaders);
+    res.writeHead(upstreamRes.statusCode ?? 502, responseHeaders);
+    upstreamRes.pipe(res);
+  });
+
+  if (upstreamBody) upstreamReq.end(upstreamBody);
+  else upstreamReq.end();
 });
 
 server.listen(PORT, () => {

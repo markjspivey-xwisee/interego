@@ -97,16 +97,43 @@ az containerapp create \
   --memory 1Gi \
   --output none
 
+# CSS is now internal-only. Its ingress FQDN resolves only inside the
+# Container Apps environment. All external writes MUST go through
+# interego-css-gate, which enforces per-user bearer authz (see Fix A
+# / commit history). The CSS public FQDN is gone — the anon-write hole
+# is closed at the network boundary, not at the CSS ACL layer.
+#
+# CSS_FQDN here is the internal-form hostname returned by Azure for
+# `--ingress internal` containers (looks like
+# `<app>.internal.<envDomain>`). CSS_INTERNAL_URL is used by every
+# server-side caller (relay, identity) AND by the gate as its
+# upstream; browser-facing apps must instead point at CSS_GATE_URL.
 CSS_FQDN=$(az containerapp show --name "$CSS_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
 CSS_INTERNAL_URL="https://$CSS_FQDN/"
 echo "    CSS internal: $CSS_INTERNAL_URL"
 
-# Set CSS_BASE_URL so CSS recognizes requests at its internal FQDN
-echo ">>> Setting CSS_BASE_URL..."
+# CSS_GATE_URL is the gate's public FQDN — the only external face of
+# CSS. CSS_BASE_URL gets set to this so issued WebIDs / Solid OIDC
+# issuer metadata remain externally dereferenceable.
+CSS_GATE_APP="${CSS_GATE_APP:-interego-css-gate}"
+CSS_GATE_FQDN=$(az containerapp show --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+if [ -n "$CSS_GATE_FQDN" ]; then
+  CSS_GATE_URL="https://$CSS_GATE_FQDN/"
+  echo "    CSS gate (public): $CSS_GATE_URL"
+else
+  echo "    WARNING: $CSS_GATE_APP not deployed yet — falling back to internal URL for browser-facing apps. Deploy the gate, then re-run this script."
+  CSS_GATE_URL="$CSS_INTERNAL_URL"
+fi
+
+# Set CSS_BASE_URL so CSS issues identifiers (WebIDs, container URLs)
+# at the gate's public hostname rather than at the internal one. The
+# gate forwards the public Host header through to CSS so CSS recognizes
+# incoming requests as in-space.
+echo ">>> Setting CSS_BASE_URL to gate FQDN..."
 az containerapp update \
   --name "$CSS_APP" \
   --resource-group "$RESOURCE_GROUP" \
-  --set-env-vars "CSS_BASE_URL=$CSS_INTERNAL_URL" \
+  --set-env-vars "CSS_BASE_URL=$CSS_GATE_URL" \
   --output none
 
 # ── 6. Deploy Dashboard ──────────────────────────────────────
@@ -125,7 +152,7 @@ az containerapp create \
   --max-replicas 3 \
   --cpu 0.25 \
   --memory 0.5Gi \
-  --env-vars "CSS_URL=$CSS_INTERNAL_URL" \
+  --env-vars "CSS_URL=$CSS_GATE_URL" \
   --output none
 
 DASHBOARD_FQDN=$(az containerapp show --name "$DASHBOARD_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
