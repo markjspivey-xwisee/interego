@@ -83,13 +83,27 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
     route.fulfill({ status: 200, contentType: 'text/html', body: '<html><body>ok</body></html>' }),
   );
 
+  // Surface in-browser console output and page errors in CI logs so the
+  // next failure shows the live status text ("Creating passkey..." vs
+  // "err: …") and any /oauth/verify HTTP error, instead of leaving us
+  // guessing from a static page snapshot.
+  page.on('console', m => console.log('[page]', m.type(), m.text()));
+  page.on('pageerror', e => console.log('[pageerror]', e.message));
+
   await page.goto(authUrl);
 
   // 3. Fill the display name, click "Register new".
   // The authorize page no longer exposes a `#pk-user` field because
   // the server-side userId is derived from the credential, not claimed.
   await page.fill('#pk-name', displayName);
-  const redirectPromise = page.waitForURL(url => url.toString().startsWith('http://localhost:9999/cb?'), { timeout: 30_000 });
+  // 120s budget: a first-touch pod-bootstrap on a cold Azure Container
+  // Apps instance has to walk readAgentRegistry -> putRelayProfileCard
+  // -> ensurePodAcls -> writeAgentRegistry -> publishPodBootstrapDescriptor
+  // -> verify-read through the css-gate synchronously inside /oauth/verify
+  // (deploy/mcp-relay/server.ts:4614-4634). 30s is not enough headroom
+  // for that worst case + retries; 120s is. Follow-up server-side fix
+  // moves bootstrapPod off the response path so this can shrink again.
+  const redirectPromise = page.waitForURL(url => url.toString().startsWith('http://localhost:9999/cb?'), { timeout: 120_000 });
   await page.getByRole('button', { name: /register new/i }).click();
   await redirectPromise;
 
