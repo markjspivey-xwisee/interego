@@ -1998,13 +1998,29 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     bootstrapTargetUserId = bootstrapUserId;
   }
 
-  // Ceremony-time user handle: for modes (A) and (B) we don't yet know
-  // the final userId (mode A derives it from the credential; mode B
-  // binds to bootstrapTargetUserId at register time). Use a transient
-  // random session id as the WebAuthn userHandle. For mode (C) use the
-  // existing userId so the authenticator binds to the correct account.
+  // Ceremony-time correlation key: for modes (A) and (B) we don't yet
+  // know the final userId (mode A derives it from the credential; mode B
+  // binds to bootstrapTargetUserId at register time). A transient random
+  // session id correlates the in-flight challenge to /register. For mode
+  // (C) we already know the existing userId.
+  //
+  // IMPORTANT: sessionUserId is a SERVER-SIDE correlation key only —
+  // it MUST NOT be used as the WebAuthn user.name field. The authenticator
+  // persists user.name in its credential metadata, and OS passkey pickers
+  // (Windows Hello, macOS Keychain, Edge, Chrome) surface user.name as
+  // the primary label. Leaking 'u-pend-<rand-hex>' into user.name was a
+  // regression that produced an unreadable picker — the user sees a list
+  // of opaque random strings instead of human names. The typed
+  // displayName from the /authorize page is the right value for both
+  // user.name (the credential's primary label) and user.displayName.
   const sessionUserId = addDeviceUserId ?? `u-pend-${crypto.randomBytes(8).toString('hex')}`;
-  const userDisplayName = String(name);
+  const userDisplayName = String(name).trim();
+  // Defensive: /register-options already 400s on empty name above, so this
+  // fallback is unreachable in practice. Kept so a future caller bypass
+  // can't reintroduce the u-pend-* leak — fall back to a readable hint
+  // derived from the session id, never the raw transient handle.
+  const credentialUserName = userDisplayName
+    || `Interego user (${sessionUserId.replace(/^u-pend-/, '').slice(0, 6)})`;
 
   // excludeCredentials: prevents re-enrolling an authenticator already
   // bound to this account. Only meaningful in mode (C).
@@ -2025,8 +2041,10 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
   const options = await generateRegistrationOptions({
     rpName: RP_NAME,
     rpID: rp.rpId,
-    userName: sessionUserId,
-    userDisplayName,
+    // user.name is what OS passkey pickers display as the primary label.
+    // Use the typed display name — NEVER the sessionUserId transient.
+    userName: credentialUserName,
+    userDisplayName: credentialUserName,
     attestationType: 'none',
     excludeCredentials,
     authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
@@ -2044,7 +2062,9 @@ app.post('/auth/webauthn/register-options', authEnrollLimiter, async (req, res) 
     ch.bootstrapUserId = bootstrapTargetUserId;
     ch.bootstrapInvite = bootstrapInvite;
   }
-  ch.displayName = userDisplayName;
+  // Use the same value we wrote into the credential so /register's
+  // Identity row stays in sync with what the authenticator persisted.
+  ch.displayName = credentialUserName;
   // /register verifies against the rp this ceremony actually used.
   ch.rpId = rp.rpId;
   ch.rpOrigin = rp.origin;
