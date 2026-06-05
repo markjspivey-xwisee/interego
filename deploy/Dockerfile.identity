@@ -19,6 +19,7 @@ RUN npm ci
 COPY deploy/identity/tsconfig.json ./
 COPY deploy/identity/server.ts ./
 COPY deploy/identity/cors-allowlist.ts ./
+COPY deploy/identity/webfinger.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────
