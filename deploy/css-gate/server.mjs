@@ -11,15 +11,36 @@
  *   GET / HEAD / OPTIONS  →  passthrough (anonymous reads stay open —
  *                            the pod-browser, federation discover(),
  *                            descriptor dereferencing all still work)
- *   POST / PUT / PATCH / DELETE  →  require Authorization: Bearer
- *                                   matching WRITE_SECRET; reject 401
- *                                   otherwise; strip header + forward
- *                                   to CSS (so CSS sees an anonymous
- *                                   write it accepts, but only authed
- *                                   callers reach this point).
+ *   POST / PUT / PATCH / DELETE  →  require Authorization: Bearer; one
+ *                                   of two acceptable bearer types:
  *
- * One env var: WRITE_SECRET — shared with the bridge + any seeder
- * tools that publish to the pod.
+ *     (a) Operator bearer — equals WRITE_SECRET. Trusted infra path
+ *         (seeders, the relay's own service identity, deploy-time
+ *         tooling). Allowed to write to ANY path on the pod.
+ *
+ *     (b) Per-user bearer — verified against the identity server's
+ *         POST /tokens/verify endpoint. The gate extracts `userId`
+ *         from the verified token claims and ENFORCES that the
+ *         request URL path begins with `/<userId>/` (i.e. the
+ *         user can only write into their own pod). Cross-pod writes
+ *         from a user bearer are 403'd here.
+ *
+ *     Verified user bearers are cached for USER_BEARER_CACHE_TTL_MS
+ *     (default 60s) to avoid round-tripping identity on every write.
+ *
+ *   The bearer is stripped before forwarding so CSS doesn't try to
+ *   parse it as a DPoP/OIDC token. CSS is allow-all behind the gate;
+ *   auth is the gate's job, not CSS's.
+ *
+ * Env vars:
+ *   WRITE_SECRET     — operator bearer (required).
+ *   IDENTITY_URL     — identity server base URL for /tokens/verify
+ *                      (required for per-user bearer path; if unset,
+ *                      ONLY the operator bearer works and per-user
+ *                      writes 401).
+ *   CSS_INTERNAL_URL — upstream CSS.
+ *   CSS_HOST_HEADER  — Host header to forward to CSS.
+ *   USER_BEARER_CACHE_TTL_MS — verified-token cache TTL (default 60000).
  *
  * No deps — uses Node 20+ built-in fetch.
  */
@@ -38,10 +59,19 @@ const CSS_INTERNAL_URL = process.env.CSS_INTERNAL_URL
 // CSS_INTERNAL_URL when not set.
 const CSS_HOST_HEADER = process.env.CSS_HOST_HEADER ?? null;
 const WRITE_SECRET = process.env.WRITE_SECRET;
+const IDENTITY_URL = (process.env.IDENTITY_URL ?? '').replace(/\/+$/, '');
+const USER_BEARER_CACHE_TTL_MS = Number(process.env.USER_BEARER_CACHE_TTL_MS ?? 60_000);
 
 if (!WRITE_SECRET) {
   console.error('[css-gate] WRITE_SECRET env var is required');
   process.exit(1);
+}
+
+if (!IDENTITY_URL) {
+  console.warn(
+    '[css-gate] IDENTITY_URL is not set — per-user bearer writes will be rejected. ' +
+    'Only the operator WRITE_SECRET bearer will be accepted.',
+  );
 }
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -54,31 +84,189 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
+// ── User bearer verification cache ─────────────────────────────────
+//
+// Verified-token state for a single bearer:
+//   { userId, scope, agentId, expiresAt: epoch-ms-cache-expiry }
+// Negative results (valid:false) are cached too, with the same TTL, so
+// a wave of bad-token traffic doesn't hammer the identity server.
+//
+// Cache is in-process only — the gate is small + horizontally scaled,
+// and a verified-token round-trip to identity is cheap enough that
+// per-replica caches are fine. No invalidation on revoke; the TTL
+// bounds the window.
+const userBearerCache = new Map();
+
+function cacheGet(token) {
+  const entry = userBearerCache.get(token);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    userBearerCache.delete(token);
+    return null;
+  }
+  return entry;
+}
+
+function cacheSet(token, value) {
+  // Lightweight LRU: cap the map at 10k entries; on overflow, drop
+  // the oldest insertion. Map iteration order = insertion order.
+  if (userBearerCache.size >= 10_000) {
+    const oldestKey = userBearerCache.keys().next().value;
+    if (oldestKey !== undefined) userBearerCache.delete(oldestKey);
+  }
+  userBearerCache.set(token, {
+    ...value,
+    expiresAt: Date.now() + USER_BEARER_CACHE_TTL_MS,
+  });
+}
+
+/**
+ * Verify a per-user bearer against identity-server /tokens/verify.
+ *
+ * Returns { ok: true, userId, agentId?, scope? } on a valid token,
+ * or { ok: false, status, reason } on invalid / unreachable.
+ *
+ * - status: HTTP status the gate should return upstream (401 for
+ *   invalid token / unreachable identity, 503 for identity hard-down
+ *   when we can distinguish — currently treated as 401 to keep the
+ *   surface minimal; callers retry).
+ */
+async function verifyUserBearer(token) {
+  if (!IDENTITY_URL) {
+    return { ok: false, status: 401, reason: 'per-user bearers not supported (IDENTITY_URL unset)' };
+  }
+  const cached = cacheGet(token);
+  if (cached) {
+    if (cached.valid) return { ok: true, userId: cached.userId, agentId: cached.agentId, scope: cached.scope };
+    return { ok: false, status: 401, reason: cached.reason ?? 'invalid token' };
+  }
+  let resp;
+  try {
+    resp = await fetch(`${IDENTITY_URL}/tokens/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+  } catch (err) {
+    // Identity unreachable — do NOT cache (transient). 401 to caller.
+    return { ok: false, status: 401, reason: `identity unreachable: ${err.message}` };
+  }
+  if (!resp.ok) {
+    // Identity returned non-2xx. Treat as invalid; cache briefly to
+    // throttle. Distinguish from network failure so the cache is
+    // populated.
+    cacheSet(token, { valid: false, reason: `identity ${resp.status}` });
+    return { ok: false, status: 401, reason: `identity returned ${resp.status}` };
+  }
+  let data;
+  try {
+    data = await resp.json();
+  } catch {
+    return { ok: false, status: 401, reason: 'identity returned non-JSON' };
+  }
+  if (!data.valid) {
+    cacheSet(token, { valid: false, reason: data.reason ?? 'invalid token' });
+    return { ok: false, status: 401, reason: data.reason ?? 'invalid token' };
+  }
+  if (typeof data.userId !== 'string' || !data.userId) {
+    // Defensive: identity reported valid but no userId claim — we
+    // can't path-check, so refuse rather than allow an unscoped write.
+    cacheSet(token, { valid: false, reason: 'verified token has no userId claim' });
+    return { ok: false, status: 401, reason: 'verified token has no userId claim' };
+  }
+  cacheSet(token, { valid: true, userId: data.userId, agentId: data.agentId, scope: data.scope });
+  return { ok: true, userId: data.userId, agentId: data.agentId, scope: data.scope };
+}
+
+/**
+ * Extract the first path segment of a URL path. Returns null if the
+ * path has no first segment (e.g. "/" or "").
+ *
+ * We compare against the verified userId to enforce that a user
+ * bearer can only write to `<pod>/<userId>/...`. Trailing-slash and
+ * percent-encoding edge cases handled here once.
+ */
+function firstPathSegment(reqUrl) {
+  // reqUrl is the request-target (path?query). Strip query / fragment.
+  const q = reqUrl.indexOf('?');
+  const path = q >= 0 ? reqUrl.slice(0, q) : reqUrl;
+  if (!path.startsWith('/')) return null;
+  const rest = path.slice(1);
+  const slash = rest.indexOf('/');
+  const seg = slash < 0 ? rest : rest.slice(0, slash);
+  if (!seg) return null;
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return seg;
+  }
+}
+
 const server = createServer(async (req, res) => {
   const method = (req.method ?? 'GET').toUpperCase();
 
   // Health: anyone can hit /healthz on the gate itself (does NOT proxy).
   if (req.url === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, gating: 'writes-only', upstream: CSS_INTERNAL_URL }));
+    res.end(JSON.stringify({
+      ok: true,
+      gating: 'writes-only',
+      upstream: CSS_INTERNAL_URL,
+      perUserBearers: Boolean(IDENTITY_URL),
+    }));
     return;
   }
 
-  // Write-method gate: require Authorization: Bearer <WRITE_SECRET>.
+  // Write-method gate.
   if (WRITE_METHODS.has(method)) {
     const auth = req.headers['authorization'] ?? '';
-    const expected = `Bearer ${WRITE_SECRET}`;
-    if (!safeEqual(auth, expected)) {
+    if (!auth.startsWith('Bearer ')) {
       res.writeHead(401, {
         'Content-Type': 'application/json',
         'WWW-Authenticate': 'Bearer realm="interego-css-gate"',
       });
       res.end(JSON.stringify({
         error: 'anonymous writes denied',
-        detail: `${method} requires Authorization: Bearer <WRITE_SECRET>; reads (GET/HEAD/OPTIONS) remain anonymous.`,
+        detail: `${method} requires Authorization: Bearer <token>; reads (GET/HEAD/OPTIONS) remain anonymous.`,
       }));
       return;
     }
+    const token = auth.slice(7);
+
+    // Path 1: operator bearer (legacy / trusted infra). Allows writes
+    // to any path. We accept the WHOLE "Bearer <secret>" header here
+    // via safeEqual so wrong-length attempts cost the same time.
+    const isOperator = safeEqual(auth, `Bearer ${WRITE_SECRET}`);
+    if (!isOperator) {
+      // Path 2: per-user bearer. Verify via identity, then enforce
+      // that the request path is rooted at the verified userId.
+      const verified = await verifyUserBearer(token);
+      if (!verified.ok) {
+        res.writeHead(verified.status ?? 401, {
+          'Content-Type': 'application/json',
+          'WWW-Authenticate': 'Bearer realm="interego-css-gate"',
+        });
+        res.end(JSON.stringify({
+          error: 'invalid bearer',
+          detail: verified.reason ?? 'token failed identity-server verification',
+        }));
+        return;
+      }
+      const userId = verified.userId;
+      const seg = firstPathSegment(req.url ?? '/');
+      if (seg !== userId) {
+        // Cross-pod write attempt. The verified user owns
+        // `/<userId>/...` only.
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          error: 'cross-pod write denied',
+          detail: `bearer is scoped to userId="${userId}" but request targets path segment "${seg ?? '(root)'}"; user bearers can only write to /<userId>/...`,
+        }));
+        return;
+      }
+      // Authorized per-user write. Fall through to strip + proxy.
+    }
+
     // Strip the bearer before forwarding so CSS doesn't try to parse it
     // as a DPoP/OIDC token. CSS is allow-all behind the gate; auth is
     // the gate's job, not CSS's.
@@ -149,6 +337,13 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`[css-gate] listening on :${PORT}`);
   console.log(`[css-gate] upstream: ${CSS_INTERNAL_URL}`);
-  console.log(`[css-gate] write methods (POST/PUT/PATCH/DELETE) require Authorization: Bearer <WRITE_SECRET>`);
+  console.log(`[css-gate] write methods (POST/PUT/PATCH/DELETE) require Authorization: Bearer <token>`);
+  console.log(`[css-gate]   • Bearer <WRITE_SECRET>             → operator path, any pod path`);
+  if (IDENTITY_URL) {
+    console.log(`[css-gate]   • Bearer <identity-server token>   → per-user path, must target /<userId>/...`);
+    console.log(`[css-gate]   identity verify: ${IDENTITY_URL}/tokens/verify  (cache TTL ${USER_BEARER_CACHE_TTL_MS} ms)`);
+  } else {
+    console.log(`[css-gate]   • per-user bearers DISABLED (IDENTITY_URL not set)`);
+  }
   console.log(`[css-gate] read methods (GET/HEAD/OPTIONS) pass through anonymously`);
 });

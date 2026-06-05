@@ -4044,6 +4044,233 @@ async function withPodMutex<T>(podUrl: string, fn: () => Promise<T>): Promise<T>
 // error rather than spinning indefinitely.
 const POD_BOOTSTRAP_MAX_ATTEMPTS = 3;
 
+// ── Pod-side WAC .acl writer ──────────────────────────────────────
+//
+// On first-touch pod init we PUT proper WAC turtle to `<container>.acl`
+// for every container that needs a policy distinct from the parent.
+//
+// Policy summary (WAC inheritance handles unspecified children):
+//
+//   /                — public Read, owner Read+Write+Control
+//   /profile/        — public Read, owner Read+Write+Control (profile
+//                      card MUST be world-readable for federation
+//                      discovery + DID/WebID resolution)
+//   /agents          — owner Read+Write+Control. Public READ is
+//                      intentional: cross-pod agents resolve a recipient
+//                      pod's authorized-agent registry to find encryption
+//                      keys for envelope sharing. The contents themselves
+//                      are non-sensitive metadata (agent IRIs + public
+//                      keys + scopes).
+//   /credentials/    — owner Read+Write+Control ONLY. No public read.
+//                      Delegation credentials carry the relay's signed
+//                      attestation that a surface agent acts on behalf
+//                      of this user; they are NOT secrets but also do
+//                      not belong in public discovery.
+//   /context-graphs/ — owner Read+Write+Control; authorized agents
+//                      (currently the relay's per-surface agent on this
+//                      pod) Read+Write within their delegation scope;
+//                      anonymous Read allowed so descriptors remain
+//                      world-discoverable. Field-level confidentiality
+//                      is handled by JOSE envelope encryption at the
+//                      content layer, NOT by WAC at the storage layer.
+//
+// This is belt-and-suspenders: even if CSS is taken off allow-all (or
+// the css-gate is bypassed), WAC alone still rejects anonymous writes
+// from anywhere on the public internet. Once CSS is moved off allow-all
+// the .acl files become the storage-side authority and the gate's
+// per-user check becomes a redundant verifier layer — which is the
+// desired defense-in-depth posture.
+//
+// Idempotency: each .acl write is a full PUT (replace-semantics). The
+// content is a deterministic function of (podUrl, ownerWebId,
+// surfaceAgentIri) so re-runs against the same inputs produce the same
+// document. Re-runs that change the surface agent simply overwrite the
+// previous policy — historical surface agents stay in the agent
+// registry (revoked / superseded), but new writes are authorized only
+// against the currently-named surface agent.
+//
+// Failure mode: best-effort. WAC writes log + continue on failure;
+// the gate remains the authoritative authz boundary until CSS is moved
+// off allow-all. We don't want a transient CSS .acl PUT failure to
+// block the rest of the pod init (agent registry, profile card,
+// bootstrap descriptor).
+async function ensurePodAcls(params: {
+  podUrl: string;
+  userId: string;
+  ownerWebId: IRI;
+  surfaceAgentIri: IRI;
+}): Promise<void> {
+  const { podUrl, userId, ownerWebId, surfaceAgentIri } = params;
+  void userId; // referenced only by callers' logging; podUrl already encodes it.
+
+  // Containers needing distinct policy + the WAC turtle for each.
+  // Keys are container URLs; CSS exposes their .acl at `${container}.acl`.
+  const aclSpecs: Array<{ targetUrl: string; aclBody: string }> = [
+    {
+      // Pod root — public READ (so anyone can dereference profile/card
+      // + the manifest + published descriptors); owner full control.
+      targetUrl: podUrl,
+      aclBody: buildRootAcl(podUrl, ownerWebId),
+    },
+    {
+      // Profile container — explicit public READ. (Inherits from root,
+      // but pinning the policy locally keeps it stable if root's policy
+      // ever tightens.)
+      targetUrl: `${podUrl}profile/`,
+      aclBody: buildPublicReadOwnerWriteAcl(`${podUrl}profile/`, ownerWebId),
+    },
+    {
+      // Authorized-agents registry — public READ for cross-pod agent
+      // resolution; owner-only WRITE.
+      targetUrl: `${podUrl}agents`,
+      aclBody: buildPublicReadOwnerWriteAcl(`${podUrl}agents`, ownerWebId),
+    },
+    {
+      // Delegation credentials — owner-only READ + WRITE.
+      targetUrl: `${podUrl}credentials/`,
+      aclBody: buildOwnerOnlyAcl(`${podUrl}credentials/`, ownerWebId),
+    },
+    {
+      // Context-graphs manifest + descriptor container. Anonymous READ
+      // allowed (federation discovery); owner + delegated surface agent
+      // WRITE. The surface agent's WebID is the relay-minted
+      // `surfaceAgentIri` registered in `<pod>/agents`.
+      targetUrl: `${podUrl}context-graphs/`,
+      aclBody: buildContextGraphsAcl(
+        `${podUrl}context-graphs/`,
+        ownerWebId,
+        surfaceAgentIri,
+      ),
+    },
+  ];
+
+  for (const { targetUrl, aclBody } of aclSpecs) {
+    // CSS / WAC convention: the ACL for a container `<c>/` lives at
+    // `<c>/.acl`; the ACL for a leaf resource `<r>` lives at `<r>.acl`.
+    // Both reduce to `${targetUrl}.acl` because we keep container URLs
+    // trailing-slashed and leaf URLs un-slashed.
+    const aclUrl = `${targetUrl}.acl`;
+    try {
+      const resp = await fetch(aclUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/turtle' },
+        body: aclBody,
+      });
+      if (!resp.ok && resp.status !== 205) {
+        log(`[pod-acl] warn: PUT ${aclUrl} returned ${resp.status} ${resp.statusText}; gate remains the authoritative authz boundary`);
+      }
+    } catch (err) {
+      log(`[pod-acl] warn: PUT ${aclUrl} threw ${(err as Error).message}; gate remains the authoritative authz boundary`);
+    }
+  }
+}
+
+// Pod-root WAC: public Read; owner full control. Default policy applies
+// to children via `acl:default <root>` so the whole pod inherits unless
+// a child container overrides.
+function buildRootAcl(podUrl: string, ownerWebId: IRI): string {
+  return [
+    `@prefix acl: <http://www.w3.org/ns/auth/acl#> .`,
+    `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
+    ``,
+    `<#owner>`,
+    `    a acl:Authorization ;`,
+    `    acl:agent <${ownerWebId}> ;`,
+    `    acl:accessTo <${podUrl}> ;`,
+    `    acl:default <${podUrl}> ;`,
+    `    acl:mode acl:Read, acl:Write, acl:Control .`,
+    ``,
+    `<#public>`,
+    `    a acl:Authorization ;`,
+    `    acl:agentClass foaf:Agent ;`,
+    `    acl:accessTo <${podUrl}> ;`,
+    `    acl:default <${podUrl}> ;`,
+    `    acl:mode acl:Read .`,
+    ``,
+  ].join('\n');
+}
+
+// Generic policy: public Read, owner Read+Write+Control. Used for
+// /profile/ + /agents.
+function buildPublicReadOwnerWriteAcl(targetUrl: string, ownerWebId: IRI): string {
+  return [
+    `@prefix acl: <http://www.w3.org/ns/auth/acl#> .`,
+    `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
+    ``,
+    `<#owner>`,
+    `    a acl:Authorization ;`,
+    `    acl:agent <${ownerWebId}> ;`,
+    `    acl:accessTo <${targetUrl}> ;`,
+    `    acl:default <${targetUrl}> ;`,
+    `    acl:mode acl:Read, acl:Write, acl:Control .`,
+    ``,
+    `<#public>`,
+    `    a acl:Authorization ;`,
+    `    acl:agentClass foaf:Agent ;`,
+    `    acl:accessTo <${targetUrl}> ;`,
+    `    acl:default <${targetUrl}> ;`,
+    `    acl:mode acl:Read .`,
+    ``,
+  ].join('\n');
+}
+
+// Owner-only policy. Used for /credentials/.
+function buildOwnerOnlyAcl(targetUrl: string, ownerWebId: IRI): string {
+  return [
+    `@prefix acl: <http://www.w3.org/ns/auth/acl#> .`,
+    ``,
+    `<#owner>`,
+    `    a acl:Authorization ;`,
+    `    acl:agent <${ownerWebId}> ;`,
+    `    acl:accessTo <${targetUrl}> ;`,
+    `    acl:default <${targetUrl}> ;`,
+    `    acl:mode acl:Read, acl:Write, acl:Control .`,
+    ``,
+  ].join('\n');
+}
+
+// Context-graphs policy: owner full control + delegated surface agent
+// Read+Write within the container + public Read. The surface agent
+// authorization is what lets the relay's per-user/per-surface agent
+// publish descriptors on the user's behalf when the user is signed in
+// through that surface (claude.ai, ChatGPT, etc.). Additional authorized
+// agents added via `register_agent` extend the registry but do NOT
+// implicitly grant write here — they must be added to this .acl too
+// when CSS is moved off allow-all. (Until then, the css-gate per-user
+// bearer check is the live enforcement; this .acl is forward-looking.)
+function buildContextGraphsAcl(
+  targetUrl: string,
+  ownerWebId: IRI,
+  surfaceAgentIri: IRI,
+): string {
+  return [
+    `@prefix acl: <http://www.w3.org/ns/auth/acl#> .`,
+    `@prefix foaf: <http://xmlns.com/foaf/0.1/> .`,
+    ``,
+    `<#owner>`,
+    `    a acl:Authorization ;`,
+    `    acl:agent <${ownerWebId}> ;`,
+    `    acl:accessTo <${targetUrl}> ;`,
+    `    acl:default <${targetUrl}> ;`,
+    `    acl:mode acl:Read, acl:Write, acl:Control .`,
+    ``,
+    `<#surface-agent>`,
+    `    a acl:Authorization ;`,
+    `    acl:agent <${surfaceAgentIri}> ;`,
+    `    acl:accessTo <${targetUrl}> ;`,
+    `    acl:default <${targetUrl}> ;`,
+    `    acl:mode acl:Read, acl:Write .`,
+    ``,
+    `<#public>`,
+    `    a acl:Authorization ;`,
+    `    acl:agentClass foaf:Agent ;`,
+    `    acl:accessTo <${targetUrl}> ;`,
+    `    acl:default <${targetUrl}> ;`,
+    `    acl:mode acl:Read .`,
+    ``,
+  ].join('\n');
+}
+
 // Renamed from `bootstrapPodForOAuth` — the helper is now ingress-agnostic
 // and called from BOTH /oauth/verify AND the lazy CallTool middleware
 // (ensurePodInitialized). Behavior is unchanged; only the name changed
@@ -4111,6 +4338,19 @@ async function bootstrapPod(params: {
         ownerWebId,
         identityWebId,
         identityDid,
+      });
+      // FIX 1 (anon-write): write WAC .acl resources at pod root +
+      // key containers BEFORE the first registry write lands, so the
+      // initial /agents PUT itself is policy-bound (when CSS is
+      // off allow-all). Order is: profile/card → .acl → agents PUT.
+      // Best-effort: log + continue on failure; the css-gate's
+      // per-user bearer check remains the live enforcement until
+      // CSS is moved off allow-all.
+      await ensurePodAcls({
+        podUrl,
+        userId,
+        ownerWebId,
+        surfaceAgentIri,
       });
     }
     await writeAgentRegistry(nextProfile, podUrl, { fetch: solidFetch });
