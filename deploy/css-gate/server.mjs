@@ -41,13 +41,25 @@
  *   CSS_INTERNAL_URL — upstream CSS.
  *   CSS_HOST_HEADER  — Host header to forward to CSS.
  *   USER_BEARER_CACHE_TTL_MS — verified-token cache TTL (default 60000).
+ *   UPSTREAM_POOL_CONNECTIONS — undici Pool size per upstream origin
+ *                               (default 16). Each connection multiplexes
+ *                               many h2 streams concurrently.
+ *   UPSTREAM_REQUEST_BUFFER   — when "1" / "true", buffer request bodies
+ *                               before forwarding (legacy behavior; kept
+ *                               as an escape hatch). Default is streaming
+ *                               via undici over ALPN-negotiated h2.
  *
- * No deps — uses Node 20+ built-in fetch.
+ * Upstream transport: undici Pool with allowH2 = true. ALPN-negotiated h2
+ * against Container Apps' internal envoy eliminates the ECONNRESET storms
+ * that the previous raw https.request path produced under load, and the
+ * pool keeps connections warm across requests. undici's low-level Pool API
+ * does NOT enforce fetch's forbidden-headers list, so we can set the Host
+ * header explicitly — which is the entire reason the previous version had
+ * to drop to raw https.request in the first place.
  */
 
-import { createServer, request as httpRequest } from 'http';
-import { request as httpsRequest } from 'https';
-import { Readable } from 'stream';
+import { createServer } from 'http';
+import { Pool } from 'undici';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const CSS_INTERNAL_URL = process.env.CSS_INTERNAL_URL
@@ -67,6 +79,9 @@ const CSS_HOST_HEADER = process.env.CSS_HOST_HEADER ?? null;
 const WRITE_SECRET = process.env.WRITE_SECRET;
 const IDENTITY_URL = (process.env.IDENTITY_URL ?? '').replace(/\/+$/, '');
 const USER_BEARER_CACHE_TTL_MS = Number(process.env.USER_BEARER_CACHE_TTL_MS ?? 60_000);
+const UPSTREAM_POOL_CONNECTIONS = Number(process.env.UPSTREAM_POOL_CONNECTIONS ?? 16);
+const UPSTREAM_REQUEST_BUFFER = (process.env.UPSTREAM_REQUEST_BUFFER ?? '').toLowerCase() === 'true'
+  || process.env.UPSTREAM_REQUEST_BUFFER === '1';
 
 if (!WRITE_SECRET) {
   console.error('[css-gate] WRITE_SECRET env var is required');
@@ -274,6 +289,110 @@ async function verifyUserBearer(token) {
  * bearer can only write to `<pod>/<userId>/...`. Trailing-slash and
  * percent-encoding edge cases handled here once.
  */
+// ── Upstream undici Pool (keyed by origin) ─────────────────────────
+//
+// One Pool per upstream origin. The gate only ever talks to ONE upstream
+// (CSS_INTERNAL_URL), but keying by origin keeps the structure tidy in
+// case a future split routes some paths to a different backend.
+//
+// allowH2: true — ALPN negotiation prefers h2 when the server offers it
+// (Container Apps' envoy does), which fixes the ECONNRESET storms the
+// previous https.request path saw under sustained load. h2 multiplexes
+// many requests over one connection, so the pool size is small.
+//
+// keepAliveTimeout * keepAliveMaxTimeout — keep idle connections warm
+// long enough that a chatty client (Foxxi bridge writing one descriptor
+// per affordance call) doesn't pay TLS+ALPN cost per request.
+const upstreamPools = new Map();
+
+export function _getUpstreamPool(originUrl) {
+  // Normalize to "<protocol>//<host>" (no trailing slash). undici Pool
+  // wants the origin only; the path is supplied per-request.
+  const u = new URL(originUrl);
+  const origin = `${u.protocol}//${u.host}`;
+  let pool = upstreamPools.get(origin);
+  if (!pool) {
+    pool = new Pool(origin, {
+      connections: UPSTREAM_POOL_CONNECTIONS,
+      allowH2: true,
+      keepAliveTimeout: 60_000,
+      keepAliveMaxTimeout: 600_000,
+      // Generous header timeout — CSS occasionally takes a beat under
+      // load (LDP container updates, ACL re-eval), and we'd rather wait
+      // than blip a 502.
+      headersTimeout: 60_000,
+      bodyTimeout: 120_000,
+    });
+    upstreamPools.set(origin, pool);
+  }
+  return pool;
+}
+
+// Test hook: let unit tests inject a Pool/MockPool keyed by origin so
+// they can drive responses without opening real sockets.
+export function _setUpstreamPool(originUrl, pool) {
+  const u = new URL(originUrl);
+  const origin = `${u.protocol}//${u.host}`;
+  upstreamPools.set(origin, pool);
+}
+
+// Headers that must never be forwarded upstream (hop-by-hop per RFC 7230
+// §6.1, plus length/encoding markers undici sets itself).
+const HOP_BY_HOP_REQUEST_HEADERS = new Set([
+  'host',
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'content-length',
+  'expect',
+]);
+
+const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+function buildUpstreamHeaders(inboundHeaders, hostHeader) {
+  const out = {};
+  for (const [name, value] of Object.entries(inboundHeaders)) {
+    if (value === undefined) continue;
+    const lower = name.toLowerCase();
+    if (HOP_BY_HOP_REQUEST_HEADERS.has(lower)) continue;
+    out[lower] = value;
+  }
+  // undici Pool/Client honors a caller-supplied host header verbatim
+  // (unlike fetch, which silently strips it under fetch's forbidden-
+  // headers rule). This is the entire reason we are using undici
+  // directly rather than fetch().
+  out['host'] = hostHeader;
+  return out;
+}
+
+function buildResponseHeaders(upstreamHeaders, corsHeaders) {
+  const out = {};
+  for (const [name, value] of Object.entries(upstreamHeaders)) {
+    if (value === undefined) continue;
+    const lower = name.toLowerCase();
+    if (HOP_BY_HOP_RESPONSE_HEADERS.has(lower)) continue;
+    out[lower] = value;
+  }
+  // Layer CORS over whatever upstream CSS returned. Our corsHeaders are
+  // already canonicalized; they override any echo from upstream.
+  Object.assign(out, corsHeaders);
+  return out;
+}
+
 function firstPathSegment(reqUrl) {
   // reqUrl is the request-target (path?query). Strip query / fragment.
   const q = reqUrl.indexOf('?');
@@ -377,50 +496,64 @@ const server = createServer(async (req, res) => {
     delete req.headers['authorization'];
   }
 
-  // Proxy through.
-  //
-  // We use raw http(s).request instead of Node's fetch() because the
-  // Host header MUST be overridden when forwarding to CSS: CSS computes
-  // request identifiers from the request host + path and rejects with
-  // "outside the configured identifier space" when the host doesn't
-  // match its baseUrl. Node's undici-backed fetch() silently strips
-  // any caller-supplied `host` header (per fetch spec it is a forbidden
-  // header), so an explicit `headers.host = ...` does nothing there.
-  // The Node http/https client honors it.
+  // Proxy through via undici Pool. The gate has historically used
+  // raw http(s).request because the Host header MUST be overridden
+  // when forwarding to CSS (CSS computes request identifiers from
+  // the request host + path and rejects with "outside the configured
+  // identifier space" when the host doesn't match its baseUrl); Node's
+  // fetch() silently strips any caller-supplied `host` header under
+  // fetch's forbidden-headers rule. undici's low-level Pool.request
+  // honors `headers.host` verbatim, so we get the Host-override
+  // freedom of raw http.request AND ALPN-negotiated h2 multiplexing
+  // (which eliminates the ECONNRESET storms the raw path produced
+  // against Container Apps' envoy under sustained load) AND pooled
+  // keep-alive.
   const upstreamUrl = new URL(`${CSS_INTERNAL_URL.replace(/\/+$/, '')}${req.url}`);
   const hostHeader = CSS_HOST_HEADER ?? upstreamUrl.host;
+  const headers = buildUpstreamHeaders(req.headers, hostHeader);
 
-  // Forward headers. Drop hop-by-hop and the inbound host.
-  const headers = { ...req.headers };
-  delete headers['host'];
-  delete headers['connection'];
-  delete headers['content-length'];
-  delete headers['transfer-encoding'];
-  headers['host'] = hostHeader;
-
-  // Buffer the body for write methods — same rationale as the previous
-  // fetch-based path: Azure Container Apps' ingress hangs on streamed
-  // bodies > a few KB; a normal Content-Length PUT proxies cleanly.
+  // Body forwarding strategy:
+  //   - GET / HEAD: no body.
+  //   - Everything else: stream the inbound IncomingMessage straight
+  //     to undici. h2 streams handle backpressure natively, so a large
+  //     PUT does not need to buffer into memory.
+  //   - UPSTREAM_REQUEST_BUFFER=1 escape hatch: buffer first (legacy
+  //     path; kept for if a future ingress layer regresses).
   let upstreamBody;
   if (method !== 'GET' && method !== 'HEAD') {
-    const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
-    upstreamBody = Buffer.concat(chunks);
-    headers['content-length'] = String(upstreamBody.length);
+    if (UPSTREAM_REQUEST_BUFFER) {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const buf = Buffer.concat(chunks);
+      upstreamBody = buf;
+      headers['content-length'] = String(buf.length);
+    } else {
+      // Stream — pass the inbound request through. Preserve the inbound
+      // Content-Length if the caller supplied it (avoids forcing chunked
+      // transfer-encoding for a known-size body); if the caller used
+      // chunked, undici will keep it chunked.
+      upstreamBody = req;
+      const inboundLen = req.headers['content-length'];
+      if (inboundLen !== undefined) headers['content-length'] = String(inboundLen);
+    }
   }
 
-  const isHttps = upstreamUrl.protocol === 'https:';
-  const requestFn = isHttps ? httpsRequest : httpRequest;
-  const upstreamReq = requestFn({
-    method,
-    protocol: upstreamUrl.protocol,
-    hostname: upstreamUrl.hostname,
-    port: upstreamUrl.port || (isHttps ? 443 : 80),
-    path: `${upstreamUrl.pathname}${upstreamUrl.search}`,
-    headers,
-  });
-
-  upstreamReq.on('error', (err) => {
+  const pool = _getUpstreamPool(CSS_INTERNAL_URL);
+  let upstreamRes;
+  try {
+    upstreamRes = await pool.request({
+      method,
+      path: `${upstreamUrl.pathname}${upstreamUrl.search}`,
+      headers,
+      body: upstreamBody,
+      // We bubble status + body through 1:1; do not let undici redirect
+      // for us (CSS uses redirects for LDP container semantics, and the
+      // caller needs to see those). undici Pool.request never throws on
+      // upstream 4xx/5xx — the response object simply carries that
+      // statusCode — so we forward those bodies through naturally.
+      maxRedirections: 0,
+    });
+  } catch (err) {
     console.error('[css-gate] upstream request failed:', err.message);
     if (!res.headersSent) {
       res.writeHead(502, { 'Content-Type': 'application/json', ...corsHeaders });
@@ -428,21 +561,30 @@ const server = createServer(async (req, res) => {
     } else {
       res.end();
     }
-  });
+    return;
+  }
 
-  upstreamReq.on('response', (upstreamRes) => {
-    // Mirror response. Layer CORS over whatever upstream CSS returned.
-    const responseHeaders = { ...upstreamRes.headers };
-    Object.assign(responseHeaders, corsHeaders);
-    res.writeHead(upstreamRes.statusCode ?? 502, responseHeaders);
-    upstreamRes.pipe(res);
-  });
+  const responseHeaders = buildResponseHeaders(upstreamRes.headers, corsHeaders);
+  res.writeHead(upstreamRes.statusCode ?? 502, responseHeaders);
 
-  if (upstreamBody) upstreamReq.end(upstreamBody);
-  else upstreamReq.end();
+  // Stream the response body back. upstreamRes.body is a Node Readable.
+  if (upstreamRes.body && typeof upstreamRes.body.pipe === 'function') {
+    upstreamRes.body.on('error', (err) => {
+      console.error('[css-gate] upstream response stream error:', err.message);
+      if (!res.writableEnded) res.end();
+    });
+    upstreamRes.body.pipe(res);
+  } else {
+    res.end();
+  }
 });
 
-server.listen(PORT, () => {
+// Export the bare http.Server so unit tests can drive it via
+// server.listen(0, ...) on an ephemeral port (and stay quiet when
+// imported — listen() is gated on CSS_GATE_AUTOSTART below).
+export { server };
+
+if (process.env.CSS_GATE_AUTOSTART !== '0') server.listen(PORT, () => {
   console.log(`[css-gate] listening on :${PORT}`);
   console.log(`[css-gate] upstream: ${CSS_INTERNAL_URL}`);
   console.log(`[css-gate] write methods (POST/PUT/PATCH/DELETE) require Authorization: Bearer <token>`);

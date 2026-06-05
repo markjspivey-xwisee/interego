@@ -1,19 +1,30 @@
 # ────────────────────────────────────────────────────────────
-#  CSS write-gate — tiny Node reverse proxy fronting the CSS pod server.
-#  Buffered-body proxy (does NOT stream request bodies — streaming hung at
-#  Azure ingress for payloads larger than a few KB, so the gate reads the
-#  full request body into memory before forwarding it to CSS).
+#  CSS write-gate — small Node reverse proxy fronting the CSS pod server.
+#
+#  Transport: undici Pool with ALPN-negotiated h2 against the upstream.
+#  Replaces the previous raw https.request path that produced ECONNRESET
+#  storms against Container Apps' internal envoy under load. Streaming
+#  bodies are forwarded as-is; the UPSTREAM_REQUEST_BUFFER=1 env var keeps
+#  the legacy buffered-body behavior available as an escape hatch.
 #
 #  Write-gating model:
 #    - GET/HEAD/OPTIONS pass through anonymously (reads stay zero-trust at
 #      the storage layer).
-#    - POST/PUT/PATCH/DELETE require Authorization: Bearer <WRITE_SECRET>;
+#    - POST/PUT/PATCH/DELETE require Authorization: Bearer <WRITE_SECRET>
+#      (operator) or a per-user bearer verified against IDENTITY_URL;
 #      missing or mismatched bearer → 401, request never reaches CSS.
 # ────────────────────────────────────────────────────────────
 
 FROM node:20-alpine
 
 WORKDIR /app
+
+# Install runtime deps (undici). Use a clean install with --omit=dev so
+# we do not drag in test tooling. The package-lock is not committed for
+# this micro-service — `npm install` is fine on a leaf with one direct
+# dependency.
+COPY deploy/css-gate/package.json /app/package.json
+RUN npm install --omit=dev --no-audit --no-fund
 
 COPY deploy/css-gate/server.mjs /app/server.mjs
 
