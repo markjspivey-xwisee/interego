@@ -86,14 +86,15 @@ console.log(`1. Found T1 attestation: ${t1Url.split('/').pop()}`);
 const t1Ttl = await fetchText(t1Url);
 console.log(`   (${t1Ttl.length} bytes of signed Turtle)\n`);
 
-// ── Step 2: pin to IPFS (local provider → deterministic CID) ─
+// ── Step 2: compute IPFS CID (local-unpinned → deterministic CID, NOT uploaded) ─
 
-const pin = await pinToIpfs(t1Ttl, 'erc8004-t1-attestation', { provider: 'local' });
-console.log(`2. Pinned to IPFS:`);
+const pin = await pinToIpfs(t1Ttl, 'erc8004-t1-attestation', { provider: 'local-unpinned' });
+console.log(`2. Computed IPFS CID:`);
 console.log(`   provider: ${pin.provider}`);
 console.log(`   CID:      ${pin.cid}`);
 console.log(`   size:     ${pin.size} bytes`);
-console.log(`   gateway:  (local — inline content-addressing; swap to pinata for persistence)\n`);
+if (pin.warning) console.log(`   warning:  ${pin.warning}`);
+console.log(`   gateway:  (local-unpinned — content-address only; swap to pinata for actual pinning)\n`);
 
 // ── Step 3: construct the ERC-8004 Reputation Registry tx ──
 //

@@ -174,9 +174,28 @@ const DIRECTORY_URL = process.env['CG_DIRECTORY_URL'] ?? undefined;
 const IDENTITY_SERVER_URL = process.env['CG_IDENTITY_URL']
   ?? 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 
-// IPFS config
-const IPFS_PROVIDER = (process.env['CG_IPFS_PROVIDER'] ?? 'local') as 'pinata' | 'web3storage' | 'local';
-const IPFS_API_KEY = process.env['CG_IPFS_API_KEY'] ?? '';
+// IPFS config.
+//
+// Auto-detect PINATA_API_KEY / WEB3STORAGE_TOKEN so the stdio server
+// actually pins by default when the operator has credentials in env.
+// CG_IPFS_PROVIDER + CG_IPFS_API_KEY remain explicit overrides. With no
+// credentials we report `local-unpinned` (NOT the old misleading `local`)
+// so consumers can tell that the CID is content-addressed but the bytes
+// are not on any public gateway.
+const _CG_PINATA = process.env['PINATA_API_KEY'] ?? '';
+const _CG_WEB3 = process.env['WEB3STORAGE_TOKEN'] ?? '';
+const IPFS_PROVIDER: 'pinata' | 'web3storage' | 'local-unpinned' = (() => {
+  const explicit = process.env['CG_IPFS_PROVIDER'];
+  if (explicit === 'pinata' || explicit === 'web3storage') return explicit;
+  if (explicit === 'local' || explicit === 'local-unpinned') return 'local-unpinned';
+  if (_CG_PINATA) return 'pinata';
+  if (_CG_WEB3) return 'web3storage';
+  return 'local-unpinned';
+})();
+const IPFS_API_KEY = process.env['CG_IPFS_API_KEY']
+  ?? (IPFS_PROVIDER === 'pinata' ? _CG_PINATA
+    : IPFS_PROVIDER === 'web3storage' ? _CG_WEB3
+    : '');
 const IPFS_CONFIG = { provider: IPFS_PROVIDER, apiKey: IPFS_API_KEY } as const;
 
 // Local mode: detect when running without cloud services
@@ -791,13 +810,15 @@ async function toolPublishContext(args: {
     args.task_description ? `  Task: ${args.task_description}` : '',
   ];
 
-  // Pin to IPFS if configured
+  // Pin to IPFS if configured. `local-unpinned` (formerly `local`) means
+  // we compute a CID but DO NOT upload — the caller MUST surface that
+  // distinction. See crypto/ipfs.ts:localPin.
   const turtle = toTurtle(descriptor);
   let ipfsCid: string | undefined;
   let ipfsUrl: string | undefined;
-  let ipfsProvider: string = 'local';
+  let ipfsProvider: string = 'local-unpinned';
 
-  if (IPFS_PROVIDER !== 'local') {
+  if (IPFS_PROVIDER !== 'local-unpinned') {
     try {
       const pinResult = await pinToIpfs(turtle, `descriptor-${descriptor.id}`, IPFS_CONFIG, solidFetch);
       ipfsCid = pinResult.cid;
@@ -811,8 +832,10 @@ async function toolPublishContext(args: {
     }
   } else {
     ipfsCid = cryptoComputeCid(turtle);
-    ipfsProvider = 'local';
-    lines.push(`  CID (local): ${ipfsCid}`);
+    ipfsProvider = 'local-unpinned';
+    ipfsUrl = `ipfs://${ipfsCid}`;
+    lines.push(`  CID (local-unpinned): ${ipfsCid}`);
+    lines.push(`  IPFS: not pinned to public gateway (set PINATA_API_KEY or WEB3STORAGE_TOKEN to enable)`);
   }
 
   // Write anchor receipt to pod (zero-copy: only metadata, not content)
@@ -891,7 +914,7 @@ async function toolPublishContext(args: {
       // Auto-pin the signature to IPFS too (compliance descriptors get
       // their full audit pair publicly anchored when a pin provider is
       // configured). Failure is non-fatal — local CID still computed.
-      if (IPFS_PROVIDER !== 'local') {
+      if (IPFS_PROVIDER !== 'local-unpinned') {
         try {
           const sigPin = await pinToIpfs(sigBody, `signature-${descriptor.id}`, IPFS_CONFIG, solidFetch);
           sigIpfsCid = sigPin.cid;

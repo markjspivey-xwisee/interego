@@ -21,6 +21,7 @@ export type {
   IpfsPinResult,
   IpfsAnchor,
   IpfsConfig,
+  IpfsProvider,
   ChainMode,
   ChainConfig,
   WalletBalance,
@@ -50,6 +51,8 @@ export {
   createIpfsAnchor,
   pinPgslFragment,
   pinDescriptor,
+  LOCAL_UNPINNED_WARNING,
+  resetLocalUnpinnedWarningLatch,
 } from './ipfs.js';
 
 // Wallets (real crypto via ethers.js)

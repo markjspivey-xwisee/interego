@@ -30,7 +30,7 @@ import type {
   IRI,
 } from '@interego/core';
 
-const localIpfsConfig: IpfsConfig = { provider: 'local' };
+const localIpfsConfig: IpfsConfig = { provider: 'local-unpinned' };
 
 // ═════════════════════════════════════════════════════════════
 //  SHA-256 Hashing (real via ethers.js)
@@ -80,16 +80,20 @@ describe('IPFS CID (real)', () => {
 });
 
 // ═════════════════════════════════════════════════════════════
-//  IPFS Pinning (local = real CID, no network)
+//  IPFS Pinning (local-unpinned = real CID, no network)
 // ═════════════════════════════════════════════════════════════
 
-describe('IPFS Pinning (local)', () => {
-  it('local pins content and returns real CID', async () => {
+describe('IPFS Pinning (local-unpinned)', () => {
+  it('local-unpinned computes a real CID and reports a warning', async () => {
     const result = await pinToIpfs('test content', 'test.txt', localIpfsConfig);
     expect(result.cid).toBeTruthy();
     expect(result.cid.startsWith('bafkrei')).toBe(true);
-    expect(result.provider).toBe('local');
+    // Honesty: provider must NOT report 'local' (which read like a
+    // successful pin) — see crypto/ipfs.ts:localPin.
+    expect(result.provider).toBe('local-unpinned');
     expect(result.url).toContain('ipfs://');
+    expect(result.warning).toBeTruthy();
+    expect(result.warning).toContain('NOT on a public gateway');
   });
 
   it('deterministic CID for same content', async () => {

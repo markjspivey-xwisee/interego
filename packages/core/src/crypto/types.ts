@@ -19,13 +19,30 @@ import type { IRI } from '../model/types.js';
 /** IPFS Content Identifier */
 export type CID = string & { readonly __brand: 'CID' };
 
+/**
+ * IPFS provider tag on a pin result.
+ *
+ * `local-unpinned` is the honest label for the no-credentials path: we
+ * compute a content-addressed CID but DO NOT upload the bytes anywhere,
+ * so the CID is NOT retrievable from any public gateway. Older code used
+ * the misleading `'local'` label which read like a successful pin; that
+ * label has been removed. See `localPin` in `crypto/ipfs.ts`.
+ */
+export type IpfsProvider = 'pinata' | 'web3storage' | 'local-unpinned';
+
 /** Result of pinning content to IPFS */
 export interface IpfsPinResult {
   readonly cid: CID;
   readonly size: number;
   readonly url: string;             // gateway URL: ipfs://CID or https://gateway/ipfs/CID
   readonly pinnedAt: string;        // ISO timestamp
-  readonly provider: 'pinata' | 'web3storage' | 'local';
+  readonly provider: IpfsProvider;
+  /**
+   * Operator/agent-facing warning. Set whenever `provider === 'local-unpinned'`
+   * (CID computed but content NOT uploaded). Consumers should surface this
+   * to the user instead of treating the pin as successful.
+   */
+  readonly warning?: string;
 }
 
 /** IPFS anchor on a descriptor or PGSL fragment */
@@ -38,7 +55,7 @@ export interface IpfsAnchor {
 
 /** Configuration for IPFS pinning service */
 export interface IpfsConfig {
-  readonly provider: 'pinata' | 'web3storage' | 'local';
+  readonly provider: IpfsProvider;
   readonly apiKey?: string;
   readonly apiSecret?: string;
   readonly gateway?: string;        // default: https://gateway.pinata.cloud/ipfs/

@@ -8,13 +8,29 @@
  * PGSL atoms are content-addressed — this extends that to IPFS:
  *   urn:pgsl:atom:X → CID based on real SHA-256 hash
  *
- * Supports Pinata, web3.storage, or local (CID computed, not pinned).
+ * Supports Pinata, web3.storage, or local-unpinned (CID computed, not
+ * uploaded — content is NOT retrievable from a public gateway).
  */
 
 import { ethers } from 'ethers';
 import type { IRI } from '../model/types.js';
 import type { CID, IpfsPinResult, IpfsAnchor, IpfsConfig } from './types.js';
 import type { FetchFn } from '../http/types.js';
+
+/**
+ * Per-process latch so the no-pinning warning is emitted at most once per
+ * container lifetime instead of on every pin call. Reset only by process
+ * restart. Tests that want to assert the warning can reset by importing
+ * `resetLocalUnpinnedWarningLatch`.
+ */
+let LOCAL_UNPINNED_WARNED = false;
+export function resetLocalUnpinnedWarningLatch(): void {
+  LOCAL_UNPINNED_WARNED = false;
+}
+
+/** Human-readable warning attached to every `local-unpinned` result. */
+export const LOCAL_UNPINNED_WARNING =
+  '[ipfs] no PINATA_API_KEY / WEB3STORAGE_TOKEN — content is NOT on a public gateway; CID is local-only';
 
 // ── Content hashing (real SHA-256 via ethers.js) ─────────────
 
@@ -104,7 +120,7 @@ export async function pinToIpfs(
       return pinToPinata(content, name, config, fetchFn);
     case 'web3storage':
       return pinToWeb3Storage(content, name, config, fetchFn);
-    case 'local':
+    case 'local-unpinned':
     default:
       return localPin(content);
   }
@@ -184,18 +200,34 @@ async function pinToWeb3Storage(
 }
 
 /**
- * Local CID computation without pinning.
- * Computes a real content-addressed identifier — same hash IPFS would produce.
- * Content is not uploaded anywhere.
+ * Local CID computation WITHOUT pinning.
+ *
+ * Computes a real content-addressed identifier — same hash IPFS would
+ * produce — but does NOT upload the bytes to any pinning service. The
+ * returned CID is therefore NOT retrievable from `gateway.pinata.cloud`,
+ * `w3s.link`, or any other public gateway. Use this only when you want
+ * the content-address as a local identifier; do not surface it as a
+ * "successful pin" to downstream consumers.
+ *
+ * The result is tagged `provider: 'local-unpinned'` (previously
+ * misleading `'local'`) and carries an explicit `warning` field so
+ * consumers can render it to the user. The first call per process also
+ * logs a `console.warn` so operators notice that PINATA_API_KEY /
+ * WEB3STORAGE_TOKEN is unset.
  */
 function localPin(content: string): IpfsPinResult {
   const cid = computeCid(content);
+  if (!LOCAL_UNPINNED_WARNED) {
+    LOCAL_UNPINNED_WARNED = true;
+    console.warn(LOCAL_UNPINNED_WARNING);
+  }
   return {
     cid,
     size: content.length,
     url: `ipfs://${cid}`,
     pinnedAt: new Date().toISOString(),
-    provider: 'local',
+    provider: 'local-unpinned',
+    warning: LOCAL_UNPINNED_WARNING,
   };
 }
 

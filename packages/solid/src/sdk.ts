@@ -106,7 +106,7 @@ export class ContextGraphsSDK {
       agentId: 'urn:agent:sdk:default',
       ownerWebId: `${config.podUrl}profile#me`,
       ownerName: 'SDK User',
-      ipfs: { provider: 'local' },
+      ipfs: { provider: 'local-unpinned' },
 ...config,
       podUrl: config.podUrl.endsWith('/') ? config.podUrl : `${config.podUrl}/`,
     };
@@ -182,11 +182,14 @@ export class ContextGraphsSDK {
       fetch: this.fetchFn,
     });
 
-    // Pin to IPFS if configured
+    // Pin to IPFS if configured. `local-unpinned` (formerly the
+    // misleadingly-named `local`) means we compute a CID for callers
+    // that want a content-address but do NOT upload — see
+    // crypto/ipfs.ts:localPin.
     let ipfsCid: string | undefined;
     let ipfsUrl: string | undefined;
-    const shouldPin = options.pin ?? (this.config.ipfs?.provider !== 'local');
-    if (shouldPin && this.config.ipfs && this.config.ipfs.provider !== 'local') {
+    const shouldPin = options.pin ?? (this.config.ipfs?.provider !== 'local-unpinned');
+    if (shouldPin && this.config.ipfs && this.config.ipfs.provider !== 'local-unpinned') {
       try {
         const turtle = toTurtle(descriptor);
         const pinResult = await pinToIpfs(turtle, `descriptor-${descId}`, this.config.ipfs, this.fetchFn);
