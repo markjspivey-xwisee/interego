@@ -66,6 +66,8 @@ export {
   exportPrivateKey,
   signMessageRaw,
   recoverMessageSigner,
+  makeWalletDelegationSigner,
+  makeWalletDelegationVerifier,
 } from './wallet.js';
 export {
   getNostrPubkey,

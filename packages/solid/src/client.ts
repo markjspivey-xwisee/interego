@@ -1392,3 +1392,88 @@ export async function verifyAgentDelegation(
       : {},
   );
 }
+
+// ─────────────────────────────────────────────────────────────
+//  verify_agent response envelope (shared by MCP shims)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Stable response envelope returned by every `verify_agent` MCP tool
+ * (both the stdio shim under `mcp-server/` and the HTTP relay under
+ * `deploy/mcp-relay/`).
+ *
+ * Why this exists: the raw `DelegationVerification` shape uses
+ * trust-label string-discrimination (`trustLevel === 'CryptographicallyVerified'`)
+ * to tell registry-only from chain-walked results. Downstream agents
+ * (claude.ai connector, ChatGPT, codex/cursor bridges, regulators)
+ * need to branch on a single boolean — they should not have to parse
+ * `trustLevel` strings. So we surface `delegationChain` as a concrete
+ * object iff the chain walk succeeded, and `null` otherwise.
+ *
+ * The raw `valid` / `owner` / `agent` / `scope` fields stay alongside
+ * so the v0.4 wire shape still passes through; this is additive.
+ */
+export interface VerifyAgentEnvelope {
+  readonly verified: boolean;
+  readonly trustLevel: 'CryptographicallyVerified' | 'SelfAsserted';
+  /**
+   * Number of signed links in the verified chain. 0 when verification
+   * failed before any link could be checked; 1 for a direct
+   * owner→agent delegation; n>1 for sub-delegated chains.
+   */
+  readonly chainLength: number;
+  /**
+   * Concrete chain block, ONLY populated when
+   * `trustLevel === 'CryptographicallyVerified'`. Clients branch on
+   * `delegationChain != null` to gate cryptographic-trust paths.
+   */
+  readonly delegationChain: {
+    readonly anchored: true;
+    readonly owner?: IRI;
+    readonly agent?: IRI;
+    readonly scope?: string;
+    readonly length: number;
+  } | null;
+  readonly reason: string | null;
+  // Raw fields kept for back-compat.
+  readonly valid: boolean;
+  readonly owner?: IRI;
+  readonly agent?: IRI;
+  readonly scope?: string;
+}
+
+/**
+ * Wrap a `DelegationVerification` (the raw result returned by
+ * `verifyAgentDelegation`) in the stable `verify_agent` envelope.
+ *
+ * Factored out so the stdio shim under `mcp-server/server.ts` and the
+ * HTTP shim under `deploy/mcp-relay/server.ts` emit byte-equivalent
+ * JSON for the same `(agent_id, pod_url)` input — wire-format drift
+ * between the two surfaces was the original observable bug
+ * (johnny's `{ verified, agents:[...] }` paraphrase did not match the
+ * stdio text-summary that callers actually hit).
+ */
+export function buildVerifyAgentEnvelope(result: DelegationVerification): VerifyAgentEnvelope {
+  const trustLevel = result.trustLevel ?? 'SelfAsserted';
+  const chainLength = result.chainLength ?? (result.valid ? 1 : 0);
+  const cryptographicallyVerified = result.valid && trustLevel === 'CryptographicallyVerified';
+  return {
+    verified: result.valid,
+    trustLevel,
+    chainLength,
+    delegationChain: cryptographicallyVerified
+      ? {
+          anchored: true,
+          owner: result.owner,
+          agent: result.agent,
+          scope: result.scope,
+          length: chainLength,
+        }
+      : null,
+    reason: result.reason ?? null,
+    valid: result.valid,
+    owner: result.owner,
+    agent: result.agent,
+    scope: result.scope,
+  };
+}

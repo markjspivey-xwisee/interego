@@ -66,6 +66,8 @@ import {
   KERNEL_JSONLD_CONTEXT,
   KERNEL_RESULT_SHAPES,
   kernelAct,
+  makeWalletDelegationSigner,
+  makeWalletDelegationVerifier,
   mint as kernelMint,
   normalizePublishInputs,
   openEncryptedEnvelope,
@@ -84,6 +86,8 @@ import {
 
 import type {
   ContextDescriptorData,
+  DelegationSigner,
+  DelegationVerifier,
   FetchFn,
   IRI,
   ManifestEntry,
@@ -107,6 +111,7 @@ import {
   readAgentRegistry,
   writeDelegationCredential,
   verifyAgentDelegation,
+  buildVerifyAgentEnvelope,
   fetchPodDirectory,
   publishPodDirectory,
   resolveWebFinger,
@@ -312,6 +317,27 @@ async function ensureComplianceWallet(): Promise<PersistedComplianceWallet> {
   });
   return _complianceWalletPromise;
 }
+
+// ── Delegation VC verifier ──────────────────────────────────
+//
+// Wire ECDSA-recovery into the delegation-VC pipeline so the stdio
+// shim's `verify_agent` can perform a real cryptographic chain walk
+// instead of the registry-only path (which silently downgrades every
+// result to `trustLevel: 'SelfAsserted'`). The verifier is pure
+// recovery on the proof block — wallet-independent and safe to share
+// across every tool call. The matching signer (via the compliance
+// wallet at `ensureComplianceWallet`) is exposed by
+// `getDelegationSigner` below for any future `register_agent`
+// migration that wants to mint signed VCs from this shim instead of
+// the unsigned `createDelegationCredential` path it uses today.
+const delegationVerifier: DelegationVerifier = makeWalletDelegationVerifier();
+async function getDelegationSigner(): Promise<DelegationSigner> {
+  const cw = await ensureComplianceWallet();
+  return makeWalletDelegationSigner(cw.wallet);
+}
+// Suppress unused-symbol lint until a caller wires register_agent into
+// this signer — the function is part of the documented shared shim API.
+void getDelegationSigner;
 
 // PGSL state — the lattice persists across tool calls
 const pgslProvenance: NodeProvenance = {
@@ -1229,38 +1255,44 @@ async function toolVerifyAgent(args: {
 }): Promise<string> {
   await ensureCSS();
 
+  // Pass the verifier so this shim performs a real cryptographic chain
+  // walk (matching the HTTP relay): the signed VC at
+  // `<pod>/credentials/<agent>.jsonld` is fetched, its proof is checked
+  // against the owner's wallet key, and any sub-delegation chain is
+  // walked to the pod owner before a `CryptographicallyVerified` label
+  // is returned. Without `verifier:` the function would silently
+  // downgrade every result to `trustLevel: 'SelfAsserted'`.
   const result = await verifyAgentDelegation(
     args.agent_id as IRI,
     args.pod_url,
-    { fetch: solidFetch },
+    { fetch: solidFetch, verifier: delegationVerifier },
   );
 
+  // L2 clarification (see post-run findings 2026-04-20): registry
+  // membership ≠ envelope-recipient eligibility. An agent without a
+  // registered cg:encryptionPublicKey is authorized to act but
+  // CANNOT decrypt new envelopes (because publish excludes agents
+  // missing a public key from recipient-set composition). Decorate
+  // the standard envelope with `canDecryptNewEnvelopes` so callers
+  // don't have to re-read the agent registry just to learn that.
+  let canDecryptNewEnvelopes: boolean | null = null;
   if (result.valid) {
-    // L2 clarification (see post-run findings 2026-04-20): registry
-    // membership ≠ envelope-recipient eligibility. An agent without a
-    // registered cg:encryptionPublicKey is authorized to act but
-    // CANNOT decrypt new envelopes (because publish excludes agents
-    // missing a public key from recipient-set composition). Surface
-    // this distinction explicitly so clients don't assume valid →
-    // readable.
     const profile = await readAgentRegistry(args.pod_url, { fetch: solidFetch }).catch(() => null);
     const entry = profile?.authorizedAgents.find(a => a.agentId === result.agent);
-    const canDecrypt = Boolean(entry?.encryptionPublicKey);
-    return [
-      `VALID — Agent ${result.agent} is authorized`,
-      `  Owner: ${result.owner}`,
-      `  Scope: ${result.scope}`,
-      `  Pod: ${args.pod_url}`,
-      `  Can decrypt new envelopes: ${canDecrypt ? 'YES' : 'NO — no cg:encryptionPublicKey on file. Agent can act (per scope) but cannot read E2EE payloads addressed to recipients registered after its enrollment.'}`,
-    ].join('\n');
-  } else {
-    return [
-      `INVALID — ${result.reason}`,
-      `  Agent: ${result.agent}`,
-      result.owner ? `  Owner: ${result.owner}` : '',
-      `  Pod: ${args.pod_url}`,
-    ].filter(Boolean).join('\n');
+    canDecryptNewEnvelopes = Boolean(entry?.encryptionPublicKey);
   }
+
+  // Machine-readable JSON envelope — same shape the HTTP relay emits
+  // so MCP clients see byte-equivalent responses across both surfaces.
+  // The prior multi-line text-summary stripped trustLevel + chainLength
+  // entirely; downstream agents had no way to tell `SelfAsserted`
+  // (registry-only) from `CryptographicallyVerified` (chain-walked).
+  const envelope = buildVerifyAgentEnvelope(result);
+  return JSON.stringify({
+    ...envelope,
+    pod: args.pod_url,
+    canDecryptNewEnvelopes,
+  });
 }
 
 // ── NEW: Multi-pod federation tools ──────────────────────────

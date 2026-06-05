@@ -4,9 +4,10 @@ export {
   parseDistributionFromDescriptorTurtle,
   writeAgentRegistry, readAgentRegistry,
   writeDelegationCredential, readDelegationCredential, verifyAgentDelegation,
+  buildVerifyAgentEnvelope,
   predictDescriptorUrl,
 } from './client.js';
-export type { DistributionLink, VerifyAgentDelegationOptions } from './client.js';
+export type { DistributionLink, VerifyAgentDelegationOptions, VerifyAgentEnvelope } from './client.js';
 export type {
   FetchFn,
   FetchResponse,

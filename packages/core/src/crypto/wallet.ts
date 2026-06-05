@@ -226,6 +226,77 @@ export function recoverMessageSigner(message: string, signature: string): string
 }
 
 // ═════════════════════════════════════════════════════════════
+//  Delegation VC signer + verifier (shared between MCP shims)
+// ═════════════════════════════════════════════════════════════
+//
+// The relay and the stdio MCP server both need to mint and verify
+// signed delegation credentials, and both back the proof block with
+// an Ethereum-style ECDSA recovery (the address the canonical payload
+// recovers to MUST equal the address recorded in `proof.signerAddress`).
+// Factor the two halves out so each shim has a one-liner wallet binding
+// instead of re-implementing the loop.
+//
+// `makeWalletDelegationSigner` returns a function shaped like
+// `DelegationSigner` (defined in `model/delegation`) — kept duck-typed
+// here so the crypto layer does not have to import the model layer.
+// `makeWalletDelegationVerifier` returns the symmetric verifier.
+
+/**
+ * Build a `DelegationSigner` backed by an in-process wallet (the
+ * compliance ECDSA key the operator persisted via
+ * `loadOrCreateComplianceWallet`).
+ *
+ * The returned function takes the canonical credential payload, signs
+ * it with the wallet, and emits `{ signature, signerAddress,
+ * verificationMethod }` — `verificationMethod` uses `did:ethr:<addr>`
+ * so non-pod verifiers can recover the public key without an extra
+ * DID-document fetch.
+ */
+export function makeWalletDelegationSigner(
+  wallet: Wallet,
+): (canonicalPayload: string) => Promise<{
+  signature: string;
+  signerAddress: string;
+  verificationMethod: IRI;
+}> {
+  return async (canonicalPayload: string) => {
+    const signature = await signMessageRaw(wallet, canonicalPayload);
+    const signerAddress = wallet.address;
+    const verificationMethod = `did:ethr:${signerAddress}` as IRI;
+    return { signature, signerAddress, verificationMethod };
+  };
+}
+
+/**
+ * Build a `DelegationVerifier` that recovery-checks an ECDSA proof
+ * block against the canonical payload it signed.
+ *
+ * A bad signature, an edited payload, or a substituted signerAddress
+ * all make recovery yield a different address — the comparison fails
+ * and the credential is rejected. This is symmetric with
+ * `makeWalletDelegationSigner` and accepts VCs signed by any party
+ * using an Ethereum-style ECDSA key (including external wallets that
+ * users plug in to replace the relay-backed compliance signer).
+ *
+ * The verifier is wallet-independent — recovery is a pure function of
+ * `(payload, signature)` — so a single instance is safe to share across
+ * every request even when each pod owner holds their own wallet.
+ */
+export function makeWalletDelegationVerifier(): (
+  canonicalPayload: string,
+  proof: { proofValue: string; signerAddress: string },
+) => Promise<boolean> {
+  return async (canonicalPayload, proof) => {
+    try {
+      const recovered = recoverMessageSigner(canonicalPayload, proof.proofValue);
+      return recovered.toLowerCase() === proof.signerAddress.toLowerCase();
+    } catch {
+      return false;
+    }
+  };
+}
+
+// ═════════════════════════════════════════════════════════════
 //  Real Wallet Delegation (EIP-712 Typed Data)
 // ═════════════════════════════════════════════════════════════
 

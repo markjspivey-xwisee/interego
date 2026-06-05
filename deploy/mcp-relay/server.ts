@@ -97,8 +97,8 @@ import {
   removeAuthorizedAgent,
   restrict as kernelRestrict,
   signDescriptor,
-  signMessageRaw,
-  recoverMessageSigner,
+  makeWalletDelegationSigner,
+  makeWalletDelegationVerifier,
   type SignedDescriptor,
   type DelegationSigner,
   type DelegationVerifier,
@@ -135,6 +135,7 @@ import {
   writeDelegationCredential,
   readDelegationCredential,
   verifyAgentDelegation,
+  buildVerifyAgentEnvelope,
   fetchPodDirectory,
   publishPodDirectory,
   resolveWebFinger,
@@ -559,37 +560,21 @@ async function ensureRelayComplianceWallet(): Promise<PersistedComplianceWallet>
 // relay) recover the public key without an extra DID-document fetch.
 async function getDelegationSigner(): Promise<DelegationSigner> {
   const cw = await ensureRelayComplianceWallet();
-  return async (canonicalPayload: string) => {
-    const signature = await signMessageRaw(cw.wallet, canonicalPayload);
-    const signerAddress = cw.wallet.address;
-    const verificationMethod = `did:ethr:${signerAddress}` as IRI;
-    return { signature, signerAddress, verificationMethod };
-  };
+  return makeWalletDelegationSigner(cw.wallet);
 }
 
 /**
  * Verify a delegation proof block against its canonical payload.
  *
- * Recovery-based check: derives the address from the (payload,
- * signature) pair and compares it case-insensitively against
- * `proof.signerAddress`. A bad signature, an edited payload, or a
- * substituted signerAddress all make recovery yield a different
- * address — the comparison fails and the credential is rejected.
- *
- * Symmetric with `getDelegationSigner` so the relay can verify the
- * VCs it has signed itself, AND VCs signed by any other party using
- * an Ethereum-style ECDSA key (including external wallets that
- * users will eventually plug in to replace the relay-backed
- * compliance signer).
+ * Recovery-based check shared with the stdio MCP shim: derives the
+ * address from the (payload, signature) pair and compares it
+ * case-insensitively against `proof.signerAddress`. Symmetric with
+ * `getDelegationSigner` so the relay can verify the VCs it signed
+ * itself AND VCs signed by any other party using an Ethereum-style
+ * ECDSA key (including external wallets that users will eventually
+ * plug in to replace the relay-backed compliance signer).
  */
-const delegationVerifier: DelegationVerifier = async (canonicalPayload, proof) => {
-  try {
-    const recovered = recoverMessageSigner(canonicalPayload, proof.proofValue);
-    return recovered.toLowerCase() === proof.signerAddress.toLowerCase();
-  } catch {
-    return false;
-  }
-};
+const delegationVerifier: DelegationVerifier = makeWalletDelegationVerifier();
 
 // ── OAuth provider init (DCR-persistent) ────────────────────
 //
@@ -1611,7 +1596,7 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
     args.pod_url as string,
     { fetch: solidFetch, verifier: delegationVerifier },
   );
-  return JSON.stringify(result);
+  return JSON.stringify(buildVerifyAgentEnvelope(result));
 }
 
 // ── Federation Tool Handlers ────────────────────────────────

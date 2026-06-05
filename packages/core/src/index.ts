@@ -424,6 +424,8 @@ export {
   exportPrivateKey,
   signMessageRaw,
   recoverMessageSigner,
+  makeWalletDelegationSigner,
+  makeWalletDelegationVerifier,
   getNostrPubkey,
   schnorrSign,
   schnorrVerify,
