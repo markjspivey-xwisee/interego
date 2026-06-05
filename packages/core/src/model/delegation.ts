@@ -15,9 +15,38 @@ import type {
   OwnerProfileData,
   AuthorizedAgentData,
   AgentDelegationCredential,
+  SignedDelegationCredential,
+  DelegationProof,
   DelegationVerification,
   DelegationScope,
 } from './types.js';
+
+// ── Signer / Verifier injection types ───────────────────────
+//
+// Cryptographic primitives are injected so this module stays in the
+// pure model layer (no dependency on packages/core/src/crypto, which
+// itself imports from model/types). Callers wire ethers/nacl/etc.
+// implementations through these tiny function shapes.
+
+/**
+ * Synchronous signing function. Given the canonical JSON payload of the
+ * credential (the credential with `proof` removed, stringified with
+ * stable key order), returns the signer's hex signature plus the address
+ * the verifier should match. `verificationMethod` is the IRI that names
+ * the key — typically `did:ethr:<addr>` or `<webId>#key-1`.
+ */
+export type DelegationSigner = (canonicalPayload: string) => Promise<{
+  signature: string;
+  signerAddress: string;
+  verificationMethod: IRI;
+}>;
+
+/**
+ * Synchronous verification function. Given the canonical payload that
+ * was signed plus the proof block, returns true iff the signature
+ * recovers an address matching `proof.signerAddress`.
+ */
+export type DelegationVerifier = (canonicalPayload: string, proof: DelegationProof) => Promise<boolean>;
 
 // ── Owner Profile ────────────────────────────────────────────
 
@@ -93,15 +122,24 @@ export function createDelegationCredential(
     case 'DiscoverOnly': scopes.push('discover'); break;
   }
 
+  // Honour the agent's own `delegatedBy` so sub-delegation chains are
+  // expressed correctly: when an agent's parent is NOT the pod owner,
+  // the credentialSubject.delegatedBy points to that parent agent and
+  // the issuer becomes that parent (the principal that signed it). The
+  // chain walker then follows `delegatedBy` link-by-link up to the pod
+  // owner. For the common case of a directly-owner-delegated agent the
+  // issuer + delegatedBy both collapse back to `owner.webId`, so the
+  // existing single-hop tests are unaffected.
+  const principal = agent.delegatedBy || owner.webId;
   return {
     id: credentialId,
     type: ['VerifiableCredential', 'AgentDelegation'],
-    issuer: owner.webId,
+    issuer: principal,
     issuanceDate: now,
     expirationDate: agent.validUntil,
     credentialSubject: {
       id: agent.agentId,
-      delegatedBy: owner.webId,
+      delegatedBy: principal,
       scope: scopes,
       pod: podUrl,
     },
@@ -267,7 +305,77 @@ export function parseOwnerProfile(turtle: string): OwnerProfileData {
 }
 
 /**
+ * Build the canonical JSON of a credential for signing or verification.
+ *
+ * The proof block is excluded — signing the payload-with-proof would
+ * make verification chicken-and-egg. Keys are emitted in a fixed order
+ * so two parties computing the canonical payload from the same logical
+ * credential always agree byte-for-byte.
+ */
+export function canonicalCredentialPayload(
+  credential: AgentDelegationCredential,
+): string {
+  const ordered: Record<string, unknown> = {
+    '@context': [
+      'https://www.w3.org/2018/credentials/v1',
+      'https://markjspivey-xwisee.github.io/interego/ns/cg/delegation/v1',
+    ],
+    id: credential.id,
+    type: [...credential.type].sort(),
+    issuer: credential.issuer,
+    issuanceDate: credential.issuanceDate,
+    credentialSubject: {
+      id: credential.credentialSubject.id,
+      delegatedBy: credential.credentialSubject.delegatedBy,
+      pod: credential.credentialSubject.pod,
+      scope: [...credential.credentialSubject.scope].sort(),
+    },
+  };
+  if (credential.expirationDate) {
+    ordered['expirationDate'] = credential.expirationDate;
+  }
+  // Stable stringify: JS object literal key order is insertion order,
+  // so the constant block above produces a deterministic serialization.
+  return JSON.stringify(ordered);
+}
+
+/**
+ * Sign a delegation credential with the owner's wallet key, producing a
+ * SignedDelegationCredential that downstream verifiers can cryptographically
+ * check.
+ *
+ * The signer is injected so callers can wire in any key-management story
+ * (ethers wallet held by the relay, hardware wallet, OIDC token exchanged
+ * for a JWS, etc.). Whatever the signer returns is captured verbatim in
+ * the proof block — no key material flows through this module.
+ */
+export async function createSignedDelegationCredential(
+  owner: OwnerProfileData,
+  agent: AuthorizedAgentData,
+  podUrl: IRI,
+  signer: DelegationSigner,
+): Promise<SignedDelegationCredential> {
+  const unsigned = createDelegationCredential(owner, agent, podUrl);
+  const payload = canonicalCredentialPayload(unsigned);
+  const { signature, signerAddress, verificationMethod } = await signer(payload);
+  const proof: DelegationProof = {
+    type: 'EcdsaSecp256k1Signature2019',
+    created: new Date().toISOString(),
+    proofPurpose: 'assertionMethod',
+    verificationMethod,
+    proofValue: signature,
+    signerAddress,
+  };
+  return { ...unsigned, proof };
+}
+
+/**
  * Serialize a delegation credential to JSON-LD.
+ *
+ * When a `proof` block is present (i.e. the credential was signed via
+ * createSignedDelegationCredential) it round-trips verbatim, so consumers
+ * fetching the JSON-LD off a pod can reconstruct the canonical payload
+ * and re-run signature verification end-to-end.
  */
 export function delegationCredentialToJsonLd(
   credential: AgentDelegationCredential,
@@ -291,28 +399,113 @@ export function delegationCredentialToJsonLd(
   if (credential.expirationDate) {
     doc['expirationDate'] = credential.expirationDate;
   }
+  if (credential.proof) {
+    doc['proof'] = { ...credential.proof };
+  }
   return JSON.stringify(doc, null, 2);
+}
+
+/**
+ * Parse a delegation credential JSON-LD document back into an
+ * AgentDelegationCredential. Used by verifyDelegationChain to re-hydrate
+ * credentials pulled from `<pod>/credentials/<agent>.jsonld` for signature
+ * verification.
+ *
+ * Throws if the document is missing required VC fields. The proof block is
+ * optional — unsigned credentials are accepted but `verifyDelegationChain`
+ * will refuse to elevate trust above SelfAsserted.
+ */
+export function parseDelegationCredential(
+  jsonLd: string,
+): AgentDelegationCredential {
+  const doc = JSON.parse(jsonLd) as Record<string, unknown>;
+  const subject = doc['credentialSubject'] as Record<string, unknown> | undefined;
+  if (!doc['id'] || !doc['issuer'] || !doc['issuanceDate'] || !subject) {
+    throw new Error('Delegation credential JSON-LD is missing required fields');
+  }
+  const result: AgentDelegationCredential = {
+    id: doc['id'] as IRI,
+    type: Array.isArray(doc['type']) ? (doc['type'] as string[]) : ['VerifiableCredential', 'AgentDelegation'],
+    issuer: doc['issuer'] as IRI,
+    issuanceDate: doc['issuanceDate'] as string,
+    expirationDate: doc['expirationDate'] as string | undefined,
+    credentialSubject: {
+      id: subject['id'] as IRI,
+      delegatedBy: subject['delegatedBy'] as IRI,
+      scope: Array.isArray(subject['scope']) ? (subject['scope'] as string[]) : [],
+      pod: subject['pod'] as IRI,
+    },
+    proof: doc['proof'] as DelegationProof | undefined,
+  };
+  return result;
 }
 
 // ── Verification ─────────────────────────────────────────────
 
 /**
+ * Options for `verifyDelegation` that activate cryptographic chain walking.
+ *
+ * When `fetchCredential` AND `verifier` are both supplied, verifyDelegation
+ * delegates to `verifyDelegationChain`, which fetches the signed VC for the
+ * agent, verifies the signature against the owner's wallet key, and walks
+ * up the chain if the agent was itself delegated by another agent (sub-
+ * delegation). When either is omitted, verifyDelegation runs the registry-
+ * only check and reports `trustLevel: 'SelfAsserted'`.
+ */
+export interface DelegationVerificationOptions {
+  /**
+   * Fetch the signed delegation VC for the given agent against the given
+   * pod. Return `null` if no credential is present (in which case the
+   * trust label is downgraded to SelfAsserted even if the registry
+   * accepts the agent).
+   */
+  readonly fetchCredential?: (
+    podUrl: string,
+    agentId: IRI,
+  ) => Promise<AgentDelegationCredential | null>;
+  /**
+   * Verify a credential's proof block against its canonical payload.
+   * Injected so this module stays free of crypto-library imports.
+   */
+  readonly verifier?: DelegationVerifier;
+  /**
+   * Walk sub-delegation chains where one agent has re-delegated to
+   * another. Defaults to true. Set false to verify only the immediate
+   * delegation, even if the owner field points at another agent.
+   */
+  readonly walkSubDelegations?: boolean;
+  /** Maximum chain length before we abort with a `chain too deep` error. */
+  readonly maxChainLength?: number;
+}
+
+/**
  * Verify that an agent is authorized to act on behalf of a pod owner.
  *
- * Checks the delegation chain:
- *   1. Fetch the agent registry from the pod
- *   2. Find the agent in the registry
- *   3. Check scope, temporal validity, revocation status
+ * Two modes, selected by `options`:
+ *
+ *   Registry-only (default): fetch the agent registry, confirm the agent
+ *     is present, in-window, and not revoked. Result carries
+ *     `trustLevel: 'SelfAsserted'` — no cryptographic claim is made.
+ *
+ *   Chain-walking: same registry checks PLUS fetch the signed VC for the
+ *     agent, verify the proof against the owner's wallet key, then if
+ *     `walkSubDelegations` is set and the credential's `delegatedBy`
+ *     points at another agent rather than the pod owner, recurse up
+ *     until we hit the pod owner's WebID. Each link must produce a
+ *     valid signature. Result carries `trustLevel: 'CryptographicallyVerified'`
+ *     and `chainLength: N` (number of signed links).
  *
  * @param agentId - The agent claiming delegation
  * @param podUrl - The pod URL being acted on
  * @param fetchProfile - Function to fetch and parse the owner profile from the pod
+ * @param options - Optional credential fetcher + signature verifier
  * @returns Verification result
  */
 export async function verifyDelegation(
   agentId: IRI,
   podUrl: string,
   fetchProfile: (podUrl: string) => Promise<OwnerProfileData | null>,
+  options: DelegationVerificationOptions = {},
 ): Promise<DelegationVerification> {
   const profile = await fetchProfile(podUrl);
 
@@ -363,10 +556,172 @@ export async function verifyDelegation(
     };
   }
 
+  // Registry checks passed. If the caller didn't supply a credential
+  // fetcher + verifier we stop here and label the result SelfAsserted.
+  if (!options.fetchCredential || !options.verifier) {
+    return {
+      valid: true,
+      owner: profile.webId,
+      agent: agentId,
+      scope: agent.scope,
+      trustLevel: 'SelfAsserted',
+      chainLength: 1,
+    };
+  }
+
+  // Chain-walk: fetch the signed VC, verify each link up to the pod owner.
+  return verifyDelegationChain(agentId, podUrl, profile, fetchProfile, options);
+}
+
+/**
+ * Walk a signed delegation chain from `agentId` up to the pod owner's
+ * WebID, verifying each VC's signature in turn.
+ *
+ * The walk:
+ *   1. Fetch the signed VC for the current agent from `<pod>/credentials/<agent>.jsonld`.
+ *   2. Re-derive the canonical payload, run the verifier — fail if the
+ *      proof is absent, the signature is bad, or the recovered address
+ *      doesn't match `proof.signerAddress`.
+ *   3. Read `credentialSubject.delegatedBy`. If it equals the pod owner,
+ *      the chain is anchored — return success. Otherwise treat the
+ *      `delegatedBy` IRI as the next agent up and recurse.
+ *   4. Abort with a `chain too deep` error if we exceed `maxChainLength`.
+ *
+ * Each link gets its own registry-membership + temporal + revocation
+ * check; a revoked intermediate agent fails the whole chain.
+ */
+export async function verifyDelegationChain(
+  agentId: IRI,
+  podUrl: string,
+  profile: OwnerProfileData,
+  fetchProfile: (podUrl: string) => Promise<OwnerProfileData | null>,
+  options: DelegationVerificationOptions,
+): Promise<DelegationVerification> {
+  const { fetchCredential, verifier, walkSubDelegations = true, maxChainLength = 8 } = options;
+  if (!fetchCredential || !verifier) {
+    return {
+      valid: false,
+      agent: agentId,
+      reason: 'verifyDelegationChain requires both fetchCredential and verifier',
+    };
+  }
+
+  let currentAgent: IRI = agentId;
+  let currentProfile = profile;
+  let chainLength = 0;
+  const seen = new Set<IRI>();
+  const now = new Date().toISOString();
+
+  while (chainLength < maxChainLength) {
+    if (seen.has(currentAgent)) {
+      return {
+        valid: false,
+        owner: profile.webId,
+        agent: agentId,
+        reason: `Delegation chain cycle detected at ${currentAgent}`,
+      };
+    }
+    seen.add(currentAgent);
+
+    const credential = await fetchCredential(podUrl, currentAgent);
+    if (!credential) {
+      return {
+        valid: false,
+        owner: profile.webId,
+        agent: agentId,
+        reason: `No signed delegation credential found for ${currentAgent} on ${podUrl}`,
+      };
+    }
+    if (!credential.proof) {
+      return {
+        valid: false,
+        owner: profile.webId,
+        agent: agentId,
+        reason: `Delegation credential for ${currentAgent} is unsigned — cannot upgrade trust above SelfAsserted`,
+      };
+    }
+    if (credential.expirationDate && credential.expirationDate < now) {
+      return {
+        valid: false,
+        owner: profile.webId,
+        agent: agentId,
+        reason: `Delegation credential for ${currentAgent} expired ${credential.expirationDate}`,
+      };
+    }
+    const payload = canonicalCredentialPayload(credential);
+    const ok = await verifier(payload, credential.proof);
+    if (!ok) {
+      return {
+        valid: false,
+        owner: profile.webId,
+        agent: agentId,
+        reason: `Delegation credential for ${currentAgent} has an invalid signature`,
+      };
+    }
+
+    chainLength += 1;
+    const delegatedBy = credential.credentialSubject.delegatedBy;
+
+    // Reached the pod owner's WebID — chain is anchored.
+    if (delegatedBy === currentProfile.webId) {
+      return {
+        valid: true,
+        owner: currentProfile.webId,
+        agent: agentId,
+        scope: profile.authorizedAgents.find(a => a.agentId === agentId)?.scope,
+        trustLevel: 'CryptographicallyVerified',
+        chainLength,
+      };
+    }
+
+    if (!walkSubDelegations) {
+      // Caller asked us to stop at the first hop even though the credential
+      // points further up the chain. Treat that as a malformed delegation.
+      return {
+        valid: false,
+        owner: currentProfile.webId,
+        agent: agentId,
+        reason: `Delegation for ${currentAgent} is sub-delegated but walkSubDelegations is disabled`,
+      };
+    }
+
+    // Sub-delegation: the immediate parent is another agent on this pod.
+    // Confirm that parent is itself registered and not revoked, then loop.
+    const parent = currentProfile.authorizedAgents.find(a => a.agentId === delegatedBy);
+    if (!parent) {
+      return {
+        valid: false,
+        owner: currentProfile.webId,
+        agent: agentId,
+        reason: `Sub-delegating agent ${delegatedBy} is not registered on ${podUrl}`,
+      };
+    }
+    if (parent.revoked) {
+      return {
+        valid: false,
+        owner: currentProfile.webId,
+        agent: agentId,
+        reason: `Sub-delegating agent ${delegatedBy} has been revoked`,
+      };
+    }
+    if (parent.validUntil && parent.validUntil < now) {
+      return {
+        valid: false,
+        owner: currentProfile.webId,
+        agent: agentId,
+        reason: `Sub-delegating agent ${delegatedBy} expired ${parent.validUntil}`,
+      };
+    }
+    currentAgent = delegatedBy;
+    // Re-fetch the profile in case it has been updated between hops
+    // (defensive; in practice the same profile applies for the same pod).
+    currentProfile = (await fetchProfile(podUrl)) ?? currentProfile;
+  }
+
   return {
-    valid: true,
+    valid: false,
     owner: profile.webId,
     agent: agentId,
-    scope: agent.scope,
+    reason: `Delegation chain exceeded maxChainLength=${maxChainLength}`,
   };
 }

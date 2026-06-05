@@ -40,10 +40,14 @@ export {
   addAuthorizedAgent,
   removeAuthorizedAgent,
   createDelegationCredential,
+  createSignedDelegationCredential,
+  canonicalCredentialPayload,
   ownerProfileToTurtle,
   parseOwnerProfile,
   delegationCredentialToJsonLd,
+  parseDelegationCredential,
   verifyDelegation,
+  verifyDelegationChain,
   registerFacetType,
   getFacetEntry,
   getRegisteredTypes,
@@ -99,6 +103,9 @@ export type {
   EffectiveModal,
   TemporalContext,
   TemporalAnnotations,
+  DelegationSigner,
+  DelegationVerifier,
+  DelegationVerificationOptions,
 } from './model/index.js';
 
 // ── Causality (Pearl's SCM Framework) ───────────────────────
@@ -151,6 +158,8 @@ export type {
   AuthorizedAgentData,
   OwnerProfileData,
   AgentDelegationCredential,
+  SignedDelegationCredential,
+  DelegationProof,
   DelegationVerification,
   PodDirectoryEntry,
   PodDirectoryData,

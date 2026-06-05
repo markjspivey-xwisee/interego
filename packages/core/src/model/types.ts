@@ -710,6 +710,41 @@ export interface OwnerProfileData {
   readonly authorizedAgents: readonly AuthorizedAgentData[];
 }
 
+/**
+ * Cryptographic proof attached to a VC per the W3C Data Integrity model.
+ *
+ * For Interego the default scheme is `EcdsaSecp256k1Signature2019` —
+ * the owner (or a wallet-backed signer acting on the owner's authenticated
+ * behalf) signs the canonical credential payload (the credential with the
+ * `proof` field removed). The signer's secp256k1 address is captured so
+ * verifiers can match it against the owner's published wallet key without
+ * having to reach into a separate DID document. (DID-rooted keys are still
+ * supported via `verificationMethod`.)
+ */
+export interface DelegationProof {
+  /** Proof type (W3C Data Integrity). */
+  readonly type: 'EcdsaSecp256k1Signature2019';
+  /** ISO 8601 timestamp when the proof was created. */
+  readonly created: string;
+  /** Proof purpose per the VC Data Model. */
+  readonly proofPurpose: 'assertionMethod';
+  /**
+   * IRI identifying the verification method — typically the owner's
+   * wallet address as `did:ethr:<addr>` or the owner's WebID `#key`
+   * fragment. The verifier resolves it to recover the public key.
+   */
+  readonly verificationMethod: IRI;
+  /** Hex-encoded secp256k1 signature (0x-prefixed). */
+  readonly proofValue: string;
+  /**
+   * The signer's Ethereum-style address (case-insensitive). Recovered
+   * from the signature at verify time and compared against this value
+   * to detect tampering. Convenience field — the address is also
+   * encoded inside `verificationMethod`.
+   */
+  readonly signerAddress: string;
+}
+
 /** A Verifiable Credential for agent delegation. */
 export interface AgentDelegationCredential {
   /** The credential IRI (stored on the pod). */
@@ -733,7 +768,25 @@ export interface AgentDelegationCredential {
     /** Which pod this delegation covers. */
     readonly pod: IRI;
   };
+  /**
+   * Optional cryptographic proof. When absent the credential is treated
+   * as unsigned and verifyDelegationChain MUST refuse to elevate the
+   * trust label above 'SelfAsserted'. When present the proof MUST sign
+   * the canonical JSON of the credential with the `proof` field removed.
+   */
+  readonly proof?: DelegationProof;
 }
+
+/**
+ * A credential whose `proof` is statically required.
+ *
+ * `createSignedDelegationCredential` returns this narrowed type;
+ * `verifyDelegationChain` accepts only signed credentials when the
+ * caller requests a `CryptographicallyVerified` trust label.
+ */
+export type SignedDelegationCredential = AgentDelegationCredential & {
+  readonly proof: DelegationProof;
+};
 
 /** Result of verifying a delegation chain. */
 export interface DelegationVerification {
@@ -745,6 +798,20 @@ export interface DelegationVerification {
   readonly agent?: IRI;
   /** The delegation scope granted. */
   readonly scope?: DelegationScope;
+  /**
+   * Length of the verified delegation chain. A direct user-to-agent
+   * delegation is length 1; an agent re-delegating to another agent
+   * pushes the count up by one per hop. Only populated when chain
+   * walking succeeds.
+   */
+  readonly chainLength?: number;
+  /**
+   * Trust label earned by this verification. `CryptographicallyVerified`
+   * requires a valid signed VC for every link in the chain;
+   * `SelfAsserted` is the fallback when no signature is available or
+   * the caller skipped the cryptographic check.
+   */
+  readonly trustLevel?: 'CryptographicallyVerified' | 'SelfAsserted';
   /** Human-readable reason if verification failed. */
   readonly reason?: string;
 }

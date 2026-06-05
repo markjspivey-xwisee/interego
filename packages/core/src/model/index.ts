@@ -13,10 +13,19 @@ export {
   addAuthorizedAgent,
   removeAuthorizedAgent,
   createDelegationCredential,
+  createSignedDelegationCredential,
+  canonicalCredentialPayload,
   ownerProfileToTurtle,
   parseOwnerProfile,
   delegationCredentialToJsonLd,
+  parseDelegationCredential,
   verifyDelegation,
+  verifyDelegationChain,
+} from './delegation.js';
+export type {
+  DelegationSigner,
+  DelegationVerifier,
+  DelegationVerificationOptions,
 } from './delegation.js';
 export {
   registerFacetType,

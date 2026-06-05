@@ -10,14 +10,20 @@
 import { describe, it, expect } from 'vitest';
 import {
   addAuthorizedAgent,
+  canonicalCredentialPayload,
   createDelegationCredential,
+  createSignedDelegationCredential,
   createOwnerProfile,
   delegationCredentialToJsonLd,
+  parseDelegationCredential,
   removeAuthorizedAgent,
   verifyDelegation,
 } from '@interego/core';
 import type {
+  AgentDelegationCredential,
   AuthorizedAgentData,
+  DelegationSigner,
+  DelegationVerifier,
   IRI,
   OwnerProfileData,
 } from '@interego/core';
@@ -185,5 +191,208 @@ describe('verifyDelegation', () => {
     );
     expect(r.valid).toBe(false);
     expect(r.reason).toMatch(/expired/);
+  });
+
+  it('reports trustLevel=SelfAsserted when no verifier is supplied', async () => {
+    const r = await verifyDelegation('urn:agent:claude' as IRI, POD, fetcher(profileWith(agent())));
+    expect(r.valid).toBe(true);
+    expect(r.trustLevel).toBe('SelfAsserted');
+    expect(r.chainLength).toBe(1);
+  });
+});
+
+// ── Signed VC chain ──────────────────────────────────────────
+//
+// The chain-walking path is the actual security boundary: registry
+// membership alone is not a cryptographic claim. These tests confirm
+// (a) signed credentials round-trip through canonicalize/sign/verify
+// without losing fidelity, (b) tampering with the credential body or
+// the proof invalidates verification, (c) revoking the agent on the
+// registry kills the verification even when the signed VC is intact,
+// and (d) a sub-delegation chain (owner -> agent A -> agent B) walks
+// up to the pod owner and produces chainLength=2.
+
+const OWNER_ADDRESS = '0xowner000000000000000000000000000000000001';
+const PARENT_ADDRESS = '0xparent00000000000000000000000000000000002';
+
+/** Toy signer — returns a deterministic "signature" tag derived from
+ *  the payload + the signer address. Verifier below recovers by
+ *  splitting the tag; tampering with the payload breaks the recovery. */
+function makeToySigner(address: string): DelegationSigner {
+  return async (canonicalPayload: string) => {
+    const signature = `${address}|${canonicalPayload.length}|${canonicalPayload.slice(0, 32)}`;
+    return {
+      signature,
+      signerAddress: address,
+      verificationMethod: `did:ethr:${address}` as IRI,
+    };
+  };
+}
+
+const toyVerifier: DelegationVerifier = async (canonicalPayload, proof) => {
+  const parts = proof.proofValue.split('|');
+  if (parts.length !== 3) return false;
+  const [recoveredAddress, length, prefix] = parts;
+  if (recoveredAddress?.toLowerCase() !== proof.signerAddress.toLowerCase()) return false;
+  if (parseInt(length ?? '-1', 10) !== canonicalPayload.length) return false;
+  if (prefix !== canonicalPayload.slice(0, 32)) return false;
+  return true;
+};
+
+describe('createSignedDelegationCredential', () => {
+  const owner = createOwnerProfile(OWNER, 'Alice');
+
+  it('attaches a Data-Integrity-shaped proof block to the credential', async () => {
+    const cred = await createSignedDelegationCredential(owner, agent(), POD, makeToySigner(OWNER_ADDRESS));
+    expect(cred.proof).toBeDefined();
+    expect(cred.proof?.type).toBe('EcdsaSecp256k1Signature2019');
+    expect(cred.proof?.proofPurpose).toBe('assertionMethod');
+    expect(cred.proof?.signerAddress).toBe(OWNER_ADDRESS);
+    expect(cred.proof?.verificationMethod).toBe(`did:ethr:${OWNER_ADDRESS}`);
+  });
+
+  it('produces a canonical payload that round-trips byte-for-byte', async () => {
+    const cred = await createSignedDelegationCredential(owner, agent(), POD, makeToySigner(OWNER_ADDRESS));
+    const canonical = canonicalCredentialPayload(cred);
+    // Re-parsing the JSON-LD form must yield a credential whose canonical
+    // payload is identical to the original — otherwise verification
+    // would fail on any round-trip through the pod.
+    const jsonLd = delegationCredentialToJsonLd(cred);
+    const reparsed = parseDelegationCredential(jsonLd);
+    expect(canonicalCredentialPayload(reparsed)).toBe(canonical);
+  });
+
+  it('survives a verify-after-sign round-trip', async () => {
+    const cred = await createSignedDelegationCredential(owner, agent(), POD, makeToySigner(OWNER_ADDRESS));
+    const ok = await toyVerifier(canonicalCredentialPayload(cred), cred.proof!);
+    expect(ok).toBe(true);
+  });
+
+  it('rejects verification when the credential body is tampered', async () => {
+    const cred = await createSignedDelegationCredential(owner, agent(), POD, makeToySigner(OWNER_ADDRESS));
+    const tampered: AgentDelegationCredential = {
+      ...cred,
+      credentialSubject: {
+        ...cred.credentialSubject,
+        // attacker tries to elevate scope post-signing
+        scope: ['publish', 'discover', 'subscribe', 'revoke-everyone'],
+      },
+    };
+    const ok = await toyVerifier(canonicalCredentialPayload(tampered), cred.proof!);
+    expect(ok).toBe(false);
+  });
+
+  it('rejects verification when the proof.signerAddress is swapped', async () => {
+    const cred = await createSignedDelegationCredential(owner, agent(), POD, makeToySigner(OWNER_ADDRESS));
+    const swapped = {
+      ...cred.proof!,
+      signerAddress: '0ximposter000000000000000000000000000000beef',
+    };
+    const ok = await toyVerifier(canonicalCredentialPayload(cred), swapped);
+    expect(ok).toBe(false);
+  });
+});
+
+describe('verifyDelegation (chain mode)', () => {
+  it('upgrades the trust label to CryptographicallyVerified when the signed VC verifies', async () => {
+    const owner = createOwnerProfile(OWNER, 'Alice', [agent()]);
+    const cred = await createSignedDelegationCredential(owner, owner.authorizedAgents[0]!, POD, makeToySigner(OWNER_ADDRESS));
+    const r = await verifyDelegation('urn:agent:claude' as IRI, POD, async () => owner, {
+      fetchCredential: async () => cred,
+      verifier: toyVerifier,
+    });
+    expect(r.valid).toBe(true);
+    expect(r.trustLevel).toBe('CryptographicallyVerified');
+    expect(r.chainLength).toBe(1);
+  });
+
+  it('refuses to upgrade when the credential is unsigned', async () => {
+    const owner = createOwnerProfile(OWNER, 'Alice', [agent()]);
+    const unsigned = createDelegationCredential(owner, owner.authorizedAgents[0]!, POD);
+    const r = await verifyDelegation('urn:agent:claude' as IRI, POD, async () => owner, {
+      fetchCredential: async () => unsigned,
+      verifier: toyVerifier,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/unsigned/);
+  });
+
+  it('refuses to upgrade when the credential is missing on the pod', async () => {
+    const owner = createOwnerProfile(OWNER, 'Alice', [agent()]);
+    const r = await verifyDelegation('urn:agent:claude' as IRI, POD, async () => owner, {
+      fetchCredential: async () => null,
+      verifier: toyVerifier,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/No signed delegation credential/);
+  });
+
+  it('rejects a verified credential after the agent is revoked on the registry', async () => {
+    const ownerActive = createOwnerProfile(OWNER, 'Alice', [agent()]);
+    const cred = await createSignedDelegationCredential(ownerActive, ownerActive.authorizedAgents[0]!, POD, makeToySigner(OWNER_ADDRESS));
+    const ownerRevoked = removeAuthorizedAgent(ownerActive, 'urn:agent:claude' as IRI);
+    const r = await verifyDelegation('urn:agent:claude' as IRI, POD, async () => ownerRevoked, {
+      fetchCredential: async () => cred,
+      verifier: toyVerifier,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/revoked/);
+  });
+
+  it('rejects a tampered signature', async () => {
+    const owner = createOwnerProfile(OWNER, 'Alice', [agent()]);
+    const cred = await createSignedDelegationCredential(owner, owner.authorizedAgents[0]!, POD, makeToySigner(OWNER_ADDRESS));
+    const tampered: AgentDelegationCredential = {
+      ...cred,
+      proof: { ...cred.proof!, proofValue: '0xdeadbeef|0|garbage' },
+    };
+    const r = await verifyDelegation('urn:agent:claude' as IRI, POD, async () => owner, {
+      fetchCredential: async () => tampered,
+      verifier: toyVerifier,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/invalid signature/);
+  });
+
+  it('walks a sub-delegation chain and reports chainLength=2', async () => {
+    // Owner authorizes parent agent; parent agent re-delegates to a child agent.
+    const PARENT = 'urn:agent:parent' as IRI;
+    const CHILD = 'urn:agent:child' as IRI;
+    const parentAgent: AuthorizedAgentData = {
+      agentId: PARENT, delegatedBy: OWNER, scope: 'ReadWrite', validFrom: '2020-01-01T00:00:00Z',
+    };
+    const childAgent: AuthorizedAgentData = {
+      agentId: CHILD, delegatedBy: PARENT, scope: 'ReadWrite', validFrom: '2020-01-01T00:00:00Z',
+    };
+    const owner = createOwnerProfile(OWNER, 'Alice', [parentAgent, childAgent]);
+    const parentCred = await createSignedDelegationCredential(owner, parentAgent, POD, makeToySigner(OWNER_ADDRESS));
+    const childCred = await createSignedDelegationCredential(owner, childAgent, POD, makeToySigner(PARENT_ADDRESS));
+    const r = await verifyDelegation(CHILD, POD, async () => owner, {
+      fetchCredential: async (_url, aid) => (aid === CHILD ? childCred : parentCred),
+      verifier: toyVerifier,
+    });
+    expect(r.valid).toBe(true);
+    expect(r.trustLevel).toBe('CryptographicallyVerified');
+    expect(r.chainLength).toBe(2);
+  });
+
+  it('aborts the walk if the sub-delegating parent has been revoked', async () => {
+    const PARENT = 'urn:agent:parent' as IRI;
+    const CHILD = 'urn:agent:child' as IRI;
+    const parentAgent: AuthorizedAgentData = {
+      agentId: PARENT, delegatedBy: OWNER, scope: 'ReadWrite', validFrom: '2020-01-01T00:00:00Z', revoked: true,
+    };
+    const childAgent: AuthorizedAgentData = {
+      agentId: CHILD, delegatedBy: PARENT, scope: 'ReadWrite', validFrom: '2020-01-01T00:00:00Z',
+    };
+    const owner = createOwnerProfile(OWNER, 'Alice', [parentAgent, childAgent]);
+    const parentCred = await createSignedDelegationCredential(owner, parentAgent, POD, makeToySigner(OWNER_ADDRESS));
+    const childCred = await createSignedDelegationCredential(owner, childAgent, POD, makeToySigner(PARENT_ADDRESS));
+    const r = await verifyDelegation(CHILD, POD, async () => owner, {
+      fetchCredential: async (_url, aid) => (aid === CHILD ? childCred : parentCred),
+      verifier: toyVerifier,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toMatch(/revoked/);
   });
 });

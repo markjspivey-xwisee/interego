@@ -65,6 +65,7 @@ import {
   compose as kernelCompose,
   ContextDescriptor,
   createDelegationCredential,
+  createSignedDelegationCredential,
   createOwnerProfile,
   cryptoComputeCid,
   decompose as kernelDecompose,
@@ -87,7 +88,11 @@ import {
   removeAuthorizedAgent,
   restrict as kernelRestrict,
   signDescriptor,
+  signMessageRaw,
+  recoverMessageSigner,
   type SignedDescriptor,
+  type DelegationSigner,
+  type DelegationVerifier,
   toTurtle,
   validate,
   verifyDescriptorSignature,
@@ -119,6 +124,7 @@ import {
   writeAgentRegistry,
   readAgentRegistry,
   writeDelegationCredential,
+  readDelegationCredential,
   verifyAgentDelegation,
   fetchPodDirectory,
   publishPodDirectory,
@@ -477,6 +483,55 @@ async function ensureRelayComplianceWallet(): Promise<PersistedComplianceWallet>
   return _relayComplianceWallet;
 }
 
+// ── Delegation VC signer + verifier ─────────────────────────
+//
+// The relay holds the compliance ECDSA wallet on the pod owner's
+// authenticated behalf (the OAuth bearer the request came in with
+// proves key-possession against identity server, which is itself the
+// gatekeeper for the wallet). At register-agent time we mint a signed
+// VC whose `proof` is an ECDSA signature over the canonical credential
+// payload. At verify-delegation time we recover the signer from the
+// proof and confirm it matches the address recorded inside the VC —
+// any tampering with the credential body, the agent id, the scope, or
+// the proof block itself invalidates the recovery.
+//
+// `did:ethr:<addr>` is used as the `verificationMethod` IRI: it is
+// self-describing and lets non-pod verifiers (an audit tool, another
+// relay) recover the public key without an extra DID-document fetch.
+async function getDelegationSigner(): Promise<DelegationSigner> {
+  const cw = await ensureRelayComplianceWallet();
+  return async (canonicalPayload: string) => {
+    const signature = await signMessageRaw(cw.wallet, canonicalPayload);
+    const signerAddress = cw.wallet.address;
+    const verificationMethod = `did:ethr:${signerAddress}` as IRI;
+    return { signature, signerAddress, verificationMethod };
+  };
+}
+
+/**
+ * Verify a delegation proof block against its canonical payload.
+ *
+ * Recovery-based check: derives the address from the (payload,
+ * signature) pair and compares it case-insensitively against
+ * `proof.signerAddress`. A bad signature, an edited payload, or a
+ * substituted signerAddress all make recovery yield a different
+ * address — the comparison fails and the credential is rejected.
+ *
+ * Symmetric with `getDelegationSigner` so the relay can verify the
+ * VCs it has signed itself, AND VCs signed by any other party using
+ * an Ethereum-style ECDSA key (including external wallets that
+ * users will eventually plug in to replace the relay-backed
+ * compliance signer).
+ */
+const delegationVerifier: DelegationVerifier = async (canonicalPayload, proof) => {
+  try {
+    const recovered = recoverMessageSigner(canonicalPayload, proof.proofValue);
+    return recovered.toLowerCase() === proof.signerAddress.toLowerCase();
+  } catch {
+    return false;
+  }
+};
+
 // ── OAuth provider init (DCR-persistent) ────────────────────
 //
 // Hydrate the OAuth provider's client map from the maintainer's pod
@@ -595,6 +650,76 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     }
   }
 
+  // Ensure the calling agent is registered + has a signed delegation VC
+  // BEFORE the trust facet evaluates — the compliance grade upgrade
+  // depends on verifyAgentDelegation finding a valid signed credential
+  // chain on the pod for this agent. Without this ordering, the very
+  // first publish_context call for a new OAuth session would always
+  // downgrade to SelfAsserted because the chain wouldn't have been
+  // minted yet.
+  //
+  // Three cases:
+  //   1. No registry yet                          -> create profile + register this agent
+  //   2. Registry present, this agent missing     -> register it (auto-provision) + mint signed VC
+  //   3. Agent present but encryption key stale   -> patch the key
+  // Without (1) and (2), OAuth clients whose agent identity wasn't already on
+  // the pod would silently piggyback on whatever agent *was* registered,
+  // breaking per-agent attribution and recipient-set growth. After this
+  // block, every new OAuth-authenticated session adds its own did:web agent
+  // with its own X25519 key as a first-class authorized agent on the pod.
+  try {
+    let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+    if (!profile) {
+      profile = createOwnerProfile(ownerWebId as IRI, args.owner_name as string | undefined);
+    }
+    const me = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked);
+    if (!me) {
+      // Auto-register: this agent authenticated against identity server (so
+      // the OAuth token proves key-possession). Safe to add to the pod's
+      // authorized-agent list automatically.
+      profile = addAuthorizedAgent(profile, {
+        agentId: agentId as IRI,
+        delegatedBy: ownerWebId as IRI,
+        label: (args.label as string) ?? `Agent ${agentId}`,
+        isSoftwareAgent: true,
+        scope: 'ReadWrite',
+        validFrom: new Date().toISOString(),
+        encryptionPublicKey: relayAgentKey.publicKey,
+      });
+      await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
+      try {
+        // Mint a SIGNED VC so downstream verifiers can cryptographically
+        // walk the chain (the unsigned form forces a SelfAsserted trust
+        // label even on otherwise-trusted publishes). The signer is the
+        // relay's compliance ECDSA wallet acting on the OAuth-bearer's
+        // authenticated behalf.
+        const newAgent = profile.authorizedAgents.find(a => a.agentId === agentId)!;
+        const signer = await getDelegationSigner();
+        const credential = await createSignedDelegationCredential(
+          profile,
+          newAgent,
+          podUrl as IRI,
+          signer,
+        );
+        await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
+      } catch { /* delegation credential is nice-to-have; registry is authoritative */ }
+    } else if (me.encryptionPublicKey !== relayAgentKey.publicKey) {
+      const updated = {
+        ...profile,
+        authorizedAgents: Object.freeze(
+          profile.authorizedAgents.map(a =>
+            a.agentId === agentId && !a.revoked
+              ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
+              : a,
+          ),
+        ),
+      };
+      await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
+    }
+  } catch (err) {
+    log(`WARN: could not ensure agent registration: ${(err as Error).message}`);
+  }
+
   const builder = ContextDescriptor.create(descId)
 .describes((args.graph_iri as string) as IRI)
 .temporal({ validFrom: (args.valid_from as string) ?? now, validUntil: args.valid_until as string })
@@ -605,12 +730,35 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     })
 .semiotic(preprocessed.semiotic)
 .trust(await (async () => {
+      // Trust label is only elevated to `CryptographicallyVerified` when
+      // BOTH conditions hold:
+      //   (a) the caller asked for a compliance-grade publish, AND
+      //   (b) the agent's signed VC chain on the pod verifies end-to-end
+      //       via verifyAgentDelegation(verifier: delegationVerifier).
+      // Otherwise we fall back to SelfAsserted — the registry membership
+      // check alone is not a cryptographic claim.
+      const requestedCompliance = args.compliance === true;
+      let chainVerified = false;
+      if (requestedCompliance) {
+        try {
+          const verifyResult = await verifyAgentDelegation(
+            agentId as IRI,
+            podUrl,
+            { fetch: solidFetch, verifier: delegationVerifier },
+          );
+          chainVerified = verifyResult.valid && verifyResult.trustLevel === 'CryptographicallyVerified';
+          if (!chainVerified) {
+            log(`WARN: compliance publish requested but VC chain did not verify for ${agentId}: ${verifyResult.reason ?? 'unknown reason'} — downgrading to SelfAsserted`);
+          }
+        } catch (err) {
+          log(`WARN: compliance publish requested but VC verification threw for ${agentId}: ${(err as Error).message} — downgrading to SelfAsserted`);
+        }
+      }
       const baseTrust = {
-        // Compliance grade upgrades to HighAssurance per spec.
-        trustLevel: (args.compliance === true ? 'CryptographicallyVerified' : 'SelfAsserted') as 'CryptographicallyVerified' | 'SelfAsserted',
+        trustLevel: (chainVerified ? 'CryptographicallyVerified' : 'SelfAsserted') as 'CryptographicallyVerified' | 'SelfAsserted',
         issuer: ownerWebId as IRI,
       };
-      if (args.compliance !== true) return baseTrust;
+      if (!chainVerified) return baseTrust;
       // Pre-compute the sig URL so cg:proof can be embedded in the
       // Turtle BEFORE signing. Verifies against tampering: if anyone
       // edits cg:proof in transit the signature won't validate.
@@ -649,57 +797,10 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     return JSON.stringify({ error: validation.violations.map(v => v.message) });
   }
 
-  // Ensure the calling agent is registered on this pod with the relay's
-  // encryption public key. Three cases:
-  //   1. No registry yet        -> create profile + register this agent
-  //   2. Registry present, this agent missing   -> register it (auto-provision)
-  //   3. Agent present but encryption key stale -> patch the key
-  // Without (1) and (2), OAuth clients whose agent identity wasn't already on
-  // the pod would silently piggyback on whatever agent *was* registered,
-  // breaking per-agent attribution and recipient-set growth. After this
-  // block, every new OAuth-authenticated session adds its own did:web agent
-  // with its own X25519 key as a first-class authorized agent on the pod.
-  try {
-    let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
-    if (!profile) {
-      profile = createOwnerProfile(ownerWebId as IRI, args.owner_name as string | undefined);
-    }
-    const me = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked);
-    if (!me) {
-      // Auto-register: this agent authenticated against identity server (so
-      // the OAuth token proves key-possession). Safe to add to the pod's
-      // authorized-agent list automatically.
-      profile = addAuthorizedAgent(profile, {
-        agentId: agentId as IRI,
-        delegatedBy: ownerWebId as IRI,
-        label: (args.label as string) ?? `Agent ${agentId}`,
-        isSoftwareAgent: true,
-        scope: 'ReadWrite',
-        validFrom: new Date().toISOString(),
-        encryptionPublicKey: relayAgentKey.publicKey,
-      });
-      await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
-      try {
-        const newAgent = profile.authorizedAgents.find(a => a.agentId === agentId)!;
-        const credential = createDelegationCredential(profile, newAgent, podUrl as IRI);
-        await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
-      } catch { /* delegation credential is nice-to-have; registry is authoritative */ }
-    } else if (me.encryptionPublicKey !== relayAgentKey.publicKey) {
-      const updated = {
-        ...profile,
-        authorizedAgents: Object.freeze(
-          profile.authorizedAgents.map(a =>
-            a.agentId === agentId && !a.revoked
-              ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
-              : a,
-          ),
-        ),
-      };
-      await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
-    }
-  } catch (err) {
-    log(`WARN: could not ensure agent registration: ${(err as Error).message}`);
-  }
+  // Agent registration + signed-VC minting was moved BEFORE the builder
+  // so the trust facet's `verifyAgentDelegation` chain walk could find a
+  // credential to verify. See the block immediately following the
+  // privacy-screen + auto-supersede preprocessing above.
 
   const currentProfile = await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null);
   const recipients = (currentProfile?.authorizedAgents ?? [])
@@ -1312,18 +1413,36 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
 
   await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
 
+  // Sign the credential with the relay's compliance wallet so
+  // verify_agent can perform a cryptographic chain walk later.
   const agent = profile.authorizedAgents.find(a => a.agentId === agentId)!;
-  const credential = createDelegationCredential(profile, agent, podUrl as IRI);
+  const signer = await getDelegationSigner();
+  const credential = await createSignedDelegationCredential(
+    profile,
+    agent,
+    podUrl as IRI,
+    signer,
+  );
   const credUrl = await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
 
-  return JSON.stringify({ registered: true, agent: agentId, credential: credUrl });
+  return JSON.stringify({
+    registered: true,
+    agent: agentId,
+    credential: credUrl,
+    proof: credential.proof,
+  });
 }
 
 async function handleVerifyAgent(args: ToolArgs): Promise<string> {
+  // Pass the verifier so the registry-only path is upgraded to a real
+  // cryptographic chain walk: the signed VC at /credentials/<agent>.jsonld
+  // is fetched, its proof is checked against the owner's wallet key,
+  // and any sub-delegation chain is walked to the pod owner before a
+  // `CryptographicallyVerified` label is returned.
   const result = await verifyAgentDelegation(
     (args.agent_id as string) as IRI,
     args.pod_url as string,
-    { fetch: solidFetch },
+    { fetch: solidFetch, verifier: delegationVerifier },
   );
   return JSON.stringify(result);
 }

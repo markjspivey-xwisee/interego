@@ -13,10 +13,10 @@
  * Uses only fetch and WebSocket — zero additional dependencies.
  */
 
-import type { ContextDescriptorData, ContextTypeName, OwnerProfileData, AgentDelegationCredential, DelegationVerification, IRI, SemioticFacetData, TrustFacetData, ModalStatus, TrustLevel, ContextFacetData } from '@interego/core';
+import type { ContextDescriptorData, ContextTypeName, OwnerProfileData, AgentDelegationCredential, DelegationVerification, DelegationVerifier, IRI, SemioticFacetData, TrustFacetData, ModalStatus, TrustLevel, ContextFacetData } from '@interego/core';
 import { toTurtle } from '@interego/core';
 import { turtlePrefixes } from '@interego/core';
-import { ownerProfileToTurtle, parseOwnerProfile, delegationCredentialToJsonLd, verifyDelegation } from '@interego/core';
+import { ownerProfileToTurtle, parseOwnerProfile, delegationCredentialToJsonLd, parseDelegationCredential, verifyDelegation } from '@interego/core';
 import { createEncryptedEnvelope, openEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
 import { withTransientRetry } from '@interego/core/http';
 import { getDefaultFetch, getDefaultWebSocket } from '@interego/core/http';
@@ -1192,22 +1192,87 @@ export async function writeDelegationCredential(
 }
 
 /**
+ * Read a signed delegation credential from a Solid pod.
+ *
+ * Returns `null` when no credential exists for the agent. Used by
+ * `verifyAgentDelegation` when a `verifier` is supplied: the credential
+ * is rehydrated, its canonical payload is recomputed, and the proof block
+ * is checked against the owner's wallet key.
+ */
+export async function readDelegationCredential(
+  podUrl: string,
+  agentId: IRI,
+  options: RegistryOptions = {},
+): Promise<AgentDelegationCredential | null> {
+  const fetchFn = options.fetch ?? getDefaultFetch();
+  const pod = ensureTrailingSlash(podUrl);
+  const agentSlug = encodeURIComponent(agentId);
+  const credentialUrl = `${pod}${CREDENTIALS_PATH}${agentSlug}.jsonld`;
+
+  const resp = await fetchFn(credentialUrl, {
+    method: 'GET',
+    headers: { 'Accept': 'application/ld+json' },
+  });
+  if (!resp.ok) {
+    if (resp.status === 404) return null;
+    throw new Error(
+      `Failed to read delegation credential from ${credentialUrl}: ${resp.status} ${resp.statusText}`,
+    );
+  }
+  const jsonLd = await resp.text();
+  return parseDelegationCredential(jsonLd);
+}
+
+/**
+ * Options for `verifyAgentDelegation` — extends the registry options with
+ * an optional `verifier` callback that turns the function into a
+ * cryptographic chain check. When supplied, verifyAgentDelegation walks
+ * the signed VC chain from the agent up to the pod owner and only
+ * returns `trustLevel: 'CryptographicallyVerified'` if every link
+ * validates.
+ */
+export interface VerifyAgentDelegationOptions extends RegistryOptions {
+  /** Cryptographic verifier for VC proof blocks. */
+  readonly verifier?: DelegationVerifier;
+  /** Whether to walk sub-delegation chains (default true). */
+  readonly walkSubDelegations?: boolean;
+  /** Maximum chain depth before erroring out (default 8). */
+  readonly maxChainLength?: number;
+}
+
+/**
  * Verify that an agent is authorized to act on a pod by checking the
- * pod's agent registry.
+ * pod's agent registry, and — when a `verifier` is supplied — its signed
+ * delegation credential chain.
+ *
+ * Without a verifier, the result mirrors the legacy registry-only check
+ * and carries `trustLevel: 'SelfAsserted'`. With a verifier, the signed
+ * VC at `<pod>/credentials/<agentId>.jsonld` is fetched, its proof is
+ * checked against the owner's wallet key, and any sub-delegation chain
+ * is walked to the pod owner — only then is the result labelled
+ * `'CryptographicallyVerified'`.
  *
  * @param agentId - The agent claiming delegation
  * @param podUrl - The pod URL being acted on
- * @param options - Optional configuration
+ * @param options - Optional configuration (fetch, verifier, chain limits)
  * @returns Verification result
  */
 export async function verifyAgentDelegation(
   agentId: IRI,
   podUrl: string,
-  options: RegistryOptions = {},
+  options: VerifyAgentDelegationOptions = {},
 ): Promise<DelegationVerification> {
   return verifyDelegation(
     agentId,
     podUrl,
     async (url: string) => readAgentRegistry(url, options),
+    options.verifier
+      ? {
+          fetchCredential: async (url, agent) => readDelegationCredential(url, agent, options),
+          verifier: options.verifier,
+          walkSubDelegations: options.walkSubDelegations,
+          maxChainLength: options.maxChainLength,
+        }
+      : {},
   );
 }
