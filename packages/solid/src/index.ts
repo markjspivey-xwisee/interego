@@ -3,10 +3,10 @@ export {
   fetchGraphContent,
   parseDistributionFromDescriptorTurtle,
   writeAgentRegistry, readAgentRegistry,
-  writeDelegationCredential, verifyAgentDelegation,
+  writeDelegationCredential, readDelegationCredential, verifyAgentDelegation,
   predictDescriptorUrl,
 } from './client.js';
-export type { DistributionLink } from './client.js';
+export type { DistributionLink, VerifyAgentDelegationOptions } from './client.js';
 export type {
   FetchFn,
   FetchResponse,
@@ -63,7 +63,7 @@ export { resolveWebFinger } from './webfinger.js';
 export type { WebFingerResult, WebFingerLink } from './webfinger.js';
 
 // ── DID Resolution ─────────────────────────────────────────
-export { didWebToUrl, resolveDidWeb, extractPublicKey, findStorageEndpoint } from './did.js';
+export { didWebToUrl, resolveDidWeb, extractPublicKey, findStorageEndpoint, findKeyAgreementKey } from './did.js';
 export type { DidDocument, VerificationMethod, ServiceEndpoint, DidResolutionResult } from './did.js';
 export { resolveDid } from './did-resolver.js';
 

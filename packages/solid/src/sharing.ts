@@ -13,7 +13,7 @@
  * be HTTP-fetchable for the agent-registry read.
  */
 import type { FetchFn } from './types.js';
-import { resolveDidWeb, findStorageEndpoint } from './did.js';
+import { resolveDidWeb, findStorageEndpoint, findKeyAgreementKey, type DidDocument } from './did.js';
 import { resolveWebFinger } from './webfinger.js';
 import { readAgentRegistry } from './client.js';
 
@@ -46,11 +46,15 @@ export interface ResolveRecipientsOptions {
  *
  * Accepts DIDs, WebIDs, `acct:` handles, and direct pod URLs. Returns
  * `null` when the handle can't be turned into a pod we can read.
+ *
+ * For `did:web:` handles the resolved DID document is included on the
+ * result so callers (notably {@link resolveRecipient}) can fast-path
+ * key-agreement extraction without re-fetching the document.
  */
 export async function resolveHandleToPodUrl(
   handle: ShareHandle,
   options: ResolveRecipientsOptions = {},
-): Promise<{ podUrl: string; webId?: string } | null> {
+): Promise<{ podUrl: string; webId?: string; didDocument?: DidDocument } | null> {
   // Direct pod URL — ends in `/`, looks like https://host/name/
   if (handle.match(/^https?:\/\/[^/]+\/[^/]+\/$/)) {
     return { podUrl: handle };
@@ -92,7 +96,10 @@ export async function resolveHandleToPodUrl(
     if (!res.didDocument) return null;
     const pod = findStorageEndpoint(res.didDocument);
     if (pod) {
-      const result: { podUrl: string; webId?: string } = { podUrl: pod };
+      const result: { podUrl: string; webId?: string; didDocument?: DidDocument } = {
+        podUrl: pod,
+        didDocument: res.didDocument,
+      };
       const webId = res.didDocument.alsoKnownAs?.find((u: string) => u.includes('/profile'));
       if (webId) result.webId = webId;
       return result;
@@ -115,8 +122,35 @@ export async function resolveRecipient(
   const pod = await resolveHandleToPodUrl(handle, options);
   if (!pod) return null;
 
+  // FIX 6 fast path — bare agent DIDs:
+  //   `did:web:<host>:agents:<agentId>` resolves to a DID document
+  //   carrying the agent's own X25519 key-agreement key. We can use it
+  //   as the envelope recipient directly without round-tripping the
+  //   owner pod's agent registry, which makes cross-pod sharing work
+  //   even when the agent hasn't (yet) been mirrored into the owner's
+  //   /agents resource.
+  //
+  // The registry walk is still preferred when present because it
+  // surfaces rollover/retired keys (the rolling window below) and
+  // honours revocation. We only short-circuit when the registry
+  // returned nothing — that's the case the diagnosis is closing.
+  const didKey = pod.didDocument ? findKeyAgreementKey(pod.didDocument) : null;
+  const agentIdFromDid = pod.didDocument && handle.startsWith('did:web:')
+    ? extractAgentIdFromDid(handle)
+    : null;
+
   const profile = await readAgentRegistry(pod.podUrl, options);
   if (!profile) {
+    if (didKey) {
+      const fastPath: ResolvedRecipientPod = {
+        handle,
+        podUrl: pod.podUrl,
+        agentEncryptionKeys: [didKey],
+        agentIds: agentIdFromDid ? [agentIdFromDid] : [],
+      };
+      if (pod.webId) (fastPath as { webId?: string }).webId = pod.webId;
+      return fastPath;
+    }
     const empty: ResolvedRecipientPod = {
       handle,
       podUrl: pod.podUrl,
@@ -127,7 +161,15 @@ export async function resolveRecipient(
     return empty;
   }
 
-  const active = profile.authorizedAgents.filter(a => !a.revoked && a.encryptionPublicKey);
+  // If the handle was a bare agent DID (`did:web:…:agents:<agentId>`),
+  // narrow the registry walk to that single agent — sharing with one
+  // agent must not silently fan the envelope out to every other agent
+  // on the owner's pod. When the registry has no entry for that agent
+  // (the FIX-6 case), we fall back below to the DID-doc keyAgreement key.
+  const filteredAgents = agentIdFromDid
+    ? profile.authorizedAgents.filter(a => a.agentId === agentIdFromDid)
+    : profile.authorizedAgents;
+  const active = filteredAgents.filter(a => !a.revoked && a.encryptionPublicKey);
 
   // Pubkey rollover (closes Sec #12): include both current pubkey AND
   // any recently-retired pubkeys from each agent's encryptionKeyHistory
@@ -160,6 +202,19 @@ export async function resolveRecipient(
       }
     }
   }
+
+  // FIX 6 fallback — the registry has no usable entry for this agent
+  // (either the agent DID isn't registered on its owner's pod yet, or
+  // its entry has no encryption key). Use the DID doc's keyAgreement
+  // key as the recipient. This keeps cross-pod sharing working while
+  // owner-pod registry presence catches up. Registry walks for owner
+  // DIDs (`did:web:…:users:<id>`) still produce the full multi-agent
+  // recipient set as before.
+  if (keys.length === 0 && didKey) {
+    keys.push(didKey);
+    if (agentIdFromDid) ids.push(agentIdFromDid);
+  }
+
   const result: ResolvedRecipientPod = {
     handle,
     podUrl: pod.podUrl,
@@ -169,6 +224,22 @@ export async function resolveRecipient(
   if (pod.webId) (result as { webId?: string }).webId = pod.webId;
   if (!pod.webId && profile.webId) (result as { webId?: string }).webId = profile.webId;
   return result;
+}
+
+/**
+ * Pull the `<agentId>` slug out of a `did:web:<host>:agents:<agentId>`
+ * handle so the registry walk can narrow to that single agent. Returns
+ * `null` when the handle isn't a bare agent DID.
+ */
+function extractAgentIdFromDid(handle: string): string | null {
+  if (!handle.startsWith('did:web:')) return null;
+  const parts = handle.slice('did:web:'.length).split(':');
+  // `<host> : agents : <agentId>` — i.e. parts[1] === 'agents'.
+  if (parts.length >= 3 && parts[1] === 'agents') {
+    const id = parts[2];
+    return id && id.length > 0 ? decodeURIComponent(id) : null;
+  }
+  return null;
 }
 
 /**

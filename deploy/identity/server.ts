@@ -155,9 +155,22 @@ function deriveUserIdFromDid(did: string): string {
 // ── Key Generation ──────────────────────────────────────────
 
 interface KeyPair {
+  // Ed25519 signing key (DID authentication / assertionMethod).
   publicKeyMultibase: string;
   privateKey: crypto.KeyObject;
   publicKey: crypto.KeyObject;
+  // X25519 key-agreement key (DID `keyAgreement` — used by remote pods
+  // wrapping content for this identity as an envelope recipient).
+  // Per-identity so each agent has its own encryption key (FIX 6 — paired
+  // with FIX 3); the `keys.get(id)` map is the single source of truth.
+  x25519PublicKeyMultibase: string;
+  x25519PrivateKey: crypto.KeyObject;
+  x25519PublicKey: crypto.KeyObject;
+  /** Raw 32-byte X25519 public key, base64-encoded — matches the on-pod
+   *  `cg:AuthorizedAgent.encryptionPublicKey` shape so cross-pod sharing
+   *  can resolve a DID doc keyAgreement key and use it as a recipient
+   *  without a second registry round-trip. */
+  x25519PublicKeyBase64: string;
 }
 
 // ── base58btc (Bitcoin alphabet) — for W3C did:key + multibase ──
@@ -235,6 +248,8 @@ function base58btcDecode(str: string): Uint8Array {
 
 // Multicodec varint for Ed25519 public key: 0xed 0x01.
 const ED25519_MULTICODEC = Uint8Array.from([0xed, 0x01]);
+// Multicodec varint for X25519 public key: 0xec 0x01.
+const X25519_MULTICODEC = Uint8Array.from([0xec, 0x01]);
 
 /**
  * Encode a 32-byte raw Ed25519 public key as a W3C-spec multibase string:
@@ -247,6 +262,20 @@ function encodeEd25519Multibase(rawKey: Buffer): string {
   const buf = new Uint8Array(ED25519_MULTICODEC.length + 32);
   buf.set(ED25519_MULTICODEC, 0);
   buf.set(rawKey, ED25519_MULTICODEC.length);
+  return 'z' + base58btcEncode(buf);
+}
+
+/**
+ * Encode a 32-byte raw X25519 public key as a W3C-spec multibase string:
+ *   'z' + base58btc(0xec 0x01 || rawKey)
+ * Canonical form for `publicKeyMultibase` on `X25519KeyAgreementKey2020`
+ * verification methods (W3C Security Vocabulary — X25519 Key Agreement 2020).
+ */
+function encodeX25519Multibase(rawKey: Buffer): string {
+  if (rawKey.length !== 32) throw new Error(`X25519 raw key must be 32 bytes, got ${rawKey.length}`);
+  const buf = new Uint8Array(X25519_MULTICODEC.length + 32);
+  buf.set(X25519_MULTICODEC, 0);
+  buf.set(rawKey, X25519_MULTICODEC.length);
   return 'z' + base58btcEncode(buf);
 }
 
@@ -295,11 +324,37 @@ function parseEd25519DidKey(did: string): { ok: true; publicKey: Buffer; format:
 }
 
 function generateEd25519(): KeyPair {
+  // Ed25519 — signing / authentication / assertionMethod.
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
-  const pubRaw = publicKey.export({ type: 'spki', format: 'der' });
-  const rawKey = pubRaw.subarray(pubRaw.length - 32);
-  const publicKeyMultibase = encodeEd25519Multibase(rawKey);
-  return { publicKeyMultibase, privateKey, publicKey };
+  const edSpki = publicKey.export({ type: 'spki', format: 'der' });
+  const edRaw = edSpki.subarray(edSpki.length - 32);
+  const publicKeyMultibase = encodeEd25519Multibase(edRaw);
+
+  // X25519 — keyAgreement (envelope-recipient key for cross-pod E2EE
+  // sharing). Per-identity so each agent has its own encryption key
+  // (FIX 6 with FIX 3). Extract raw 32 bytes via JWK (`x`) — avoids
+  // hand-parsing SPKI DER.
+  const { publicKey: x25519PublicKey, privateKey: x25519PrivateKey } = crypto.generateKeyPairSync('x25519');
+  const xJwk = x25519PublicKey.export({ format: 'jwk' }) as { x?: string };
+  if (typeof xJwk.x !== 'string') {
+    throw new Error('X25519 public key JWK missing `x` field; cannot derive raw key');
+  }
+  const xRaw = Buffer.from(xJwk.x, 'base64url');
+  if (xRaw.length !== 32) {
+    throw new Error(`X25519 raw public key must be 32 bytes, got ${xRaw.length}`);
+  }
+  const x25519PublicKeyMultibase = encodeX25519Multibase(xRaw);
+  const x25519PublicKeyBase64 = xRaw.toString('base64');
+
+  return {
+    publicKeyMultibase,
+    privateKey,
+    publicKey,
+    x25519PublicKeyMultibase,
+    x25519PrivateKey,
+    x25519PublicKey,
+    x25519PublicKeyBase64,
+  };
 }
 
 // ── Dynamic Identity Registry ───────────────────────────────
@@ -1192,43 +1247,107 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
 
 // ── DID Document Builder ────────────────────────────────────
 
+/**
+ * Build a W3C-conformant did:web document for either a user or an agent.
+ *
+ * Agents get BOTH an Ed25519 verification method (for #authentication +
+ * #assertionMethod) AND an X25519 verification method (for #keyAgreement).
+ * The X25519 key lets remote pods resolving a bare
+ * `did:web:<host>:agents:<id>` pull the agent's envelope-recipient key
+ * straight from the DID doc — no owner-pod agent-registry round-trip
+ * required (FIX 6). The owner-pod registry remains the canonical source
+ * for revocation + rollover metadata; this is just a fast path so a
+ * `share_with: ['did:web:…:agents:…']` call resolves even when the
+ * resolver only knows the agent's DID.
+ *
+ * Users keep the same shape plus a `ContextGraphsManifest` service entry
+ * and an `alsoKnownAs` pointer to the canonical WebID profile.
+ *
+ * Service entries:
+ *   - SolidStorage      → the controlling user's pod (the agent acts on
+ *                         behalf of its owner, so its pod IS the owner's
+ *                         pod)
+ *   - InteregoRelay     → agents only — points at the relay surface
+ *                         clients use to reach this agent. Lets a remote
+ *                         resolver route delegated operations without
+ *                         hard-coding the relay URL.
+ *   - ContextGraphsManifest → users only — the published manifest the
+ *                             owner pod exposes.
+ */
 function buildDidDocument(identity: Identity): object {
   const kp = keys.get(identity.id)!;
+  const host = new URL(BASE_URL).host;
   const path = identity.type === 'user' ? `users:${identity.id}` : `agents:${identity.id}`;
-  const did = `did:web:${new URL(BASE_URL).host}:${path}`;
-  const keyId = `${did}#key-1`;
+  const did = `did:web:${host}:${path}`;
+  const ed25519KeyId = `${did}#ed25519-1`;
+  const x25519KeyId = `${did}#x25519-1`;
   const owner = identity.owner ?? identity.id;
 
+  // For agents, the controller is the owning user's did:web — this is
+  // how a remote resolver discovers who delegated this agent. For users,
+  // they control themselves.
+  const controller = identity.type === 'agent'
+    ? `did:web:${host}:users:${owner}`
+    : did;
+
+  const podUrl = `${CSS_URL}${owner}/`;
+
+  // Per W3C DID Core 1.0 + Security Vocab 2020:
+  //  - https://www.w3.org/ns/did/v1                       — core terms
+  //  - https://w3id.org/security/suites/ed25519-2020/v1   — Ed25519VerificationKey2020
+  //  - https://w3id.org/security/suites/x25519-2020/v1    — X25519KeyAgreementKey2020
   const doc: Record<string, unknown> = {
     '@context': [
       'https://www.w3.org/ns/did/v1',
       'https://w3id.org/security/suites/ed25519-2020/v1',
+      'https://w3id.org/security/suites/x25519-2020/v1',
     ],
     id: did,
-    controller: identity.type === 'agent'
-      ? `did:web:${new URL(BASE_URL).host}:users:${owner}`
-      : did,
-    verificationMethod: [{
-      id: keyId,
-      type: 'Ed25519VerificationKey2020',
-      controller: did,
-      publicKeyMultibase: kp.publicKeyMultibase,
-    }],
-    authentication: [keyId],
-    assertionMethod: [keyId],
+    controller,
+    verificationMethod: [
+      {
+        id: x25519KeyId,
+        type: 'X25519KeyAgreementKey2020',
+        controller: did,
+        publicKeyMultibase: kp.x25519PublicKeyMultibase,
+      },
+      {
+        id: ed25519KeyId,
+        type: 'Ed25519VerificationKey2020',
+        controller: did,
+        publicKeyMultibase: kp.publicKeyMultibase,
+      },
+    ],
+    authentication: [ed25519KeyId],
+    assertionMethod: [ed25519KeyId],
+    keyAgreement: [x25519KeyId],
   };
 
-  const podUrl = `${CSS_URL}${owner}/`;
-
   if (identity.type === 'agent') {
-    doc['service'] = [{
-      id: `${did}#solid-pod`,
-      type: 'SolidStorage',
-      serviceEndpoint: podUrl,
-    }];
+    doc['service'] = [
+      {
+        id: `${did}#pod`,
+        type: 'SolidStorage',
+        serviceEndpoint: podUrl,
+      },
+      {
+        id: `${did}#relay`,
+        type: 'InteregoRelay',
+        serviceEndpoint: RELAY_URL,
+      },
+      // Pointer to the owner's agent-registry resource so a resolver can
+      // still fetch revocation / rollover metadata when needed (the DID
+      // doc only carries the current key; the registry has the history
+      // window used by sharing.ts's rollover logic).
+      {
+        id: `${did}#registry`,
+        type: 'ContextGraphsAgentRegistry',
+        serviceEndpoint: `${podUrl}agents`,
+      },
+    ];
   } else {
     doc['service'] = [
-      { id: `${did}#solid-pod`, type: 'SolidStorage', serviceEndpoint: podUrl },
+      { id: `${did}#pod`, type: 'SolidStorage', serviceEndpoint: podUrl },
       { id: `${did}#context-graphs`, type: 'ContextGraphsManifest', serviceEndpoint: `${podUrl}.well-known/context-graphs` },
     ];
     doc['alsoKnownAs'] = [`${BASE_URL}/users/${identity.id}/profile`];
