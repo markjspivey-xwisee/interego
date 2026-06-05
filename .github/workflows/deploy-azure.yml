@@ -420,6 +420,57 @@ jobs:
             echo "Latest active revision: $LATEST"
           fi
 
+      # CSS-specific env wiring. CSS needs to know:
+      #   - CSS_BASE_URL — the hostname CSS treats as "in-space" when
+      #                    minting WebIDs / container URLs AND when
+      #                    validating incoming request Host headers
+      #                    ("outside the configured identifier space"
+      #                    is rejected).
+      #
+      # We deliberately pin CSS_BASE_URL to the INTERNAL CSS FQDN here.
+      # Background: pointing it at the public css-gate FQDN looked
+      # appealing (externally-dereferenceable WebIDs) but it ties every
+      # server-side write through the gate's reverse-proxy code path,
+      # which uses raw https.request with a public-Host-header override
+      # and is currently flaky under ALPN/keep-alive (ECONNRESET storms
+      # break relay /oauth/verify, identity manifest writes, federation-
+      # store writes). The CSS image is configured with the
+      # suffix.json identifier strategy and a single --baseUrl arg — no
+      # multi-base knob exists without a custom Components.js
+      # IdentifierStrategy + image rebuild.
+      #
+      # The anon-write hole stays closed regardless: CSS still runs
+      # `--ingress internal`, so there is no public CSS endpoint for
+      # anonymous traffic to reach. Once the gate proxy is replaced
+      # with undici.Dispatcher (ALPN h2 + Host-header override on a
+      # pooled connection), flip this back to the gate FQDN and
+      # re-issue WebIDs minted during the internal window.
+      - name: Wire css env vars
+        if: steps.decide.outputs.build == 'true' && matrix.image == 'interego-css'
+        run: |
+          CSS_FQDN=$(az containerapp show --name interego-css --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          az containerapp update \
+            --name interego-css \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --set-env-vars \
+              "CSS_BASE_URL=https://$CSS_FQDN/" \
+            --output none
+          MODE=$(az containerapp show --name interego-css --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.activeRevisionsMode" -o tsv)
+          echo "activeRevisionsMode=$MODE"
+          if [ "$MODE" = "Multiple" ]; then
+            az containerapp ingress traffic set \
+              --name interego-css \
+              --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+              --revision-weight latest=100 \
+              --output none
+            LATEST=$(az containerapp show --name interego-css --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.latestRevisionName" -o tsv)
+            az containerapp revision list --name interego-css --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "[?name!='$LATEST' && properties.active].name" -o tsv | while read -r rev; do
+              [ -z "$rev" ] && continue
+              az containerapp revision deactivate --name interego-css --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --revision "$rev" --output none || true
+            done
+            echo "Latest active revision: $LATEST"
+          fi
+
       - name: Summary
         if: always()
         run: |

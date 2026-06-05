@@ -125,15 +125,37 @@ else
   CSS_GATE_URL="$CSS_INTERNAL_URL"
 fi
 
-# Set CSS_BASE_URL so CSS issues identifiers (WebIDs, container URLs)
-# at the gate's public hostname rather than at the internal one. The
-# gate forwards the public Host header through to CSS so CSS recognizes
-# incoming requests as in-space.
-echo ">>> Setting CSS_BASE_URL to gate FQDN..."
+# Set CSS_BASE_URL to the CSS internal FQDN.
+#
+# History: we previously set this to CSS_GATE_URL so issued WebIDs would
+# externally dereference. That broke every server-side write path —
+# relay /oauth/verify, identity manifest writes, federation-store
+# writes — because the gate's reverse-proxy code path (raw https.request
+# with a public Host header override) is hitting ECONNRESET under load
+# (no ALPN h2, fragile keep-alive). CSS then rejects incoming requests
+# whose Host doesn't match its configured baseUrl with "outside the
+# configured identifier space", and server-side callers fail.
+#
+# Single-base CSS has no knob for "issue identifiers at FQDN A but
+# accept requests from FQDN B" — a multi-base IdentifierStrategy
+# would require a custom Components.js shim + a CSS image rebuild.
+# Reverting to the internal FQDN restores every server-side caller
+# immediately. The anon-write hole stays closed because CSS still runs
+# with `--ingress internal` — there is no public CSS endpoint for
+# anonymous traffic to reach, so baseUrl value is irrelevant to that.
+#
+# Cost: WebIDs minted while CSS_BASE_URL was pointing at the gate FQDN
+# remain externally dereferenceable; new WebIDs issued from this point
+# resolve only inside the Container Apps environment. Once the gate's
+# upstream code path is hardened (replace raw https.request with
+# undici.request to get ALPN h2 + Host-header override on a pooled
+# Dispatcher), we can flip CSS_BASE_URL back to CSS_GATE_URL and
+# re-issue any internal-FQDN WebIDs minted during this window.
+echo ">>> Setting CSS_BASE_URL to CSS internal FQDN..."
 az containerapp update \
   --name "$CSS_APP" \
   --resource-group "$RESOURCE_GROUP" \
-  --set-env-vars "CSS_BASE_URL=$CSS_GATE_URL" \
+  --set-env-vars "CSS_BASE_URL=$CSS_INTERNAL_URL" \
   --output none
 
 # ── 6. Deploy Dashboard ──────────────────────────────────────
