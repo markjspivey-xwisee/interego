@@ -46,6 +46,17 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install + build monorepo workspace
+        # Root install resolves workspace symlinks (e.g. @interego/pgsl ->
+        # packages/pgsl); the build then produces every workspace package's
+        # dist/, including packages/pgsl/dist/index.js. This is required by
+        # relay test files (pgsl-shim-kernel-fusion.test.ts and others) that
+        # import the built artifacts directly via @interego/pgsl/dist/...
+        # Without this, the relay's vitest run dies before Playwright even
+        # starts because the import ENOENTs.
+        working-directory: .
+        run: npm ci --no-audit --no-fund && npm run build
+
       - name: Install relay deps
         run: npm ci --no-audit --no-fund
 
