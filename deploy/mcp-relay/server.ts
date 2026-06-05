@@ -4115,6 +4115,25 @@ async function bootstrapPod(params: {
     }
     await writeAgentRegistry(nextProfile, podUrl, { fetch: solidFetch });
 
+    // FIX C: write the cg:PodBootstrap descriptor in the same
+    // single-writer block as /agents + /profile/card. Idempotent
+    // (fixed IRI urn:cg:pod-bootstrap:<userId>:v1) so re-bootstraps
+    // don't duplicate the manifest entry. Best-effort — see
+    // publishPodBootstrapDescriptor's failure-mode comment. We only
+    // publish on first-touch because the bootstrap describes the pod's
+    // static topology (owner / storage / WebID / registry / card); the
+    // dynamic surface-agent list lives on /agents and is read from
+    // there. Subsequent surface adds don't need to re-publish the
+    // bootstrap descriptor.
+    if (firstTouch) {
+      await publishPodBootstrapDescriptor({
+        podUrl,
+        ownerWebId,
+        userId,
+        surfaceAgentIri,
+      });
+    }
+
     // Post-write verify: re-read and confirm our surface agent landed.
     // If a concurrent writer (different replica, or anything outside
     // this process's mutex) clobbered our write, the surface agent
@@ -4339,6 +4358,117 @@ function escapeTurtleString(s: string): string {
     .replace(/\n/g, '\\n')
     .replace(/\r/g, '\\r')
     .replace(/\t/g, '\\t');
+}
+
+// ── Pod-bootstrap descriptor writer (FIX C) ───────────────────────
+//
+// On first-touch pod init the relay also publishes a single
+// `cg:PodBootstrap` Context Descriptor into the pod's
+// `.well-known/context-graphs` manifest. The descriptor self-describes
+// the pod (cg:owner / cg:storage / cg:webId / cg:agentRegistry /
+// cg:profileCard) and carries one cg:Affordance (cg:canPublish) whose
+// hydra:target points back at the relay's publish_context tool so a
+// client discovering the pristine pod has a strictly better UX signal
+// than an empty manifest: "pod is alive, owned by X, here is how to
+// add more context."
+//
+// Idempotency
+// -----------
+// Descriptor IRI is pinned to `urn:cg:pod-bootstrap:<userId>:v1` — the
+// same IRI every time. `publish()` on the substrate is idempotent at
+// the manifest level (it observes the entry already exists and skips
+// the PUT), so subsequent bootstrap calls are no-ops at the manifest
+// layer. The descriptor + graph PUTs overwrite themselves with
+// identical content (or only updated timestamps), so re-bootstrap
+// never accumulates duplicate manifest entries.
+//
+// Failure mode
+// ------------
+// This call is best-effort. If the bootstrap publish fails (CSS
+// unreachable, descriptor validation rejects, manifest CAS exhausts
+// retries), we log and continue — the agent registry + profile card
+// PUTs already landed, and an empty manifest is still functionally
+// correct, just a slightly worse first-touch UX. Callers should not
+// surface this failure as a bootstrap blocker.
+async function publishPodBootstrapDescriptor(params: {
+  podUrl: string;
+  ownerWebId: IRI;
+  userId: string;
+  surfaceAgentIri: IRI;
+}): Promise<void> {
+  const { podUrl, ownerWebId, userId, surfaceAgentIri } = params;
+  const descId = `urn:cg:pod-bootstrap:${userId}:v1` as IRI;
+  const agentsRegistryUrl = `${podUrl}agents`;
+  const cardUrl = `${podUrl}profile/card`;
+  const ownerWebIdHash = `${cardUrl}#me`;
+  // hydra:target for the cg:canPublish affordance. PUBLIC_BASE_URL is
+  // the relay's public origin (set in container env). When unset the
+  // affordance still gets a sensible local-dev target so dev-mode
+  // discovers behave consistently with prod.
+  const relayBase = (PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+  const publishTarget = `${relayBase}/tool/publish_context`;
+  const now = new Date().toISOString();
+
+  const builder = ContextDescriptor.create(descId)
+    .describes(podUrl as IRI)
+    .temporal({ validFrom: now })
+    .validFrom(now)
+    .delegatedBy(ownerWebId, surfaceAgentIri, {
+      endedAt: now,
+    })
+    .semiotic({
+      modalStatus: 'Asserted',
+      epistemicConfidence: 1.0,
+    })
+    .trust({
+      trustLevel: 'SelfAsserted',
+      issuer: ownerWebId,
+    })
+    .federation({
+      origin: podUrl as IRI,
+      storageEndpoint: podUrl as IRI,
+      syncProtocol: 'SolidNotifications',
+    })
+    .version(1);
+  const descriptor = builder.build();
+
+  const validation = validate(descriptor);
+  if (!validation.conforms) {
+    log(`WARN: pod-bootstrap descriptor failed validation: ${validation.violations.map(v => v.message).join('; ')}`);
+    return;
+  }
+
+  // Named-graph body: the pod self-description + one cg:canPublish
+  // affordance. Kept compact; conventional cg: / hydra: / dcat:
+  // vocabularies only. Lines are emitted without prefix declarations —
+  // `wrapAsTriG()` hoists the descriptor's prefix block above the
+  // named-graph body so cg: / hydra: / dcat: / prov: are already in
+  // scope inside the graph block.
+  const graphContent = [
+    `<${podUrl}>`,
+    `    a cg:PodBootstrap ;`,
+    `    cg:owner <${ownerWebId}> ;`,
+    `    cg:storage <${podUrl}> ;`,
+    `    cg:webId <${ownerWebIdHash}> ;`,
+    `    cg:agentRegistry <${agentsRegistryUrl}> ;`,
+    `    cg:profileCard <${cardUrl}> ;`,
+    `    prov:wasGeneratedBy <${surfaceAgentIri}> ;`,
+    `    cg:affordance [`,
+    `        a cg:Affordance, hydra:Operation ;`,
+    `        cg:action cg:canPublish ;`,
+    `        hydra:method "POST" ;`,
+    `        hydra:target <${publishTarget}> ;`,
+    `        hydra:title "Publish a new context descriptor to this pod"`,
+    `    ] .`,
+  ].join('\n');
+
+  try {
+    await publish(descriptor, graphContent, podUrl, { fetch: solidFetch });
+    log(`[pod-bootstrap] published ${descId} to ${podUrl}`);
+  } catch (err) {
+    // Best-effort — see the failure-mode comment above.
+    log(`WARN: pod-bootstrap publish failed for ${podUrl}: ${(err as Error).message}`);
+  }
 }
 
 // ── Browser-friendly landing page ─────────────────────────────────

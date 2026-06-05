@@ -862,6 +862,28 @@ cg:canCompose a cg:Affordance ;
     rdfs:label "Can Compose" ;
     rdfs:comment "This endpoint applies a composition operator (union / intersection / restriction / override per §3.4) to operand descriptors and returns the composed descriptor. The cg:compositionOp query parameter selects the operator; operand IRIs are supplied via repeated cg:operand parameters.".
 
+# ── Pod self-description (bootstrap) ──────────────────────────
+
+cg:PodBootstrap a owl:Class ;
+    rdfs:label "Pod Bootstrap" ;
+    rdfs:comment "Self-describing context descriptor written into a freshly-initialized pod's manifest. Asserts cg:owner, cg:storage, cg:webId, cg:agentRegistry, cg:profileCard for the pod and carries one cg:Affordance (cg:canPublish) so a client discovering the pristine pod knows where to write subsequent context. Idempotent — one entry per pod, pinned to a stable IRI (urn:cg:pod-bootstrap:<userId>:v1) so re-bootstraps don't accumulate duplicates. Categorically a Context Descriptor like any other: provenance / federation facets apply, and it can be superseded via cg:supersedes when the pod's underlying topology changes." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:storage a owl:ObjectProperty ;
+    rdfs:label "storage" ;
+    rdfs:comment "The pod (LDP root container) URL where this resource is stored. Used in cg:PodBootstrap to name the pod itself; semantically equivalent to pim:storage / solid:storage from the Solid vocabulary but kept as a cg: term so cg-only readers don't need to load the Solid namespace." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:agentRegistry a owl:ObjectProperty ;
+    rdfs:label "agent registry" ;
+    rdfs:comment "URL of the pod-resident agent registry document (typically <pod>/agents) — the authoritative list of cg:AuthorizedAgent entries for the pod's owner. Resolvers follow this property to discover which agents may publish on behalf of the owner and which X25519 public keys recipients should wrap envelopes for." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:profileCard a owl:ObjectProperty ;
+    rdfs:label "profile card" ;
+    rdfs:comment "URL of the pod-resident WebID profile card (typically <pod>/profile/card). The card's #me node is the canonical owner WebID and carries solid:oidcIssuer, solid:storage, and rdfs:seeAlso links back to cg:agentRegistry, so conventional Solid clients can dereference the card alone to find the rest of the pod's identity surface." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
 # ── Identity / Auth-methods classes (pod-resident) ────────────
 
 cg:AuthMethods a owl:Class ;
