@@ -538,6 +538,106 @@ const solidFetch: FetchFn = async (url, init) => {
 let subscriptions: Map<string, Subscription> = new Map();
 let notificationLog: ContextChangeEvent[] = [];
 
+// ── SolidNotifications SSE fan-out ──────────────────────────
+//
+// Implements the syncProtocol: 'SolidNotifications' contract declared
+// in every descriptor's FederationFacet. Every successful
+// publish_context emits a NotificationEvent to:
+//   1. an in-process subscriber map keyed by podSlug — fed to
+//      /notifications/:podSlug Server-Sent-Event clients
+//      (text/event-stream)
+//   2. any HTTP webhook URLs registered for the pod (best-effort POST)
+//   3. the legacy in-memory notificationLog so the older /sse polling
+//      transport still surfaces the event for backwards compatibility.
+//
+// A podSlug is the first 16 chars of sha256(podUrl) — a stable, opaque
+// public token that doesn't leak pod path structure. The relay maps
+// slug -> podUrl in `podSlugToUrl`; clients receive the slug from
+// subscribe_to_pod and use it directly in the SSE URL.
+interface NotificationEvent {
+  readonly '@context': string;
+  readonly type: 'cg:Notification';
+  readonly eventType: 'created' | 'updated' | 'superseded';
+  readonly timestamp: string;
+  readonly podUrl: string;
+  readonly descriptorUrl: string;
+  readonly graphUrl?: string;
+  readonly author?: string;
+}
+
+const sseSubscribers: Map<string, Set<express.Response>> = new Map();
+const notificationWebhooks: Map<string, Set<string>> = new Map();
+const podSlugToUrl: Map<string, string> = new Map();
+
+function podSlug(podUrl: string): string {
+  const slug = createHash('sha256').update(podUrl).digest('hex').slice(0, 16);
+  // First registration wins — record both directions for round-tripping.
+  if (!podSlugToUrl.has(slug)) {
+    podSlugToUrl.set(slug, podUrl);
+  }
+  return slug;
+}
+
+function emitNotification(
+  podUrl: string,
+  partial: Omit<NotificationEvent, '@context' | 'type' | 'timestamp' | 'podUrl'> & { timestamp?: string },
+): void {
+  const event: NotificationEvent = {
+    '@context': 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
+    type: 'cg:Notification',
+    timestamp: partial.timestamp ?? new Date().toISOString(),
+    podUrl,
+    eventType: partial.eventType,
+    descriptorUrl: partial.descriptorUrl,
+    ...(partial.graphUrl !== undefined ? { graphUrl: partial.graphUrl } : {}),
+    ...(partial.author !== undefined ? { author: partial.author } : {}),
+  };
+  const slug = podSlug(podUrl);
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+
+  // (1) Fan-out to live SSE subscribers for this pod.
+  const subs = sseSubscribers.get(slug);
+  if (subs && subs.size > 0) {
+    for (const res of subs) {
+      try {
+        res.write(payload);
+      } catch (err) {
+        log(`[notify/sse] write failed for pod=${podUrl}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  // (2) POST to registered webhooks (best-effort, fire-and-forget).
+  const hooks = notificationWebhooks.get(podUrl);
+  if (hooks && hooks.size > 0) {
+    for (const url of hooks) {
+      void fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/ld+json' },
+        body: JSON.stringify(event),
+      }).catch(err => log(`[notify/webhook] POST ${url} failed: ${(err as Error).message}`));
+    }
+  }
+
+  // (3) Bridge into the legacy notificationLog so /sse polling clients
+  // continue to observe events even when no upstream WebSocket
+  // subscription exists. Maps the JSON-LD eventType to the legacy
+  // 'Add' | 'Update' | 'Remove' triad.
+  const legacyType: 'Add' | 'Update' | 'Remove' =
+    event.eventType === 'created' ? 'Add'
+      : event.eventType === 'superseded' ? 'Remove'
+      : 'Update';
+  notificationLog.push({
+    resource: event.descriptorUrl,
+    type: legacyType,
+    timestamp: event.timestamp,
+  });
+  // Cap the legacy log so it doesn't grow without bound.
+  if (notificationLog.length > 1024) {
+    notificationLog = notificationLog.slice(-512);
+  }
+}
+
 // PGSL lattice — the relay does NOT own a private PGSL instance.
 // Every pgsl_* shim composes against the kernel's lattice via the
 // substrate verbs (`kernel.mint` / `promote` / `dereference` /
@@ -1517,6 +1617,20 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     log(`ensurePodDirectory failed for ${podUrl}: ${(err as Error).message}`),
   );
 
+  // SolidNotifications fan-out — honors the syncProtocol contract
+  // declared in the descriptor's FederationFacet. Emits a JSON-LD
+  // NotificationEvent to every SSE subscriber + webhook for this pod
+  // AND mirrors it into the legacy notificationLog for the /sse
+  // polling transport. This is the producer side; the consumer side
+  // is GET /notifications/:podSlug (text/event-stream). Done before
+  // the JSON return so observable causality matches the response.
+  emitNotification(podUrl, {
+    eventType: priorVersions.length > 0 ? 'superseded' : 'created',
+    descriptorUrl: result.descriptorUrl,
+    graphUrl: result.graphUrl,
+    author: agentId,
+  });
+
   return JSON.stringify({
     published: true,
     owner: ownerWebId,
@@ -1548,6 +1662,15 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // — see fix CAS-supersession.
     previousHeadCid: result.previousHeadCid,
     previousHeadUrl: result.previousHeadUrl,
+    // SolidNotifications channel — the relay-hosted SSE endpoint that
+    // delivers cg:Notification events for this pod. Consumers can
+    // `EventSource(notifications.sse_url)` to receive every subsequent
+    // create/update/supersede event without polling. Honors the
+    // syncProtocol contract declared on the descriptor's FederationFacet.
+    notifications: {
+      sse_url: `${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/notifications/${podSlug(podUrl)}`,
+      pod_slug: podSlug(podUrl),
+    },
     // Privacy-hygiene preflight (see docs://interego/playbook §2). Empty
     // string means no flags. The calling agent — and any LLM in the
     // loop — should surface the warning to the user before treating the
@@ -2138,22 +2261,62 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
 
 async function handleSubscribeToPod(args: ToolArgs): Promise<string> {
   const podUrl = args.pod_url as string;
+  const slug = podSlug(podUrl);
+  const relayBase = (PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+  const sseUrl = `${relayBase}/notifications/${slug}`;
+
   if (subscriptions.has(podUrl)) {
-    return JSON.stringify({ subscribed: true, message: 'Already subscribed' });
+    return JSON.stringify({
+      subscribed: true,
+      message: 'Already subscribed',
+      pod: podUrl,
+      sse_url: sseUrl,
+      pod_slug: slug,
+    });
   }
 
   try {
     const sub = await subscribe(podUrl, (event: ContextChangeEvent) => {
-      notificationLog.push(event);
+      // Tee the upstream WebSocket event into the relay's
+      // SolidNotifications fan-out so SSE clients see remote changes,
+      // not just local relay-mediated publishes. The legacy
+      // notificationLog is still populated as a side-effect of
+      // emitNotification so older /sse pollers continue to work.
+      const legacyEventType: 'created' | 'updated' | 'superseded' =
+        event.type === 'Add' ? 'created'
+          : event.type === 'Remove' ? 'superseded'
+          : 'updated';
+      emitNotification(podUrl, {
+        eventType: legacyEventType,
+        descriptorUrl: event.resource,
+        timestamp: event.timestamp,
+      });
       log(`[notification] ${event.type} on ${event.resource}`);
     }, {
       fetch: solidFetch,
       WebSocket: WebSocket as unknown as WebSocketConstructor,
     });
     subscriptions.set(podUrl, sub);
-    return JSON.stringify({ subscribed: true, pod: podUrl });
+    return JSON.stringify({
+      subscribed: true,
+      pod: podUrl,
+      // SolidNotifications SSE channel for this pod — clients can
+      // connect directly with `EventSource(sse_url, { withCredentials })`
+      // to receive every cg:Notification event without paying the
+      // /sse global polling tax.
+      sse_url: sseUrl,
+      pod_slug: slug,
+    });
   } catch (err) {
-    return JSON.stringify({ subscribed: false, error: (err as Error).message });
+    return JSON.stringify({
+      subscribed: false,
+      error: (err as Error).message,
+      // Even on upstream WebSocket failure, the SSE channel is still
+      // usable for relay-mediated publishes since emitNotification
+      // fans out independently of any upstream subscription.
+      sse_url: sseUrl,
+      pod_slug: slug,
+    });
   }
 }
 
@@ -2714,7 +2877,17 @@ async function handleSubscribeAll(args: ToolArgs): Promise<string> {
   await Promise.allSettled(toSubscribe.map(async (pod) => {
     try {
       const sub = await subscribe(pod.url, (event: ContextChangeEvent) => {
-        notificationLog.push(event);
+        // Tee upstream events into the SolidNotifications SSE fan-out
+        // (also writes the legacy notificationLog entry as a side-effect).
+        const legacyEventType: 'created' | 'updated' | 'superseded' =
+          event.type === 'Add' ? 'created'
+            : event.type === 'Remove' ? 'superseded'
+            : 'updated';
+        emitNotification(pod.url, {
+          eventType: legacyEventType,
+          descriptorUrl: event.resource,
+          timestamp: event.timestamp,
+        });
         log(`[notification] ${event.type} on ${event.resource}`);
       }, {
         fetch: solidFetch,
@@ -2728,12 +2901,20 @@ async function handleSubscribeAll(args: ToolArgs): Promise<string> {
     }
   }));
 
+  const relayBase = (PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+  const sseChannels = pods.map(p => ({
+    pod: p.url,
+    pod_slug: podSlug(p.url),
+    sse_url: `${relayBase}/notifications/${podSlug(p.url)}`,
+  }));
+
   return JSON.stringify({
     total: pods.length,
     subscribed,
     skipped,
     failed,
     failures: failures.length > 0 ? failures : undefined,
+    sse_channels: sseChannels,
   });
 }
 
@@ -7304,6 +7485,128 @@ app.get('/sse', (req, res, next) => mcpGate(req, res, next), (req, res) => {
   req.on('close', () => {
     clearInterval(interval);
   });
+});
+
+// ── SolidNotifications SSE — per-pod live channel ───────────
+//
+// GET /notifications/:podSlug
+//
+// Honors the syncProtocol: 'SolidNotifications' contract declared
+// in every descriptor's FederationFacet. Clients connect with
+// `EventSource(url)`; each `data:` event is a JSON-LD
+// cg:Notification describing a descriptor lifecycle event
+// (created | updated | superseded). The producer side is
+// emitNotification() — called at the end of handlePublishContext
+// AND from every WebSocket subscription tee, so every relay-mediated
+// publish AND every upstream pod event reaches every connected client
+// with zero polling tail.
+//
+// Auth: requires a bearer that owns or has read access to the pod
+// the slug resolves to. The existing requireAuthorizedPodUrl() gate
+// is reused so the authorization model is identical to /inbox.
+//
+// Transport hygiene:
+//   - Content-Type: text/event-stream
+//   - Cache-Control: no-cache
+//   - Connection: keep-alive
+//   - X-Accel-Buffering: no (disable nginx buffering for SSE)
+//   - ': heartbeat\n\n' comment line every 30s so proxies + load
+//     balancers don't close the idle TCP socket.
+app.get('/notifications/:podSlug', bearerVerifyLimiter, async (req, res) => {
+  const slug = String(req.params.podSlug);
+  const podUrl = podSlugToUrl.get(slug);
+  if (!podUrl) {
+    res.status(404).json({
+      error: 'unknown_pod_slug',
+      detail: 'No pod is registered under this slug on this relay. Call subscribe_to_pod or publish_context first to register the pod, then reconnect.',
+    });
+    return;
+  }
+
+  // Reuse the existing read-auth gate: the bearer must own the pod
+  // (or a subpath). This mirrors /inbox and /audit/compliance.
+  const authorizedPod = await requireAuthorizedPodUrl(req, res, podUrl);
+  if (!authorizedPod) return; // requireAuthorizedPodUrl already wrote the 401/403
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  // Register this response in the per-pod subscriber set.
+  let subs = sseSubscribers.get(slug);
+  if (!subs) {
+    subs = new Set();
+    sseSubscribers.set(slug, subs);
+  }
+  subs.add(res);
+
+  // Hello event so the client confirms the channel is live.
+  res.write(`data: ${JSON.stringify({
+    '@context': 'https://markjspivey-xwisee.github.io/interego/ns/cg#',
+    type: 'cg:NotificationChannelOpen',
+    podUrl,
+    pod_slug: slug,
+    timestamp: new Date().toISOString(),
+  })}\n\n`);
+
+  // Heartbeat every 30s — proxy idle timeouts are typically 60-120s,
+  // so 30s leaves plenty of margin while not generating measurable
+  // traffic.
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(': heartbeat\n\n');
+    } catch {
+      /* socket already gone — close handler will clean up */
+    }
+  }, 30_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    const set = sseSubscribers.get(slug);
+    if (set) {
+      set.delete(res);
+      if (set.size === 0) sseSubscribers.delete(slug);
+    }
+  });
+});
+
+// POST /notifications/:podSlug/webhook — register an HTTP webhook URL
+// so the relay can POST cg:Notification events to it in addition to
+// the SSE fan-out. Bearer-gated identically to the SSE channel.
+app.post('/notifications/:podSlug/webhook', bearerVerifyLimiter, express.json(), async (req, res) => {
+  const slug = String(req.params.podSlug);
+  const podUrl = podSlugToUrl.get(slug);
+  if (!podUrl) {
+    res.status(404).json({ error: 'unknown_pod_slug' });
+    return;
+  }
+  const authorizedPod = await requireAuthorizedPodUrl(req, res, podUrl);
+  if (!authorizedPod) return;
+  const webhookUrl = (req.body as { url?: string } | undefined)?.url;
+  if (!webhookUrl || typeof webhookUrl !== 'string') {
+    res.status(400).json({ error: 'url_required', detail: 'POST body must be {"url": "https://..."}' });
+    return;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(webhookUrl);
+  } catch {
+    res.status(400).json({ error: 'invalid_url' });
+    return;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    res.status(400).json({ error: 'unsupported_scheme', detail: 'Only http(s) webhooks are supported.' });
+    return;
+  }
+  let hooks = notificationWebhooks.get(podUrl);
+  if (!hooks) {
+    hooks = new Set();
+    notificationWebhooks.set(podUrl, hooks);
+  }
+  hooks.add(webhookUrl);
+  res.json({ registered: true, podUrl, webhook: webhookUrl, total: hooks.size });
 });
 
 // MCP JSON-RPC over POST (simplified — for tools/list and tools/call)

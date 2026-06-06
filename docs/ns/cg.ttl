@@ -1658,3 +1658,86 @@ cg:overlap a owl:ObjectProperty ;
     rdfs:comment "Shared sub-fragment at the meet of cg:left and cg:right in a PGSL pullback square emitted by kernel.decompose." ;
     rdfs:domain cg:ComposedDescriptor ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+# ══════════════════════════════════════════════════════════════
+#  SolidNotifications — descriptor-lifecycle event format
+# ══════════════════════════════════════════════════════════════
+
+cg:Notification a owl:Class ;
+    rdfs:label "Notification" ;
+    rdfs:comment "A descriptor-lifecycle event emitted by a relay or pod implementing the cg:FederationFacet syncProtocol 'SolidNotifications' contract. Carries the IRI of the descriptor that changed, the kind of change (created / updated / superseded), the producing pod, the timestamp, and optionally the authoring agent. Delivered over Server-Sent Events (text/event-stream) at GET /notifications/:podSlug and/or POSTed to registered webhook URLs as application/ld+json." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:NotificationChannelOpen a owl:Class ;
+    rdfs:subClassOf cg:Notification ;
+    rdfs:label "Notification Channel Open" ;
+    rdfs:comment "A control event sent by a SolidNotifications SSE endpoint as the first data frame after the HTTP headers flush. Confirms the channel is alive and carries the resolved pod URL + slug so the client can sanity-check the routing before processing subsequent cg:Notification events." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:eventType a owl:DatatypeProperty ;
+    rdfs:label "event type" ;
+    rdfs:comment "Kind of descriptor lifecycle event — one of 'created' (new descriptor minted), 'updated' (existing descriptor's payload or facets changed in place), or 'superseded' (a successor descriptor was published via cg:supersedes and the prior head is no longer the canonical view)." ;
+    rdfs:domain cg:Notification ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:podUrl a owl:DatatypeProperty ;
+    rdfs:label "pod URL" ;
+    rdfs:comment "The Solid pod URL the notification originated from. Combined with cg:descriptorUrl it locates the changed resource without requiring the consumer to maintain a separate pod-to-descriptor index." ;
+    rdfs:domain cg:Notification ;
+    rdfs:range xsd:anyURI ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:descriptorUrl a owl:DatatypeProperty ;
+    rdfs:label "descriptor URL" ;
+    rdfs:comment "Dereferenceable IRI of the cg:ContextDescriptor a notification refers to. Used in cg:Notification events to identify the changed descriptor without forcing the consumer to parse the event payload's structure." ;
+    rdfs:range xsd:anyURI ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:graphUrl a owl:DatatypeProperty ;
+    rdfs:label "graph URL" ;
+    rdfs:comment "Dereferenceable IRI of the cg:ContextDescriptor's payload graph (the .nq / .envelope.jose.json artifact). Carried alongside cg:descriptorUrl in cg:Notification events so a consumer can fetch the payload without first re-fetching the descriptor index." ;
+    rdfs:range xsd:anyURI ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:NotificationShape a sh:NodeShape ;
+    rdfs:label "Notification SHACL shape" ;
+    rdfs:comment "Validation shape for cg:Notification events delivered over Server-Sent Events or as JSON-LD webhook payloads. Every event MUST carry a podUrl, descriptorUrl, eventType (one of created / updated / superseded), and a timestamp. graphUrl and author are optional but RECOMMENDED. Implementations honoring the FederationFacet syncProtocol 'SolidNotifications' contract conform to this shape." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> ;
+    sh:targetClass cg:Notification ;
+    sh:property [
+        sh:path cg:podUrl ;
+        sh:datatype xsd:anyURI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "cg:Notification MUST carry exactly one cg:podUrl identifying the source pod."
+    ] ;
+    sh:property [
+        sh:path dct:source ;
+        sh:minCount 0
+    ] ;
+    sh:property [
+        sh:path cg:descriptorUrl ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "cg:Notification MUST carry exactly one cg:descriptorUrl identifying the changed descriptor."
+    ] ;
+    sh:property [
+        sh:path cg:eventType ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:in ( "created" "updated" "superseded" ) ;
+        sh:message "cg:eventType MUST be one of 'created', 'updated', or 'superseded'."
+    ] ;
+    sh:property [
+        sh:path dct:created ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 0 ;
+        sh:maxCount 1
+    ] ;
+    sh:property [
+        sh:path prov:wasAttributedTo ;
+        sh:minCount 0 ;
+        sh:maxCount 1
+    ] .
