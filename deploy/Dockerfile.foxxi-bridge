@@ -5,10 +5,10 @@
 #  relative imports (`../affordances.ts`, `../src/...`, `../../_shared/...`,
 #  `../../learner-performer-companion/src/grounded-answer.js`) work
 #  unchanged. The Interego substrate is imported as the `@interego/core`
-#  package (see the symlink step below), not via relative paths — so a
-#  future extraction of the foxxi vertical into its own repo is mechanical.
-#  Runs via tsx for the vertical's TS sources (no separate compile step
-#  needed for the vertical).
+#  package (now at packages/core/ in the @interego/workspace monorepo),
+#  not via relative paths — so a future extraction of the foxxi vertical
+#  into its own repo is mechanical. Runs via tsx for the vertical's TS
+#  sources (no separate compile step needed for the vertical).
 # ────────────────────────────────────────────────────────────
 
 ARG NODE_BASE=node:20-slim
@@ -18,21 +18,47 @@ ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
 
 WORKDIR /app
 
-# Install @interego/core deps + tsx for runtime. We use the repo root's
-# package.json to get the same dep tree the bridge sees in dev.
-COPY package.json package-lock.json tsconfig.json ./
+# Workspace manifests — npm ci requires every declared workspace's
+# package.json to exist before it can resolve the tree.
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY packages/abac/package.json ./packages/abac/
+COPY packages/compliance/package.json ./packages/compliance/
+COPY packages/connectors/package.json ./packages/connectors/
+COPY packages/constitutional/package.json ./packages/constitutional/
+COPY packages/core/package.json ./packages/core/
+COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/ops/package.json ./packages/ops/
+COPY packages/p2p/package.json ./packages/p2p/
+COPY packages/passport/package.json ./packages/passport/
+COPY packages/pgsl/package.json ./packages/pgsl/
+COPY packages/privacy/package.json ./packages/privacy/
+COPY packages/registry/package.json ./packages/registry/
+COPY packages/security-txt/package.json ./packages/security-txt/
+COPY packages/skills/package.json ./packages/skills/
+COPY packages/solid/package.json ./packages/solid/
+COPY packages/transactions/package.json ./packages/transactions/
+COPY mcp-server/package.json ./mcp-server/
+COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
+COPY deploy/identity/package.json ./deploy/identity/
+COPY deploy/validator/package.json ./deploy/validator/
+COPY applications/foxxi-content-intelligence/bridge/package.json ./applications/foxxi-content-intelligence/bridge/
+COPY applications/learner-performer-companion/bridge/package.json ./applications/learner-performer-companion/bridge/
+COPY applications/agent-collective/bridge/package.json ./applications/agent-collective/bridge/
+COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
+COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
+COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
 RUN npm ci
 
 # Add tsx for the runtime.
 RUN npm install --no-save tsx@4.22.0
 
 # Copy the bits the bridge transitively needs, preserving relative-path layout:
-#   - src/                                            (@interego/core sources)
+#   - packages/core/                                  (@interego/core sources)
 #   - docs/ns/                                        (ontology TTLs that tools load)
 #   - applications/_shared/                           (vertical-bridge + affordance-mcp + aggregate-privacy + scorm + vc-jwt)
 #   - applications/foxxi-content-intelligence/        (the vertical itself)
 #   - applications/learner-performer-companion/src/   (grounded-answer.ts imported by course-qa.ts)
-COPY src/ ./src/
+COPY packages/core/ ./packages/core/
 COPY docs/ns/ ./docs/ns/
 COPY applications/_shared/ ./applications/_shared/
 COPY applications/foxxi-content-intelligence/ ./applications/foxxi-content-intelligence/
@@ -41,16 +67,19 @@ COPY applications/learner-performer-companion/src/ ./applications/learner-perfor
 # foxxi bridge composes for foxxi.query_experience_index.
 COPY applications/lrs-adapter/src/ ./applications/lrs-adapter/src/
 
-# Compile @interego/core → dist/. The foxxi vertical imports the substrate
-# as the `@interego/core` package, and that package's exports map resolves
-# to dist/ — so the compile is now load-bearing for the vertical at runtime.
-RUN npm run build --workspace @interego/core
+# Compile @interego/core → packages/core/dist/. The foxxi vertical imports
+# the substrate as the `@interego/core` package, and that package's exports
+# map resolves to dist/ — so the compile is load-bearing at runtime.
+RUN npm run build:core
 
-# Make `@interego/core` resolvable by name. The repo root IS the
-# @interego/core package; symlink it into node_modules so Node resolves
-# `@interego/core` (from anywhere under /app) to the root package.json,
-# whose `exports` map points at the dist/ just compiled.
-RUN mkdir -p node_modules/@interego && ln -sfn /app node_modules/@interego/core
+# Make `@interego/core` resolvable by name. The substrate kernel package
+# now lives at packages/core/ (the repo root is @interego/workspace);
+# point the symlink at packages/core so Node resolves `@interego/core`
+# (from anywhere under /app) to that package.json, whose `exports` map
+# points at the dist/ just compiled. npm ci will have created this
+# symlink as part of the workspace install — this line is explicit and
+# idempotent.
+RUN mkdir -p node_modules/@interego && ln -sfn /app/packages/core node_modules/@interego/core
 
 # ────────────────────────────────────────────────────────────
 #  Runtime stage
