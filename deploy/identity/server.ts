@@ -2051,6 +2051,9 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     return;
   }
 
+  if (!walletIndex.has(recoveredAddress)) {
+    await awaitInitialIndexWithBudget(50);
+  }
   // Returning user via wallet index — no user-claim needed.
   let userId = walletIndex.get(recoveredAddress);
   let user = userId ? identities.get(userId) : undefined;
@@ -2430,6 +2433,9 @@ app.post('/auth/webauthn/authenticate', authEnrollLimiter, async (req, res) => {
   if (!response?.id) {
     res.status(400).json({ error: 'response (with credential id) is required' });
     return;
+  }
+  if (!credentialIndex.has(response.id)) {
+    await awaitInitialIndexWithBudget(50);
   }
   // Canonical lookup: credential id → userId. We never trust a body-supplied
   // userId claim; the identity is whichever user owns the credential that
