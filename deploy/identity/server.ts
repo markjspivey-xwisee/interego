@@ -39,6 +39,11 @@ import {
   getOrCreateEd25519VerifyKey,
 } from './did-parse.js';
 import { startTiming, logTiming, timingEnabled } from './timing.js';
+import {
+  deriveUserIdFromCredentialId,
+  deriveUserIdFromWallet,
+  deriveUserIdFromDid,
+} from './derive-userid.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -175,26 +180,11 @@ function verifyBootstrapInvite(userId: string, token: string | undefined): boole
 //   * If you ever want a pod-LOCAL identity, that's a different
 //     construct (use a fresh credential per pod). Don't try to make
 //     userId pod-scoped — that would re-centralize the namespace.
-function deriveUserIdFromCredentialId(credentialId: string): string {
-  const h = crypto.createHash('sha256').update(credentialId).digest('hex');
-  return `u-pk-${h.slice(0, 12)}`;
-}
-function deriveUserIdFromWallet(addressLower: string): string {
-  // Ethereum addresses are already 160-bit; slice directly.
-  //
-  // NOTE — do NOT migrate this to loadAgentKeypair({ envVar, label }):
-  // the input here is a CLIENT-SUPPLIED Ethereum address from the
-  // registration payload, not an operator-held private key. The userId
-  // shape `u-eth-<addr-slice>` is also intentionally distinct from the
-  // did:key format that loadAgentKeypair produces; changing it would
-  // break the federation invariant documented in the section comment
-  // above (same wallet → same userId across identity-server instances).
-  return `u-eth-${addressLower.replace(/^0x/, '').slice(0, 12)}`;
-}
-function deriveUserIdFromDid(did: string): string {
-  const h = crypto.createHash('sha256').update(did).digest('hex');
-  return `u-did-${h.slice(0, 12)}`;
-}
+// Three deterministic userId-derivation functions live in
+// ./derive-userid.ts so they can be unit-tested with frozen vectors
+// without importing this file (which has top-level `app.listen` side
+// effects). See the section comment above for the federation invariant
+// these shapes encode.
 
 // ── Key Generation ──────────────────────────────────────────
 

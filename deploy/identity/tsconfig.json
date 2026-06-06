@@ -12,6 +12,6 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["server.ts", "cors-allowlist.ts", "webfinger.ts", "did-parse.ts", "timing.ts", "tests/**/*.ts"],
+  "include": ["server.ts", "cors-allowlist.ts", "webfinger.ts", "did-parse.ts", "derive-userid.ts", "timing.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
