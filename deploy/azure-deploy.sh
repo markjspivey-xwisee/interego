@@ -140,8 +140,16 @@ IDENTITY_URL="https://$IDENTITY_FQDN"
 echo "    Identity: $IDENTITY_URL"
 
 # Wire identity self-referential env vars + a stable 32-byte HMAC
-# TOKEN_SIGNING_KEY so sessions survive restarts.
+# TOKEN_SIGNING_KEY so sessions survive restarts. Stored as a Container
+# Apps secret (not a plain env var) so the HMAC key never appears in the
+# revision spec or ARM activity logs — forgery of this key means minting
+# valid identity-server tokens for any user.
 TOKEN_SIGNING_KEY=$(openssl rand -base64 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+az containerapp secret set \
+  --name "$IDENTITY_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --secrets "token-signing-key=$TOKEN_SIGNING_KEY" \
+  --output none
 az containerapp update \
   --name "$IDENTITY_APP" \
   --resource-group "$RESOURCE_GROUP" \
@@ -150,7 +158,7 @@ az containerapp update \
     "WEBAUTHN_RP_ID=$IDENTITY_FQDN" \
     "WEBAUTHN_RP_ORIGIN=$IDENTITY_URL" \
     "WEBAUTHN_RP_ORIGINS=$IDENTITY_URL" \
-    "TOKEN_SIGNING_KEY=$TOKEN_SIGNING_KEY" \
+    "TOKEN_SIGNING_KEY=secretref:token-signing-key" \
     "IDENTITY_TIMING=1" \
   --output none
 
@@ -178,7 +186,20 @@ az containerapp create \
   --env-vars \
     "CSS_INTERNAL_URL=$CSS_INTERNAL_URL" \
     "IDENTITY_URL=$IDENTITY_URL" \
-    "WRITE_SECRET=$GATE_WRITE_SECRET" \
+  --output none
+
+# Store WRITE_SECRET as a Container Apps secret (not a plain env var) so
+# the operator bearer — which bypasses the css-gate to write to any pod
+# path — never appears in the revision spec or ARM activity logs.
+az containerapp secret set \
+  --name "$CSS_GATE_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --secrets "gate-write-secret=$GATE_WRITE_SECRET" \
+  --output none
+az containerapp update \
+  --name "$CSS_GATE_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --set-env-vars "WRITE_SECRET=secretref:gate-write-secret" \
   --output none
 
 # Second pass: set PUBLIC_BASE_URL once the gate's own FQDN exists.
@@ -448,11 +469,22 @@ if [ -n "$IDENTITY_FQDN" ]; then
   echo ">>> Wiring identity env vars..."
   # Idempotent on TOKEN_SIGNING_KEY: only generate a new HMAC key if
   # one isn't already configured, so existing user sessions survive
-  # this deploy. Same check the CI workflow uses.
-  EXISTING_TOKEN_KEY=$(az containerapp show --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[?name=='TOKEN_SIGNING_KEY'].value | [0]" -o tsv 2>/dev/null || true)
+  # this deploy. Same check the CI workflow uses. Check the Container
+  # Apps secret first, then fall back to a plaintext env var on older
+  # deployments that pre-date the secretref migration.
+  EXISTING_TOKEN_KEY=$(az containerapp secret show --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" \
+    --secret-name token-signing-key --query value -o tsv 2>/dev/null || true)
+  if [ -z "$EXISTING_TOKEN_KEY" ]; then
+    EXISTING_TOKEN_KEY=$(az containerapp show --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[?name=='TOKEN_SIGNING_KEY'].value | [0]" -o tsv 2>/dev/null || true)
+  fi
   if [ -z "$EXISTING_TOKEN_KEY" ]; then
     echo "    TOKEN_SIGNING_KEY not yet configured — generating fresh 32-byte HMAC key."
     NEW_TOKEN_KEY=$(openssl rand -base64 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+    az containerapp secret set \
+      --name "$IDENTITY_APP" \
+      --resource-group "$RESOURCE_GROUP" \
+      --secrets "token-signing-key=$NEW_TOKEN_KEY" \
+      --output none
     az containerapp update \
       --name "$IDENTITY_APP" \
       --resource-group "$RESOURCE_GROUP" \
@@ -462,11 +494,18 @@ if [ -n "$IDENTITY_FQDN" ]; then
         "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
         "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
         "RELAY_URL=https://$RELAY_FQDN" \
-        "TOKEN_SIGNING_KEY=$NEW_TOKEN_KEY" \
+        "TOKEN_SIGNING_KEY=secretref:token-signing-key" \
         "IDENTITY_TIMING=1" \
       --output none
   else
     echo "    TOKEN_SIGNING_KEY already configured — preserving so sessions survive this deploy."
+    # Ensure the key is stored as a secret + bound by secretref even if
+    # the prior deploy stored it as a plaintext env var.
+    az containerapp secret set \
+      --name "$IDENTITY_APP" \
+      --resource-group "$RESOURCE_GROUP" \
+      --secrets "token-signing-key=$EXISTING_TOKEN_KEY" \
+      --output none
     az containerapp update \
       --name "$IDENTITY_APP" \
       --resource-group "$RESOURCE_GROUP" \
@@ -476,6 +515,7 @@ if [ -n "$IDENTITY_FQDN" ]; then
         "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
         "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
         "RELAY_URL=https://$RELAY_FQDN" \
+        "TOKEN_SIGNING_KEY=secretref:token-signing-key" \
         "IDENTITY_TIMING=1" \
       --output none
   fi
