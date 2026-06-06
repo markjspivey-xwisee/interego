@@ -325,6 +325,15 @@ jobs:
           # if it isn't already configured, so subsequent deploys reuse
           # the original key and existing sessions survive.
           EXISTING_TOKEN_KEY=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='TOKEN_SIGNING_KEY'].value | [0]" -o tsv)
+          # IDENTITY_TIMING: when set to "1" the /auth/did handler emits 6
+          # structured `[identity-timing] step=… ms=…` lines per request
+          # (did-parse / did-verify / did-index-lookup / did-pod-write /
+          # did-issue-token / did-total). Pinned to "1" in IaC because the
+          # signal is cheap (single guarded console.log per step, no string
+          # work on the disabled path) and we want every redeploy to keep
+          # cold-path visibility — previously this was set manually via
+          # `az containerapp update --set-env-vars` and got blown away on
+          # the next CI deploy (same trap as the old CSS_URL pattern).
           if [ -z "$EXISTING_TOKEN_KEY" ]; then
             echo "TOKEN_SIGNING_KEY not yet configured — generating fresh 32-byte HMAC key."
             NEW_TOKEN_KEY=$(openssl rand -base64 32)
@@ -338,6 +347,7 @@ jobs:
                 "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
                 "RELAY_URL=https://$RELAY_FQDN" \
                 "TOKEN_SIGNING_KEY=$NEW_TOKEN_KEY" \
+                "IDENTITY_TIMING=1" \
               --output none
           else
             echo "TOKEN_SIGNING_KEY already configured (length: ${#EXISTING_TOKEN_KEY}) — preserving so sessions survive this deploy."
@@ -350,6 +360,7 @@ jobs:
                 "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
                 "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
                 "RELAY_URL=https://$RELAY_FQDN" \
+                "IDENTITY_TIMING=1" \
               --output none
           fi
           # Same Multiple-vs-Single revision-mode handling as the dashboard
