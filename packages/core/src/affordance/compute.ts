@@ -245,7 +245,7 @@ function evaluateTrustPolicy(
     if (!policy.requiredForAction.includes(action)) continue;
 
     // Check trust level
-    const trustLevels = ['SelfAsserted', 'DelegatedTrust', 'CryptographicallyVerified'];
+    const trustLevels = ['SelfAsserted', 'ThirdPartyAttested', 'CryptographicallyVerified'];
     const actualLevel = trustFacet?.trustLevel ?? 'SelfAsserted';
     const actualIdx = trustLevels.indexOf(actualLevel);
     const requiredIdx = trustLevels.indexOf(policy.minTrustLevel);
@@ -364,7 +364,7 @@ function computeActionConfidence(
   if (trust?.trustLevel) {
     const trustMultipliers: Record<string, number> = {
       CryptographicallyVerified: 1.0,
-      DelegatedTrust: 0.85,
+      ThirdPartyAttested: 0.85,
       SelfAsserted: 0.7,
     };
     confidence *= trustMultipliers[trust.trustLevel] ?? 0.5;
@@ -410,11 +410,11 @@ function extractSignifiers(facet: ContextFacetData): Signifier[] {
         facetType: 'Trust',
         indicates: f.trustLevel === 'CryptographicallyVerified'
           ? ['apply', 'forward', 'compose']
-          : f.trustLevel === 'DelegatedTrust'
+          : f.trustLevel === 'ThirdPartyAttested'
           ? ['apply', 'compose', 'cite']
           : ['read', 'cite', 'ingest'],
         strength: f.trustLevel === 'CryptographicallyVerified' ? 'strong' :
-                  f.trustLevel === 'DelegatedTrust' ? 'weak' : 'ambiguous',
+                  f.trustLevel === 'ThirdPartyAttested' ? 'weak' : 'ambiguous',
         detail: `Trust: ${f.trustLevel}`,
       });
       break;

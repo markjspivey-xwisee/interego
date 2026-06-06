@@ -131,7 +131,7 @@ export type AgentCapability =
   | 'retract';      // can retract own descriptors
 
 export interface TrustPolicy {
-  readonly minTrustLevel: 'SelfAsserted' | 'DelegatedTrust' | 'CryptographicallyVerified';
+  readonly minTrustLevel: 'SelfAsserted' | 'ThirdPartyAttested' | 'CryptographicallyVerified';
   readonly minConfidence: number;
   readonly requiredForAction: AffordanceAction[];
 }

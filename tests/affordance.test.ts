@@ -31,7 +31,7 @@ const fullProfile: AgentProfile = {
   vocabularies: ['http://schema.org/' as IRI],
   trustPolicies: [
     { minTrustLevel: 'SelfAsserted', minConfidence: 0.5, requiredForAction: ['apply'] },
-    { minTrustLevel: 'DelegatedTrust', minConfidence: 0.7, requiredForAction: ['forward'] },
+    { minTrustLevel: 'ThirdPartyAttested', minConfidence: 0.7, requiredForAction: ['forward'] },
   ],
   causalModels: [],
 };

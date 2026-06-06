@@ -408,7 +408,7 @@ export function updateStigmergicField(
   for (const desc of descriptors) {
     const trust = desc.facets.find(f => f.type === 'Trust') as any;
     if (trust?.trustLevel === 'CryptographicallyVerified') cryptographicallyVerified++;
-    else if (trust?.trustLevel === 'DelegatedTrust') delegatedTrust++;
+    else if (trust?.trustLevel === 'ThirdPartyAttested') delegatedTrust++;
     else selfAsserted++;
   }
   const trustDist: TrustDistribution = {
@@ -545,7 +545,7 @@ function evaluateTrust(descriptor: ContextDescriptorData): TrustEvaluation {
     verified: trust?.trustLevel === 'CryptographicallyVerified',
     lastVerified: new Date().toISOString(),
     confidence: trust?.trustLevel === 'CryptographicallyVerified' ? 1.0
-      : trust?.trustLevel === 'DelegatedTrust' ? 0.85
+      : trust?.trustLevel === 'ThirdPartyAttested' ? 0.85
       : 0.7,
   };
 }
