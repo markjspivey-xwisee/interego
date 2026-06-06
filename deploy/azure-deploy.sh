@@ -239,11 +239,11 @@ RELAY_FQDN=$(az containerapp show --name "$RELAY_APP" --resource-group "$RESOURC
 echo "    MCP Relay: https://$RELAY_FQDN"
 
 # ── 8. Deploy PGSL Browser + Observatory ──────────────────────
-BROWSER_APP="interego-browser"
+BROWSER_APP="interego-pgsl-browser"
 echo ">>> Building PGSL Browser image..."
 az acr build \
   --registry "$ACR_NAME" \
-  --image interego-browser:latest \
+  --image interego-pgsl-browser:latest \
   --file deploy/Dockerfile.pgsl-browser \
   . \
   --no-logs
@@ -253,7 +253,7 @@ az containerapp create \
   --name "$BROWSER_APP" \
   --resource-group "$RESOURCE_GROUP" \
   --environment "$ENV_NAME" \
-  --image "$ACR_LOGIN_SERVER/interego-browser:latest" \
+  --image "$ACR_LOGIN_SERVER/interego-pgsl-browser:latest" \
   --registry-server "$ACR_LOGIN_SERVER" \
   --registry-username "$ACR_USERNAME" \
   --registry-password "$ACR_PASSWORD" \
