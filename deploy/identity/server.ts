@@ -93,7 +93,15 @@ const BASE_URL_HOST_NO_PORT = BASE_URL_HOST.replace(/:.*$/, '');
 const BASE_URL_HOSTNAME = new URL(BASE_URL).hostname;
 // The sibling MCP relay — surfaced on the landing page so agent
 // operators can copy it into their MCP client without hunting.
-const RELAY_URL = (process.env['RELAY_URL'] ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+// No literal-URL fallback: IaC is the source of truth (see the
+// `Wire identity env vars` step in .github/workflows/deploy-azure.yml).
+// A baked-in default silently masks a skipped wire-step and points the
+// binary at a stale host.
+const RELAY_URL_RAW = process.env['RELAY_URL'];
+if (!RELAY_URL_RAW) {
+  throw new Error('RELAY_URL is required at startup — IaC (deploy-azure.yml `Wire identity env vars`) must set it.');
+}
+const RELAY_URL = RELAY_URL_RAW.replace(/\/$/, '');
 const REPO_URL = process.env['REPO_URL'] ?? 'https://github.com/markjspivey-xwisee/interego';
 const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
 const TOKEN_TTL_SECONDS = 86400; // 24 hours
