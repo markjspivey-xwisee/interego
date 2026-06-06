@@ -1691,6 +1691,10 @@ setInterval(() => {
 const authEnrollLimiter = rateLimit('auth-enroll', { windowMs: 60_000, max: 30 });
 const challengeLimiter = rateLimit('challenges', { windowMs: 60_000, max: 60 });
 const tokenLimiter = rateLimit('tokens', { windowMs: 60_000, max: 60 });
+// /siwe/verify runs ECDSA recovery on every call — tighter cap than the
+// general auth-enroll limiter to keep unauthenticated CPU exhaustion off
+// the table.
+const siweVerifyLimiter = rateLimit('siwe-verify', { windowMs: 60_000, max: 10 });
 
 // ── Browser-friendly landing page ─────────────────────────────────
 //
@@ -3279,9 +3283,19 @@ app.get('/erc8004/:chain/:contract/:tokenId', (req, res) => {
 
 // ── List users (admin/dashboard) ─────────────────────────────
 
-app.get('/users', (_req, res) => {
+app.get('/users', async (req, res) => {
+  // Auth-gated to prevent unauthenticated enumeration of every account on
+  // the deployment. Returns only the authenticated user's own record.
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Bearer token required' });
+    return;
+  }
+  const tr = await verifyToken(authHeader.slice(7));
+  if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return; }
+  const callerId = tr.record!.userId;
   const users = [...identities.values()]
-    .filter(i => i.type === 'user')
+    .filter(i => i.type === 'user' && i.id === callerId)
     .map(u => ({
       id: u.id,
       name: u.name,
@@ -3712,6 +3726,19 @@ app.get('/agents/me', async (req, res) => {
  * GET /wallet/status/:userId — Check if a user has any linked wallets.
  */
 app.get('/wallet/status/:userId', async (req, res) => {
+  // Auth-gated to prevent linking userIds to on-chain wallet addresses.
+  // Only the bearer's own userId may be queried.
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Bearer token required' });
+    return;
+  }
+  const tr = await verifyToken(authHeader.slice(7));
+  if (!tr.valid) { res.status(401).json({ error: `Invalid bearer token: ${tr.reason}` }); return; }
+  if (tr.record!.userId !== req.params.userId) {
+    res.status(403).json({ error: 'Bearer token does not match the requested userId' });
+    return;
+  }
   const user = identities.get(req.params.userId);
   if (!user || user.type !== 'user') {
     res.status(404).json({ error: 'User not found' });
