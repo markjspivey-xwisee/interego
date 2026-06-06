@@ -112,10 +112,86 @@ CSS_FQDN=$(az containerapp show --name "$CSS_APP" --resource-group "$RESOURCE_GR
 CSS_INTERNAL_URL="https://$CSS_FQDN/"
 echo "    CSS internal: $CSS_INTERNAL_URL"
 
+# ── 5a. Deploy Identity ───────────────────────────────────────
+# Identity must come up before the relay (relay's OAuth flow calls
+# IDENTITY_URL/tokens/verify) and before the css-gate (the gate's
+# per-user bearer verifier hits IDENTITY_URL/tokens/verify too).
+IDENTITY_APP="${IDENTITY_APP:-interego-identity}"
+echo ">>> Deploying Identity..."
+az containerapp create \
+  --name "$IDENTITY_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/interego-identity:latest" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USERNAME" \
+  --registry-password "$ACR_PASSWORD" \
+  --target-port 8090 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 2 \
+  --cpu 0.5 \
+  --memory 1Gi \
+  --env-vars "CSS_URL=$CSS_INTERNAL_URL" \
+  --output none
+
+IDENTITY_FQDN=$(az containerapp show --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
+IDENTITY_URL="https://$IDENTITY_FQDN"
+echo "    Identity: $IDENTITY_URL"
+
+# Wire identity self-referential env vars + a stable 32-byte HMAC
+# TOKEN_SIGNING_KEY so sessions survive restarts.
+TOKEN_SIGNING_KEY=$(openssl rand -base64 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+az containerapp update \
+  --name "$IDENTITY_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --set-env-vars \
+    "BASE_URL=$IDENTITY_URL" \
+    "WEBAUTHN_RP_ID=$IDENTITY_FQDN" \
+    "WEBAUTHN_RP_ORIGIN=$IDENTITY_URL" \
+    "WEBAUTHN_RP_ORIGINS=$IDENTITY_URL" \
+    "TOKEN_SIGNING_KEY=$TOKEN_SIGNING_KEY" \
+    "IDENTITY_TIMING=1" \
+  --output none
+
+# ── 5b. Deploy CSS Gate ───────────────────────────────────────
+# The css-gate is the only public face of CSS (CSS itself runs with
+# `--ingress internal`). Browser-facing apps point CSS_URL at the gate;
+# the gate proxies to CSS_INTERNAL_URL and gates writes by bearer authz.
+CSS_GATE_APP="${CSS_GATE_APP:-interego-css-gate}"
+echo ">>> Deploying CSS Gate..."
+GATE_WRITE_SECRET=$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+az containerapp create \
+  --name "$CSS_GATE_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/interego-css-gate:latest" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USERNAME" \
+  --registry-password "$ACR_PASSWORD" \
+  --target-port 8080 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 3 \
+  --cpu 0.5 \
+  --memory 1Gi \
+  --env-vars \
+    "CSS_INTERNAL_URL=$CSS_INTERNAL_URL" \
+    "IDENTITY_URL=$IDENTITY_URL" \
+    "WRITE_SECRET=$GATE_WRITE_SECRET" \
+  --output none
+
+# Second pass: set PUBLIC_BASE_URL once the gate's own FQDN exists.
+CSS_GATE_FQDN_TMP=$(az containerapp show --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
+az containerapp update \
+  --name "$CSS_GATE_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --set-env-vars "PUBLIC_BASE_URL=https://$CSS_GATE_FQDN_TMP" \
+  --output none
+
 # CSS_GATE_URL is the gate's public FQDN — the only external face of
 # CSS. CSS_BASE_URL gets set to this so issued WebIDs / Solid OIDC
 # issuer metadata remain externally dereferenceable.
-CSS_GATE_APP="${CSS_GATE_APP:-interego-css-gate}"
 CSS_GATE_FQDN=$(az containerapp show --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
 if [ -n "$CSS_GATE_FQDN" ]; then
   CSS_GATE_URL="https://$CSS_GATE_FQDN/"
@@ -407,16 +483,160 @@ else
   echo ">>> Skipping identity env wiring — $IDENTITY_APP not deployed."
 fi
 
+# ── 10. Deploy Foxxi Bridge ───────────────────────────────────
+FOXXI_BRIDGE_APP="${FOXXI_BRIDGE_APP:-interego-foxxi-bridge}"
+echo ">>> Deploying Foxxi Bridge..."
+az containerapp create \
+  --name "$FOXXI_BRIDGE_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/interego-foxxi-bridge:latest" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USERNAME" \
+  --registry-password "$ACR_PASSWORD" \
+  --target-port 6080 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 2 \
+  --cpu 0.5 \
+  --memory 1Gi \
+  --env-vars "CSS_URL=$CSS_INTERNAL_URL" "IDENTITY_URL=$IDENTITY_URL" "RELAY_URL=https://$RELAY_FQDN" \
+  --output none
+
+FOXXI_BRIDGE_FQDN=$(az containerapp show --name "$FOXXI_BRIDGE_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
+echo "    Foxxi Bridge: https://$FOXXI_BRIDGE_FQDN"
+
+# ── 11. Deploy Foxxi Dashboard ────────────────────────────────
+FOXXI_DASHBOARD_APP="${FOXXI_DASHBOARD_APP:-interego-foxxi-dashboard}"
+echo ">>> Deploying Foxxi Dashboard..."
+az containerapp create \
+  --name "$FOXXI_DASHBOARD_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/interego-foxxi-dashboard:latest" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USERNAME" \
+  --registry-password "$ACR_PASSWORD" \
+  --target-port 8080 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 2 \
+  --cpu 0.25 \
+  --memory 0.5Gi \
+  --env-vars "BRIDGE_URL=https://$FOXXI_BRIDGE_FQDN" \
+  --output none
+
+FOXXI_DASHBOARD_FQDN=$(az containerapp show --name "$FOXXI_DASHBOARD_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
+echo "    Foxxi Dashboard: https://$FOXXI_DASHBOARD_FQDN"
+
+# ── 12. Deploy Foxxi Microsite ────────────────────────────────
+FOXXI_MICROSITE_APP="${FOXXI_MICROSITE_APP:-interego-foxxi-microsite}"
+echo ">>> Deploying Foxxi Microsite..."
+az containerapp create \
+  --name "$FOXXI_MICROSITE_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/interego-foxxi-microsite:latest" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USERNAME" \
+  --registry-password "$ACR_PASSWORD" \
+  --target-port 8080 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 2 \
+  --cpu 0.25 \
+  --memory 0.5Gi \
+  --env-vars "BRIDGE_URL=https://$FOXXI_BRIDGE_FQDN" \
+  --output none
+
+FOXXI_MICROSITE_FQDN=$(az containerapp show --name "$FOXXI_MICROSITE_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
+echo "    Foxxi Microsite: https://$FOXXI_MICROSITE_FQDN"
+
+# ── 13. Deploy Foxxi SCORM Player ─────────────────────────────
+FOXXI_SCORM_APP="${FOXXI_SCORM_APP:-interego-foxxi-scorm-player}"
+echo ">>> Deploying Foxxi SCORM Player..."
+az containerapp create \
+  --name "$FOXXI_SCORM_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/interego-foxxi-scorm-player:latest" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USERNAME" \
+  --registry-password "$ACR_PASSWORD" \
+  --target-port 8080 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 2 \
+  --cpu 0.25 \
+  --memory 0.5Gi \
+  --env-vars "BRIDGE_URL=https://$FOXXI_BRIDGE_FQDN" \
+  --output none
+
+FOXXI_SCORM_FQDN=$(az containerapp show --name "$FOXXI_SCORM_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
+echo "    Foxxi SCORM Player: https://$FOXXI_SCORM_FQDN"
+
+# ── 14. Deploy Acme ID ────────────────────────────────────────
+ACME_ID_APP="${ACME_ID_APP:-interego-acme-id}"
+echo ">>> Deploying Acme ID..."
+az containerapp create \
+  --name "$ACME_ID_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/interego-acme-id:latest" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USERNAME" \
+  --registry-password "$ACR_PASSWORD" \
+  --target-port 8080 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 2 \
+  --cpu 0.25 \
+  --memory 0.5Gi \
+  --output none
+
+ACME_ID_FQDN=$(az containerapp show --name "$ACME_ID_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
+echo "    Acme ID: https://$ACME_ID_FQDN"
+
+# ── 15. Deploy Interego Main ──────────────────────────────────
+INTEREGO_MAIN_APP="${INTEREGO_MAIN_APP:-interego-main}"
+echo ">>> Deploying Interego Main..."
+az containerapp create \
+  --name "$INTEREGO_MAIN_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --environment "$ENV_NAME" \
+  --image "$ACR_LOGIN_SERVER/interego-main:latest" \
+  --registry-server "$ACR_LOGIN_SERVER" \
+  --registry-username "$ACR_USERNAME" \
+  --registry-password "$ACR_PASSWORD" \
+  --target-port 8080 \
+  --ingress external \
+  --min-replicas 1 \
+  --max-replicas 2 \
+  --cpu 0.25 \
+  --memory 0.5Gi \
+  --output none
+
+INTEREGO_MAIN_FQDN=$(az containerapp show --name "$INTEREGO_MAIN_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
+echo "    Interego Main: https://$INTEREGO_MAIN_FQDN"
+
 # ── Done ──────────────────────────────────────────────────────
 echo ""
 echo "=== Deployment Complete ==="
 echo ""
 echo "Services:"
-echo "  CSS (internal):  $CSS_INTERNAL_URL"
-echo "  Dashboard:       https://$DASHBOARD_FQDN"
-echo "  MCP Relay:       https://$RELAY_FQDN"
-echo "  PGSL Browser:    https://$BROWSER_FQDN"
-echo "  Observatory:     https://$BROWSER_FQDN/observatory"
+echo "  CSS (internal):       $CSS_INTERNAL_URL"
+echo "  CSS Gate:             https://$CSS_GATE_FQDN_TMP"
+echo "  Identity:             $IDENTITY_URL"
+echo "  Dashboard:            https://$DASHBOARD_FQDN"
+echo "  MCP Relay:            https://$RELAY_FQDN"
+echo "  PGSL Browser:         https://$BROWSER_FQDN"
+echo "  Observatory:          https://$BROWSER_FQDN/observatory"
+echo "  Foxxi Bridge:         https://$FOXXI_BRIDGE_FQDN"
+echo "  Foxxi Dashboard:      https://$FOXXI_DASHBOARD_FQDN"
+echo "  Foxxi Microsite:      https://$FOXXI_MICROSITE_FQDN"
+echo "  Foxxi SCORM Player:   https://$FOXXI_SCORM_FQDN"
+echo "  Acme ID:              https://$ACME_ID_FQDN"
+echo "  Interego Main:        https://$INTEREGO_MAIN_FQDN"
 echo ""
 echo "To connect a remote agent, set:"
 echo "  CG_BASE_URL=https://$RELAY_FQDN"
