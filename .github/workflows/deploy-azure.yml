@@ -718,6 +718,16 @@ jobs:
               SET_ARGS+=("RELAY_INTROSPECTION_SECRET=secretref:relay-introspection-secret")
             fi
           fi
+          # Re-assert tunables that live only on the running revision —
+          # losing them on redeploy is a silent regression (UPSTREAM_ALLOW_H2
+          # in particular gates the CSS ingress HTTP/1.1 pin).
+          for VAR in RELAY_CORS_ALLOWLIST UPSTREAM_ALLOW_H2 UPSTREAM_POOL_CONNECTIONS UPSTREAM_REQUEST_BUFFER USER_BEARER_CACHE_TTL_MS CSS_GATE_AUTOSTART; do
+            val=$(read_env "$VAR")
+            if [ -n "$val" ]; then
+              SET_ARGS+=("$VAR=$val")
+              echo "  preserve $VAR=$val"
+            fi
+          done
           az containerapp update --name "$APP" --resource-group "$RG" \
             --set-env-vars "${SET_ARGS[@]}" --output none
           # Same Multiple-vs-Single revision-mode handling as the other
