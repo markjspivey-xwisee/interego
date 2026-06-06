@@ -1867,10 +1867,10 @@ else activeAffordances = [...foxxiAffordances, ...foxxiAdminAffordances];
 const PORT = parseInt(process.env.PORT ?? '6080', 10);
 
 // Browser dashboard origin (default Vite dev server). Override with
-// FOXXI_DASHBOARD_ORIGIN for production; "*" for open development. Multiple
-// browser surfaces (dashboard + microsite) supply a comma-separated list;
-// the middleware below echoes back the request's Origin if it's in the
-// allow-list (single Access-Control-Allow-Origin per CORS spec).
+// FOXXI_DASHBOARD_ORIGIN for production. Multiple browser surfaces
+// (dashboard + microsite) supply a comma-separated list; the middleware
+// below echoes back the request's Origin if it's in the allow-list
+// (single Access-Control-Allow-Origin per CORS spec).
 const ALLOWED_ORIGINS: ReadonlySet<string> = new Set(
   (process.env.FOXXI_DASHBOARD_ORIGIN ?? 'http://localhost:5173,http://localhost:5174')
     .split(',').map(s => s.trim()).filter(Boolean),

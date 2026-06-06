@@ -2108,12 +2108,9 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
       ?? defaultAgentForRegistration(targetUserId, user.name, surfaceAgent).agentId;
     const methods = emptyAuthMethods(user.id, user.name, agentId);
     methods.walletAddresses.push(recoveredAddress);
-    try {
-      await putPodAuthMethods(user.id, methods);
-    } catch (err) {
-      res.status(500).json({ error: `Failed to persist wallet to pod: ${(err as Error).message}` });
-      return;
-    }
+    inlineApplyAuthMethods(user.id, methods);
+    scheduleDeferredAuthMethodsWrite(user.id, methods, 'siwe-first-time');
+    if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'first-time' });
     // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
     // The relay is now the single authoritative writer for both pod-side
     // documents and does so synchronously inside /oauth/verify before
@@ -2128,12 +2125,9 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
     const methods = await readAuthMethods(user.id);
     if (!methods.walletAddresses.includes(recoveredAddress)) {
       methods.walletAddresses.push(recoveredAddress);
-      try {
-        await putPodAuthMethods(user.id, methods);
-      } catch (err) {
-        res.status(500).json({ error: `Failed to persist wallet to pod: ${(err as Error).message}` });
-        return;
-      }
+      inlineApplyAuthMethods(user.id, methods);
+      scheduleDeferredAuthMethodsWrite(user.id, methods, 'siwe-add-wallet');
+      if (timingEnabled()) logTiming('siwe-pod-write-scheduled', requestStart, { branch: 'add-wallet' });
       log(`Wallet ${recoveredAddress} linked to existing user ${user.id}`);
     }
   }
