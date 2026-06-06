@@ -36,6 +36,7 @@ import { Pool } from 'undici';
 // Required env BEFORE importing server.mjs (it reads env at module load).
 process.env.WRITE_SECRET = 'test-write-secret';
 process.env.CSS_INTERNAL_URL = 'http://upstream.invalid.test';
+process.env.PUBLIC_BASE_URL = 'http://gate.invalid.test';
 process.env.CSS_HOST_HEADER = 'css.public.example';
 process.env.CSS_GATE_AUTOSTART = '0';
 // Use a very short cache TTL so we can write a non-flaky cache test

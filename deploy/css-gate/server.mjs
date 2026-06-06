@@ -83,13 +83,23 @@ import { createServer } from 'http';
 import { Pool } from 'undici';
 
 const PORT = Number(process.env.PORT ?? 8080);
-const CSS_INTERNAL_URL = process.env.CSS_INTERNAL_URL
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+// Fail-fast: CSS is internal-only (--ingress internal). The canonical
+// upstream is the `.internal.` FQDN set by deploy/azure-deploy.sh. No
+// default — a missing env var here would silently dial the legacy
+// public host that no longer resolves.
+if (!process.env.CSS_INTERNAL_URL) {
+  console.error('[css-gate] FATAL: CSS_INTERNAL_URL is required (expected internal FQDN, e.g. https://interego-css.internal.<env>.azurecontainerapps.io)');
+  process.exit(1);
+}
+const CSS_INTERNAL_URL = process.env.CSS_INTERNAL_URL;
 // Public origin of THIS gate. Returned as ACAO when the request Origin
 // is off-list — browsers refuse to read it because no off-list caller
 // has that origin.
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL
-  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/+$/, '');
+if (!process.env.PUBLIC_BASE_URL) {
+  console.error('[css-gate] FATAL: PUBLIC_BASE_URL is required (the gate\'s own public FQDN)');
+  process.exit(1);
+}
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL.replace(/\/+$/, '');
 // CSS validates that incoming requests' Host header matches its
 // configured CSS_BASE_URL ("outside the configured identifier space"
 // errors otherwise). When the gate connects to CSS at an internal
