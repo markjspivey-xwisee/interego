@@ -363,10 +363,10 @@ cg:delegatedBy a owl:ObjectProperty ;
     rdfs:comment "The principal who delegated authority to this agent." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
-cg:scope a owl:DatatypeProperty ;
+cg:scope a owl:ObjectProperty ;
     rdfs:label "scope" ;
     rdfs:comment "Delegation scope: ReadWrite, ReadOnly, PublishOnly, or DiscoverOnly." ;
-    rdfs:range xsd:string ;
+    rdfs:range cg:DelegationScopeEnum ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 # ── Access Control / Policy properties ───────────────────────
@@ -433,12 +433,12 @@ cg:ratifiedAt a owl:DatatypeProperty ;
 
 # ── Semiotic properties ───────────────────────────────────────
 
-cg:interpretationFrame a owl:DatatypeProperty ;
+cg:interpretationFrame a owl:ObjectProperty ;
     rdfs:label "interpretation frame" ;
     rdfs:comment "The interpretive frame under which the context should be understood." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
-cg:signSystem a owl:DatatypeProperty ;
+cg:signSystem a owl:ObjectProperty ;
     rdfs:label "sign system" ;
     rdfs:comment "The sign system or semiotic code used." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
@@ -480,7 +480,7 @@ cg:issuer a owl:ObjectProperty ;
     rdfs:comment "The issuer of the trust assertion (typically a DID)." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
-cg:proofMechanism a owl:DatatypeProperty ;
+cg:proofMechanism a owl:ObjectProperty ;
     rdfs:label "proof mechanism" ;
     rdfs:comment "The cryptographic proof mechanism used (e.g. Ed25519Signature2020)." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
@@ -491,7 +491,7 @@ cg:trustLevel a owl:ObjectProperty ;
     rdfs:range cg:TrustLevelEnum ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
-cg:revocationStatus a owl:DatatypeProperty ;
+cg:revocationStatus a owl:ObjectProperty ;
     rdfs:label "revocation status" ;
     rdfs:comment "Whether the trust assertion has been revoked." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
@@ -841,6 +841,24 @@ cg:Polling a owl:NamedIndividual ;
     rdfs:label "Polling" ;
     rdfs:comment "HTTP polling for change detection (fallback).".
 
+# ── Delegation Scopes ─────────────────────────────────────────
+
+cg:ReadWrite a owl:NamedIndividual, cg:DelegationScopeEnum ;
+    rdfs:label "Read/Write" ;
+    rdfs:comment "Delegated agent may read and write context on behalf of the principal.".
+
+cg:ReadOnly a owl:NamedIndividual, cg:DelegationScopeEnum ;
+    rdfs:label "Read Only" ;
+    rdfs:comment "Delegated agent may only read context on behalf of the principal.".
+
+cg:PublishOnly a owl:NamedIndividual, cg:DelegationScopeEnum ;
+    rdfs:label "Publish Only" ;
+    rdfs:comment "Delegated agent may only publish new context on behalf of the principal.".
+
+cg:DiscoverOnly a owl:NamedIndividual, cg:DelegationScopeEnum ;
+    rdfs:label "Discover Only" ;
+    rdfs:comment "Delegated agent may only discover context on behalf of the principal.".
+
 # ── Affordance Individuals ────────────────────────────────────
 
 cg:canPublish a cg:Affordance ;
@@ -1093,6 +1111,7 @@ cg:ProjectionFacet a owl:Class ; rdfs:subClassOf cg:ContextFacet ; rdfs:label "P
 cg:Delegate a owl:Class ; rdfs:subClassOf cg:AuthorizedAgent ; rdfs:label "Delegate" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:ModalStatusEnum a owl:Class ; rdfs:label "Modal Status Enum" ; owl:oneOf ( cg:Asserted cg:Hypothetical cg:Counterfactual cg:Quoted cg:Retracted ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:TrustLevelEnum a owl:Class ; rdfs:label "Trust Level Enum" ; owl:oneOf ( cg:SelfAsserted cg:ThirdPartyAttested cg:CryptographicallyVerified ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:DelegationScopeEnum a owl:Class ; rdfs:label "Delegation Scope Enum" ; owl:oneOf ( cg:ReadWrite cg:ReadOnly cg:PublishOnly cg:DiscoverOnly ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Properties (long tail)
