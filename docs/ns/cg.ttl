@@ -202,6 +202,14 @@ cg:describes a owl:ObjectProperty ;
     rdfs:domain cg:ContextDescriptor ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
+cg:describedBy a owl:ObjectProperty ;
+    rdfs:label "described by" ;
+    rdfs:comment "Inverse of cg:describes — links a named graph back to its descriptor." ;
+    rdfs:domain rdf:Graph ;
+    rdfs:range cg:ContextDescriptor ;
+    owl:inverseOf cg:describes ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
 cg:hasFacet a owl:ObjectProperty ;
     rdfs:label "has facet" ;
     rdfs:comment "Links a ContextDescriptor to one of its context facets." ;
@@ -1437,4 +1445,29 @@ cg:status a owl:DatatypeProperty ;
 cg:apex a owl:ObjectProperty ;
     rdfs:label "apex" ;
     rdfs:comment "The apex fragment IRI of a PGSL pullback square. Used by promote and decompose result envelopes." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:kind a owl:DatatypeProperty ;
+    rdfs:label "kind" ;
+    rdfs:comment "Holon role within the substrate — one of 'atom' (PGSL level-0 scalar), 'fragment' (PGSL level-N composition), 'descriptor' (cg:ContextDescriptor envelope), 'manifest' (hydra:Collection manifest), or 'opaque' (dereferenceable but uninterpreted)." ;
+    rdfs:domain cg:Holon ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:left a owl:ObjectProperty ;
+    rdfs:label "left" ;
+    rdfs:comment "Left leg of a PGSL pullback square emitted by kernel.decompose — the first sub-fragment whose intersection with cg:right is cg:overlap and whose join is cg:apex." ;
+    rdfs:domain cg:ComposedDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:right a owl:ObjectProperty ;
+    rdfs:label "right" ;
+    rdfs:comment "Right leg of a PGSL pullback square emitted by kernel.decompose — the second sub-fragment whose intersection with cg:left is cg:overlap and whose join is cg:apex." ;
+    rdfs:domain cg:ComposedDescriptor ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:overlap a owl:ObjectProperty ;
+    rdfs:label "overlap" ;
+    rdfs:comment "Shared sub-fragment at the meet of cg:left and cg:right in a PGSL pullback square emitted by kernel.decompose." ;
+    rdfs:domain cg:ComposedDescriptor ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
