@@ -96,6 +96,7 @@ export const KERNEL_RESULT_SHAPES = Object.freeze({
   decompose:   `${CG}DecomposeResultShape` as IRI,
   act:         `${CG}ActResultShape`       as IRI,
   dereference: `${CG}DereferenceResultShape` as IRI,
+  reduce:      `${CG}ReduceResultShape`    as IRI,
   result:      `${CG}KernelResultShape`    as IRI,
 }) as Readonly<Record<string, IRI>>;
 
@@ -114,7 +115,8 @@ export type KernelResultKind =
   | 'restrict'
   | 'extend'
   | 'promote'
-  | 'decompose';
+  | 'decompose'
+  | 'reduce';
 
 /**
  * A fully Hydra-typed affordance, ready to be serialized as JSON-LD.
@@ -251,6 +253,7 @@ function resolveTypes(kind: KernelResultKind): string[] {
     case 'extend':      return [`${CG}ExtendResult`,      `${CG}ContextDescriptor`];
     case 'promote':     return [`${CG}PromoteResult`];
     case 'decompose':   return [`${CG}DecomposeResult`];
+    case 'reduce':      return [`${CG}ReduceResult`];
   }
 }
 
@@ -264,6 +267,7 @@ function resolveShape(kind: KernelResultKind): IRI {
     case 'extend':      return KERNEL_RESULT_SHAPES['descriptor']!;
     case 'promote':    return KERNEL_RESULT_SHAPES['promote']!;
     case 'decompose':   return KERNEL_RESULT_SHAPES['decompose']!;
+    case 'reduce':      return KERNEL_RESULT_SHAPES['reduce']!;
   }
 }
 

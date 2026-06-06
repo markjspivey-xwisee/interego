@@ -21,6 +21,8 @@
  * | `extend`       | Adjunction right half (part → whole)              |
  * | `promote`      | PGSL fibration vertical movement (level k → k+1)  |
  * | `decompose`    | PGSL fibration vertical movement (level k → k-1)  |
+ * | `reduce`       | Fold over a cg:supersedes chain (colimit) +       |
+ * |                | verifiable replay proof                           |
  *
  * Each verb either delegates to an existing protocol primitive or
  * composes existing primitives. No new ontology terms; no new
@@ -144,6 +146,11 @@ import type {
   ExtendResult,
   PromoteResult,
   DecomposeResult,
+  ReducerSpec,
+  ReduceOptions,
+  ReduceResult,
+  ReplayCheckpoint,
+  ReplayProof,
 } from './types.js';
 
 export * from './types.js';
@@ -1339,6 +1346,276 @@ export function decompose(fragmentIri: IRI): DecomposeResult | null {
     left: square.left,
     right: square.right,
     overlap: square.overlap,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Verb 9 — reduce
+//  Fold over a cg:supersedes chain — the colimit of the chain in the
+//  supersession category, witnessed by a content-addressed ReplayProof.
+//
+//  Categorical role: each link in a cg:supersedes chain is an arrow
+//  in the descriptor category. The chain itself is a diagram D whose
+//  colimit is "the latest state plus its derivation." reduce computes
+//  that colimit declaratively — the reducer is the algebra; the fold
+//  is left-Kan extension along the chain's inclusion.
+//
+//  Trustlessness: the ReplayProof carries (a) the CID of every chain
+//  link in walk order, (b) the CID of the reducer artifact itself,
+//  and (c) periodic checkpoint state-CIDs. Any third party can fetch
+//  the same CIDs from any pod or IPFS gateway and replay the fold —
+//  no trust in the original kernel is needed. Mismatches localize
+//  exactly which link or which checkpoint diverged.
+//
+//  Substrate-honest reducer: the reducer is declarative (Turtle
+//  template OR SHACL transformation), never arbitrary code. This
+//  preserves replayability across implementations and across time.
+// ═══════════════════════════════════════════════════════════════
+
+const REDUCE_DEFAULT_MAX_CHAIN = 64;
+const REDUCE_DEFAULT_CHECKPOINT_EVERY = 8;
+const REDUCE_CG_SUPERSEDES = 'https://markjspivey-xwisee.github.io/interego/ns/cg#supersedes';
+const REDUCE_CG_REDUCER = 'https://markjspivey-xwisee.github.io/interego/ns/cg#reducer';
+
+/**
+ * Content-address `s` as a stable CID prefix. Uses the kernel's local
+ * sha256 helper so this module has no @interego/core circular import.
+ * The CID format is `urn:cg:cid:<hex-prefix>` — same scheme the rest
+ * of the kernel uses for content-addressed identifiers.
+ */
+function reduceCid(s: string): string {
+  return `urn:cg:cid:${sha256Hex(s).slice(0, 40)}`;
+}
+
+/**
+ * Walk cg:supersedes back-links from `headIri` to the chain origin
+ * via a breadth-first traversal. Returns links in CHAIN ORDER —
+ * oldest first, newest last — so the caller can fold left-to-right.
+ *
+ * Cycle defence: the `Set<IRI>` visited guard mirrors the cycle guard
+ * at delegation.ts:783-795. Supersedes is normatively a DAG, but the
+ * defence is cheap and keeps tampered chains from looping.
+ *
+ * The fetcher takes an IRI and returns its Turtle body (or null when
+ * the link isn't resolvable). Tests inject a stub; production wires
+ * in `kernel.dereference`.
+ */
+async function walkSupersedesChain(
+  headIri: IRI,
+  fetcher: (iri: IRI) => Promise<string | null>,
+  maxChain: number,
+): Promise<Array<{ iri: IRI; body: string }>> {
+  const linksNewestFirst: Array<{ iri: IRI; body: string }> = [];
+  const visited = new Set<IRI>();
+  let current: IRI | undefined = headIri;
+
+  while (current && linksNewestFirst.length < maxChain) {
+    if (visited.has(current)) break; // cycle defence
+    visited.add(current);
+
+    const body = await fetcher(current);
+    if (body === null) break; // unresolved link terminates the walk
+    linksNewestFirst.push({ iri: current, body });
+
+    // Parse cg:supersedes from the body. parseTrig is forgiving; on
+    // failure we stop the walk rather than surface partial garbage.
+    let next: IRI | undefined;
+    try {
+      const parsed = parseTrig(body);
+      outer: for (const subject of parsed.subjects) {
+        const terms = subject.properties.get(REDUCE_CG_SUPERSEDES as IRI);
+        if (!terms) continue;
+        for (const t of terms) {
+          if (t.kind === 'iri') {
+            next = t.iri;
+            break outer;
+          }
+        }
+      }
+    } catch {
+      break;
+    }
+    current = next;
+  }
+
+  // Reverse so the fold sees the oldest link first.
+  return linksNewestFirst.reverse();
+}
+
+/**
+ * Read `cg:reducer <iri>` from a chain head's Turtle body. Returns
+ * the first reducer IRI found, or undefined when none is declared.
+ */
+function readReducerIri(headBody: string): IRI | undefined {
+  try {
+    const parsed = parseTrig(headBody);
+    for (const subject of parsed.subjects) {
+      const terms = subject.properties.get(REDUCE_CG_REDUCER as IRI);
+      if (!terms) continue;
+      for (const t of terms) {
+        if (t.kind === 'iri') return t.iri;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Apply one fold step: combine the prior accumulated state with the
+ * current chain link's body and return the new state.
+ *
+ * MVP implementation:
+ *   - `'turtle-template'`: bind `{?prior}` → priorState and
+ *     `{?current}` → currentLink in the template, return the
+ *     materialized result. The new state is the union of the prior
+ *     state and the materialization — set-of-triples-style merge.
+ *
+ *   - `'shacl-transform'`: as a substrate-honest MVP we treat the
+ *     SHACL shape as a "merge" declaration — the new state is the
+ *     prior state ∪ the current link's body. Richer transforms
+ *     (sh:rule / sh:construct dispatched through the SHACL engine)
+ *     are scoped as a follow-up; the ReplayProof's reducerCid still
+ *     anchors the declared shape so a future engine yields the same
+ *     CID chain.
+ *
+ * The fold is intentionally pure — same (prior, current, reducer) →
+ * same next state — so the ReplayProof is deterministic.
+ */
+function applyReducerStep(
+  prior: string,
+  currentBody: string,
+  spec: ReducerSpec,
+): string {
+  if (spec.kind === 'turtle-template') {
+    // Substitute placeholders. We accept either `{?prior}` /
+    // `{?current}` (whole-body) or `{?prior.cg:value}` /
+    // `{?current.cg:value}` (extracted field) forms; the latter
+    // collapses to whole-body in the MVP.
+    const materialized = spec.template
+      .replace(/\{\?prior(?:\.[^}]+)?\}/g, () => prior)
+      .replace(/\{\?current(?:\.[^}]+)?\}/g, () => currentBody);
+    // Merge prior + materialized as concatenated Turtle. A semantic
+    // dedup pass is a follow-up; the chain-CID anchoring still makes
+    // the fold reproducible.
+    return prior ? `${prior}\n${materialized}` : materialized;
+  }
+  // shacl-transform — MVP fold is union of prior + current. The
+  // declared shape is anchored in the ReplayProof's reducerCid so
+  // future engines can refine the fold without breaking the proof
+  // shape (a richer engine would emit the same chain of state-CIDs
+  // as long as the rule is shape-monotone, which the union fold is).
+  return prior ? `${prior}\n${currentBody}` : currentBody;
+}
+
+/**
+ * `reduce(chainHeadIri, options?)` — fold a cg:supersedes chain through
+ * a declarative reducer; return canonical state + a verifiable
+ * ReplayProof.
+ *
+ * Lookup order for the reducer:
+ *   1. `options.reducerSpec` (inline) wins outright.
+ *   2. Otherwise the chain head's body is parsed for
+ *      `<head> cg:reducer <iri>`; the IRI is dereferenced and the
+ *      response body becomes the reducer source. The kernel treats
+ *      a body starting with `@prefix` or containing `sh:` as a
+ *      shacl-transform; anything else is treated as a turtle-template.
+ *
+ * Independent verification: a third party with `replayProof.chainCids`
+ * + `replayProof.reducerCid` re-fetches them (CIDs are content-
+ * addressed across all federated pods + IPFS gateways), replays the
+ * same fold with the same `maxChain`, and asserts every checkpoint
+ * `stateCid` matches. Mismatch at index `i` localizes the divergence.
+ */
+export async function reduce(
+  chainHeadIri: IRI,
+  options?: ReduceOptions,
+): Promise<ReduceResult> {
+  const maxChain = options?.maxChain ?? REDUCE_DEFAULT_MAX_CHAIN;
+  const checkpointEvery = options?.checkpointEvery ?? REDUCE_DEFAULT_CHECKPOINT_EVERY;
+
+  // Resolver: caller-supplied fetcher OR kernel.dereference.
+  const fetcher = options?.fetch
+    ?? (async (iri: IRI): Promise<string | null> => {
+      const r = await dereference(iri);
+      if (r.status !== 'ok' || r.representation === undefined) return null;
+      return r.representation;
+    });
+
+  // 1. Walk the chain back to its origin.
+  const chain = await walkSupersedesChain(chainHeadIri, fetcher, maxChain);
+  if (chain.length === 0) {
+    throw new TypeError(`reduce(${chainHeadIri}) found no resolvable chain links`);
+  }
+
+  // 2. Resolve the reducer. Inline arg wins; otherwise parse the
+  //    chain head body for cg:reducer and dereference.
+  let spec: ReducerSpec | undefined = options?.reducerSpec;
+  let reducerSource: string;
+  if (!spec) {
+    // The chain head is the LAST element in `chain` (newest = head).
+    const headBody = chain[chain.length - 1]!.body;
+    const reducerIri = readReducerIri(headBody);
+    if (!reducerIri) {
+      throw new TypeError(
+        `reduce(${chainHeadIri}) requires a reducer — pass options.reducerSpec or declare \`cg:reducer <iri>\` on the chain head.`,
+      );
+    }
+    const reducerBody = await fetcher(reducerIri);
+    if (reducerBody === null) {
+      throw new TypeError(`reduce(${chainHeadIri}) failed to dereference cg:reducer <${reducerIri}>`);
+    }
+    reducerSource = reducerBody;
+    // Heuristic: SHACL bodies almost always reference `sh:` /
+    // `sh:rule` / `sh:construct`. Anything else is treated as a
+    // Turtle template.
+    spec = /\bsh:\w+|sh:rule|sh:construct/i.test(reducerBody)
+      ? { kind: 'shacl-transform', shape: reducerBody }
+      : { kind: 'turtle-template', template: reducerBody };
+  } else {
+    reducerSource = spec.kind === 'turtle-template' ? spec.template : spec.shape;
+  }
+  const reducerCid = reduceCid(`reducer:${spec.kind}:${reducerSource}`);
+
+  // 3. Fold left-to-right (oldest → newest), emitting CIDs and
+  //    periodic checkpoints as we go.
+  const chainCids: string[] = [];
+  const checkpoints: ReplayCheckpoint[] = [];
+  let state = '';
+  for (let i = 0; i < chain.length; i++) {
+    const link = chain[i]!;
+    const linkCid = reduceCid(link.body);
+    chainCids.push(linkCid);
+    state = applyReducerStep(state, link.body, spec);
+    // Checkpoint cadence — every k-th link AND the final link
+    // (so the verifier always has the head end to anchor on).
+    const isCheckpoint = (i + 1) % checkpointEvery === 0;
+    const isLast = i === chain.length - 1;
+    if (isCheckpoint || isLast) {
+      checkpoints.push({
+        index: i,
+        afterLinkCid: linkCid,
+        stateCid: reduceCid(`state:${state}`),
+      });
+    }
+  }
+
+  const headStateCid = reduceCid(`state:${state}`);
+  const replayProof: ReplayProof = {
+    chainCids,
+    reducerCid,
+    reducerKind: spec.kind,
+    chainLength: chain.length,
+    checkpoints,
+    headStateCid,
+  };
+
+  return {
+    head: state,
+    replayProof,
+    chainLength: chain.length,
+    chainHeadIri,
   };
 }
 

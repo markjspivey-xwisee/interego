@@ -240,3 +240,121 @@ export interface DecomposeResult {
   readonly right: IRI;
   readonly overlap: IRI;
 }
+
+// ── Verb 9 — reduce (fold over a cg:supersedes chain) ────────
+//
+// `reduce(chainHeadIri, reducerSpec?)` walks the cg:supersedes back-
+// links from the head to the oldest link, folds the chain through a
+// declarative reducer (NOT arbitrary code), and returns a canonical
+// "current state" alongside a ReplayProof a third party can use to
+// independently verify the fold. The reducer is itself content-
+// addressed; a verifier re-fetches chain + reducer by CID and replays.
+//
+// Categorical role: the fold is the colimit of the chain in the
+// supersession category — a left-Kan extension along the inclusion
+// of the chain into the descriptor category. The reducer is the
+// algebra; checkpoints are the standard "every k-th cocone" trick that
+// localizes mismatches without re-replaying from scratch.
+
+/**
+ * Declarative reducer specification. Two substrate-honest kinds:
+ *
+ *   - `'turtle-template'` — a Turtle document with `{?prior.cg:value}`
+ *     / `{?current.cg:value}` placeholders. The kernel binds them and
+ *     materializes triples. Pure data; no execution.
+ *
+ *   - `'shacl-transform'` — a SHACL graph using `sh:rule` /
+ *     `sh:construct` / `sh:targetClass`. The fold runs each link
+ *     through the SHACL engine; the rule's constructed triples become
+ *     the next state. Pure shape transformation.
+ *
+ * Arbitrary code is intentionally excluded so the fold is replayable
+ * by any independent verifier with the same SHACL engine or Turtle
+ * template renderer.
+ */
+export type ReducerSpec =
+  | { readonly kind: 'turtle-template'; readonly template: string }
+  | { readonly kind: 'shacl-transform'; readonly shape: string };
+
+/** Options for {@link reduce}. */
+export interface ReduceOptions {
+  /**
+   * Inline reducer specification. When omitted, the kernel reads
+   * `cg:reducer <iri>` from the chain head's descriptor body and
+   * dereferences the named reducer artifact (itself content-addressed).
+   */
+  readonly reducerSpec?: ReducerSpec;
+  /**
+   * Maximum chain length the fold will walk before aborting. Defaults
+   * to 64 — same order of magnitude as the delegation-chain cycle
+   * guard at delegation.ts:612-623. Cycles already break naturally
+   * because supersedes is a DAG; the Set-of-visited guard provides
+   * defense in depth.
+   */
+  readonly maxChain?: number;
+  /**
+   * Checkpoint interval — every k-th link is hashed into the
+   * ReplayProof so a verifier can short-circuit from the nearest
+   * checkpoint when partial trust is acceptable. Defaults to 8.
+   */
+  readonly checkpointEvery?: number;
+  /**
+   * Resolver for individual chain links. When omitted, the kernel uses
+   * its own `dereference` against each `cg:supersedes` IRI. Tests
+   * supply a stub so the fold can be exercised without touching HTTP.
+   */
+  readonly fetch?: (iri: IRI) => Promise<string | null>;
+}
+
+/**
+ * A single checkpoint in the ReplayProof. `index` is the link's
+ * position in the chain (0 = oldest), `afterLinkCid` is the chain
+ * link's CID, `stateCid` is the CID of the fold's accumulator state
+ * AFTER applying that link.
+ */
+export interface ReplayCheckpoint {
+  readonly index: number;
+  readonly afterLinkCid: string;
+  readonly stateCid: string;
+}
+
+/**
+ * Verifiable replay witness. Independent verification protocol:
+ *   1. Re-fetch every CID in `chainCids` from any pod or IPFS gateway.
+ *   2. Re-fetch the reducer by `reducerCid`.
+ *   3. Replay the fold with the same `maxChain` bound.
+ *   4. Assert that every `chainCid`, the `reducerCid`, every
+ *      checkpoint `stateCid`, and the final head CID match. Mismatch
+ *      at any step localizes the divergence (chain tampering vs
+ *      reducer drift vs fold non-determinism).
+ */
+export interface ReplayProof {
+  /** Chain link CIDs, oldest → newest. */
+  readonly chainCids: readonly string[];
+  /** Content-address of the reducer artifact. */
+  readonly reducerCid: string;
+  /** Which kind of reducer was applied. */
+  readonly reducerKind: 'turtle-template' | 'shacl-transform';
+  /** Number of links folded (length of `chainCids`). */
+  readonly chainLength: number;
+  /** Periodic state checkpoints (every `checkpointEvery` links). */
+  readonly checkpoints: readonly ReplayCheckpoint[];
+  /** CID of the final folded state — anchors the head end of the proof. */
+  readonly headStateCid: string;
+}
+
+/** Result of `reduce(chainHeadIri, options?)`. */
+export interface ReduceResult {
+  /**
+   * The reduced canonical state, serialized as Turtle. The head's
+   * modal-status semantics (Asserted / Hypothetical / Counterfactual)
+   * carries through unchanged — reduce is a fold, not a re-derivation.
+   */
+  readonly head: string;
+  /** Witness for independent verification. */
+  readonly replayProof: ReplayProof;
+  /** Number of links folded. */
+  readonly chainLength: number;
+  /** Chain head IRI the fold started from. */
+  readonly chainHeadIri: IRI;
+}

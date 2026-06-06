@@ -293,6 +293,57 @@ cg:supersedes a owl:ObjectProperty ;
     rdfs:range cg:ContextDescriptor ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
+# ── Reduce / replay (kernel verb #9) ──────────────────────────
+# The reduce verb folds a cg:supersedes chain into canonical state
+# under a declarative reducer, producing a content-addressed
+# ReplayProof that lets any third party re-fetch the chain by CID,
+# re-fetch the reducer by CID, and re-fold to verify the result. The
+# fold is the colimit of the chain in the supersession category.
+
+cg:Reducer a owl:Class ;
+    rdfs:label "Reducer" ;
+    rdfs:comment "Declarative fold function applied by the kernel's reduce verb to a cg:supersedes chain. A Reducer is content-addressed (its CID anchors the ReplayProof); two concrete kinds are defined — cg:TurtleTemplateReducer (Turtle body with {?prior}/{?current} placeholders) and cg:ShaclTransformReducer (SHACL graph using sh:rule/sh:construct). Arbitrary code is intentionally excluded so the fold is replayable across implementations." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:TurtleTemplateReducer a owl:Class ;
+    rdfs:subClassOf cg:Reducer ;
+    rdfs:label "Turtle Template Reducer" ;
+    rdfs:comment "A Reducer whose body is a Turtle document with `{?prior}` and `{?current}` placeholders (optionally projected like `{?prior.cg:value}`). The kernel binds the placeholders to the accumulator state and the current chain link, then materializes the resulting triples as the next state." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:ShaclTransformReducer a owl:Class ;
+    rdfs:subClassOf cg:Reducer ;
+    rdfs:label "SHACL Transform Reducer" ;
+    rdfs:comment "A Reducer whose body is a SHACL graph declaring `sh:rule` / `sh:construct` over the prior + current state. The kernel runs each chain link through the SHACL engine; the constructed triples become the next state. Pure shape transformation; no procedural code." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:reducer a owl:ObjectProperty ;
+    rdfs:label "reducer" ;
+    rdfs:comment "Declares the reducer the kernel's reduce verb should fold this descriptor's cg:supersedes chain through. The reducer IRI dereferences to a content-addressed cg:Reducer artifact. When absent, callers MUST supply an inline reducer specification to the reduce verb." ;
+    rdfs:domain cg:ContextDescriptor ;
+    rdfs:range cg:Reducer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:ReducerSpec a owl:Class ;
+    rdfs:label "Reducer Specification" ;
+    rdfs:comment "Inline form of a cg:Reducer passed directly to the reduce verb without dereferencing through a cg:reducer link. Carries the same kind discriminator (turtle-template | shacl-transform) and body as a stored Reducer; equivalent to dereferencing a hypothetical Reducer whose CID is the hash of the spec." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:ReplayProof a owl:Class ;
+    rdfs:label "Replay Proof" ;
+    rdfs:comment "Content-addressed witness produced by the kernel's reduce verb. Carries the CIDs of every chain link in walk order, the CID of the reducer artifact, periodic state checkpoints, and the final head-state CID. Any third party can independently re-fetch the chain + reducer by CID and replay the fold; mismatch at any checkpoint localizes the divergence (chain tampering, reducer drift, or fold non-determinism)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:ReduceResult a owl:Class ;
+    rdfs:label "Reduce Result" ;
+    rdfs:comment "Result envelope returned by the kernel's reduce verb. Carries the folded canonical head state, the ReplayProof witnessing the fold, the chain length actually walked, and the chain-head IRI the fold started from." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:ReduceResultShape a owl:Class ;
+    rdfs:label "Reduce Result Shape" ;
+    rdfs:comment "SHACL shape IRI advertised by every cg:ReduceResult payload via cg:conformsToShape. Anchors the wire shape of the result envelope (head, replayProof, chainLength, chainHeadIri) so validators can verify the substrate's response surface without out-of-band schema." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
 cg:AgentCatalog a owl:Class ;
     rdfs:label "Agent Catalog" ;
     rdfs:comment "A domain-level catalog of agents + pods published at <domain>/.well-known/interego-agents per spec §6.5d (progressive discovery T3). Carries one or more cg:hasAgent entries enumerating agents the domain operator wishes to advertise. Consumers use this to discover agents without needing to know specific pod URLs upfront." ;

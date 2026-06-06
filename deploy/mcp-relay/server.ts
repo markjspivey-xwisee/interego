@@ -81,6 +81,7 @@ import {
   type AuthorshipProof,
   cryptoComputeCid,
   decompose as kernelDecompose,
+  reduce as kernelReduce,
   decorateKernelResult,
   decorateShim,
   dereference as kernelDereference,
@@ -125,6 +126,7 @@ import type {
   OwnerProfileData,
   PodDirectoryData,
   PodDirectoryEntry,
+  ReducerSpec,
   WebSocketConstructor,
 } from '@interego/core';
 import type {
@@ -446,6 +448,7 @@ const PUBLIC_TOOLS = new Set([
 const KERNEL_VERBS = new Set([
   'mint', 'dereference', 'compose', 'act',
   'restrict', 'extend', 'promote', 'decompose',
+  'reduce_chain',
 ]);
 
 interface AuthResult {
@@ -3543,6 +3546,90 @@ async function handleKernelDecompose(args: ToolArgs): Promise<string> {
   }));
 }
 
+// Kernel verb #9 — reduce a cg:supersedes chain through a declarative
+// reducer and return the canonical state + a content-addressed
+// ReplayProof. The reducer is either inlined (turtle-template /
+// shacl-transform body) OR resolved via `cg:reducer <iri>` declared
+// on the chain head. The fold is the colimit of the chain in the
+// supersession category; the ReplayProof lets any third party
+// independently re-fetch by CID and replay.
+async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
+  const chainIri = normalizeCssUrl(String(args['chain_iri'] ?? '')) as IRI;
+  if (!chainIri) {
+    return JSON.stringify({
+      error: 'chain_iri is required',
+      detail: 'reduce_chain folds a cg:supersedes chain — supply the chain HEAD IRI as `chain_iri`.',
+    });
+  }
+
+  // Reducer resolution: either inline reducer_spec wins, or
+  // reducer_iri is dereferenced and its body classified, or the
+  // kernel reads `cg:reducer` off the chain head.
+  let reducerSpec: ReducerSpec | undefined;
+  const inline = args['reducer_spec'] as
+    | { kind: 'turtle-template'; template: string }
+    | { kind: 'shacl-transform'; shape: string }
+    | undefined;
+  if (inline && (inline.kind === 'turtle-template' || inline.kind === 'shacl-transform')) {
+    reducerSpec = inline;
+  } else {
+    const reducerIri = args['reducer_iri'] as string | undefined;
+    if (reducerIri) {
+      const r = await kernelDereference(normalizeCssUrl(reducerIri), {
+        fetch: solidFetch,
+        recipientKeyPair: relayAgentKey,
+      });
+      if (r.status === 'ok' && r.representation !== undefined) {
+        const body = r.representation;
+        reducerSpec = /\bsh:\w+|sh:rule|sh:construct/i.test(body)
+          ? { kind: 'shacl-transform', shape: body }
+          : { kind: 'turtle-template', template: body };
+      }
+    }
+  }
+
+  // Caller-supplied bounds, with sensible defaults.
+  const maxChain = typeof args['max_chain'] === 'number' ? args['max_chain'] as number : undefined;
+  const checkpointEvery = typeof args['checkpoint_every'] === 'number' ? args['checkpoint_every'] as number : undefined;
+
+  try {
+    // Resolve each chain link through the kernel's own dereference
+    // so the relay's solidFetch (URL rewriting, retries, agent key
+    // for decrypt) participates in the walk.
+    const linkFetch = async (iri: IRI): Promise<string | null> => {
+      const r = await kernelDereference(iri, {
+        fetch: solidFetch,
+        recipientKeyPair: relayAgentKey,
+      });
+      if (r.status !== 'ok' || r.representation === undefined) return null;
+      return r.representation;
+    };
+    const opts: Parameters<typeof kernelReduce>[1] = {
+      fetch: linkFetch,
+      ...(reducerSpec ? { reducerSpec } : {}),
+      ...(typeof maxChain === 'number' ? { maxChain } : {}),
+      ...(typeof checkpointEvery === 'number' ? { checkpointEvery } : {}),
+    };
+    const r = await kernelReduce(chainIri, opts);
+    return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
+      kind: 'reduce',
+      id: chainIri,
+      // Next-step affordance: any reducer-aware client can re-call
+      // reduce_chain on the same head and verify by comparing the
+      // replayProof.headStateCid.
+      nextSteps: [
+        { action: 'urn:cg:action:kernel:dereference', target: chainIri, method: 'GET' },
+      ],
+    }));
+  } catch (err) {
+    return JSON.stringify({
+      error: 'reduce_failed',
+      detail: (err as Error).message ?? String(err),
+      chain_iri: chainIri,
+    });
+  }
+}
+
 const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => Promise<string> }> = {
   // ── Kernel verbs (first-class substrate access) ──
   // These delegate straight to @interego/core kernel exports. The 27
@@ -3555,6 +3642,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   extend: { description: 'Kernel verb — adjunction right half (part → whole)', handler: handleKernelExtend },
   promote: { description: 'Kernel verb — PGSL fibration vertical movement upward', handler: handleKernelPromote },
   decompose: { description: 'Kernel verb — PGSL fibration vertical movement downward', handler: handleKernelDecompose },
+  reduce_chain: { description: 'Kernel verb — fold a cg:supersedes chain through a declarative reducer (turtle-template OR shacl-transform) and return the canonical head state + a content-addressed ReplayProof (chain CIDs, reducer CID, periodic state checkpoints, head-state CID) that any third party can use to independently re-fetch + re-fold + verify.', handler: handleKernelReduceChain },
   // ── Core tools (compatibility shims; internal implementation routes through kernel where natural) ──
   publish_context: { description: 'Publish a context-annotated knowledge graph', handler: handlePublishContext },
   get_current_head: { description: 'Resolve the current chain head (descriptorUrl + content-CID) for a urn:graph:* on a pod — used as the read half of CAS supersession', handler: handleGetCurrentHead },
@@ -4061,6 +4149,26 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Decompose a fragment', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'reduce_chain',
+    description: 'Kernel verb — fold a cg:supersedes chain through a declarative reducer (Turtle-template OR SHACL-transform) and return the canonical head state alongside a content-addressed ReplayProof. The proof carries each chain link\'s CID in walk order, the reducer artifact\'s CID, periodic state checkpoints, and the final head-state CID. Any third party can independently re-fetch by CID and replay the same fold to verify the result — no trust in the original kernel is required. Reducer resolution order: (1) inline reducer_spec wins, (2) reducer_iri is dereferenced and classified, (3) the kernel reads `cg:reducer <iri>` declared on the chain head.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        chain_iri: { type: 'string', description: 'Chain HEAD IRI — the most recent descriptor in the cg:supersedes chain. The fold walks back to the chain origin and applies the reducer left-to-right.' },
+        reducer_iri: { type: 'string', description: 'Optional reducer artifact IRI to dereference + apply. Body starting with sh:rule / sh:construct / sh:* is treated as a SHACL transform; otherwise as a Turtle template with `{?prior}` / `{?current}` placeholders.' },
+        reducer_spec: {
+          type: 'object',
+          description: 'Inline reducer spec. Wins over reducer_iri and over cg:reducer on the chain head when supplied. Shape: { kind: "turtle-template", template: "<turtle>" } OR { kind: "shacl-transform", shape: "<shacl-turtle>" }.',
+        },
+        max_chain: { type: 'number', description: 'Maximum chain length to walk (default 64). Defense in depth against tampered cyclic chains; supersedes is normatively a DAG.' },
+        checkpoint_every: { type: 'number', description: 'Emit a state checkpoint every Nth link (default 8). Verifiers can short-circuit replay from the nearest checkpoint when partial trust is acceptable.' },
+      },
+      required: ['chain_iri'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Reduce a supersedes chain', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   // ═══════════════════════════════════════════════════════════
   //  Compatibility shims — the 27 named tools. Each remains
