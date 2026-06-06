@@ -1418,7 +1418,12 @@ async function walkSupersedesChain(
     linksNewestFirst.push({ iri: current, body });
 
     // Parse cg:supersedes from the body. parseTrig is forgiving; on
-    // failure we stop the walk rather than surface partial garbage.
+    // failure we fall back to a regex scan of the raw Turtle for any
+    // `cg:supersedes <iri>` triple. The fallback is necessary because
+    // pod-published descriptors routinely embed affordance blocks
+    // using vocabularies (cgh:, hydra:, dcat:) whose @prefix lines
+    // may be absent from the descriptor body — a strict parse fails
+    // even though the chain back-link itself is well-formed.
     let next: IRI | undefined;
     try {
       const parsed = parseTrig(body);
@@ -1433,7 +1438,19 @@ async function walkSupersedesChain(
         }
       }
     } catch {
-      break;
+      // Fallback — regex-scan for `cg:supersedes <IRI>` triples. We
+      // only need ONE back-link to keep walking; the walker's visited
+      // set still guards against cycles.
+      const m = body.match(/cg:supersedes\s*<([^>]+)>/);
+      if (m && m[1]) next = m[1] as IRI;
+    }
+    // Same regex fallback when parseTrig succeeds but found no
+    // supersedes — common when the descriptor's subject form prevents
+    // the parser from associating the property (e.g., subject `<>`
+    // with implicit base IRI).
+    if (!next) {
+      const m = body.match(/cg:supersedes\s*<([^>]+)>/);
+      if (m && m[1]) next = m[1] as IRI;
     }
     current = next;
   }
@@ -1457,8 +1474,14 @@ function readReducerIri(headBody: string): IRI | undefined {
       }
     }
   } catch {
-    return undefined;
+    // Fall through to regex fallback below.
   }
+  // Regex fallback — pod descriptors routinely embed vocabularies
+  // (cgh:, hydra:, dcat:) without explicit @prefix declarations,
+  // which a strict parse rejects. The well-formed `cg:reducer <iri>`
+  // triple still scans cleanly.
+  const m = headBody.match(/cg:reducer\s*<([^>]+)>/);
+  if (m && m[1]) return m[1] as IRI;
   return undefined;
 }
 
