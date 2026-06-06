@@ -54,6 +54,13 @@ on:
         default: 'false'
   pull_request:
     types: [labeled, opened, synchronize]
+    paths:
+      - 'packages/**'
+      - 'deploy/mcp-relay/**'
+      - 'deploy/identity/**'
+      - 'examples/emergent/**'
+      - 'scripts/test-publish-deref-roundtrip.mjs'
+      - '.github/workflows/nightly-emergent.yml'
 
 permissions:
   contents: read
