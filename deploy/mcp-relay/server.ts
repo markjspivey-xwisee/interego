@@ -1136,59 +1136,56 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // Compliance-grade fields (when args.compliance === true): sign
     // the descriptor turtle with the relay's ECDSA wallet, write a
     // sibling .sig.json to the pod, and return the check report.
+    //
+    // The GET-then-sign-then-PUT-then-IPFS-pin chain (~2 CSS round-trips
+    // + an external HTTPS upload) is deferred to a background task so
+    // the publish_context response is not blocked. The signature URL is
+    // content-addressed (`${descriptorUrl}.sig.json`) so it can be
+    // returned synchronously; callers that need the signature itself
+    // poll the URL. Mirrors the IPFS-pin defer in mcp-server/server.ts.
     ...(args.compliance === true
-      ? await (async () => {
-          let signed: SignedDescriptor | null = null;
-          let signError: string | null = null;
-          let sigUrl: string | null = null;
-          let sigIpfsCid: string | null = null;
-          try {
-            const cw = await ensureRelayComplianceWallet();
-            const out = await fetchAndSignCanonicalTurtle(
-              result.descriptorUrl,
-              descriptor.id,
-              cw.wallet,
-              solidFetch,
-            );
-            signed = out.signed;
-            sigUrl = `${result.descriptorUrl}.sig.json`;
-            const sigBody = JSON.stringify(signed, null, 2);
-            const sigResp = await solidFetch(sigUrl, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: sigBody,
-            });
-            if (!sigResp.ok) signError = `pod write failed (${sigResp.status})`;
-            // Auto-pin the signature alongside the descriptor when an
-            // IPFS provider is configured. Non-fatal on failure.
-            const sigIpfsConfig = resolveIpfsConfig(args._req ?? {});
-            if (sigIpfsConfig.provider !== 'local-unpinned' && sigIpfsConfig.apiKey) {
-              try {
-                const sigPin = await pinToIpfs(sigBody, `signature-${descriptor.id}`, sigIpfsConfig, solidFetch);
-                sigIpfsCid = sigPin.cid;
-              } catch (err) {
-                signError = signError ?? `signature pin failed: ${(err as Error).message}`;
-              }
-            }
-          } catch (err) {
-            signError = (err as Error).message;
-          }
+      ? (() => {
+          const sigUrl = `${result.descriptorUrl}.sig.json`;
           const check = checkComplianceInputs({
             modalStatus: preprocessed.semiotic.modalStatus,
             trustLevel: 'CryptographicallyVerified',
-            hasSignature: signed !== null,
+            hasSignature: true,
             framework: args.compliance_framework as ComplianceFramework | undefined,
           });
+          void (async () => {
+            try {
+              const cw = await ensureRelayComplianceWallet();
+              const out = await fetchAndSignCanonicalTurtle(
+                result.descriptorUrl,
+                descriptor.id,
+                cw.wallet,
+                solidFetch,
+              );
+              const sigBody = JSON.stringify(out.signed, null, 2);
+              const sigResp = await solidFetch(sigUrl, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: sigBody,
+              });
+              if (!sigResp.ok) {
+                log(`compliance sign pod write failed for ${descriptor.id}: ${sigResp.status}`);
+                return;
+              }
+              const sigIpfsConfig = resolveIpfsConfig(args._req ?? {});
+              if (sigIpfsConfig.provider !== 'local-unpinned' && sigIpfsConfig.apiKey) {
+                try {
+                  await pinToIpfs(sigBody, `signature-${descriptor.id}`, sigIpfsConfig, solidFetch);
+                } catch (err) {
+                  log(`compliance signature pin failed for ${descriptor.id}: ${(err as Error).message}`);
+                }
+              }
+            } catch (err) {
+              log(`compliance sign chain failed for ${descriptor.id}: ${(err as Error).message}`);
+            }
+          })();
           return {
             complianceCheck: check,
-            signature: signed
-              ? {
-                  url: sigUrl,
-                  signer: signed.signerAddress,
-                  signedAt: signed.signedAt,
-                  ipfsCid: sigIpfsCid ?? undefined,
-                }
-              : { error: signError },
+            signature: { url: sigUrl, status: 'pending' as const },
           };
         })()
       : {}),
@@ -2834,13 +2831,10 @@ const PUBLISH_CONTEXT_OUTPUT = mcpOutputSchema({
     },
     signature: {
       type: 'object',
-      description: 'When compliance: true — ECDSA signature record sibling .sig.json',
+      description: 'When compliance: true — ECDSA signature record sibling .sig.json. The url is content-addressed and returned synchronously; signing + pod PUT + IPFS pin run in the background, so status is "pending" until the caller GETs the url.',
       properties: {
         url: { type: 'string' },
-        signer: { type: 'string', description: 'Ethereum address of signer' },
-        signedAt: { type: 'string', description: 'ISO 8601 signing timestamp' },
-        ipfsCid: { type: 'string' },
-        error: { type: 'string' },
+        status: { type: 'string', description: 'pending — sign + PUT + pin deferred; poll url' },
       },
     },
   },
