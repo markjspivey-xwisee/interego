@@ -86,11 +86,23 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Wait for Azure deployment to settle (60s)
-        # Lets the latest deploy-azure workflow's revision come up before
-        # we hammer the authorize endpoint. Safe to skip on workflow_dispatch.
+      - name: Wait for Azure deployment to settle
+        # The concurrent deploy-azure workflow takes 2-5 min (ACR build +
+        # image push + container app update + revision activation). A flat
+        # 60s sleep almost always landed Playwright on the previous revision.
+        # Wait a realistic baseline, then poll /health until the relay is
+        # reachable (bounded), so we don't run before the new revision is up.
         if: github.event_name == 'push'
-        run: sleep 60
+        run: |
+          sleep 240
+          deadline=$((SECONDS + 180))
+          until curl -fsS --max-time 5 https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/health > /dev/null; do
+            if [ $SECONDS -ge $deadline ]; then
+              echo "Relay /health did not become reachable within readiness window" >&2
+              exit 1
+            fi
+            sleep 10
+          done
 
       - name: Run Playwright passkey suite
         env:
