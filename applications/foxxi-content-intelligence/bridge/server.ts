@@ -2233,12 +2233,14 @@ const app = createVerticalBridge({
     // x-forwarded-for, the canonical proxy header Azure Container Apps
     // populates) so individual handlers can apply per-IP rate limits.
     a.use((req, _res, next) => {
-      // Per-IP injection — Azure Container Apps puts the original
-      // client IP in x-forwarded-for; fall back to req.ip for local dev.
+      // Per-IP injection — Azure Container Apps appends the real client
+      // IP as the LAST hop of x-forwarded-for. Taking the first hop would
+      // let an attacker forge it via a client-supplied header and bypass
+      // per-IP rate limits. Fall back to req.ip for local dev.
       const xff = req.headers['x-forwarded-for'];
       const clientIp = typeof xff === 'string'
-        ? xff.split(',')[0]!.trim()
-        : Array.isArray(xff) ? xff[0] : req.ip ?? 'unknown';
+        ? xff.split(',').at(-1)!.trim()
+        : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
 
       const header = req.headers['authorization'] ?? req.headers['Authorization'];
       const m = typeof header === 'string' && /^Bearer\s+(.+)$/i.exec(header);
