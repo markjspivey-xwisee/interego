@@ -237,7 +237,7 @@ jobs:
       (github.event_name != 'workflow_dispatch' ||
        github.event.inputs.tests == 'all' ||
        github.event.inputs.tests == '' ||
-       contains(github.event.inputs.tests, matrix.scenario))
+       contains(format(',{0},', github.event.inputs.tests), format(',{0},', matrix.scenario)))
 
     steps:
       - name: Checkout
