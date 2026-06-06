@@ -238,6 +238,28 @@ az containerapp create \
 RELAY_FQDN=$(az containerapp show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
 echo "    MCP Relay: https://$RELAY_FQDN"
 
+# Wire the four extra dashboard env vars the CI's "Wire dashboard env vars"
+# step sets — IDENTITY_URL (/api/identity proxy), RELAY_URL (OAuth code
+# exchange + /identity-token), PUBLIC_RELAY_URL (browser-side /authorize
+# redirect), PUBLIC_BASE_URL (OAuth redirect_uri). Without these, the
+# dashboard can never complete OAuth on a fresh-cluster bootstrap that
+# hasn't yet been touched by a CI deploy. Identity isn't created by this
+# script; tolerate its absence so the bootstrap doesn't hard-fail before
+# the identity app exists.
+IDENTITY_FQDN=$(az containerapp show --name interego-identity --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+DASHBOARD_ENV_VARS=("CSS_URL=$CSS_GATE_URL" "RELAY_URL=https://$RELAY_FQDN" "PUBLIC_RELAY_URL=https://$RELAY_FQDN" "PUBLIC_BASE_URL=https://$DASHBOARD_FQDN")
+if [ -n "$IDENTITY_FQDN" ]; then
+  DASHBOARD_ENV_VARS+=("IDENTITY_URL=https://$IDENTITY_FQDN")
+else
+  echo "    WARNING: interego-identity not deployed yet — dashboard IDENTITY_URL left unset; re-run after identity is up."
+fi
+echo ">>> Wiring dashboard env vars (CSS_URL, RELAY_URL, PUBLIC_RELAY_URL, PUBLIC_BASE_URL${IDENTITY_FQDN:+, IDENTITY_URL})..."
+az containerapp update \
+  --name "$DASHBOARD_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --set-env-vars "${DASHBOARD_ENV_VARS[@]}" \
+  --output none
+
 # ── 8. Deploy PGSL Browser + Observatory ──────────────────────
 BROWSER_APP="interego-pgsl-browser"
 echo ">>> Building PGSL Browser image..."
