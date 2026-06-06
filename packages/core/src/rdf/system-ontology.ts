@@ -257,21 +257,17 @@ cg:composedFrom a owl:ObjectProperty ;
 
 cg:compositionOp a owl:ObjectProperty, owl:FunctionalProperty ;
     rdfs:domain cg:ComposedDescriptor ;
-    rdfs:range cg:CompositionOperatorEnum ;
+    rdfs:range cg:CompositionOperator ;
     rdfs:label "composition operator" ;
     rdfs:comment "The algebraic operator used: union, intersection, restriction, or override." .
 
-cg:CompositionOperatorEnum a owl:Class ;
-    owl:oneOf ( cg:union cg:intersection cg:restriction cg:override ) ;
-    rdfs:label "Composition Operator Enumeration" .
-
-cg:union a owl:NamedIndividual, cg:CompositionOperatorEnum ;
+cg:union a owl:NamedIndividual, cg:CompositionOperator ;
     rdfs:label "Union" .
-cg:intersection a owl:NamedIndividual, cg:CompositionOperatorEnum ;
+cg:intersection a owl:NamedIndividual, cg:CompositionOperator ;
     rdfs:label "Intersection" .
-cg:restriction a owl:NamedIndividual, cg:CompositionOperatorEnum ;
+cg:restriction a owl:NamedIndividual, cg:CompositionOperator ;
     rdfs:label "Restriction" .
-cg:override a owl:NamedIndividual, cg:CompositionOperatorEnum ;
+cg:override a owl:NamedIndividual, cg:CompositionOperator ;
     rdfs:label "Override" .
 
 # ── Coherence Classes ────────────────────────────────────────
