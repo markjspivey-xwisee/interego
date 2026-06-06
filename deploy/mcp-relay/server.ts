@@ -193,6 +193,16 @@ import {
 // Security.txt — `@interego/security-txt`.
 import { buildSecurityTxtFromEnv } from '@interego/security-txt';
 
+// Lazy pod-init self-heal helper (Set fast-path + HEAD probe +
+// mutex-guarded bootstrap). Extracted so vitest can cover the
+// invariants without spinning the full relay.
+import { createLazyPodInit, POD_AWARE_TOOLS } from './lazy-pod-init.js';
+
+// Compliance-grade re-fetch-then-sign helper. Extracted so the
+// audit-load-bearing "sign the bytes the pod actually persists, not
+// the locally-built body" contract has dedicated test coverage.
+import { fetchAndSignCanonicalTurtle } from './compliance-sign.js';
+
 // ── Config ──────────────────────────────────────────────────
 
 const PORT = parseInt(process.env['PORT'] ?? '8080');
@@ -1101,13 +1111,13 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
           let sigIpfsCid: string | null = null;
           try {
             const cw = await ensureRelayComplianceWallet();
-            // Re-fetch the published Turtle to sign canonical bytes the
-            // pod actually persists (storage layer may normalize).
-            const ttlResp = await solidFetch(result.descriptorUrl, {
-              headers: { 'Accept': 'text/turtle' },
-            });
-            const canonicalTurtle = ttlResp.ok ? await ttlResp.text() : '';
-            signed = await signDescriptor(descriptor.id, canonicalTurtle, cw.wallet);
+            const out = await fetchAndSignCanonicalTurtle(
+              result.descriptorUrl,
+              descriptor.id,
+              cw.wallet,
+              solidFetch,
+            );
+            signed = out.signed;
             sigUrl = `${result.descriptorUrl}.sig.json`;
             const sigBody = JSON.stringify(signed, null, 2);
             const sigResp = await solidFetch(sigUrl, {
@@ -5137,83 +5147,11 @@ async function bootstrapPod(params: {
 // (RELAY_REQUIRE_DPOP=true) combined with an AUTH_REQUIRED_TOOLS call —
 // there we honor the strict guarantee and rethrow so the tool handler
 // surfaces a clear error rather than silently writing to a half-init pod.
-const bootstrappedPods = new Set<string>();
-
-// Tools that materially depend on `<pod>/agents` and/or
-// `<pod>/profile/card` existing before they run — these AWAIT the
-// lazy init. Reads (discover/list/status) need /agents for the
-// registry-derived identity claims; writes (publish/register/revoke/
-// publish_directory) need the registry for their first-line auth
-// check. Everything else (mint, dereference, compose, act, restrict,
-// extend, promote, decompose, pgsl_* lattice ops, kernel verbs that
-// operate purely on lattice atoms, ping, etc.) does NOT need pod
-// state pre-init — for those we kick off the bootstrap as a
-// best-effort fire-and-forget so the NEXT call lands on a warm pod
-// without paying any latency on THIS call.
-const POD_AWARE_TOOLS = new Set<string>([
-  // Writes — first-line auth reads /agents
-  'publish_context', 'register_agent', 'revoke_agent', 'publish_directory',
-  // Reads that materialize over /agents or /profile/card
-  'discover_context', 'discover_all', 'get_descriptor',
-  'get_pod_status', 'list_known_pods', 'verify_agent',
-  'subscribe_to_pod', 'unsubscribe_from_pod',
-  'add_pod', 'remove_pod', 'discover_directory', 'resolve_webfinger',
-]);
-
-async function ensurePodInitialized(
-  authContext: { podUrl?: string; agentId: string; ownerWebId: string; userId: string; identityToken?: string },
-): Promise<void> {
-  const podUrl = authContext.podUrl;
-  if (!podUrl) return;
-  // Layer 1: in-process fast-path. After a confirmed success on this
-  // process this is O(1) Set.has — no network.
-  if (bootstrappedPods.has(podUrl)) return;
-
-  // Layer 2: HEAD probe. A 200 means another replica/process beat us
-  // to it — record + skip. A 404 means first-touch and we proceed to
-  // the mutex-guarded bootstrap. Anything else (5xx, network) we treat
-  // as "unknown" and attempt the bootstrap; bootstrap itself is
-  // idempotent (existing-agent re-connect path is a no-op write).
-  try {
-    const head = await solidFetch(`${podUrl}agents`, { method: 'HEAD' });
-    if (head.status === 200) {
-      bootstrappedPods.add(podUrl);
-      return;
-    }
-  } catch {
-    // Network blip — fall through to the bootstrap attempt. The mutex
-    // + bootstrap-internal retries cope with transient CSS issues.
-  }
-
-  // Mutex-guarded bootstrap. The same `podWriteMutexes` map used by
-  // the OAuth verify path — serialises lazy init AND OAuth init on
-  // the SAME per-pod key, so a tool call racing an OAuth completion
-  // for the same user does not double-write the registry.
-  await withPodMutex(podUrl, async () => {
-    // Double-checked locking: a concurrent in-process call may have
-    // landed the Set entry while we were waiting on the mutex.
-    if (bootstrappedPods.has(podUrl)) return;
-    // Fallback labels mirror the OAuth-verify path when identity
-    // is unreachable / cache-cold: userName=userId, agentLabel
-    // synthesized from the bare agent slug.
-    const bareAgentSlug = authContext.agentId.startsWith('did:web:')
-      ? (authContext.agentId.split(':').pop() ?? authContext.agentId)
-      : authContext.agentId;
-    await bootstrapPod({
-      podUrl,
-      ownerWebId: authContext.ownerWebId as IRI,
-      surfaceAgentIri: authContext.agentId as IRI,
-      userName: authContext.userId,
-      agentLabel: `Surface agent ${bareAgentSlug}`,
-      userId: authContext.userId,
-      identityWebId: authContext.ownerWebId,
-    });
-    bootstrappedPods.add(podUrl);
-    // On throw: do NOT add to bootstrappedPods so next call retries;
-    // the throw propagates so the caller can decide whether to mask
-    // (best-effort path) or surface (strict-DPoP write path).
-  });
-}
+const { bootstrappedPods, ensurePodInitialized } = createLazyPodInit({
+  solidFetch,
+  withPodMutex,
+  bootstrapPod,
+});
 
 // ── Pod-side /profile/card writer (FIX A) ─────────────────────────
 //
