@@ -916,7 +916,6 @@ async function toolPublishContext(args: {
   if (args.compliance) {
     let signed: SignedDescriptor | null = null;
     let signError: string | null = null;
-    let sigIpfsCid: string | null = null;
     try {
       const cw = await ensureComplianceWallet();
       signed = await signDescriptor(descriptor.id, turtle, cw.wallet);
@@ -924,30 +923,34 @@ async function toolPublishContext(args: {
       // <descriptor-url>.sig.json (Content-Type: application/json).
       const sigUrl = `${result.descriptorUrl}.sig.json`;
       const sigBody = JSON.stringify(signed, null, 2);
-      const sigResp = await solidFetch(sigUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: sigBody,
-      });
-      if (!sigResp.ok) {
-        signError = `signature stored locally but pod write failed (${sigResp.status})`;
-      }
-      lines.push(`  Signature: ${sigUrl}`);
+      lines.push(`  Signature: ${sigUrl} (deferred)`);
       lines.push(`    Signer:    ${signed.signerAddress}`);
       lines.push(`    SignedAt:  ${signed.signedAt}`);
-
-      // Auto-pin the signature to IPFS too (compliance descriptors get
-      // their full audit pair publicly anchored when a pin provider is
-      // configured). Failure is non-fatal — local CID still computed.
-      if (IPFS_PROVIDER !== 'local-unpinned') {
+      void (async () => {
         try {
-          const sigPin = await pinToIpfs(sigBody, `signature-${descriptor.id}`, IPFS_CONFIG, solidFetch);
-          sigIpfsCid = sigPin.cid;
-          lines.push(`    SigCID:    ${sigIpfsCid}`);
+          const sigResp = await solidFetch(sigUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: sigBody,
+          });
+          if (!sigResp.ok) {
+            log(`Signature write failed: ${sigResp.status} ${sigResp.statusText}`);
+          }
         } catch (err) {
-          lines.push(`    SigPin:    failed (${(err as Error).message})`);
+          log(`Signature write error: ${(err as Error).message}`);
         }
-      }
+        // Auto-pin the signature to IPFS too (compliance descriptors get
+        // their full audit pair publicly anchored when a pin provider is
+        // configured). Failure is non-fatal — local CID still computed.
+        if (IPFS_PROVIDER !== 'local-unpinned') {
+          try {
+            const sigPin = await pinToIpfs(sigBody, `signature-${descriptor.id}`, IPFS_CONFIG, solidFetch);
+            log(`Signature IPFS pin completed for ${descriptor.id}: ${sigPin.cid}`);
+          } catch (err) {
+            log(`Signature IPFS pin failed for ${descriptor.id}: ${(err as Error).message}`);
+          }
+        }
+      })();
     } catch (err) {
       signError = (err as Error).message;
     }
