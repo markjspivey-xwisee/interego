@@ -138,8 +138,9 @@ The LLM picks the right tool based on what you ask — you don't have to remembe
 ## Configuration via environment variables
 
 ```bash
-CG_OWNER=https://id.example.com/agent/profile#me \
-CG_AGENT=urn:agent:claude-code:my-laptop \
+CG_OWNER_WEBID=https://id.example.com/agent/profile#me \
+CG_OWNER_NAME="Agent Owner" \
+CG_AGENT_ID=urn:agent:claude-code:my-laptop \
 CG_HOME_POD=https://pod.example.com/agent/ \
 CG_KNOWN_PODS=https://bob.example.com/,https://alice.example.com/ \
 npx -y @interego/mcp
@@ -147,9 +148,12 @@ npx -y @interego/mcp
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CG_OWNER` | `https://id.example.com/agent/profile#me` | The pod owner's WebID |
-| `CG_AGENT` | `urn:agent:claude-code:local` | Identifier for this AI agent instance |
-| `CG_HOME_POD` | `http://localhost:3456/agent/` | Default Solid pod for publishing |
+| `CG_OWNER_WEBID` | `https://id.example.com/<pod-name>/profile#me` | The pod owner's WebID |
+| `CG_OWNER_NAME` | _(empty)_ | Human-readable name of the pod owner |
+| `CG_AGENT_ID` | `urn:agent:claude-code:local` | Identifier for this AI agent instance |
+| `CG_POD_NAME` | `agent` | Slug for this agent's pod (used in default WebID and home pod URL) |
+| `CG_BASE_URL` | `http://localhost:3456/` | Base URL used to compute the default home pod |
+| `CG_HOME_POD` | `${CG_BASE_URL}${CG_POD_NAME}/` | Default Solid pod for publishing |
 | `CG_KNOWN_PODS` | _(empty)_ | Comma-separated pod URLs to seed the federation |
 
 ## Build from source
