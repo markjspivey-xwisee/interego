@@ -6239,7 +6239,7 @@ app.post('/agents/:agentIri/revoke', bearerVerifyLimiter, async (req, res) => {
     return;
   }
 
-  const agentIri = decodeURIComponent(req.params['agentIri'] ?? '') as IRI;
+  const agentIri = decodeURIComponent((req.params['agentIri'] ?? '') as string) as IRI;
   if (!agentIri) { res.status(400).json({ error: 'agentIri path param required' }); return; }
 
   const podUrl = `${CSS_URL}${tokenUserId}/`;
