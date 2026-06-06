@@ -710,6 +710,30 @@ const AGENT_REGISTRATION_CACHE_TTL_MS = 60 * 1000;
 const AGENT_REGISTRATION_CACHE_MAX = 1024;
 const agentRegistrationCache = new Map<string, { expiresAt: number }>();
 
+// Per-pod full-profile cache. agentRegistrationCache above only memoizes the
+// boolean "this surface-agent is registered + key matches" check — the
+// publish_context recipient-set computation (and discover_context's
+// verify_delegation branch, and get_pod_status) still need the entire
+// AgentRegistry to enumerate every authorized agent's encryptionPublicKey.
+// Without this cache each authenticated publish does a second CSS GET
+// against Azure CSS on the hot path. Mirrors mcp-server's profileCache.
+// Invalidated on every writeAgentRegistry success below.
+const relayProfileCache = new Map<string, { profile: OwnerProfileData; expiresAt: number }>();
+async function getCachedRelayProfile(podUrl: string): Promise<OwnerProfileData | null> {
+  const hit = relayProfileCache.get(podUrl);
+  if (hit && hit.expiresAt > Date.now()) return hit.profile;
+  if (hit) relayProfileCache.delete(podUrl);
+  const profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+  if (profile) {
+    if (relayProfileCache.size >= AGENT_REGISTRATION_CACHE_MAX) {
+      const oldestKey = relayProfileCache.keys().next().value;
+      if (oldestKey !== undefined) relayProfileCache.delete(oldestKey);
+    }
+    relayProfileCache.set(podUrl, { profile, expiresAt: Date.now() + AGENT_REGISTRATION_CACHE_TTL_MS });
+  }
+  return profile;
+}
+
 // Per-pod unfiltered-manifest cache. publish_context auto-supersede plus
 // the get_pod_status / verify_agent / register_agent / revoke_agent paths
 // all GET the full manifest (10s-100s of KB on busy pods) and re-run
@@ -833,24 +857,30 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
           validFrom: new Date().toISOString(),
           encryptionPublicKey: relayAgentKey.publicKey,
         });
+        // Mint a SIGNED VC so downstream verifiers can cryptographically
+        // walk the chain (the unsigned form forces a SelfAsserted trust
+        // label even on otherwise-trusted publishes). The signer is the
+        // relay's compliance ECDSA wallet acting on the OAuth-bearer's
+        // authenticated behalf. The credential write runs concurrently
+        // with the registry PUT (independent CSS paths) but remains
+        // best-effort — registry is authoritative.
+        const newAgent = profile.authorizedAgents.find(a => a.agentId === agentId)!;
+        const credentialWrite = (async () => {
+          try {
+            const signer = await getDelegationSigner();
+            const credential = await createSignedDelegationCredential(
+              profile,
+              newAgent,
+              podUrl as IRI,
+              signer,
+            );
+            await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
+          } catch { /* delegation credential is nice-to-have; registry is authoritative */ }
+        })();
         await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
+        relayProfileCache.delete(podUrl);
         registeredOk = true;
-        try {
-          // Mint a SIGNED VC so downstream verifiers can cryptographically
-          // walk the chain (the unsigned form forces a SelfAsserted trust
-          // label even on otherwise-trusted publishes). The signer is the
-          // relay's compliance ECDSA wallet acting on the OAuth-bearer's
-          // authenticated behalf.
-          const newAgent = profile.authorizedAgents.find(a => a.agentId === agentId)!;
-          const signer = await getDelegationSigner();
-          const credential = await createSignedDelegationCredential(
-            profile,
-            newAgent,
-            podUrl as IRI,
-            signer,
-          );
-          await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
-        } catch { /* delegation credential is nice-to-have; registry is authoritative */ }
+        await credentialWrite;
       } else if (me.encryptionPublicKey !== relayAgentKey.publicKey) {
         const updated = {
           ...profile,
@@ -996,7 +1026,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // skipping the I/O saves a round-trip.
   const willShare = (rawVisibility === undefined || rawVisibility === 'shared');
   const currentProfile = willShare
-    ? await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null)
+    ? await getCachedRelayProfile(podUrl).catch(() => null)
     : null;
   const registryAgentKeys = (currentProfile?.authorizedAgents ?? [])
     .filter(a => !a.revoked && a.encryptionPublicKey)
@@ -1260,7 +1290,7 @@ async function handleDiscoverContext(args: ToolArgs): Promise<string> {
   // Optionally include registry info
   let registry = null;
   if (args.verify_delegation) {
-    const profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+    const profile = await getCachedRelayProfile(podUrl);
     if (profile) {
       registry = {
         owner: profile.webId,
@@ -1496,7 +1526,7 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   const sessionAgentDid = args._session_agent_did as string | undefined;
   const sessionAgentIdRaw = args._session_agent_id as string | undefined;
   const entries = await getCachedManifest(podUrl).catch(() => []);
-  const profile = await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null);
+  const profile = await getCachedRelayProfile(podUrl).catch(() => null);
 
   // Resolve the calling user's display name (set at WebAuthn / DID
   // registration and stored in auth-methods.jsonld#name on identity).
@@ -1676,19 +1706,26 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
     return JSON.stringify({ error: (err as Error).message });
   }
 
-  await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
-
   // Sign the credential with the relay's compliance wallet so
   // verify_agent can perform a cryptographic chain walk later.
+  // Registry + credential target distinct CSS paths — run the two
+  // PUTs concurrently.
   const agent = profile.authorizedAgents.find(a => a.agentId === agentId)!;
-  const signer = await getDelegationSigner();
-  const credential = await createSignedDelegationCredential(
-    profile,
-    agent,
-    podUrl as IRI,
-    signer,
-  );
-  const credUrl = await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
+  const credentialAndWrite = (async () => {
+    const signer = await getDelegationSigner();
+    const cred = await createSignedDelegationCredential(
+      profile,
+      agent,
+      podUrl as IRI,
+      signer,
+    );
+    const url = await writeDelegationCredential(cred, podUrl, { fetch: solidFetch });
+    return { cred, url };
+  })();
+  const [, { cred: credential, url: credUrl }] = await Promise.all([
+    writeAgentRegistry(profile, podUrl, { fetch: solidFetch }),
+    credentialAndWrite,
+  ]);
 
   return JSON.stringify({
     registered: true,
