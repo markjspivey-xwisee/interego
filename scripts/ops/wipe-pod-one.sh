@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Wipe one POD container recursively. Args: $1 = pod URL ending with /
+# Operator-only. Wipe one POD container recursively. Args: $1 = pod URL ending with /.
+# Invoke via:   npm run ops:wipe-pod -- <pod-url>
+# Requires CSS (css-gate base URL) and WRITE_SECRET (operator bearer) in env.
 # No set -e/-u — transient failures must not abort the tree walk.
 
-CSS="${CSS:-https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io}"
+CSS="${CSS:-}"
 POD_URL="$1"
 
+if [ -z "${CSS:-}" ] && [ -z "$POD_URL" ]; then
+  echo "ERROR: CSS env var or absolute pod URL is required." >&2
+  exit 1
+fi
 if [ -z "${WRITE_SECRET:-}" ]; then
   echo "ERROR: WRITE_SECRET env var is required (css-gate operator bearer)." >&2
   exit 1

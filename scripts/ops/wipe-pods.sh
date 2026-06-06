@@ -1,16 +1,57 @@
 #!/usr/bin/env bash
-# Recursive POD container wipe via CSS allow-all REST.
+# Operator-only. Recursive POD container wipe via CSS allow-all REST.
+# Invoke via:   npm run ops:wipe-pods         (auto-discovers pods at $CSS/)
+#         or:   WIPE_PODS="a b c" npm run ops:wipe-pods   (override list)
+# Requires CSS (css-gate base URL) and WRITE_SECRET (operator bearer) in env.
 # Walks ldp:contains depth-first, DELETEs children before parents.
 set -u
 
-CSS="${CSS:-https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io}"
-PODS=(${WIPE_PODS:-markj foxxi foxxi-bridge-svc demos svc-440673 u-pk-250bb96aae52 u-pk-9051bf9f68f0 u-pk-bf9f5fc511d9 u-pk-d0e766c8c1d3})
-
+if [[ -z "${CSS:-}" ]]; then
+  echo "ERROR: CSS env var is required (css-gate base URL, no trailing slash)." >&2
+  exit 1
+fi
 if [[ -z "${WRITE_SECRET:-}" ]]; then
   echo "ERROR: WRITE_SECRET env var is required (css-gate operator bearer)." >&2
   exit 1
 fi
 AUTH_HDR="Authorization: Bearer ${WRITE_SECRET}"
+
+# Reuse the parser from wipe-pod-one.sh shape — list direct children of $CSS/
+# and treat each container child (ref ending in '/') as a pod slug.
+list_pods_from_root() {
+  local body
+  body=$(curl -sS -H "Accept: text/turtle" -H "$AUTH_HDR" --max-time 30 "$CSS/" 2>/dev/null)
+  [ -z "$body" ] && return 0
+  printf '%s\n' "$body" | awk '
+    { doc = doc $0 "\n" }
+    END {
+      pos = 1
+      while ((idx = index(substr(doc, pos), "ldp:contains")) > 0) {
+        start = pos + idx - 1 + length("ldp:contains")
+        i = start; in_uri = 0; uri = ""
+        while (i <= length(doc)) {
+          ch = substr(doc, i, 1)
+          if (in_uri) { if (ch == ">") { print uri; uri=""; in_uri=0 } else { uri = uri ch }; i++; continue }
+          if (ch == "<") { in_uri = 1; uri=""; i++; continue }
+          if (ch == ".") { nxt = substr(doc, i+1, 1); if (nxt == "" || nxt ~ /[ \t\r\n]/) break }
+          i++
+        }
+        pos = i + 1
+      }
+    }
+  ' | sed -n 's:/$::p'
+}
+
+if [[ -n "${WIPE_PODS:-}" ]]; then
+  PODS=(${WIPE_PODS})
+else
+  mapfile -t PODS < <(list_pods_from_root)
+fi
+
+if [[ ${#PODS[@]} -eq 0 ]]; then
+  echo "ERROR: no pods to wipe (CSS root listing returned no ldp:contains children)." >&2
+  exit 1
+fi
 
 # Per-target final status
 declare -A FINAL_CODE

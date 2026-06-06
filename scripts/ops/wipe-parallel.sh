@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Parallel POD wipe. Args: pod URL(s) ending with /.
+# Operator-only. Parallel POD wipe. Args: pod URL(s) ending with /.
+# Invoke via:   npm run ops:wipe-parallel -- <pod-url> [<pod-url>...]
+# Requires CSS (css-gate base URL) and WRITE_SECRET (operator bearer) in env.
 # For each pod: list direct children, fork wipe-pod-one.sh per child container, wait.
 # Finally DELETE the pod root itself.
 
-CSS="${CSS:-https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io}"
+CSS="${CSS:-}"
 WIPE_ONE="$(cd "$(dirname "$0")" && pwd)/wipe-pod-one.sh"
 
 if [ -z "${WRITE_SECRET:-}" ]; then
