@@ -118,17 +118,26 @@ function* walkFiles(dir) {
 function findReferencesInFile(tsPath, prefixes) {
   const body = readFileSync(tsPath, 'utf8');
   const refs = [];
-  // Match `prefix:Term` inside TS string literals + template literals.
-  // Negative lookbehind for `:` or word-char skips matches inside longer
-  // URIs like `urn:cg:my-context` where `my-context` is example text,
-  // not a real ontology term.
+  // Scan line-by-line for `prefix:Term`, skipping `//` line comments.
+  // The earlier string-bounded regex missed any term that appeared after
+  // the first inner quote of a multi-line template literal (e.g. the
+  // SHACL shapes Turtle, which embeds 28 `"` characters in sh:message
+  // strings). Negative lookbehind for `:` or word-char still skips
+  // matches inside longer URIs like `urn:cg:my-context`.
   const refRegex = new RegExp(
-    `['"\`][^'"\`]*?(?<![:\\w])(${prefixes.join('|')}):([A-Za-z][A-Za-z0-9_]*)`,
+    `(?<![:\\w])(${prefixes.join('|')}):([A-Za-z][A-Za-z0-9_]*)`,
     'g',
   );
-  let m;
-  while ((m = refRegex.exec(body)) !== null) {
-    refs.push({ prefix: m[1], term: m[2], path: tsPath, offset: m.index });
+  let offset = 0;
+  for (const rawLine of body.split('\n')) {
+    const commentIdx = rawLine.indexOf('//');
+    const line = commentIdx === -1 ? rawLine : rawLine.slice(0, commentIdx);
+    let m;
+    refRegex.lastIndex = 0;
+    while ((m = refRegex.exec(line)) !== null) {
+      refs.push({ prefix: m[1], term: m[2], path: tsPath, offset: offset + m.index });
+    }
+    offset += rawLine.length + 1;
   }
   return refs;
 }
