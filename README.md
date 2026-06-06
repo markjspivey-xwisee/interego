@@ -415,12 +415,12 @@ const harnessTtl = loadOntology('harness');  // 982 lines, 810 triples
 Hit the deployed HTTP relay (any HTTP client works — no MCP, no SDK):
 
 ```bash
-curl -X POST https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/tools/discover_context \
+curl -X POST https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/tool/discover_context \
   -H "Content-Type: application/json" \
   -d '{"namespace": "cg"}'
 ```
 
-Every MCP tool is exposed as a `POST /tools/{tool_name}` endpoint with a JSON body matching the tool's input schema.
+Every MCP tool is exposed as a `POST /tool/{tool_name}` endpoint with a JSON body matching the tool's input schema.
 
 ### 👀 I just want to look around
 
