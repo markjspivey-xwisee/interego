@@ -119,6 +119,7 @@ import {
   fetchGraphContent,
   parseDistributionFromDescriptorTurtle,
   resolveRecipients,
+  computePublishRecipients,
   predictDescriptorUrl,
 } from '@interego/solid';
 
@@ -806,28 +807,17 @@ async function toolPublishContext(args: {
   // fall back to plaintext publish so the very first writes aren't locked
   // out of themselves. The descriptor metadata (facets, manifest entry)
   // stays plaintext so discovery queries work across federation.
-  const currentProfile = await getCachedRegistry(podUrl);
-  const recipients = (currentProfile?.authorizedAgents ?? [])
-    .filter(a => !a.revoked && a.encryptionPublicKey)
-    .map(a => a.encryptionPublicKey!) as string[];
-  // Author's session-agent key MUST be in the recipient set unconditionally,
-  // BEFORE the share_with union below. This guarantees the author can always
-  // deref-decrypt envelopes they just published, even if share_with targets
-  // a third party. share_with APPENDS to this base set; it never replaces it.
-  // See fix `share-with-author` regression test.
-  const authorEncryptionKey = agentKeyPair.publicKey;
-  if (!recipients.includes(authorEncryptionKey)) recipients.push(authorEncryptionKey);
-
-  // Cross-pod sharing: for each handle in share_with, resolve to their pod's
-  // agent registry and union their agents' encryption keys into recipients.
-  // This graph then becomes decryptable by those other people's agents too —
-  // per-graph opt-in, no pod-level ACL change needed, fully federated.
   //
+  // Recipient-set merge (registry ∪ author ∪ share_with-resolved) is
+  // delegated to `computePublishRecipients` so the stdio MCP server and
+  // the relay both pin the same author-included invariant. See
+  // tests/sharing.test.ts.
+  const authorEncryptionKey = agentKeyPair.publicKey;
   // We cap the share_with array at SHARE_WITH_MAX entries. Without a cap,
   // a caller (or LLM with too much enthusiasm) could pass thousands of
   // handles — each triggers a pod-resolution fetch + key extraction; the
-  // request would O(N) the relay's network budget and inflate the envelope
-  // to N wrapped keys. 50 is generous for legitimate cross-pod sharing
+  // request would O(N) the network budget and inflate the envelope to N
+  // wrapped keys. 50 is generous for legitimate cross-pod sharing
   // (family / small team) and refuses pathological inputs early with a
   // clear error rather than silently degrading.
   const SHARE_WITH_MAX = 50;
@@ -838,20 +828,25 @@ async function toolPublishContext(args: {
       `per-publish sharing is designed for small numbers of direct recipients.`,
     );
   }
-  const shareResolved: { handle: string; podUrl: string; agentCount: number }[] = [];
-  if (args.share_with && args.share_with.length > 0) {
-    const resolved = await resolveRecipients(args.share_with, { fetch: solidFetch });
-    for (const r of resolved) {
-      shareResolved.push({ handle: r.handle, podUrl: r.podUrl, agentCount: r.agentEncryptionKeys.length });
-      for (const key of r.agentEncryptionKeys) {
-        if (!recipients.includes(key)) recipients.push(key);
-      }
-    }
-  }
-  // Defensive invariant: author key must remain in recipients after the
-  // share_with merge. Restore if a regression in the union logic ever
-  // drops it — better to over-include than to lock the author out.
-  if (!recipients.includes(authorEncryptionKey)) recipients.push(authorEncryptionKey);
+  const shareWith = args.share_with ?? [];
+  const currentProfile = await getCachedRegistry(podUrl);
+  const registryKeys = (currentProfile?.authorizedAgents ?? [])
+    .filter(a => !a.revoked && a.encryptionPublicKey)
+    .map(a => a.encryptionPublicKey!) as string[];
+  const resolvedShareTargets = shareWith.length > 0
+    ? await resolveRecipients(shareWith, { fetch: solidFetch })
+    : [];
+  const shareResolved: { handle: string; podUrl: string; agentCount: number }[] =
+    resolvedShareTargets.map(r => ({ handle: r.handle, podUrl: r.podUrl, agentCount: r.agentEncryptionKeys.length }));
+  const computed = computePublishRecipients({
+    rawVisibility: 'shared',
+    shareWith,
+    authorEncryptionKey,
+    authorAgentId: MY_AGENT_ID,
+    registryAgentKeys: registryKeys,
+    resolvedShareTargets,
+  });
+  const recipients = computed.recipients;
 
   const publishOptions: Parameters<typeof publish>[3] = recipients.length > 0
     ? { fetch: solidFetch, encrypt: { recipients, senderKeyPair: agentKeyPair } }
