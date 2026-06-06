@@ -1049,18 +1049,22 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     warning?: string;
   } = {};
   if (ipfsConfig.provider !== 'local-unpinned' && ipfsConfig.apiKey) {
-    try {
-      const pinResult = await pinToIpfs(turtle, `descriptor-${descriptor.id}`, ipfsConfig, solidFetch);
-      ipfs = {
-        cid: pinResult.cid,
-        url: pinResult.url,
-        provider: pinResult.provider,
-        addresses,
-        ...(pinResult.warning ? { warning: pinResult.warning } : {}),
-      };
-    } catch (err) {
-      ipfs = { cid: `error: ${(err as Error).message}` };
-    }
+    // Defer the external HTTPS pin upload to a background task so the
+    // publish_context response isn't blocked on a 500-3000ms (cold-DNS /
+    // large-payload outliers up to 10s+) round-trip to Pinata/Web3Storage.
+    // The CID is content-addressed so the value returned now is the same
+    // value the pin will carry. Mirrors the IPFS-pin defer in
+    // mcp-server/server.ts.
+    const cid = cryptoComputeCid(turtle);
+    ipfs = {
+      cid,
+      url: `ipfs://${cid}`,
+      provider: 'pending',
+      addresses,
+    };
+    void pinToIpfs(turtle, `descriptor-${descriptor.id}`, ipfsConfig, solidFetch)
+      .then(r => log(`IPFS pin completed for ${descriptor.id}: ${r.cid} via ${r.provider}`))
+      .catch(err => log(`IPFS pin failed for ${descriptor.id}: ${(err as Error).message}`));
   } else {
     // No pinning provider configured: compute the CID locally so the
     // descriptor still has a content-address, but report `local-unpinned`
@@ -1082,7 +1086,9 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // to remember to call publish_directory manually. Now it's asserted
   // inline — idempotent, best-effort, non-fatal so the publish itself
   // isn't blocked by directory plumbing.
-  await ensurePodDirectory(podUrl, ownerWebId);
+  void ensurePodDirectory(podUrl, ownerWebId).catch((err) =>
+    log(`ensurePodDirectory failed for ${podUrl}: ${(err as Error).message}`),
+  );
 
   return JSON.stringify({
     published: true,
