@@ -67,7 +67,7 @@ concurrency:
 env:
   # The deployed CSS pod. Same default as examples/_lib.mjs so a
   # local `npx tsx examples/emergent/<name>.mjs` hits the same target.
-  CG_DEMO_POD_BASE: https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io
+  CG_DEMO_POD_BASE: https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io
   # Unique tag baked into every scenario's pod subpath so parallel
   # runs (and re-runs of the same workflow) never collide on the
   # manifest at .well-known/context-graphs.
