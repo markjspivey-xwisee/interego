@@ -37,7 +37,7 @@ import type {
   Sign,
   ModalStatus,
 } from './types.js';
-import { asSign, fromSign } from './types.js';
+import { asSign, fromSign, DEFAULT_EPISTEMIC_CONFIDENCE } from './types.js';
 import { union, intersection } from './composition.js';
 
 // ── Sign morphisms (semiosis) ────────────────────────────────
@@ -246,7 +246,7 @@ export function semioticField(descriptor: ContextDescriptorData): {
       const s = f as Extract<ContextFacetData, { type: 'Semiotic' }>;
       return {
         modalStatus: s.modalStatus ?? 'Asserted',
-        confidence: s.epistemicConfidence ?? 0.5,
+        confidence: s.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE,
         interpretationFrame: s.interpretationFrame,
         signSystem: s.signSystem,
         groundTruth: s.groundTruth,

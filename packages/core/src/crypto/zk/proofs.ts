@@ -31,6 +31,7 @@
 import nacl from 'tweetnacl';
 import util from 'tweetnacl-util';
 import { sha256 } from '../ipfs.js';
+import { DEFAULT_EPISTEMIC_CONFIDENCE } from '../../model/types.js';
 
 // ═════════════════════════════════════════════════════════════
 //  Types
@@ -560,7 +561,7 @@ export function createSelectiveDisclosure(
       if (req.type === 'confidence-threshold') {
         const semioticFacet = facets.find(f => f.type === 'Semiotic');
         if (semioticFacet) {
-          const confidence = (semioticFacet.data as any).epistemicConfidence ?? 0.5;
+          const confidence = (semioticFacet.data as any).epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
           try {
             const { proof } = proveConfidenceAboveThreshold(confidence, req.threshold);
             proofs.push(proof);

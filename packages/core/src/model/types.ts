@@ -239,6 +239,24 @@ export interface SemioticFacetData {
 }
 
 /**
+ * Canonical "absent confidence" default. Any subsystem that needs to read
+ * `SemioticFacetData.epistemicConfidence` from a descriptor that omitted it
+ * MUST default to this value so manifest fingerprinting, affordance gating,
+ * semiotic-field comparisons, and ZK threshold proofs agree on what the
+ * 'same' descriptor says. Set to the affordance/ uncertainty baseline.
+ */
+export const DEFAULT_EPISTEMIC_CONFIDENCE = 0.5;
+
+/**
+ * Stronger default used only by `normalizePublishInputs()`: an explicit
+ * `publish_context` call is semantically an Assertion — the caller stepped
+ * over the screening + auto-supersede gates to commit a claim, so the
+ * recorded default is higher than the generic "absent confidence" baseline.
+ * See `model/publish-preprocess.ts` and `tests/publish-preprocess.test.ts`.
+ */
+export const PUBLISH_DEFAULT_EPISTEMIC_CONFIDENCE = 0.85;
+
+/**
  * Trust & Verifiability Facet (§5.6)
  * Profiles: Verifiable Credentials 2.0, DID Core
  */

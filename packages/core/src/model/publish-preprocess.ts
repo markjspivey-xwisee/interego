@@ -30,6 +30,7 @@
  */
 
 import type { IRI, ModalStatus, RevocationConditionData } from './types.js';
+import { PUBLISH_DEFAULT_EPISTEMIC_CONFIDENCE } from './types.js';
 
 export interface PublishInputs {
   /**
@@ -90,7 +91,7 @@ export function normalizePublishInputs(inputs: PublishInputs): PreprocessedPubli
   // explicitly; the L2 integration shims and user-facing docs all
   // encode this same intent.
   const modalStatus: ModalStatus = inputs.modalStatus ?? 'Asserted';
-  const epistemicConfidence = inputs.confidence ?? 0.85;
+  const epistemicConfidence = inputs.confidence ?? PUBLISH_DEFAULT_EPISTEMIC_CONFIDENCE;
 
   let groundTruth: boolean | undefined;
   if (modalStatus === 'Asserted' || modalStatus === 'Quoted') groundTruth = true;
