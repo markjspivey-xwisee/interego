@@ -83,7 +83,7 @@ dependencies, matching Interego's zero-runtime-deps ethos.
 
 ## Reaching the whole substrate without tool bloat (HATEOAS)
 
-Interego has ~15 relay tools (~60 in the full MCP server). Surfacing
+Interego has ~35 substrate tools on both the relay and the stdio MCP server (8 kernel verbs + 27 compatibility shims). Surfacing
 them flat would crowd the agent's context with an API reference it
 mostly ignores. So this provider gives the agent **exactly three tool
 schemas, forever**:
