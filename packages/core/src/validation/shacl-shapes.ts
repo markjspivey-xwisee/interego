@@ -159,10 +159,11 @@ cg:TrustFacetShape a sh:NodeShape ;
 
 cg:AccessControlFacetShape a sh:NodeShape ;
     sh:targetClass cg:AccessControlFacet ;
-    sh:property [
-        sh:path cg:authorization ;
-        sh:minCount 1 ;
-    ] .
+    sh:or (
+        [ sh:property [ sh:path cg:authorization ; sh:minCount 1 ] ]
+        [ sh:property [ sh:path cg:policyRef ; sh:minCount 1 ] ]
+    ) ;
+    sh:message "AccessControlFacet must declare at least one access-control mode: cg:authorization (WAC) or cg:policyRef (ABAC)." .
 
 # ── Federation Facet Shape ────────────────────────────────────
 
