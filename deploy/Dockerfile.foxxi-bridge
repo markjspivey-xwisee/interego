@@ -44,7 +44,7 @@ COPY applications/lrs-adapter/src/ ./applications/lrs-adapter/src/
 # Compile @interego/core → dist/. The foxxi vertical imports the substrate
 # as the `@interego/core` package, and that package's exports map resolves
 # to dist/ — so the compile is now load-bearing for the vertical at runtime.
-RUN npx tsc
+RUN npm run build --workspace @interego/core
 
 # Make `@interego/core` resolvable by name. The repo root IS the
 # @interego/core package; symlink it into node_modules so Node resolves
