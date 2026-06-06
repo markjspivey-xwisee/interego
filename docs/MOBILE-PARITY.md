@@ -8,9 +8,9 @@ today on mobile and where the rough edges are.
 
 | Client | Surface | Status |
 |---|---|---|
-| **claude.ai web (iPhone Safari / Android Chrome)** | HTTP/SSE via relay's `/sse` | ✅ Works end-to-end — OAuth flow in-browser, passkey or wallet enrollment, tools render in the conversation. The cleanest mobile experience. |
-| **Claude iOS / Android app** | Custom connectors (Settings → Connectors → Add custom) | ✅ Works — same SSE endpoint. Adds the relay as a tool source for any conversation. |
-| **ChatGPT iOS / Android app** | Custom connectors (subscription tier dependent) | ✅ Works on supported tiers. Same SSE endpoint. |
+| **claude.ai web (iPhone Safari / Android Chrome)** | `/mcp` Streamable HTTP (fallback to `/sse`) | ✅ Works end-to-end — OAuth flow in-browser, passkey or wallet enrollment, tools render in the conversation. The cleanest mobile experience. |
+| **Claude iOS / Android app** | Custom connectors (Settings → Connectors → Add custom) | ✅ Works — same `/mcp` endpoint. Adds the relay as a tool source for any conversation. |
+| **ChatGPT iOS / Android app** | Custom connectors (subscription tier dependent) | ✅ Works on supported tiers. Same `/mcp` endpoint. |
 | **Hermes Agent (any backend)** | Modal / Daytona / SSH backend | ✅ Works headlessly — Hermes on Modal hibernates between turns, wakes when paged via Discord / Telegram / Slack / WhatsApp / Signal / SMS. Mobile users interact through the messaging app; the relay talks to Hermes' Modal endpoint. |
 | **Cursor mobile** | (No mobile client) | ❌ Cursor is desktop-only. Same code via Hermes-on-Modal or claude.ai works around it. |
 | **OpenClaw mobile** | (No mobile client) | ❌ Same as Cursor. Run on a VPS / home server and access via SSH from mobile if you want OpenClaw specifically. |
