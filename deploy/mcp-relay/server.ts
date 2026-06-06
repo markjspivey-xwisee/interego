@@ -6335,16 +6335,15 @@ app.post('/agents/:agentIri/revoke', bearerVerifyLimiter, async (req, res) => {
 const PAYMENT_REQUIRED_PODS = new Map<string, { amount: string; currency: string; address: string }>();
 
 app.post('/x402/set-price', bearerVerifyLimiter, async (req, res) => {
-  const auth = await verifyBearerToken(req.headers.authorization);
-  if (!auth.authenticated) { res.status(401).json({ error: auth.error }); return; }
-
   const { pod_url, amount, currency, address } = req.body;
   if (!pod_url || !amount || !currency || !address) {
     res.status(400).json({ error: 'pod_url, amount, currency, and address are required' });
     return;
   }
-  PAYMENT_REQUIRED_PODS.set(pod_url, { amount, currency, address });
-  res.json({ set: true, pod: pod_url, amount, currency });
+  const podUrl = await requireAuthorizedPodUrl(req, res, pod_url);
+  if (!podUrl) return;
+  PAYMENT_REQUIRED_PODS.set(podUrl, { amount, currency, address });
+  res.json({ set: true, pod: podUrl, amount, currency });
 });
 
 app.get('/x402/price/:podName', (req, res) => {

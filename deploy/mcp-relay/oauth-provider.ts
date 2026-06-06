@@ -6,10 +6,13 @@
  * exchange, token verification. In-memory state (lost on container restart)
  * — acceptable for a single-user personal deployment.
  *
- * Authorization is gated by a single RELAY_ADMIN_PASSWORD env var. The
- * authorize() method renders an HTML login form; the form POSTs to
- * /oauth/login (defined in server.ts) which calls completePendingAuthorization
- * to issue the code and redirect the user back to the client's redirect_uri.
+ * Authorization is passwordless. The authorize() method renders an HTML
+ * method-picker (passkey / SIWE / did:key); the page POSTs the resulting
+ * cryptographic proof to /oauth/verify (defined in server.ts), which
+ * forwards it to the identity server's /auth/* endpoints. On a verified
+ * proof, the verify route calls completePendingAuthorization to issue the
+ * code and redirect the user back to the client's redirect_uri. No shared
+ * secret is involved at any step.
  */
 import type { Response } from 'express';
 import { randomBytes, createHash } from 'node:crypto';
@@ -68,17 +71,20 @@ export interface InteregoAuthInfo extends AuthInfo {
 /**
  * Identity-server-backed OAuth provider for the Interego MCP relay.
  *
- * The authorize() login form collects a userId + password, which the server-
- * side /oauth/login route forwards to the identity server's /login endpoint.
- * On success, the provider issues an OAuth access token that carries the
- * user's identity (webId, podUrl, agentId) so MCP tool calls land in THAT
- * user's pod rather than a shared admin identity.
+ * The authorize() page presents a passwordless method-picker (passkey,
+ * Ethereum SIWE, did:key). The browser submits the resulting cryptographic
+ * proof to the server-side /oauth/verify route, which forwards it to the
+ * identity server's matching /auth/* endpoint (e.g. /auth/webauthn/verify,
+ * /auth/siwe/verify, /auth/did/verify). On a verified proof, the provider
+ * issues an OAuth access token that carries the user's identity (webId,
+ * podUrl, agentId) so MCP tool calls land in THAT user's pod rather than a
+ * shared admin identity.
  *
  * Design notes:
  * - In-memory state (clients, auth codes, access tokens) — lost on restart.
  * - Identity resolution is delegated to identity server: this provider stays
  *   a thin OAuth shell so the identity server remains the source of truth.
- * - No refresh tokens yet; tokens TTL = 1h; re-login via identity /login.
+ * - No refresh tokens yet; tokens TTL = 1h; re-authenticate via /oauth/verify.
  */
 export class InteregoOAuthProvider implements OAuthServerProvider {
   // Initial state can be hydrated from a persistent store at startup; see
