@@ -6428,13 +6428,19 @@ app.post('/tool/:name', async (req, res) => {
         '@type': ['hydra:Status', 'urn:cg:error:Unauthorized'],
         error: 'Authentication required for write operations',
         detail: auth.error,
-        hint: `POST ${IDENTITY_URL}/register to create an account and get a token`,
+        hint: `POST ${IDENTITY_URL}/try for an anonymous bootstrap token, or visit ${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/authorize for full passwordless enrollment`,
         affordances: [
           {
             '@type': ['cg:Affordance', 'hydra:Operation'],
-            action: 'urn:cg:action:identity:register',
-            target: `${IDENTITY_URL}/register`,
+            action: 'urn:cg:action:identity:try',
+            target: `${IDENTITY_URL}/try`,
             method: 'POST',
+          },
+          {
+            '@type': ['cg:Affordance', 'hydra:Operation'],
+            action: 'urn:cg:action:identity:authorize',
+            target: `${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/authorize`,
+            method: 'GET',
           },
         ],
       });
