@@ -4026,8 +4026,9 @@ app.get('/dashboard', (_req, res) => {
 
   // Auth-class error messages from the identity server — when the
   // dashboard sees any of these on a /me-style call, the stored token
-  // is stale (most often: the in-memory token store was wiped by a
-  // server restart) and the user needs to re-authenticate.
+  // is stale (expired, sessionEpoch bumped by sign-out-everywhere,
+  // TOKEN_SIGNING_KEY rotated/missing, or token revoked) and the user
+  // needs to re-authenticate.
   function isAuthError(err) {
     var m = (err && err.message) || '';
     // Cover every reason verifyToken can return: signature mismatch,
@@ -4077,11 +4078,12 @@ app.get('/dashboard', (_req, res) => {
     try {
       meData = await api(IDENTITY_BASE, '/me');
     } catch (e) {
-      // Stale tokens are the common case here — the identity server's
-      // in-memory token store is wiped on restart (every deploy), so a
-      // perfectly-good-looking sessionStorage token becomes "Token not
-      // found" on the server side. Surface a sign-in path; never leave
-      // the user stranded on a broken dashboard view.
+      // Stale tokens are the common case here — the stored token can
+      // fail verification because it expired, the user's sessionEpoch
+      // was bumped (sign-out-everywhere), TOKEN_SIGNING_KEY was rotated
+      // or fell back to an ephemeral key, or the token was revoked.
+      // Surface a sign-in path; never leave the user stranded on a
+      // broken dashboard view.
       if (isAuthError(e)) {
         clearToken();
         renderAuthRequired({ reason: 'Your previous session ended. Sign in again with the credential you enrolled — no new identity is created.' });
