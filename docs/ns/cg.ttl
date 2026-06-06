@@ -1458,7 +1458,26 @@ cg:HolonShape a sh:NodeShape ;
 
 cg:KernelResultShape a sh:NodeShape ;
     rdfs:label "Kernel result envelope SHACL shape" ;
+    sh:targetClass cg:KernelResult ;
     rdfs:comment "Base shape every kernel-verb / shim response satisfies — requires JSON-LD typing + at least one cg:Affordance hint for next-step navigation." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:MintResultShape a sh:NodeShape ;
+    rdfs:label "Mint result SHACL shape" ;
+    sh:targetClass cg:MintResult ;
+    rdfs:comment "Result envelope of kernel.mint — wraps a freshly minted cg:Holon." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:RestrictResultShape a sh:NodeShape ;
+    rdfs:label "Restrict result SHACL shape" ;
+    sh:targetClass cg:RestrictResult ;
+    rdfs:comment "Result envelope of kernel.restrict — narrowed cg:ContextDescriptor." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:ExtendResultShape a sh:NodeShape ;
+    rdfs:label "Extend result SHACL shape" ;
+    sh:targetClass cg:ExtendResult ;
+    rdfs:comment "Result envelope of kernel.extend — widened cg:ContextDescriptor." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
 
 cg:ToolResult a owl:Class ;
@@ -1472,8 +1491,14 @@ cg:ToolResultShape a sh:NodeShape ;
     rdfs:comment "Base shape every named-tool shim response satisfies — same envelope discipline as kernel verbs." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
 
+cg:RelayEntryPoint a owl:Class ;
+    rdfs:label "Relay entry point" ;
+    rdfs:comment "Top-level Hydra entry-point envelope a hosted MCP relay advertises — co-typed with hydra:EntryPoint and shaped by cg:RelayEntryPointShape; its affordances list the relay's surface operations." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
 cg:RelayEntryPointShape a sh:NodeShape ;
     rdfs:label "Relay entry point SHACL shape" ;
+    sh:targetClass cg:RelayEntryPoint ;
     rdfs:comment "Hypermedia entry point document for an HTTP relay's surface — every operation listed MUST be a hydra:Operation." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
 
