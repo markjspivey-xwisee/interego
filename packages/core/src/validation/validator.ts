@@ -119,6 +119,25 @@ function validateSemioticFacet(
     }
   }
 
+  if (f.modalStatus === 'Asserted' && f.groundTruth === false) {
+    v.push(violation(
+      `${path}/groundTruth`,
+      `SemioticFacet: Asserted claims require groundTruth=true (or omit)`
+    ));
+  }
+  if (f.modalStatus === 'Counterfactual' && f.groundTruth === true) {
+    v.push(violation(
+      `${path}/groundTruth`,
+      `SemioticFacet: Counterfactual claims require groundTruth=false (or omit)`
+    ));
+  }
+  if (f.modalStatus === 'Hypothetical' && f.groundTruth !== undefined) {
+    v.push(violation(
+      `${path}/groundTruth`,
+      `SemioticFacet: Hypothetical claims MUST NOT set groundTruth (leave undefined)`
+    ));
+  }
+
   return v;
 }
 
