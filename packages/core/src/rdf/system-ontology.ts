@@ -255,7 +255,7 @@ cg:composedFrom a owl:ObjectProperty ;
     rdfs:label "composed from" ;
     rdfs:comment "Links a composed descriptor to its source descriptors." .
 
-cg:compositionOperator a owl:ObjectProperty, owl:FunctionalProperty ;
+cg:compositionOp a owl:ObjectProperty, owl:FunctionalProperty ;
     rdfs:domain cg:ComposedDescriptor ;
     rdfs:range cg:CompositionOperatorEnum ;
     rdfs:label "composition operator" ;
