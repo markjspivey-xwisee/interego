@@ -223,7 +223,7 @@ the hosted reference.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Browser opens to a 404 at `/authorize` | Wrong URL — you pasted the identity-server URL instead of the relay URL. | Use the `-relay.` host, not the `-identity.` host. |
-| OAuth completes but tools fail with 401 | Refresh token expired (14 days) or revoked via sign-out-everywhere. | Restart the client to trigger re-authorization. |
+| OAuth completes but tools fail with 401 | Refresh token expired (14 days), revoked via sign-out-everywhere (bumps `sessionEpoch`), or `TOKEN_SIGNING_KEY` rotated/missing on the identity server. Container restart no longer triggers this — both the relay's OAuth tokens and the identity server's bearer tokens are persistent across redeploys (see `RELAY_OAUTH_STORE_POD` + `TOKEN_SIGNING_KEY`). | Restart the client to trigger re-authorization; also check `TOKEN_SIGNING_KEY` env var is stable across deploys. |
 | "Could not reach relay" on first call | Cold start on Azure Container Apps — the relay scales to zero. | Retry once; subsequent calls warm. |
 | 429 Too Many Requests during enrollment | Per-IP rate limit on `/auth/*` (30 enrollments / min). | Wait one minute; the limit is generous for legitimate use. |
 | Multiple agents appear in `/auth-methods/me` | Each MCP client mints its own surface agent. Expected. | Revoke unused agents via the dashboard if needed. |
