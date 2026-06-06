@@ -190,6 +190,61 @@ cg:CompositionOperator a owl:Class ;
     rdfs:comment "Algebraic operators for composing context descriptors. The four operators (union, intersection, restriction, override) form a bounded lattice." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
+# ── Kernel result envelopes ───────────────────────────────────
+
+cg:KernelResult a owl:Class ;
+    rdfs:label "Kernel Result" ;
+    rdfs:comment "Abstract superclass of every response envelope emitted by a kernel verb (mint / dereference / compose / act / restrict / extend / promote / decompose). Every instance satisfies cg:KernelResultShape." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:MintResult a owl:Class ;
+    rdfs:subClassOf cg:KernelResult ;
+    rdfs:label "Mint Result" ;
+    rdfs:comment "Response envelope of kernel.mint — wraps a freshly minted cg:Holon and its follow-up affordances." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:DereferenceResult a owl:Class ;
+    rdfs:subClassOf cg:KernelResult ;
+    rdfs:label "Dereference Result" ;
+    rdfs:comment "Response envelope of kernel.dereference — carries the fetched representation plus extracted affordances." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:ComposeResult a owl:Class ;
+    rdfs:subClassOf cg:KernelResult ;
+    rdfs:label "Compose Result" ;
+    rdfs:comment "Response envelope of kernel.compose — emits a cg:ComposedDescriptor witness." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:ActResult a owl:Class ;
+    rdfs:subClassOf cg:KernelResult ;
+    rdfs:label "Act Result" ;
+    rdfs:comment "Response envelope of kernel.act — wraps an HTTP response and echoes the followed affordance." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:RestrictResult a owl:Class ;
+    rdfs:subClassOf cg:KernelResult ;
+    rdfs:label "Restrict Result" ;
+    rdfs:comment "Response envelope of kernel.restrict — narrowed cg:ContextDescriptor produced by the restriction operator." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:ExtendResult a owl:Class ;
+    rdfs:subClassOf cg:KernelResult ;
+    rdfs:label "Extend Result" ;
+    rdfs:comment "Response envelope of kernel.extend — widened cg:ContextDescriptor produced by the override / extend operator." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:PromoteResult a owl:Class ;
+    rdfs:subClassOf cg:KernelResult ;
+    rdfs:label "Promote Result" ;
+    rdfs:comment "Response envelope of kernel.promote — apex IRI plus lattice level and optional pullback square." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:DecomposeResult a owl:Class ;
+    rdfs:subClassOf cg:KernelResult ;
+    rdfs:label "Decompose Result" ;
+    rdfs:comment "Response envelope of kernel.decompose — pullback square (apex + left + right + overlap)." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
 # ══════════════════════════════════════════════════════════════
 #  Properties
 # ══════════════════════════════════════════════════════════════
@@ -1406,8 +1461,14 @@ cg:KernelResultShape a sh:NodeShape ;
     rdfs:comment "Base shape every kernel-verb / shim response satisfies — requires JSON-LD typing + at least one cg:Affordance hint for next-step navigation." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
 
+cg:ToolResult a owl:Class ;
+    rdfs:label "Tool result envelope" ;
+    rdfs:comment "Compatibility-shim response envelope — the @type every named-tool (non-kernel-verb) MCP shim emits, shaped by cg:ToolResultShape." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
 cg:ToolResultShape a sh:NodeShape ;
     rdfs:label "Tool result envelope SHACL shape" ;
+    sh:targetClass cg:ToolResult ;
     rdfs:comment "Base shape every named-tool shim response satisfies — same envelope discipline as kernel verbs." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
 
