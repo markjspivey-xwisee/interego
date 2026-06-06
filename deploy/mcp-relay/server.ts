@@ -971,27 +971,54 @@ async function fetchShapeBody(shapeIri: string): Promise<string | null> {
 }
 
 /**
- * Run every container-declared shape against the inbound graph_content.
- * Returns either { conforms: true } or the violation list ready to
- * surface in the 422 error envelope. Missing shape bodies (404 etc.)
- * are ignored — they can't constrain a publish if the relay can't
+ * Run every container-declared shape AND every caller-supplied shape
+ * (via the MCP `conforms_to_shapes` arg) against the inbound graph_content.
+ * Returns either { conforms: true, resolvedShapes } or the violation list
+ * ready to surface in the 422 error envelope. Missing shape bodies (404
+ * etc.) are ignored — they can't constrain a publish if the relay can't
  * fetch them.
+ *
+ * Container-declared shapes (from .well-known/container-shape or the
+ * pod's manifest collection's cg:conformsTo / dct:conformsTo triples)
+ * AND caller-supplied shapes are both validated — any one failing rejects.
+ * De-duplicated by IRI: if the same shape appears in both sources, it
+ * runs once.
+ *
+ * `resolvedShapes` carries every (shapeIri, shapeTurtle) pair the gate
+ * fetched, so the caller can re-thread the same bodies into the
+ * substrate-level publish() gate (defense in depth — the gate is the
+ * relay's fast-fail, the substrate gate is the kernel-level invariant)
+ * without double-fetching.
  */
 async function runConformanceGate(
   podUrl: string,
   graphContent: string,
-): Promise<{ conforms: true } | { conforms: false; shape: string; violations: readonly ShaclResult[] }> {
-  const shapeIris = await fetchContainerShapes(podUrl);
-  if (shapeIris.length === 0) return { conforms: true };
-  for (const shapeIri of shapeIris) {
+  callerShapeIris: readonly string[] = [],
+): Promise<
+  | { conforms: true; resolvedShapes: readonly { shapeIri: string; shapeTurtle: string }[] }
+  | { conforms: false; shape: string; violations: readonly ShaclResult[] }
+> {
+  const containerShapeIris = await fetchContainerShapes(podUrl);
+  const seen = new Set<string>();
+  const allShapes: string[] = [];
+  for (const s of containerShapeIris) {
+    if (!seen.has(s)) { seen.add(s); allShapes.push(s); }
+  }
+  for (const s of callerShapeIris) {
+    if (!seen.has(s)) { seen.add(s); allShapes.push(s); }
+  }
+  if (allShapes.length === 0) return { conforms: true, resolvedShapes: [] };
+  const resolvedShapes: { shapeIri: string; shapeTurtle: string }[] = [];
+  for (const shapeIri of allShapes) {
     const shapeTurtle = await fetchShapeBody(shapeIri);
     if (!shapeTurtle) continue;
     const report = validateAgainstShape(graphContent, shapeTurtle, { entailment: 'rdfs' });
     if (!report.conforms) {
       return { conforms: false, shape: shapeIri, violations: report.results };
     }
+    resolvedShapes.push({ shapeIri, shapeTurtle });
   }
-  return { conforms: true };
+  return { conforms: true, resolvedShapes };
 }
 
 // ── Scope gate ──────────────────────────────────────────────
@@ -1349,7 +1376,21 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // (one CSS GET worst-case, cached), so we run conformance first to
   // fail fast on shape violations and skip the chain walk when the
   // payload was never going to be accepted anyway.
-  const conformance = await runConformanceGate(podUrl, (args.graph_content as string) ?? '');
+  // Caller-supplied shape IRIs (via the MCP `conforms_to_shapes` arg)
+  // stack on top of any container-declared shapes the target pod carries.
+  // Both sources are validated; either failing rejects with the same 422
+  // envelope. Lets MCP clients enforce a per-publish shape contract
+  // without needing the target pod's .well-known/container-shape to be
+  // present (the test pod typically doesn't have one).
+  const callerShapesRaw = args.conforms_to_shapes;
+  const callerShapeIris: string[] = Array.isArray(callerShapesRaw)
+    ? (callerShapesRaw as unknown[]).filter((s): s is string => typeof s === 'string' && s.length > 0)
+    : [];
+  const conformance = await runConformanceGate(
+    podUrl,
+    (args.graph_content as string) ?? '',
+    callerShapeIris,
+  );
   if (conformance.conforms === false) {
     return JSON.stringify({
       error: 'shape_violation',
@@ -1486,6 +1527,17 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     }
   }
 
+  // Thread the resolved (shapeIri, shapeTurtle) pairs from the
+  // relay-level gate into the substrate-level publish() gate so the
+  // SHACL invariant is enforced at both layers. The relay gate already
+  // accepted the payload, so publish()'s conformsToShapes is here as
+  // defense in depth (and gives the kernel-level PublishShapeViolationError
+  // a single place to fire from, regardless of which entry point
+  // triggered the publish).
+  const resolvedShapesForPublish = conformance.conforms === true ? conformance.resolvedShapes : [];
+  const conformsToShapesOpt = resolvedShapesForPublish.length > 0
+    ? { conformsToShapes: resolvedShapesForPublish }
+    : {};
   const publishOptions: Parameters<typeof publish>[3] = recipients.length > 0
     ? {
         fetch: solidFetch,
@@ -1495,6 +1547,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         ...(authorshipProof ? { authorshipProof } : {}),
         ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
         ...(ifMatchCid ? { ifMatchCid } : {}),
+        ...conformsToShapesOpt,
       }
     : {
         fetch: solidFetch,
@@ -1502,6 +1555,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         ...(authorshipProof ? { authorshipProof } : {}),
         ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
         ...(ifMatchCid ? { ifMatchCid } : {}),
+        ...conformsToShapesOpt,
       };
   // Per-pod mutex: serialize same-process publishers to this pod so the
   // read-check-write (auto-supersede manifest read above + substrate CAS
@@ -3591,6 +3645,13 @@ async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
   // Caller-supplied bounds, with sensible defaults.
   const maxChain = typeof args['max_chain'] === 'number' ? args['max_chain'] as number : undefined;
   const checkpointEvery = typeof args['checkpoint_every'] === 'number' ? args['checkpoint_every'] as number : undefined;
+  // Traversal mode — 'shortest' (default, breadth-shortest path) or
+  // 'full' (transitive supersedes closure sorted by validFrom). The
+  // 'full' mode is the one a lineage-audit caller wants when
+  // auto_supersede_prior writes ALL priors per version.
+  const traversalRaw = args['traversal'];
+  const traversal: 'shortest' | 'full' | undefined =
+    traversalRaw === 'shortest' || traversalRaw === 'full' ? traversalRaw : undefined;
 
   try {
     // Resolve each chain link through the kernel's own dereference
@@ -3609,6 +3670,7 @@ async function handleKernelReduceChain(args: ToolArgs): Promise<string> {
       ...(reducerSpec ? { reducerSpec } : {}),
       ...(typeof maxChain === 'number' ? { maxChain } : {}),
       ...(typeof checkpointEvery === 'number' ? { checkpointEvery } : {}),
+      ...(traversal ? { traversal } : {}),
     };
     const r = await kernelReduce(chainIri, opts);
     return JSON.stringify(decorateKernelResult(r as unknown as Record<string, unknown>, {
@@ -4164,6 +4226,11 @@ const TOOL_SCHEMAS = [
         },
         max_chain: { type: 'number', description: 'Maximum chain length to walk (default 64). Defense in depth against tampered cyclic chains; supersedes is normatively a DAG.' },
         checkpoint_every: { type: 'number', description: 'Emit a state checkpoint every Nth link (default 8). Verifiers can short-circuit replay from the nearest checkpoint when partial trust is acceptable.' },
+        traversal: {
+          type: 'string',
+          enum: ['shortest', 'full'],
+          description: 'How the walker reconstructs the chain from cg:supersedes back-links. "shortest" (default) follows the first cg:supersedes per link — fast and historical-compat. "full" walks every cg:supersedes branch transitively, then folds the union in canonical order (cg:validFrom ascending, descriptor-IRI lexical tiebreak). Use "full" for a complete lineage audit when auto_supersede_prior writes ALL priors per version — the ReplayProof\'s chainCids[] cover the entire DAG closure so independent verifiers reproduce the same head.',
+        },
       },
       required: ['chain_iri'],
     },
@@ -4177,7 +4244,7 @@ const TOOL_SCHEMAS = [
   // ═══════════════════════════════════════════════════════════
   {
     name: 'publish_context',
-    description: 'Compatibility shim — internally composes kernel(compose+act) over a publish affordance plus E2EE/anchoring/compliance plumbing. Publishes a context-annotated knowledge graph (Turtle) to your Solid pod with the full 6-facet descriptor (Temporal, Provenance, Agent, Semiotic, Trust, Federation). Attributes the descriptor to the pod owner and associates it with the calling agent. Audience class is set via `visibility`: "public" (plaintext payload + foaf:Agent acl:Read — useful for wiki-style notes or jam:renderView projections), "shared" (default; JOSE envelope to the pod\'s authorized agents plus optional share_with recipients), or "private" (envelope to the calling agent ONLY; share_with ignored).',
+    description: 'Compatibility shim — internally composes kernel(compose+act) over a publish affordance plus E2EE/anchoring/compliance plumbing. Publishes a context-annotated knowledge graph (Turtle) to your Solid pod with the full 6-facet descriptor (Temporal, Provenance, Agent, Semiotic, Trust, Federation). Attributes the descriptor to the pod owner and associates it with the calling agent. Audience class is set via `visibility`: "public" (plaintext payload + foaf:Agent acl:Read — useful for wiki-style notes or jam:renderView projections), "shared" (default; JOSE envelope to the pod\'s authorized agents plus optional share_with recipients), or "private" (envelope to the calling agent ONLY; share_with ignored). SHACL conformance gate: pass `conforms_to_shapes` as an array of shape IRIs — every shape is fetched, parsed, and validated against the inbound graph_content BEFORE the pod write; non-conformance returns a 422 envelope `{ error: "shape_violation", code: 422, shape, violations: [...] }` and the descriptor/payload never lands on the pod. Caller-supplied shapes stack with any cg:conformsTo / dct:conformsTo declarations the target container (or its manifest) already carries — either failing rejects.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -4223,6 +4290,11 @@ const TOOL_SCHEMAS = [
         agent_did: {
           type: 'string',
           description: 'Optional DID for the calling agent. When present and sign_authorship is true, the DID is included in the canonical authorship payload (so verifiers have a resolution hint without an extra round-trip).',
+        },
+        conforms_to_shapes: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional list of SHACL shape IRIs the inbound graph_content MUST conform to. Each shape is fetched (text/turtle) and run against the payload BEFORE any pod write — non-conformance rejects with the same 422 envelope as the container-declared conformance gate ({ error: "shape_violation", code: 422, shape, violations: [...] }) and the descriptor + payload never land on the pod. Stacks on top of any cg:conformsTo / dct:conformsTo shapes the target container (or its manifest collection) already declares; ALL shapes (container-declared + caller-supplied) must conform — any one failing rejects. Use to enforce a per-publish shape contract from the MCP wire without relying on the pod\'s .well-known/container-shape file being present.',
         },
       },
       required: ['graph_iri', 'graph_content'],

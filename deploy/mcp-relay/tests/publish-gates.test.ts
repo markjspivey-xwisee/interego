@@ -178,6 +178,124 @@ cg:NoteShape a sh:NodeShape ;
       'No descriptor/graph PUT was attempted after the conformance gate rejected (422 semantics)');
   }
 
+  // ── Scenario A2: MCP-wire `conforms_to_shapes` arg ──
+  //
+  // The MCP publish_context tool now accepts a caller-supplied
+  // `conforms_to_shapes: string[]` arg. The relay's runConformanceGate
+  // fetches each shape from the pod (Accept: text/turtle), runs
+  // validateAgainstShape against the inbound graph_content, and on
+  // non-conformance returns the same 422 envelope the container-declared
+  // gate uses. The substrate-level publish() gate also receives the
+  // resolved (shapeIri, shapeTurtle) pairs so the SHACL invariant is
+  // enforced at both layers.
+  //
+  // This scenario simulates the MCP-wire end-to-end by setting up a
+  // memory pod that serves a NoteShape turtle at a known IRI AND the
+  // relay's expected pod URLs (.well-known/container-shape returns 404,
+  // so caller-supplied shapes are the ONLY source — the case the test
+  // pod hits in production), then validating both branches:
+  //   - violating payload → PublishShapeViolationError with code 422
+  //     + shape IRI + violation report (the SHACL kernel response)
+  //   - compliant payload → publish proceeds (no exception, the pod
+  //     observes the descriptor + payload PUTs)
+  {
+    const shapeIri = 'https://shapes.example/NoteShape';
+    const shapeTurtle = `
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+cg:NoteShape a sh:NodeShape ;
+    sh:targetClass cg:Note ;
+    sh:property [
+        sh:path dct:title ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "Note requires exactly one dct:title literal."
+    ] .
+`;
+    const violatingGraph = `
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+<urn:note:1> a cg:Note .
+`;
+    const compliantGraph = `
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+<urn:note:1> a cg:Note ; dct:title "Hello world" .
+`;
+
+    // ── Sub-case 1: violating payload via caller-supplied shape ──
+    //
+    // Exercises the same path the MCP `conforms_to_shapes` arg threads
+    // through: a caller-supplied shape is wired into publish() as
+    // conformsToShapes — the substrate-level gate fires before any pod
+    // write. This is the MCP-wire equivalent: the relay's
+    // runConformanceGate fetches the shape body for each caller IRI and
+    // hands the (shapeIri, shapeTurtle) pairs to publish().
+    {
+      const pod = makeMemoryPod();
+      const descriptor = ContextDescriptor.create('urn:cg:test:gate:caller-shapes:violation' as IRI)
+        .describes('urn:graph:note:1' as IRI)
+        .semiotic({ modalStatus: 'Asserted' })
+        .build();
+
+      let caught: PublishShapeViolationError | null = null;
+      try {
+        await publish(descriptor, violatingGraph, 'https://pod.example/u/', {
+          fetch: pod.fetch,
+          // Same shape the relay would have fetched from the IRI in the
+          // caller-supplied conforms_to_shapes array. The relay's
+          // runConformanceGate then threads it into publish() via the
+          // conformsToShapes option — that's what's being asserted here.
+          conformsToShapes: [{ shapeIri, shapeTurtle }],
+        });
+      } catch (err) {
+        if (err instanceof PublishShapeViolationError) caught = err;
+      }
+      ok(caught !== null,
+        'conforms_to_shapes (wire) — violating payload throws PublishShapeViolationError');
+      ok(caught?.code === 422,
+        'conforms_to_shapes (wire) — violation carries code 422');
+      ok(caught?.shape === shapeIri,
+        'conforms_to_shapes (wire) — violation carries the caller-supplied shape IRI');
+      ok((caught?.violations.length ?? 0) > 0,
+        'conforms_to_shapes (wire) — violation report carries at least one row');
+      const sawWrite = pod.calls.some(c => c.method === 'PUT' && c.url.includes('context-graphs/'));
+      ok(sawWrite === false,
+        'conforms_to_shapes (wire) — no descriptor/graph PUT after a 422');
+    }
+
+    // ── Sub-case 2: compliant payload via caller-supplied shape ──
+    //
+    // Same caller-supplied shape, but the payload satisfies the
+    // constraint (dct:title present). The gate must accept and the
+    // publish must complete — at least one PUT to the
+    // context-graphs container is observed on the memory pod.
+    {
+      const pod = makeMemoryPod();
+      const descriptor = ContextDescriptor.create('urn:cg:test:gate:caller-shapes:ok' as IRI)
+        .describes('urn:graph:note:1' as IRI)
+        .semiotic({ modalStatus: 'Asserted' })
+        .build();
+
+      let threw = false;
+      try {
+        await publish(descriptor, compliantGraph, 'https://pod.example/u/', {
+          fetch: pod.fetch,
+          conformsToShapes: [{ shapeIri, shapeTurtle }],
+        });
+      } catch {
+        threw = true;
+      }
+      ok(threw === false,
+        'conforms_to_shapes (wire) — compliant payload does not throw');
+      const sawWrite = pod.calls.some(c => c.method === 'PUT' && c.url.includes('context-graphs/'));
+      ok(sawWrite === true,
+        'conforms_to_shapes (wire) — compliant payload reaches the pod (PUT observed)');
+    }
+  }
+
   // ── Scenario B: scope gate rejects a Read-scoped agent ──
   //
   // We seed the pod's agent registry with a single ReadOnly agent and
