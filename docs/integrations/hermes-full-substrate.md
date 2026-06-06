@@ -2,7 +2,7 @@
 
 > How a Hermes Agent bot reaches **all** of Interego — identity,
 > delegation, federation, skills, compliance, attestation, composition —
-> without 60 tool schemas bloating its context. The answer is HATEOAS:
+> without 35 tool schemas bloating its context. The answer is HATEOAS:
 > a tiny fixed tool surface plus capability that travels as data.
 
 ## The two surfaces, and why you want both
