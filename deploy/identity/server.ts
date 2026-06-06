@@ -1066,6 +1066,23 @@ function defaultAgentForRegistration(
   };
 }
 
+// Bounded concurrency runner — preserves Promise.all semantics (resolves
+// once every item has been processed) while capping in-flight work so a
+// cold-start scan over hundreds of pods doesn't exhaust file descriptors
+// or rate-limit CSS.
+async function runWithConcurrency<T>(limit: number, items: readonly T[], fn: (item: T) => Promise<void>): Promise<void> {
+  let i = 0;
+  const workers: Promise<void>[] = [];
+  const worker = async () => {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx]!);
+    }
+  };
+  for (let k = 0; k < Math.min(limit, items.length); k++) workers.push(worker());
+  await Promise.all(workers);
+}
+
 // Rebuild all indexes from pod scans. Uses LDP discovery on CSS so users
 // registered in a previous container life are recoverable without any
 // in-memory state having survived. Seeded users (markj + default agents)
@@ -1076,7 +1093,7 @@ async function rebuildAllIndexes(): Promise<void> {
   const allUserIds = [...new Set([...seededUserIds, ...discoveredUserIds])];
   log(`Rebuilding credential indexes from ${allUserIds.length} pod(s) (seeded=${seededUserIds.length} discovered=${discoveredUserIds.length})...`);
   let ok = 0, skipped = 0, fail = 0;
-  await Promise.all(allUserIds.map(async (uid) => {
+  await runWithConcurrency(16, allUserIds, async (uid) => {
     try {
       // Passive rebuild — read what's there, don't materialize empty
       // auth-methods files for pods that aren't users. A pod container
@@ -1097,7 +1114,7 @@ async function rebuildAllIndexes(): Promise<void> {
     } catch {
       fail++;
     }
-  }));
+  });
   log(`Index rebuild: ${ok} pod(s) OK, ${skipped} skipped (no credentials), ${fail} failed. users=${identities.size} wallets=${walletIndex.size} webauthn=${credentialIndex.size} dids=${didIndex.size}`);
 }
 
