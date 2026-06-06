@@ -93,6 +93,23 @@ These indexes are rebuilt on container startup from pod scans. The authenticate 
 - **Identity-server tokens are stateless HMAC-signed strings.** Format: `cg2_<base64url(payload)>.<base64url(hmac-sha256)>`, signed with `TOKEN_SIGNING_KEY` (stable across deploys). Payload carries `{ userId, agentId, scope, issuedAt, expiresAt, epoch }`. There is no in-memory token Map — verification is signature check (`timingSafeEqual`) + expiry + identity-presence + `sessionEpoch` check against the user's `auth-methods.jsonld`. Revocation is per-user: `POST /tokens/me/sign-out-everywhere` increments the pod's `sessionEpoch`, instantly invalidating every prior token for that user without a global flush.
 - `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource` let any MCP client auto-discover the auth flow.
 
+### Discovery endpoints — WebFinger (RFC 7033)
+
+The identity server mounts RFC 7033 WebFinger at `/.well-known/webfinger` (see `deploy/identity/webfinger.ts` and `server.ts:3182`). It is the discovery surface that lets an `acct:user@host` handle resolve to the user's WebID, did:web, and pod URL — and is used by `share_with`, the name service, and federation discovery.
+
+- **Resource form.** `?resource=acct:<userId>@<host>` (RFC 7033 §4.5). HTTP(S) courtesy forms `https://<host>/users/<id>` and `https://<host>/agents/<id>` are also accepted.
+- **Optional rel filter.** Repeated `?rel=<rel>` filters `links[]` only (RFC 7033 §4.3); `aliases` are unchanged.
+- **Content type.** `application/jrd+json` (RFC 7033 §4.4). 404 responses carry an empty body.
+- **Canonical `subject`.** The `subject` in every successful response is the canonical `acct:<userId>@<host>` — never the displayName the requester sent — so federation crawlers converge on one form per identity. If the caller used a displayName alias (e.g. `acct:markj@host` resolving to `u-pk-…`), the displayName form is added to `aliases[]` instead of replacing `subject`.
+- **User JRD shape.**
+  - `aliases`: `[ <webId>, did:web:<host>:users:<id>, <podUrl> ]` (plus the displayName `acct:` form if used).
+  - `links`:
+    - `http://webfinger.net/rel/profile-page` (`text/turtle`) → WebID profile
+    - `http://www.w3.org/ns/pim/space#storage` → pod root URL
+    - `http://www.w3.org/ns/solid/terms#oidcIssuer` → identity server base URL
+    - `self` (`application/did+ld+json`) → DID document
+- **Agent JRD shape.** Similar, plus `prov:actedOnBehalfOf` linking to the owner's WebID.
+
 ## Threat model: userId-claim hijack (closed)
 
 A naïve implementation would let a caller type *any* userId on the enrollment page and bind their own credential to it. That pattern let an attacker who learned a display-alias like `markj` attach their passkey to the real user's account, issue bearer tokens for them, and — because the passkey went into the pod's `auth-methods.jsonld` — survive container restarts indistinguishably from legitimate credentials.
