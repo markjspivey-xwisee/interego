@@ -23,8 +23,14 @@
  * ignore the new fields continue to work unchanged; clients that look
  * for them get a native hypermedia surface.
  *
- * No new ontology terms are introduced. Everything resolves into
- * existing `cg:`, `hydra:`, `sh:`, `dcat:` IRIs.
+ * The kernel-response class hierarchy this module emits — `cg:KernelResult`
+ * and its eight verb-specific subclasses (`cg:MintResult`,
+ * `cg:DereferenceResult`, `cg:ComposeResult`, `cg:ActResult`,
+ * `cg:RestrictResult`, `cg:ExtendResult`, `cg:PromoteResult`,
+ * `cg:DecomposeResult`), plus `cg:ToolResult` for compatibility shims and
+ * `cg:RelayEntryPoint` for the Hydra entry-point envelope — is declared in
+ * `docs/ns/cg.ttl`. All other typing resolves into existing `cg:`, `hydra:`,
+ * `sh:`, and `dcat:` IRIs.
  */
 
 import type { IRI } from '../model/types.js';
