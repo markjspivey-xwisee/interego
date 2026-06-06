@@ -48,24 +48,21 @@ az acr build \
   --registry "$ACR_NAME" \
   --image interego-css:latest \
   --file deploy/Dockerfile.css \
-  . \
-  --no-logs
+  .
 
 echo ">>> Building Dashboard image..."
 az acr build \
   --registry "$ACR_NAME" \
   --image interego-dashboard:latest \
   --file deploy/Dockerfile.dashboard \
-  . \
-  --no-logs
+  .
 
 echo ">>> Building MCP Relay image..."
 az acr build \
   --registry "$ACR_NAME" \
   --image interego-relay:latest \
   --file deploy/Dockerfile.relay \
-  . \
-  --no-logs
+  .
 
 # Build the remaining images up front so every `az containerapp create`
 # below has a `:latest` tag to pull. Mirrors the per-image matrix in
@@ -76,8 +73,7 @@ az acr build \
   --image interego-identity:latest \
   --file deploy/Dockerfile.identity \
   --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
-  . \
-  --no-logs
+  .
 
 echo ">>> Building CSS Gate image..."
 az acr build \
@@ -85,8 +81,7 @@ az acr build \
   --image interego-css-gate:latest \
   --file deploy/Dockerfile.css-gate \
   --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-alpine \
-  . \
-  --no-logs
+  .
 
 echo ">>> Building Foxxi Bridge image..."
 az acr build \
@@ -94,8 +89,7 @@ az acr build \
   --image interego-foxxi-bridge:latest \
   --file deploy/Dockerfile.foxxi-bridge \
   --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
-  . \
-  --no-logs
+  .
 
 echo ">>> Building Foxxi Dashboard image..."
 az acr build \
@@ -103,8 +97,7 @@ az acr build \
   --image interego-foxxi-dashboard:latest \
   --file deploy/Dockerfile.foxxi-dashboard \
   --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
-  . \
-  --no-logs
+  .
 
 echo ">>> Building Foxxi Microsite image..."
 az acr build \
@@ -112,8 +105,7 @@ az acr build \
   --image interego-foxxi-microsite:latest \
   --file deploy/Dockerfile.foxxi-microsite \
   --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
-  . \
-  --no-logs
+  .
 
 echo ">>> Building Foxxi SCORM Player image..."
 az acr build \
@@ -121,8 +113,7 @@ az acr build \
   --image interego-foxxi-scorm-player:latest \
   --file deploy/Dockerfile.foxxi-scorm-player \
   --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
-  . \
-  --no-logs
+  .
 
 echo ">>> Building Acme ID image..."
 az acr build \
@@ -130,8 +121,7 @@ az acr build \
   --image interego-acme-id:latest \
   --file deploy/Dockerfile.acme-id \
   --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
-  . \
-  --no-logs
+  .
 
 echo ">>> Building Interego Main image..."
 az acr build \
@@ -139,8 +129,7 @@ az acr build \
   --image interego-main:latest \
   --file deploy/Dockerfile.interego-main \
   --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
-  . \
-  --no-logs
+  .
 
 # ── 4. Container Apps Environment ─────────────────────────────
 echo ">>> Creating Container Apps environment..."
@@ -470,8 +459,7 @@ az acr build \
   --registry "$ACR_NAME" \
   --image interego-pgsl-browser:latest \
   --file deploy/Dockerfile.pgsl-browser \
-  . \
-  --no-logs
+  .
 
 echo ">>> Deploying PGSL Browser + Observatory..."
 az containerapp create \
