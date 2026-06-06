@@ -3,7 +3,6 @@ dist/
 *.tsbuildinfo
 .env
 .env.*
-{src/
 
 # MCP server dependencies and build output (installed/built separately)
 mcp-server/node_modules/
