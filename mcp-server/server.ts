@@ -1332,7 +1332,7 @@ async function toolVerifyAgent(args: {
   // don't have to re-read the agent registry just to learn that.
   let canDecryptNewEnvelopes: boolean | null = null;
   if (result.valid) {
-    const profile = await readAgentRegistry(args.pod_url, { fetch: solidFetch }).catch(() => null);
+    const profile = await getCachedRegistry(args.pod_url).catch(() => null);
     const entry = profile?.authorizedAgents.find(a => a.agentId === result.agent);
     canDecryptNewEnvelopes = Boolean(entry?.encryptionPublicKey);
   }
