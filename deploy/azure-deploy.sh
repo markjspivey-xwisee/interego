@@ -358,6 +358,55 @@ else
   echo ">>> Skipping gate↔relay introspection secret config — $CSS_GATE_APP not deployed."
 fi
 
+# ── Identity env wiring ───────────────────────────────────────
+# Mirrors the CI workflow's "Wire identity env vars" step
+# (.github/workflows/deploy-azure.yml) so a bootstrap deploy ends in
+# the same configured state as a CI deploy. Without this, the identity
+# server falls back to an ephemeral TOKEN_SIGNING_KEY (sessions die on
+# every restart) and WEBAUTHN_RP_* is unset (passkey enrollment fails
+# with rpID-mismatch). Guarded on the identity app existing because
+# the identity-create step is handled separately.
+IDENTITY_APP="${IDENTITY_APP:-interego-identity}"
+IDENTITY_FQDN=$(az containerapp show --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+if [ -n "$IDENTITY_FQDN" ]; then
+  echo ">>> Wiring identity env vars..."
+  # Idempotent on TOKEN_SIGNING_KEY: only generate a new HMAC key if
+  # one isn't already configured, so existing user sessions survive
+  # this deploy. Same check the CI workflow uses.
+  EXISTING_TOKEN_KEY=$(az containerapp show --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[?name=='TOKEN_SIGNING_KEY'].value | [0]" -o tsv 2>/dev/null || true)
+  if [ -z "$EXISTING_TOKEN_KEY" ]; then
+    echo "    TOKEN_SIGNING_KEY not yet configured — generating fresh 32-byte HMAC key."
+    NEW_TOKEN_KEY=$(openssl rand -base64 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
+    az containerapp update \
+      --name "$IDENTITY_APP" \
+      --resource-group "$RESOURCE_GROUP" \
+      --set-env-vars \
+        "BASE_URL=https://$IDENTITY_FQDN" \
+        "WEBAUTHN_RP_ID=$IDENTITY_FQDN" \
+        "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
+        "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
+        "RELAY_URL=https://$RELAY_FQDN" \
+        "TOKEN_SIGNING_KEY=$NEW_TOKEN_KEY" \
+        "IDENTITY_TIMING=1" \
+      --output none
+  else
+    echo "    TOKEN_SIGNING_KEY already configured — preserving so sessions survive this deploy."
+    az containerapp update \
+      --name "$IDENTITY_APP" \
+      --resource-group "$RESOURCE_GROUP" \
+      --set-env-vars \
+        "BASE_URL=https://$IDENTITY_FQDN" \
+        "WEBAUTHN_RP_ID=$IDENTITY_FQDN" \
+        "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
+        "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
+        "RELAY_URL=https://$RELAY_FQDN" \
+        "IDENTITY_TIMING=1" \
+      --output none
+  fi
+else
+  echo ">>> Skipping identity env wiring — $IDENTITY_APP not deployed."
+fi
+
 # ── Done ──────────────────────────────────────────────────────
 echo ""
 echo "=== Deployment Complete ==="
