@@ -27,6 +27,12 @@ benchmarks/locomo/
 benchmarks/*.log
 benchmarks/.tmp-*
 
+# Wipe/retry run logs — timestamped per-run output, regenerated each run.
+wipe-log.txt
+wipe-*.log
+retry-*.log
+wipe-logs/
+
 # npm pack output (build artifacts, regeneratable from source)
 interego-core-*.tgz
 
