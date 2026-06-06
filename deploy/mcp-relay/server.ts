@@ -5533,15 +5533,86 @@ app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
 
 // ── /audit/* — compliance + lineage endpoints ──────────────
 //
-// Public (no auth required for now — they read public metadata only;
-// add auth gating before exposing anything beyond read-only descriptor
-// summaries). Each endpoint is a thin wrapper over the relay's
-// existing pod-fetch + the compliance helpers in @interego/core.
+// /inbox + /audit/{events,lineage,verify-signature,compliance} take a
+// user-supplied pod or descriptor URL and dereference it server-side.
+// Without auth + URL validation an unauthenticated attacker could use
+// the relay as an SSRF proxy to fetch Azure IMDS (169.254.169.254),
+// the internal-only CSS host, the identity server, localhost services,
+// etc., and exfiltrate the response through the 502 error body. The
+// shared `requireAuthorizedPodUrl` gate below enforces (1) a valid
+// OAuth bearer, (2) that the supplied pod/descriptor URL belongs to
+// the bearer's own pod, and (3) that the URL parses as a public-https
+// host outside RFC1918 / link-local / loopback / IMDS ranges.
 //
 // /audit/events — list recent descriptors on a pod (audit log).
 // /audit/lineage — walk prov:wasDerivedFrom + cg:supersedes for one descriptor.
 // /audit/compliance/:framework — generate a regulatory framework report.
-// /audit/frameworks — list known frameworks + their controls.
+// /audit/frameworks — list known frameworks + their controls (public; no URL input).
+
+// Allowed host suffixes for user-supplied pod / descriptor URLs. The
+// deployment's CSS_URL host is always allowed; operators can extend the
+// list with comma-separated suffixes (e.g. known federation peers) via
+// RELAY_POD_HOST_ALLOWLIST. Empty list still rejects private-IP / IMDS
+// / .internal hosts via assertPublicPodUrl.
+const RELAY_POD_HOST_ALLOWLIST: readonly string[] = (() => {
+  const fromEnv = (process.env['RELAY_POD_HOST_ALLOWLIST'] ?? '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    const cssHost = new URL(CSS_URL).hostname.toLowerCase();
+    if (cssHost && !fromEnv.includes(cssHost)) fromEnv.push(cssHost);
+  } catch { /* CSS_URL parse failure: rely on explicit allowlist only */ }
+  return fromEnv;
+})();
+
+async function requireAuthorizedPodUrl(
+  req: express.Request,
+  res: express.Response,
+  suppliedUrl: string,
+): Promise<string | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Bearer token required' });
+    return null;
+  }
+  let ownerPodUrl: string | undefined;
+  try {
+    const info = await oauthProvider.verifyAccessToken(authHeader.slice(7));
+    const extra = (info as { extra?: { podUrl?: string; userId?: string } }).extra;
+    ownerPodUrl = extra?.podUrl
+      ?? (extra?.userId ? `${CSS_URL}${extra.userId}/` : undefined);
+  } catch (err) {
+    res.status(401).json({ error: `Invalid access token: ${(err as Error).message}` });
+    return null;
+  }
+  if (!ownerPodUrl) {
+    res.status(403).json({ error: 'Token has no associated pod' });
+    return null;
+  }
+  let parsed: URL;
+  try {
+    parsed = assertPublicPodUrl(suppliedUrl, RELAY_POD_HOST_ALLOWLIST);
+  } catch (err) {
+    res.status(400).json({ error: 'pod_url_rejected', detail: (err as Error).message });
+    return null;
+  }
+  let ownerParsed: URL;
+  try {
+    ownerParsed = new URL(ownerPodUrl);
+  } catch {
+    res.status(500).json({ error: 'owner pod URL is malformed' });
+    return null;
+  }
+  const sameOrigin = parsed.protocol === ownerParsed.protocol
+    && parsed.hostname.toLowerCase() === ownerParsed.hostname.toLowerCase()
+    && parsed.port === ownerParsed.port;
+  const ownerPath = ownerParsed.pathname.endsWith('/') ? ownerParsed.pathname : `${ownerParsed.pathname}/`;
+  const suppliedPath = parsed.pathname.endsWith('/') ? parsed.pathname : `${parsed.pathname}/`;
+  if (!sameOrigin || !suppliedPath.startsWith(ownerPath)) {
+    res.status(403).json({ error: 'pod URL does not belong to the authenticated user' });
+    return null;
+  }
+  return suppliedUrl;
+}
 
 app.get('/audit/frameworks', (_req, res) => {
   const frameworks = Object.entries(FRAMEWORK_CONTROLS).map(([name, controls]) => ({
@@ -5574,8 +5645,8 @@ app.get('/audit/frameworks', (_req, res) => {
  * the recipient graph at the manifest level.
  */
 app.get('/inbox', async (req, res) => {
-  const podUrl = req.query.pod as string | undefined;
-  if (!podUrl) {
+  const suppliedPodUrl = req.query.pod as string | undefined;
+  if (!suppliedPodUrl) {
     res.status(400).json({
       error: 'pod_required',
       title: 'pod query parameter required',
@@ -5583,6 +5654,8 @@ app.get('/inbox', async (req, res) => {
     });
     return;
   }
+  const podUrl = await requireAuthorizedPodUrl(req, res, suppliedPodUrl);
+  if (!podUrl) return;
   // Default window: last 7 days. Tighten with ?since=2026-05-01T00:00:00Z.
   const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const since = (req.query.since as string | undefined) ?? sevenDaysAgoIso;
@@ -5621,8 +5694,8 @@ app.get('/inbox', async (req, res) => {
 });
 
 app.get('/audit/events', async (req, res) => {
-  const podUrl = req.query.pod as string | undefined;
-  if (!podUrl) {
+  const suppliedPodUrl = req.query.pod as string | undefined;
+  if (!suppliedPodUrl) {
     res.status(400).json({
       error: 'pod_required',
       title: 'pod query parameter required',
@@ -5630,6 +5703,8 @@ app.get('/audit/events', async (req, res) => {
     });
     return;
   }
+  const podUrl = await requireAuthorizedPodUrl(req, res, suppliedPodUrl);
+  if (!podUrl) return;
   const since = req.query.since as string | undefined;
   const until = req.query.until as string | undefined;
   try {
@@ -5658,17 +5733,31 @@ app.get('/audit/events', async (req, res) => {
 
 app.get('/audit/lineage', async (req, res) => {
   const descriptorUrl = req.query.descriptor as string | undefined;
-  const podUrl = req.query.pod as string | undefined;
+  const suppliedPodUrl = req.query.pod as string | undefined;
   if (!descriptorUrl) {
     res.status(400).json({ error: 'descriptor query param required' });
     return;
   }
-  if (!podUrl) {
+  if (!suppliedPodUrl) {
     res.status(400).json({
       error: 'pod_required',
       title: 'pod query parameter required',
       detail: 'GET /audit/lineage?descriptor=<url>&pod=https://your-pod.example/me/ — supplies the pod URL to walk lineage on. The relay does not know which pod is "yours" unless you tell it.',
     });
+    return;
+  }
+  const podUrl = await requireAuthorizedPodUrl(req, res, suppliedPodUrl);
+  if (!podUrl) return;
+  // descriptorUrl is reflected back to the caller — keep it on the same
+  // public-https pod the bearer authorized.
+  try {
+    assertPublicPodUrl(descriptorUrl, RELAY_POD_HOST_ALLOWLIST);
+  } catch (err) {
+    res.status(400).json({ error: 'descriptor_url_rejected', detail: (err as Error).message });
+    return;
+  }
+  if (!descriptorUrl.startsWith(podUrl)) {
+    res.status(403).json({ error: 'descriptor URL is not under the authorized pod' });
     return;
   }
   try {
@@ -5712,6 +5801,8 @@ app.get('/audit/verify-signature', async (req, res) => {
     res.status(400).json({ error: 'descriptor query param required' });
     return;
   }
+  const authorized = await requireAuthorizedPodUrl(req, res, descriptorUrl);
+  if (!authorized) return;
   try {
     const sigUrl = `${descriptorUrl}.sig.json`;
     const [ttlResp, sigResp] = await Promise.all([
@@ -5751,8 +5842,8 @@ app.get('/audit/compliance/:framework', async (req, res) => {
     res.status(400).json({ error: `unknown framework; must be one of eu-ai-act / nist-rmf / soc2` });
     return;
   }
-  const podUrl = req.query.pod as string | undefined;
-  if (!podUrl) {
+  const suppliedPodUrl = req.query.pod as string | undefined;
+  if (!suppliedPodUrl) {
     res.status(400).json({
       error: 'pod_required',
       title: 'pod query parameter required',
@@ -5760,6 +5851,8 @@ app.get('/audit/compliance/:framework', async (req, res) => {
     });
     return;
   }
+  const podUrl = await requireAuthorizedPodUrl(req, res, suppliedPodUrl);
+  if (!podUrl) return;
   const auditPeriod = req.query.from && req.query.to
     ? { from: req.query.from as string, to: req.query.to as string }
     : undefined;
