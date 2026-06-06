@@ -104,7 +104,11 @@ export function isAllowedOrigin(origin: string | undefined | null, allowlist: Se
 }
 
 const DEFAULT_ALLOW_METHODS = 'GET, POST, OPTIONS, DELETE, PUT, PATCH';
-const DEFAULT_ALLOW_HEADERS = 'Accept, Content-Type, Authorization';
+// Kept in sync with deploy/mcp-relay/cors-allowlist.ts so a future maintainer
+// adding a header on the relay side does not silently leave this twin's
+// preflight 403'ing the same header. Per-call sites (e.g. identity's
+// server.ts) still narrow the effective set via the `allowHeaders` option.
+const DEFAULT_ALLOW_HEADERS = 'Accept, Content-Type, Authorization, mcp-session-id, mcp-protocol-version, DPoP';
 
 export interface CorsHeaderOptions extends CorsAllowlistOptions {
   allowMethods?: string;
