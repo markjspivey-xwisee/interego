@@ -316,6 +316,8 @@ const SURFACE_PATTERNS: Array<[RegExp, string]> = [
   [/\bcline\b/i, 'cline'],
   [/\bzed\b/i, 'zed'],
   [/continue\b/i, 'continue'],
+  [/hermes.*agent/i, 'hermes-agent'],
+  [/openclaw/i, 'openclaw'],
 ];
 
 function surfaceAgentFromClient(clientName: string | undefined): string {
