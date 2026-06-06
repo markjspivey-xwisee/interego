@@ -196,11 +196,18 @@ Or click "Sign out everywhere" in the dashboard.
 If the maintainer needs to recover the deployment itself (not an
 individual user):
 
-- **Identity-server keypair** lost: the server's DID document points
-  at a specific Ed25519 key. Regenerating means every existing token
-  becomes invalid (forced re-auth across all users) AND the DID
-  document changes (federation breaks until upstreams refetch).
-  Strongly avoid; back this up.
+- **Identity-server DID Ed25519 keypair** lost: the server's DID
+  document points at a specific Ed25519 key. Regenerating changes the
+  DID document, so federation breaks until upstreams refetch. Does
+  NOT invalidate existing tokens (tokens are HMAC'd with a separate
+  key — see next bullet). Strongly avoid; back this up.
+
+- **`TOKEN_SIGNING_KEY`** lost or rotated: every existing
+  identity-server token becomes invalid, forcing re-auth across all
+  users. Does NOT affect the DID document or federation. See the
+  `Stateless signed tokens (HMAC)` block in
+  [`deploy/identity/server.ts`](../deploy/identity/server.ts) for the
+  exact key handling. Back this up alongside the DID keypair.
 
 - **CSS / pod data** lost: pods are stateful. Azure Files backups
   cover this. Restoring data is a routine operator action;
