@@ -2919,7 +2919,7 @@ async function issueTokenResponse(user: Identity, surfaceAgent?: string): Promis
  * Body: { userId, agentId, agentName, scope }
  * Requires: Authorization header with valid token for that user
  */
-app.post('/register-agent', async (req, res) => {
+app.post('/register-agent', tokenLimiter, async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Bearer token required' });
