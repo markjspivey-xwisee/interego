@@ -40,7 +40,7 @@ https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/mcp
 
 `/mcp` is the MCP Streamable HTTP transport — a single endpoint that carries requests, responses, and server-initiated notifications (with an internal SSE channel for streaming). For clients that don't yet speak Streamable HTTP, the legacy `/sse` endpoint on the same host remains available as a fallback.
 
-That's it. Your agent now has 60 Interego tools (six progressive tiers: core, delegation, federation, identity, PGSL, and crypto/x402). The MCP server's `initialize` response includes top-level instructions explaining the protocol, and `docs://interego/playbook` is fetched on demand the first time a relevant trigger fires.
+That's it. Your agent now has 35 entries (8 kernel verbs + 27 compatibility shims) across these categories: Substrate kernel, Identity, Publishing, Discovery, Federation, PGSL, Reasoning, Wallet, and Generic vertical access. The MCP server's `initialize` response includes top-level instructions explaining the protocol, and `docs://interego/playbook` is fetched on demand the first time a relevant trigger fires.
 
 ## What to embed in your system prompt
 
