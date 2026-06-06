@@ -6643,7 +6643,13 @@ app.get('/sse', (req, res, next) => mcpGate(req, res, next), (req, res) => {
 });
 
 // MCP JSON-RPC over POST (simplified — for tools/list and tools/call)
-app.post('/messages', async (req, res) => {
+const messagesLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post('/messages', messagesLimiter, async (req, res) => {
   const { method, params, id } = req.body;
 
   if (method === 'tools/list') {
