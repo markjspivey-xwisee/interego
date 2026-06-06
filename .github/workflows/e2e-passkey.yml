@@ -17,6 +17,7 @@ on:
       - 'deploy/identity/**'
       - 'packages/pgsl/**'
       - 'packages/core/**'
+      - 'packages/solid/**'
       - '.github/workflows/e2e-passkey.yml'
   workflow_dispatch:
 
