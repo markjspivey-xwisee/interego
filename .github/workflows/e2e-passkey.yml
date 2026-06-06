@@ -6,19 +6,14 @@ name: E2E — Passkey OAuth flow
 #
 # The test targets the live Azure deployment by default, so it catches
 # regressions that only appear in the real network / TLS / OAuth routing
-# path. Triggered on every push that touches the relay, identity, or
-# this workflow; can also be run manually.
+# path. Runs after the deploy-azure workflow finishes successfully so we
+# don't race the relay's revision rollout; can also be run manually.
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Deploy to Azure Container Apps"]
+    types: [completed]
     branches: [master]
-    paths:
-      - 'deploy/mcp-relay/**'
-      - 'deploy/identity/**'
-      - 'packages/pgsl/**'
-      - 'packages/core/**'
-      - 'packages/solid/**'
-      - '.github/workflows/e2e-passkey.yml'
   workflow_dispatch:
 
 permissions:
@@ -31,6 +26,10 @@ concurrency:
 jobs:
   identity-unit:
     name: Identity unit tests (WebFinger)
+    # Skip if the upstream deploy workflow didn't succeed; manual dispatch
+    # always runs. Keeps red push notifications off the timeline when the
+    # underlying deploy itself failed.
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -51,8 +50,8 @@ jobs:
 
   playwright:
     name: Passkey OAuth (Playwright, virtual authenticator)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    # Give the deploy workflow a head start so we exercise the latest code
     needs: []
     timeout-minutes: 10
 
@@ -90,14 +89,12 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Wait for Azure deployment to settle
-        # The concurrent deploy-azure workflow takes 2-5 min (ACR build +
-        # image push + container app update + revision activation). Wait a
-        # short baseline so we don't race the previous revision's /health,
-        # then poll until the relay is reachable (bounded).
-        if: github.event_name == 'push'
+        # deploy-azure has already completed successfully (workflow_run
+        # trigger), but the new revision can still take a minute to start
+        # serving 100% of traffic. Poll /health with a generous deadline.
+        if: github.event_name == 'workflow_run'
         run: |
-          sleep 60
-          deadline=$((SECONDS + 180))
+          deadline=$((SECONDS + 420))
           until curl -fsS --max-time 5 "${{ vars.RELAY_PUBLIC_URL || format('https://interego-relay.{0}', vars.AZURE_APPS_DOMAIN_SUFFIX || 'livelysky-8b81abb0.eastus.azurecontainerapps.io') }}/health" > /dev/null; do
             if [ $SECONDS -ge $deadline ]; then
               echo "Relay /health did not become reachable within readiness window" >&2
