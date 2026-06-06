@@ -256,6 +256,35 @@ let registryInitialized = false;
 // next failed write anyway.
 let registryReverifiedAt = 0;
 const REGISTRY_REVERIFY_TTL_MS = 30 * 1000;
+// Per-pod profile cache populated by ensureRegistry/readAgentRegistry. Callers
+// on the publish-critical path (recipient lookup, status, register/revoke)
+// would otherwise issue a second readAgentRegistry GET against the same pod
+// in the same request — a ~100-400ms redundant CSS round-trip. Entries share
+// the REGISTRY_REVERIFY_TTL_MS lifetime; mutations clear the affected entry.
+const profileCache = new Map<string, { profile: OwnerProfileData; at: number }>();
+async function getCachedRegistry(podUrl: string): Promise<OwnerProfileData | null> {
+  const hit = profileCache.get(podUrl);
+  if (hit && Date.now() - hit.at < REGISTRY_REVERIFY_TTL_MS) return hit.profile;
+  const profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+  if (profile) profileCache.set(podUrl, { profile, at: Date.now() });
+  return profile;
+}
+
+// Per-pod unfiltered-manifest cache. Each publish_context auto-supersede,
+// get_pod_status, and verify_agent path otherwise GETs the full manifest
+// (10s-100s of KB on busy pods) and re-runs parseManifest on the synchronous
+// publish path. Short TTL coalesces bursts while staying small enough that
+// competing publishers' writes become visible quickly. Invalidated on every
+// local publish since the manifest just changed.
+const MANIFEST_CACHE_TTL_MS = 10 * 1000;
+const manifestCache = new Map<string, { entries: ManifestEntry[]; at: number }>();
+async function getCachedManifest(podUrl: string): Promise<ManifestEntry[]> {
+  const hit = manifestCache.get(podUrl);
+  if (hit && Date.now() - hit.at < MANIFEST_CACHE_TTL_MS) return hit.entries;
+  const entries = await discover(podUrl, undefined, { fetch: solidFetch });
+  manifestCache.set(podUrl, { entries, at: Date.now() });
+  return entries;
+}
 let notificationLog: ContextChangeEvent[] = [];
 let lastPublishedDescriptor: ContextDescriptorData | null = null;
 
@@ -526,6 +555,7 @@ async function ensureRegistry(): Promise<void> {
     const check = await readAgentRegistry(homePod.url, { fetch: solidFetch });
     if (check && check.authorizedAgents.some(a => a.agentId === MY_AGENT_ID && !a.revoked)) {
       registryReverifiedAt = Date.now();
+      profileCache.set(homePod.url, { profile: check, at: Date.now() });
       return; // still valid
     }
     log('Registry was deleted or agent removed — re-provisioning');
@@ -578,6 +608,7 @@ async function ensureRegistry(): Promise<void> {
 
   registryInitialized = true;
   registryReverifiedAt = Date.now();
+  profileCache.set(homePod.url, { profile, at: Date.now() });
   log(`Agent registry initialized — ${profile.authorizedAgents.filter(a => !a.revoked).length} active agent(s)`);
 }
 
@@ -692,7 +723,7 @@ async function toolPublishContext(args: {
   const priorVersions: IRI[] = [];
   if (args.auto_supersede_prior !== false) {
     try {
-      const entries = await discover(podUrl, undefined, { fetch: solidFetch });
+      const entries = await getCachedManifest(podUrl);
       for (const e of entries) {
         if (e.describes.includes(args.graph_iri as IRI) && e.descriptorUrl !== descId) {
           priorVersions.push(e.descriptorUrl as IRI);
@@ -774,7 +805,7 @@ async function toolPublishContext(args: {
   // fall back to plaintext publish so the very first writes aren't locked
   // out of themselves. The descriptor metadata (facets, manifest entry)
   // stays plaintext so discovery queries work across federation.
-  const currentProfile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+  const currentProfile = await getCachedRegistry(podUrl);
   const recipients = (currentProfile?.authorizedAgents ?? [])
     .filter(a => !a.revoked && a.encryptionPublicKey)
     .map(a => a.encryptionPublicKey!) as string[];
@@ -825,6 +856,7 @@ async function toolPublishContext(args: {
     ? { fetch: solidFetch, encrypt: { recipients, senderKeyPair: agentKeyPair } }
     : { fetch: solidFetch };
   const result = await publish(descriptor, args.graph_content, podUrl, publishOptions);
+  manifestCache.delete(podUrl);
   lastPublishedDescriptor = descriptor;
 
   const lines = [
@@ -1112,7 +1144,7 @@ async function toolGetPodStatus(args: { pod_url?: string }): Promise<string> {
   ];
 
   try {
-    const profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+    const profile = await getCachedRegistry(podUrl);
     if (profile) {
       lines.push(`Registry:`);
       lines.push(`  Owner: ${profile.webId}${profile.name ? ` (${profile.name})` : ''}`);
@@ -1131,7 +1163,7 @@ async function toolGetPodStatus(args: { pod_url?: string }): Promise<string> {
   lines.push('');
 
   try {
-    const entries = await discover(podUrl, undefined, { fetch: solidFetch });
+    const entries = await getCachedManifest(podUrl);
     lines.push(`Descriptors: ${entries.length}`);
     for (const e of entries) {
       lines.push(`  ${e.descriptorUrl}`);
@@ -1209,7 +1241,7 @@ async function toolRegisterAgent(args: {
   const homePod = podRegistry.getHome()!;
   const podUrl = args.pod_url ?? homePod.url;
 
-  let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+  let profile = await getCachedRegistry(podUrl);
   if (!profile) {
     profile = createOwnerProfile(MY_OWNER_WEBID, MY_OWNER_NAME);
   }
@@ -1231,6 +1263,7 @@ async function toolRegisterAgent(args: {
   }
 
   await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
+  profileCache.set(podUrl, { profile, at: Date.now() });
 
   const agent = profile.authorizedAgents.find(a => a.agentId === args.agent_id)!;
   const credential = createDelegationCredential(profile, agent, podUrl as IRI);
@@ -1251,13 +1284,14 @@ async function toolRevokeAgent(args: { agent_id: string; pod_url?: string }): Pr
   const homePod = podRegistry.getHome()!;
   const podUrl = args.pod_url ?? homePod.url;
 
-  let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+  let profile = await getCachedRegistry(podUrl);
   if (!profile) {
     return 'No agent registry found on this pod.';
   }
 
   profile = removeAuthorizedAgent(profile, args.agent_id as IRI);
   await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
+  profileCache.set(podUrl, { profile, at: Date.now() });
 
   return `Revoked delegation for ${args.agent_id}. Agent can no longer act on behalf of ${MY_OWNER_WEBID}.`;
 }
