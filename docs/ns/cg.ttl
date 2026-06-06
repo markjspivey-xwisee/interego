@@ -1069,9 +1069,6 @@ cg:Abstain a cg:DecisionStrategy ; rdfs:label "Abstain" ; rdfs:isDefinedBy <http
 #  Composition
 # ══════════════════════════════════════════════════════════════
 
-cg:ComposedDescriptor a owl:Class ; rdfs:subClassOf cg:ContextDescriptor ; rdfs:label "Composed Descriptor" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:CompositionOperator a owl:Class ; rdfs:label "Composition Operator" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:CompositionOperatorEnum a owl:Class ; rdfs:subClassOf cg:CompositionOperator ; rdfs:label "Composition Operator Enum" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:ExternalBinding a owl:Class ; rdfs:label "External Binding" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:NodeRepresentation a owl:Class ; rdfs:label "Node Representation" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
@@ -1097,7 +1094,6 @@ cg:Intervention a owl:Class ; rdfs:label "Intervention" ; rdfs:isDefinedBy <http
 
 cg:Pod a owl:Class ; rdfs:label "Pod" ; rdfs:comment "A Solid pod (LDP root) owned by a user." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:PodCatalog a owl:Class ; rdfs:subClassOf cg:DataProduct ; rdfs:label "Pod Catalog" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:PodDirectory a owl:Class ; rdfs:label "Pod Directory" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:Chain a owl:Class ; rdfs:label "Chain" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:ChainEndpoint a owl:Class ; rdfs:label "Chain Endpoint" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:NodeEndpoint a owl:Class ; rdfs:label "Node Endpoint" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
@@ -1112,6 +1108,11 @@ cg:Delegate a owl:Class ; rdfs:subClassOf cg:AuthorizedAgent ; rdfs:label "Deleg
 cg:ModalStatusEnum a owl:Class ; rdfs:label "Modal Status Enum" ; owl:oneOf ( cg:Asserted cg:Hypothetical cg:Counterfactual cg:Quoted cg:Retracted ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:TrustLevelEnum a owl:Class ; rdfs:label "Trust Level Enum" ; owl:oneOf ( cg:SelfAsserted cg:ThirdPartyAttested cg:CryptographicallyVerified ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:DelegationScopeEnum a owl:Class ; rdfs:label "Delegation Scope Enum" ; owl:oneOf ( cg:ReadWrite cg:ReadOnly cg:PublishOnly cg:DiscoverOnly ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:BindingStrengthEnum a owl:Class ; rdfs:label "Binding Strength Enum" ; owl:oneOf ( cg:Exact cg:Strong cg:Approximate cg:Weak ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Exact a owl:NamedIndividual, cg:BindingStrengthEnum ; rdfs:label "Exact" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Strong a owl:NamedIndividual, cg:BindingStrengthEnum ; rdfs:label "Strong" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Approximate a owl:NamedIndividual, cg:BindingStrengthEnum ; rdfs:label "Approximate" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Weak a owl:NamedIndividual, cg:BindingStrengthEnum ; rdfs:label "Weak" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Properties (long tail)
@@ -1159,7 +1160,7 @@ cg:agentB a owl:ObjectProperty ; rdfs:label "agent B" ; rdfs:isDefinedBy <https:
 cg:agentAAT a owl:ObjectProperty ; rdfs:label "agent AAT" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:authorization a owl:ObjectProperty ; rdfs:label "authorization" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:binding a owl:ObjectProperty ; rdfs:label "binding" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:bindingStrength a owl:DatatypeProperty ; rdfs:label "binding strength" ; rdfs:range xsd:double ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:bindingStrength a owl:ObjectProperty ; rdfs:label "binding strength" ; rdfs:range cg:BindingStrengthEnum ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:composedFrom a owl:ObjectProperty ; rdfs:label "composed from" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:consentBasis a owl:ObjectProperty ; rdfs:label "consent basis" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:hasDistribution a owl:ObjectProperty ; rdfs:label "has distribution" ; rdfs:comment "Legacy shim for descriptors written before canonical cg:affordance form. Prefer cg:affordance [ a dcat:Distribution ... ]." ; rdfs:range dcat:Distribution ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
