@@ -632,6 +632,112 @@ jobs:
             echo "Latest active revision: $LATEST"
           fi
 
+      # CSS-gate env wiring. The live `interego-css-gate` revision carries
+      # the gate's operator bearer (WRITE_SECRET) + relay introspection
+      # shared secret (RELAY_INTROSPECTION_SECRET) as secretrefs, plus
+      # CSS_INTERNAL_URL / IDENTITY_URL / PUBLIC_BASE_URL / CSS_HOST_HEADER
+      # / RELAY_VERIFY_URL as plain env vars wired from sibling-app FQDNs.
+      # None of those are baked into the image and the create call in
+      # `deploy/azure-deploy.sh §5b` only seeds CSS_INTERNAL_URL +
+      # IDENTITY_URL. On any CI redeploy that rotates the gate image, a
+      # future env var added to the gate code would only land on a full
+      # re-run of azure-deploy.sh — same trap the foxxi-bridge wire step
+      # was added to close.
+      - name: Wire css-gate env vars
+        if: steps.decide.outputs.build == 'true' && matrix.image == 'interego-css-gate'
+        run: |
+          APP=interego-css-gate
+          RG="${{ env.AZURE_RESOURCE_GROUP }}"
+          read_env() {
+            az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.template.containers[0].env[?name=='$1'].value | [0]" -o tsv 2>/dev/null || true
+          }
+          read_secretref() {
+            az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.template.containers[0].env[?name=='$1'].secretRef | [0]" -o tsv 2>/dev/null || true
+          }
+          read_secret_value() {
+            az containerapp secret show --name "$APP" --resource-group "$RG" \
+              --secret-name "$1" --query value -o tsv 2>/dev/null || true
+          }
+          # Live FQDNs of sibling apps — source of truth for the URL-shaped vars.
+          CSS_FQDN=$(az containerapp show --name interego-css --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv)
+          IDENTITY_FQDN=$(az containerapp show --name interego-identity --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv)
+          RELAY_FQDN=$(az containerapp show --name interego-relay --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv)
+          GATE_FQDN=$(az containerapp show --name "$APP" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv)
+          declare -a SET_ARGS
+          SET_ARGS+=("CSS_INTERNAL_URL=https://$CSS_FQDN/")
+          SET_ARGS+=("IDENTITY_URL=https://$IDENTITY_FQDN")
+          SET_ARGS+=("PUBLIC_BASE_URL=https://$GATE_FQDN")
+          SET_ARGS+=("CSS_HOST_HEADER=$CSS_FQDN")
+          SET_ARGS+=("RELAY_VERIFY_URL=https://$RELAY_FQDN")
+          # WRITE_SECRET — generate-if-missing, prefer the existing
+          # secretref so re-runs don't rotate the operator bearer.
+          WRITE_REF=$(read_secretref WRITE_SECRET)
+          if [ -n "$WRITE_REF" ]; then
+            SET_ARGS+=("WRITE_SECRET=secretref:$WRITE_REF")
+            echo "  preserve WRITE_SECRET (secretref:$WRITE_REF)"
+          else
+            existing=$(read_secret_value gate-write-secret)
+            if [ -z "$existing" ]; then
+              plain=$(read_env WRITE_SECRET)
+              if [ -n "$plain" ]; then
+                existing="$plain"
+                echo "  promote WRITE_SECRET plain->secretref:gate-write-secret"
+              else
+                existing=$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+                echo "  generate WRITE_SECRET (no prior value)"
+              fi
+              az containerapp secret set --name "$APP" --resource-group "$RG" \
+                --secrets "gate-write-secret=$existing" --output none
+            else
+              echo "  bind WRITE_SECRET->secretref:gate-write-secret (secret already configured)"
+            fi
+            SET_ARGS+=("WRITE_SECRET=secretref:gate-write-secret")
+          fi
+          # RELAY_INTROSPECTION_SECRET — generate-if-missing, prefer the
+          # existing secretref so the gate/relay pair stay in sync.
+          INTRO_REF=$(read_secretref RELAY_INTROSPECTION_SECRET)
+          if [ -n "$INTRO_REF" ]; then
+            SET_ARGS+=("RELAY_INTROSPECTION_SECRET=secretref:$INTRO_REF")
+            echo "  preserve RELAY_INTROSPECTION_SECRET (secretref:$INTRO_REF)"
+          else
+            existing=$(read_secret_value relay-introspection-secret)
+            if [ -z "$existing" ]; then
+              plain=$(read_env RELAY_INTROSPECTION_SECRET)
+              if [ -n "$plain" ]; then
+                existing="$plain"
+                echo "  promote RELAY_INTROSPECTION_SECRET plain->secretref:relay-introspection-secret"
+              else
+                echo "::warning::RELAY_INTROSPECTION_SECRET unset on live $APP revision and no secret configured — skipping; run azure-deploy.sh to seed the gate<->relay pair"
+              fi
+            else
+              echo "  bind RELAY_INTROSPECTION_SECRET->secretref:relay-introspection-secret (secret already configured)"
+            fi
+            if [ -n "$existing" ]; then
+              az containerapp secret set --name "$APP" --resource-group "$RG" \
+                --secrets "relay-introspection-secret=$existing" --output none
+              SET_ARGS+=("RELAY_INTROSPECTION_SECRET=secretref:relay-introspection-secret")
+            fi
+          fi
+          az containerapp update --name "$APP" --resource-group "$RG" \
+            --set-env-vars "${SET_ARGS[@]}" --output none
+          # Same Multiple-vs-Single revision-mode handling as the other
+          # wiring steps: in Multiple mode an env-var update creates a
+          # new revision that ingress won't serve until traffic is
+          # explicitly shifted.
+          MODE=$(az containerapp show --name "$APP" --resource-group "$RG" --query "properties.configuration.activeRevisionsMode" -o tsv)
+          echo "activeRevisionsMode=$MODE"
+          if [ "$MODE" = "Multiple" ]; then
+            az containerapp ingress traffic set --name "$APP" --resource-group "$RG" --revision-weight latest=100 --output none
+            LATEST=$(az containerapp show --name "$APP" --resource-group "$RG" --query "properties.latestRevisionName" -o tsv)
+            az containerapp revision list --name "$APP" --resource-group "$RG" --query "[?name!='$LATEST' && properties.active].name" -o tsv | while read -r rev; do
+              [ -z "$rev" ] && continue
+              az containerapp revision deactivate --name "$APP" --resource-group "$RG" --revision "$rev" --output none || true
+            done
+            echo "Latest active revision: $LATEST"
+          fi
+
       # Foxxi bridge env wiring. The live `interego-foxxi-bridge` revision
       # carries 19 vertical-specific env vars (tenant pod URL, audience,
       # admin WebID, federation pod list, LRS basic-auth pairs, LLM API
