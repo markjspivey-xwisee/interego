@@ -107,6 +107,21 @@ const REPO_URL = process.env['REPO_URL'] ?? 'https://github.com/markjspivey-xwis
 const ONTOLOGY_URL = 'https://markjspivey-xwisee.github.io/interego/ns/cg#';
 const TOKEN_TTL_SECONDS = 86400; // 24 hours
 
+// Shared secret guarding POST /tokens/verify. Mirrors the relay's
+// /verify-token introspection-secret pattern: any legitimate caller
+// (the css-gate today) carries `Authorization: Bearer <secret>`. Without
+// this gate the endpoint is an open oracle that lets an attacker
+// confirm a captured bearer is a live identity token AND harvest its
+// bound userId / agentId / scope for downstream targeting. Token-forging
+// is already prevented by TOKEN_SIGNING_KEY; this is info-disclosure
+// tightening on the verification surface.
+//
+// Rollout: when unset, the endpoint stays open (legacy behavior) so
+// existing css-gate deployments keep working until they're rewired with
+// the same secret. Production deployments MUST set this once the gate
+// carries IDENTITY_INTROSPECTION_SECRET.
+const IDENTITY_INTROSPECTION_SECRET = process.env['IDENTITY_INTROSPECTION_SECRET'] ?? '';
+
 function log(msg: string) { console.log(`[identity] ${msg}`); }
 
 // ── Bootstrap invites ───────────────────────────────────────
@@ -3018,6 +3033,25 @@ app.post('/tokens', tokenLimiter, async (req, res) => {
  * Returns: { valid, userId?, agentId?, scope?, reason? }
  */
 app.post('/tokens/verify', tokenLimiter, async (req, res) => {
+  // Introspection-secret gate. Mirrors the relay's /verify-token: when
+  // IDENTITY_INTROSPECTION_SECRET is set we require the caller to carry
+  // the same shared secret in `Authorization: Bearer <secret>`, compared
+  // timing-safe. Unset = legacy open behavior so the rollout doesn't
+  // break existing css-gate deployments before they're rewired.
+  if (IDENTITY_INTROSPECTION_SECRET) {
+    const auth = req.headers.authorization ?? '';
+    if (!auth.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'introspection bearer required' });
+      return;
+    }
+    const presented = Buffer.from(auth.slice(7), 'utf8');
+    const expected = Buffer.from(IDENTITY_INTROSPECTION_SECRET, 'utf8');
+    if (presented.length !== expected.length || !crypto.timingSafeEqual(presented, expected)) {
+      res.status(401).json({ error: 'introspection bearer rejected' });
+      return;
+    }
+  }
+
   const { token } = req.body;
   if (!token) {
     res.status(400).json({ error: 'token is required' });

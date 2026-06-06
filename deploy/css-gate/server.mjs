@@ -130,6 +130,13 @@ const RELAY_VERIFY_URL = (process.env.RELAY_VERIFY_URL ?? '').replace(/\/+$/, ''
 // RELAY_INTROSPECTION_SECRET; mismatch => every relay-OAuth-bearer
 // write returns 401 here.
 const RELAY_INTROSPECTION_SECRET = process.env.RELAY_INTROSPECTION_SECRET ?? '';
+// Shared secret the gate carries on its outbound /tokens/verify call
+// to identity-server. Mirrors the relay introspection pattern: when
+// identity-server has IDENTITY_INTROSPECTION_SECRET set, it rejects
+// any /tokens/verify probe that doesn't carry the same bearer. Unset
+// here = legacy unauthenticated probe (still accepted by an
+// identity-server that hasn't enabled the gate yet).
+const IDENTITY_INTROSPECTION_SECRET = process.env.IDENTITY_INTROSPECTION_SECRET ?? '';
 const USER_BEARER_CACHE_TTL_MS = Number(process.env.USER_BEARER_CACHE_TTL_MS ?? 60_000);
 const UPSTREAM_POOL_CONNECTIONS = Number(process.env.UPSTREAM_POOL_CONNECTIONS ?? 16);
 const UPSTREAM_REQUEST_BUFFER = (process.env.UPSTREAM_REQUEST_BUFFER ?? '').toLowerCase() === 'true'
@@ -384,7 +391,11 @@ async function verifyUserBearer(token) {
   let sawTransportFailure = false;
 
   if (IDENTITY_URL) {
-    const r = await probeVerifySource(`${IDENTITY_URL}/tokens/verify`, token);
+    const r = await probeVerifySource(
+      `${IDENTITY_URL}/tokens/verify`,
+      token,
+      IDENTITY_INTROSPECTION_SECRET ? { bearer: IDENTITY_INTROSPECTION_SECRET } : {},
+    );
     if (r.kind === 'valid') {
       cacheSet(token, { valid: true, userId: r.userId, agentId: r.agentId, scope: r.scope });
       return { ok: true, userId: r.userId, agentId: r.agentId, scope: r.scope };

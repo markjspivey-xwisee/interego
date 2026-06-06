@@ -4621,14 +4621,14 @@ const tokenLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.post('/token', tokenLimiter, express.urlencoded({ extended: false }), tokenDpopMiddleware);
-
 // The SDK's mcpAuthRouter sub-routers (/register, /token, /revoke,
 // /.well-known/*) each call `router.use(cors())` with default wildcard
 // config, which would overwrite the allowlist headers set above with
 // `Access-Control-Allow-Origin: *`. Freeze the CORS-related response
 // headers our allowlist middleware just set so the SDK's late
-// res.setHeader calls cannot re-open the wildcard.
+// res.setHeader calls cannot re-open the wildcard. Mounted BEFORE
+// the /token handler below so any future CORS-touching middleware
+// added to that chain still cannot bypass the allowlist.
 const FROZEN_CORS_HEADERS = new Set([
   'access-control-allow-origin',
   'access-control-allow-methods',
@@ -4650,6 +4650,8 @@ app.use((_req, res, next) => {
   };
   next();
 });
+
+app.post('/token', tokenLimiter, express.urlencoded({ extended: false }), tokenDpopMiddleware);
 
 app.use(mcpAuthRouter({
   provider: oauthProvider,
