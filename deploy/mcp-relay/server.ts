@@ -65,7 +65,7 @@ import {
   reconstructRequestUrl,
 } from './dpop.js';
 import { corsMiddleware } from './cors-allowlist.js';
-import { normalizeCssUrl } from './url-rewrite.js';
+import { normalizeCssUrl, assertPublicPodUrl } from './url-rewrite.js';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
 import {
@@ -1159,16 +1159,28 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
  * is not blocked. Federation clients use the directory to enumerate a
  * pod's context graphs without having to scan LDP containers.
  */
+// In-process memo of pods whose directory we've already verified this
+// process lifetime. Without this every publish_context re-fires the
+// fetchPodDirectory GET round-trip against the pod (~hundreds of ms on
+// Azure CSS) just to confirm idempotency. Mirrors the bootstrappedPods
+// pattern: populated only on success so transient failures retry.
+const podDirectoryEnsured = new Set<string>();
+
 async function ensurePodDirectory(podUrl: string, ownerWebId: string): Promise<void> {
+  if (podDirectoryEnsured.has(podUrl)) return;
   const directoryUrl = `${podUrl}.well-known/context-graphs-directory`;
   try {
     const existing = await fetchPodDirectory(directoryUrl, { fetch: solidFetch }).catch(() => null);
-    if (existing) return; // already published
+    if (existing) {
+      podDirectoryEnsured.add(podUrl);
+      return; // already published
+    }
     await publishPodDirectory(
       { id: directoryUrl as IRI, entries: [] },
       podUrl,
       { fetch: solidFetch },
     );
+    podDirectoryEnsured.add(podUrl);
   } catch (err) {
     console.warn(`[relay] ensurePodDirectory(${podUrl}) failed: ${(err as Error).message}`);
   }
@@ -5830,6 +5842,19 @@ app.get('/audit/compliance/:framework', async (req, res) => {
   }
 });
 
+// Shared rate limiter for bearer-gated endpoints whose first step is an
+// OAuth bearer verification (oauthProvider.verifyAccessToken /
+// verifyBearerToken) — that call can round-trip to the identity server,
+// so an unbounded caller could DoS the verification path. 60/min/IP is
+// well above any legitimate UX (dashboard token exchange, agent revoke,
+// price setting).
+const bearerVerifyLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 /**
  * GET /identity-token — exchange a valid MCP access token for the
  * underlying identity-server bearer token stored in the token's extra
@@ -5842,7 +5867,7 @@ app.get('/audit/compliance/:framework', async (req, res) => {
  * The identity token itself is bearer-bound to the user, so once the
  * dashboard has it, identity's own authorization checks apply.
  */
-app.get('/identity-token', async (req, res) => {
+app.get('/identity-token', bearerVerifyLimiter, async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Bearer token required' });
@@ -6194,7 +6219,7 @@ app.get('/render/:descriptorIri', async (req, res) => {
  * future envelope writes; already-encrypted envelopes keep their
  * previous recipient sets (true of all E2EE systems).
  */
-app.post('/agents/:agentIri/revoke', async (req, res) => {
+app.post('/agents/:agentIri/revoke', bearerVerifyLimiter, async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Bearer token required' });
@@ -6278,7 +6303,7 @@ app.post('/agents/:agentIri/revoke', async (req, res) => {
 
 const PAYMENT_REQUIRED_PODS = new Map<string, { amount: string; currency: string; address: string }>();
 
-app.post('/x402/set-price', async (req, res) => {
+app.post('/x402/set-price', bearerVerifyLimiter, async (req, res) => {
   const auth = await verifyBearerToken(req.headers.authorization);
   if (!auth.authenticated) { res.status(401).json({ error: auth.error }); return; }
 
