@@ -2449,6 +2449,23 @@ const federationStoreCfg: FederationStoreConfig = {
 // semantics).
 let federationLastPersistedAt: string | null = null;
 
+// Most recent successful hydrate (load-from-pod) completion. Updated
+// once when `startFederationHydrate()` resolves regardless of how many
+// entries came back (so an empty container still flips the flag,
+// distinguishing 'hydrate completed clean, just no entries yet' from
+// 'hydrate has not run / is in flight').
+//
+// Bug fix (FIX 5): before this, the only durability-observable signal
+// was `federationLastPersistedAt`, which is null until the first WRITE
+// after process start. A healthy deploy that hydrated N entries off the
+// pod but received no add_pod/remove_pod traffic legitimately reported
+// `lastPersistedAt: null` AND a populated `pods` list — operators could
+// not tell that apart from a broken store. `lastHydratedAt` +
+// `hydrateSourceCount` give an unambiguous health signal independent
+// of post-start mutation activity.
+let federationLastHydratedAt: string | null = null;
+let federationHydrateSourceCount: number = 0;
+
 // Debounce window for the persist sink. add_pod / discover_directory
 // can fire many add events in quick succession; we coalesce into a
 // single PUT per pod URL by replacing any pending timer for that URL
@@ -2600,6 +2617,12 @@ function startFederationHydrate(): Promise<void> {
         ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
       });
     }
+    // Record successful hydrate completion so `list_known_pods` +
+    // `/relay/federation-status` can distinguish 'never wrote since
+    // startup' from 'never loaded since startup'. Flips even on an
+    // empty container — that's a real, healthy state.
+    federationLastHydratedAt = new Date().toISOString();
+    federationHydrateSourceCount = loaded.length;
     log(`Federation store: pod=${oauthStorePodUrl} loaded=${loaded.length}`);
   }).catch(err => {
     log(`WARN: federation hydrate failed: ${(err as Error).message}`);
@@ -2699,13 +2722,33 @@ async function handleDiscoverAll(args: ToolArgs): Promise<string> {
 }
 
 async function handleListKnownPods(args: ToolArgs): Promise<string> {
-  // Surface `lastPersistedAt` so operators can verify the federation
-  // store is being written through. Null until the first successful
-  // persist (cold-start with zero mutations yet).
+  // Surface federation-store observability so operators can
+  // distinguish a healthy fresh-deploy-with-no-writes-yet from a
+  // genuinely broken store:
+  //
+  //   • `lastPersistedAt` — timestamp of the most recent successful
+  //     write (PUT or DELETE). Null until the first successful persist;
+  //     a populated pods list with null `lastPersistedAt` is normal on
+  //     a deploy that has hydrated entries but received no mutations
+  //     since startup. The string fallback below makes that explicit
+  //     for human operators reading the JSON.
+  //   • `lastHydratedAt` — timestamp of the most recent successful
+  //     load-from-pod (set once on startup completion, regardless of
+  //     mutation activity). Non-null means the store has been read at
+  //     least once.
+  //   • `hydrateSourceCount` — number of entries returned by the most
+  //     recent successful hydrate. Gives operators a baseline for the
+  //     'why is my pods list shorter than expected' diagnosis.
+  //   • `hydrateSource` — the pod URL we hydrate from, so operators
+  //     can sanity-check that the relay is reading from the expected
+  //     service-account pod.
   await awaitFederationHydrateWithBudget(50);
   return JSON.stringify({
     pods: await knownPodsWithSelf(args),
-    lastPersistedAt: federationLastPersistedAt,
+    lastPersistedAt: federationLastPersistedAt ?? '<no mutations since startup>',
+    lastHydratedAt: federationLastHydratedAt,
+    hydrateSourceCount: federationHydrateSourceCount,
+    hydrateSource: oauthStorePodUrl,
   });
 }
 
@@ -6484,6 +6527,7 @@ app.get('/', (req, res) => {
       { name: 'operations',       target: '/.well-known/operations',         method: 'GET',  description: 'Typed substrate-operation catalog — 8 kernel verbs + every thin-facade shim as cg:Affordance entries (FIX 4).' },
       { name: 'shacl-shapes',     target: '/.well-known/shacl-shapes',       method: 'GET',  description: 'SHACL shapes graph this relay\'s responses conform to.' },
       { name: 'health',           target: '/health',                         method: 'GET',  description: 'Relay liveness probe.' },
+      { name: 'federation-status', target: '/relay/federation-status',       method: 'GET',  description: 'Federation registry durability snapshot (entry count + last-hydrate / last-persist timestamps + hydrate source pod). No auth required.' },
     ],
   });
   res.type('application/ld+json').json(entry);
@@ -6499,6 +6543,36 @@ app.get('/.well-known/shacl-shapes', (_req, res) => {
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', css: CSS_URL, tools: Object.keys(TOOLS).length, auth: 'bearer-token', x402: true });
+});
+
+// ── /relay/federation-status — operator probe (FIX 5) ──────────
+//
+// Public, no-auth read-only snapshot of the federation registry's
+// durability state. Mirrors the observability fields that
+// `list_known_pods` exposes but does NOT require MCP / OAuth — ops
+// tooling (synthetic monitors, container-app readiness checks, manual
+// curl from a runbook) can verify post-deploy that the relay has
+// successfully hydrated entries from the service-account pod without
+// minting a bearer.
+//
+// Authorization: returns federation METADATA only (entry COUNT, source
+// pod URL, last-write/last-load timestamps). The list of pod URLs is
+// MCP-only (via `list_known_pods`) — operators who need that already
+// have a bearer. So this endpoint leaks nothing a federation peer
+// couldn't already infer by hitting `/.well-known/operations`.
+app.get('/relay/federation-status', async (_req, res) => {
+  // Best-effort: wait briefly for hydrate to complete so a cold-start
+  // probe sees the populated state instead of zeros. Same budget as
+  // handleListKnownPods.
+  await awaitFederationHydrateWithBudget(50);
+  res.json({
+    entries: knownPods.size,
+    lastPersistedAt: federationLastPersistedAt,
+    lastHydratedAt: federationLastHydratedAt,
+    hydrateSourceCount: federationHydrateSourceCount,
+    hydrateSource: oauthStorePodUrl,
+    podUrl: oauthStorePodUrl,
+  });
 });
 
 // ── /.well-known/security.txt — RFC 9116 ─────────────────────

@@ -193,6 +193,38 @@ async function run() {
     ok(loaded.length === 0, 'cold-start (empty container) returns empty array');
   }
 
+  // 5b. Hydrate-observability contract (FIX 5). After a successful
+  //     loadEntries that returns N entries, the relay surfaces a
+  //     post-startup signal independent of write activity. We can't
+  //     drive the relay's globals from this in-process test, but we
+  //     CAN verify the load contract that those globals depend on:
+  //     loadEntries resolves regardless of whether the container had
+  //     entries (so the relay's `.then(loaded => { federationLastHydratedAt = ...; })`
+  //     always fires), and the returned length matches the input
+  //     (drives hydrateSourceCount). This guards against a future
+  //     refactor that makes loadEntries reject on an empty container
+  //     and silently breaks the new observability path.
+  {
+    const pod = makeStubPod();
+    const cfg: FederationStoreConfig = { podUrl: POD, fetch: pod.fetch, log: () => {} };
+    // Empty container: load resolves cleanly so the relay's
+    // .then(loaded => ...) handler flips lastHydratedAt + sets
+    // hydrateSourceCount = 0.
+    const emptyLoad = await loadEntries(cfg);
+    ok(Array.isArray(emptyLoad) && emptyLoad.length === 0,
+       'loadEntries on empty container resolves to [] (not throw) — drives lastHydratedAt flip');
+
+    // Now write a couple of entries and confirm loadEntries returns
+    // them in a single Promise resolution — the relay's
+    // federationHydrateSourceCount is set from .length on this exact
+    // return value.
+    await saveEntry({ url: 'https://a.example/pod/', via: 'manual', addedAt: new Date().toISOString() }, cfg);
+    await saveEntry({ url: 'https://b.example/pod/', via: 'manual', addedAt: new Date().toISOString() }, cfg);
+    const populatedLoad = await loadEntries(cfg);
+    ok(populatedLoad.length === 2,
+       'loadEntries returns N entries in one resolution — drives hydrateSourceCount=N');
+  }
+
   // 6. Synchronous-write regression (Fix 8). saveEntry returns a
   //    Promise<void> that resolves only after the underlying PUT
   //    completes. Awaiting it MUST leave the file on disk before
