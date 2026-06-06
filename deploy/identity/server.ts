@@ -1623,6 +1623,7 @@ function buildWebIdProfile(identity: Identity): string {
 // ── Express App ─────────────────────────────────────────────
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json());
 
 // CORS: explicit allowlist, never wildcard. See cors-allowlist.ts for the
