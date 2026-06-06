@@ -668,6 +668,14 @@ const oauthTokenStoreCfg: OAuthTokenStoreConfig = {
   podUrl: oauthStorePodUrl,
   fetch: solidFetch,
   log: (msg: string) => log(msg),
+  // At-rest seal for the long-lived identity-server bearer carried in
+  // each persisted access/refresh record. The css-gate intentionally
+  // leaves GETs anonymous, so anything written to svc-relay-dcr/tokens/
+  // is enumerable by an unauthenticated reader via the LDP container
+  // listing; envelope-wrapping the bearer to the relay's own X25519
+  // keypair keeps the on-pod body opaque while a single relay process
+  // round-trips encrypt/decrypt locally.
+  encryptionKey: relayAgentKey,
 };
 const _oauthInitialAccessTokensBySha = await loadOAuthAccessTokens(oauthTokenStoreCfg);
 const _oauthInitialRefreshTokensBySha = await loadOAuthRefreshTokens(oauthTokenStoreCfg);

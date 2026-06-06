@@ -39,8 +39,13 @@
 
 import { createHash } from 'node:crypto';
 
-import type {
-  FetchFn,
+import {
+  encryptFacetValue,
+  decryptFacetValue,
+  isEncryptedFacetValue,
+  type EncryptedFacetValue,
+  type EncryptionKeyPair,
+  type FetchFn,
 } from '@interego/core';
 
 import type { InteregoAuthInfo, ResolvedIdentity } from './oauth-provider.js';
@@ -54,6 +59,53 @@ export interface OAuthTokenStoreConfig {
   readonly fetch?: FetchFn;
   /** Optional logger — defaults to silent. */
   readonly log?: (msg: string) => void;
+  /**
+   * Optional X25519 keypair used to envelope-encrypt the long-lived
+   * `identityToken` bearer at rest. The css-gate leaves GETs anonymous
+   * by design, so anything written here is world-readable from the
+   * pod's LDP container listing; wrapping the bearer in a self-recipient
+   * envelope keyed to this keypair makes the on-pod body opaque while
+   * keeping a single-process round-trip (encrypt on PUT, decrypt on
+   * load). When omitted (legacy / tests), the bearer is persisted as
+   * plaintext and read back unchanged.
+   */
+  readonly encryptionKey?: EncryptionKeyPair;
+}
+
+// ── identityToken envelope helpers ──────────────────────────
+
+/**
+ * Wrap an identity bearer for at-rest storage. When the store is
+ * configured with `encryptionKey`, the bearer is sealed to that
+ * keypair's own pubkey (self-recipient envelope) so an anonymous LDP
+ * reader sees only the envelope object. When no key is configured the
+ * value is returned unchanged for backwards compatibility.
+ */
+function sealIdentityToken(
+  token: string,
+  cfg: OAuthTokenStoreConfig,
+): string | EncryptedFacetValue {
+  if (!cfg.encryptionKey) return token;
+  return encryptFacetValue(token, [cfg.encryptionKey.publicKey], cfg.encryptionKey);
+}
+
+/**
+ * Inverse of `sealIdentityToken`. Accepts either a plaintext string
+ * (legacy file written before the at-rest seal landed, or a store
+ * configured without a key) or an `EncryptedFacetValue` blob. Returns
+ * null if the value is an envelope and the configured keypair can't
+ * decrypt it.
+ */
+function unsealIdentityToken(
+  value: unknown,
+  cfg: OAuthTokenStoreConfig,
+): string | null {
+  if (typeof value === 'string') return value;
+  if (isEncryptedFacetValue(value)) {
+    if (!cfg.encryptionKey) return null;
+    return decryptFacetValue(value, cfg.encryptionKey);
+  }
+  return null;
 }
 
 // Subcontainers below the service-account pod root. Sibling to the
@@ -119,7 +171,8 @@ interface PersistedAccessToken {
     ownerWebId: string;
     userId: string;
     podUrl: string;
-    identityToken: string;
+    /** Plaintext bearer (legacy) or self-recipient envelope (sealed). */
+    identityToken: string | EncryptedFacetValue;
     cnf?: { jkt: string };
   };
 }
@@ -133,7 +186,9 @@ interface PersistedRefreshToken {
   scopes: string[];
   /** Unix MILLIseconds — refresh-Map stores ms (Date.now()) to preserve 14d window math. */
   expiresAt: number;
-  identity: ResolvedIdentity;
+  identity: Omit<ResolvedIdentity, 'identityToken'> & {
+    identityToken: string | EncryptedFacetValue;
+  };
   dpopJkt?: string;
 }
 
@@ -176,7 +231,7 @@ export async function persistAccessToken(
       ownerWebId: info.extra.ownerWebId,
       userId: info.extra.userId,
       podUrl: info.extra.podUrl,
-      identityToken: info.extra.identityToken,
+      identityToken: sealIdentityToken(info.extra.identityToken, cfg),
       ...(info.extra.cnf ? { cnf: info.extra.cnf } : {}),
     },
   };
@@ -222,7 +277,10 @@ export async function persistRefreshToken(
     clientId: rec.clientId,
     scopes: rec.scopes,
     expiresAt: rec.expiresAt,
-    identity: rec.identity,
+    identity: {
+      ...rec.identity,
+      identityToken: sealIdentityToken(rec.identity.identityToken, cfg),
+    },
     ...(rec.dpopJkt ? { dpopJkt: rec.dpopJkt } : {}),
   };
 
@@ -311,6 +369,11 @@ export async function loadAccessTokenByRaw(
       void removeAccessToken(sha, cfg);
       return null;
     }
+    const identityToken = unsealIdentityToken(body.extra.identityToken, cfg);
+    if (identityToken === null) {
+      log(`[oauth-token-store] failed to unseal identityToken at ${url}`);
+      return null;
+    }
     const info: InteregoAuthInfo = {
       token,
       clientId: body.clientId,
@@ -321,7 +384,7 @@ export async function loadAccessTokenByRaw(
         ownerWebId: body.extra.ownerWebId,
         userId: body.extra.userId,
         podUrl: body.extra.podUrl,
-        identityToken: body.extra.identityToken,
+        identityToken,
         ...(body.extra.cnf ? { cnf: body.extra.cnf } : {}),
       },
     };
@@ -434,6 +497,11 @@ export async function loadAccessTokens(
         void removeAccessToken(body.token_sha256, cfg);
         return;
       }
+      const identityToken = unsealIdentityToken(body.extra.identityToken, cfg);
+      if (identityToken === null) {
+        log(`[oauth-token-store] failed to unseal identityToken at ${url}; skipping`);
+        return;
+      }
       const info: InteregoAuthInfo = {
         // Placeholder: we don't know the raw token string, only its
         // sha. The consumer (provider's hash-keyed map) reconstructs
@@ -447,7 +515,7 @@ export async function loadAccessTokens(
           ownerWebId: body.extra.ownerWebId,
           userId: body.extra.userId,
           podUrl: body.extra.podUrl,
-          identityToken: body.extra.identityToken,
+          identityToken,
           ...(body.extra.cnf ? { cnf: body.extra.cnf } : {}),
         },
       };
@@ -498,10 +566,15 @@ export async function loadRefreshTokens(
         void removeRefreshToken(body.token_sha256, cfg);
         return;
       }
+      const identityToken = unsealIdentityToken(body.identity.identityToken, cfg);
+      if (identityToken === null) {
+        log(`[oauth-token-store] failed to unseal identityToken at ${url}; skipping`);
+        return;
+      }
       const rec: RefreshTokenRecord = {
         clientId: body.clientId,
         scopes: body.scopes,
-        identity: body.identity,
+        identity: { ...body.identity, identityToken },
         expiresAt: body.expiresAt,
         ...(body.dpopJkt ? { dpopJkt: body.dpopJkt } : {}),
       };
@@ -545,10 +618,15 @@ export async function loadRefreshTokenByRaw(
       void removeRefreshToken(sha, cfg);
       return null;
     }
+    const identityToken = unsealIdentityToken(body.identity.identityToken, cfg);
+    if (identityToken === null) {
+      log(`[oauth-token-store] failed to unseal identityToken at ${url}`);
+      return null;
+    }
     return {
       clientId: body.clientId,
       scopes: body.scopes,
-      identity: body.identity,
+      identity: { ...body.identity, identityToken },
       expiresAt: body.expiresAt,
       ...(body.dpopJkt ? { dpopJkt: body.dpopJkt } : {}),
     };
