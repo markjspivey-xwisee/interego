@@ -690,6 +690,15 @@ oauthProvider = new InteregoOAuthProvider({
 
 type ToolArgs = Record<string, unknown>;
 
+// In steady state every publish_context calls readAgentRegistry just to
+// confirm the calling surface-agent is registered with the relay's
+// current encryption key. Both checks are stable for the relay-process
+// lifetime, so a short TTL cache eliminates one CSS GET per publish on
+// the response path. Bounded LRU mirrors identityMeCache below.
+const AGENT_REGISTRATION_CACHE_TTL_MS = 60 * 1000;
+const AGENT_REGISTRATION_CACHE_MAX = 1024;
+const agentRegistrationCache = new Map<string, { expiresAt: number }>();
+
 async function handlePublishContext(args: ToolArgs): Promise<string> {
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
@@ -698,15 +707,20 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const descId = (args.descriptor_id as string ?? `urn:cg:${podName}:${Date.now()}`) as IRI;
   const now = new Date().toISOString();
 
-  // Ensure pod container exists
-  await solidFetch(podUrl, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'text/turtle',
-      'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
-    },
-    body: '',
-  });
+  // Ensure pod container exists. Skip on steady-state — lazy-pod-init's
+  // bootstrappedPods Set is populated on successful bootstrap/HEAD, so
+  // the PUT (one CSS round-trip) is only needed before that fast-path.
+  if (!bootstrappedPods.has(podUrl)) {
+    const res = await solidFetch(podUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'text/turtle',
+        'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+      },
+      body: '',
+    });
+    if (res.ok) bootstrappedPods.add(podUrl);
+  }
 
   // Privacy-hygiene preflight: scan content for credentials, PII, etc.
   // We always WARN. We don't block automatically — the calling agent
@@ -732,7 +746,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // returning the canonical current version. Disable via
   // auto_supersede_prior: false.
   const priorVersions: IRI[] = [];
-  if (args.auto_supersede_prior !== false) {
+  if (args.auto_supersede_prior !== false && args.graph_iri) {
     try {
       const entries = await discover(podUrl, undefined, { fetch: solidFetch });
       for (const e of entries) {
@@ -762,57 +776,76 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // breaking per-agent attribution and recipient-set growth. After this
   // block, every new OAuth-authenticated session adds its own did:web agent
   // with its own X25519 key as a first-class authorized agent on the pod.
-  try {
-    let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
-    if (!profile) {
-      profile = createOwnerProfile(ownerWebId as IRI, args.owner_name as string | undefined);
-    }
-    const me = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked);
-    if (!me) {
-      // Auto-register: this agent authenticated against identity server (so
-      // the OAuth token proves key-possession). Safe to add to the pod's
-      // authorized-agent list automatically.
-      profile = addAuthorizedAgent(profile, {
-        agentId: agentId as IRI,
-        delegatedBy: ownerWebId as IRI,
-        label: (args.label as string) ?? `Agent ${agentId}`,
-        isSoftwareAgent: true,
-        scope: 'ReadWrite',
-        validFrom: new Date().toISOString(),
-        encryptionPublicKey: relayAgentKey.publicKey,
-      });
-      await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
-      try {
-        // Mint a SIGNED VC so downstream verifiers can cryptographically
-        // walk the chain (the unsigned form forces a SelfAsserted trust
-        // label even on otherwise-trusted publishes). The signer is the
-        // relay's compliance ECDSA wallet acting on the OAuth-bearer's
-        // authenticated behalf.
-        const newAgent = profile.authorizedAgents.find(a => a.agentId === agentId)!;
-        const signer = await getDelegationSigner();
-        const credential = await createSignedDelegationCredential(
-          profile,
-          newAgent,
-          podUrl as IRI,
-          signer,
-        );
-        await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
-      } catch { /* delegation credential is nice-to-have; registry is authoritative */ }
-    } else if (me.encryptionPublicKey !== relayAgentKey.publicKey) {
-      const updated = {
-        ...profile,
-        authorizedAgents: Object.freeze(
-          profile.authorizedAgents.map(a =>
-            a.agentId === agentId && !a.revoked
-              ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
-              : a,
+  const agentRegCacheKey = `${podUrl}|${agentId}`;
+  const agentRegCached = agentRegistrationCache.get(agentRegCacheKey);
+  if (!agentRegCached || agentRegCached.expiresAt <= Date.now()) {
+    if (agentRegCached) agentRegistrationCache.delete(agentRegCacheKey);
+    try {
+      let profile = await readAgentRegistry(podUrl, { fetch: solidFetch });
+      if (!profile) {
+        profile = createOwnerProfile(ownerWebId as IRI, args.owner_name as string | undefined);
+      }
+      const me = profile.authorizedAgents.find(a => a.agentId === agentId && !a.revoked);
+      let registeredOk = false;
+      if (!me) {
+        // Auto-register: this agent authenticated against identity server (so
+        // the OAuth token proves key-possession). Safe to add to the pod's
+        // authorized-agent list automatically.
+        profile = addAuthorizedAgent(profile, {
+          agentId: agentId as IRI,
+          delegatedBy: ownerWebId as IRI,
+          label: (args.label as string) ?? `Agent ${agentId}`,
+          isSoftwareAgent: true,
+          scope: 'ReadWrite',
+          validFrom: new Date().toISOString(),
+          encryptionPublicKey: relayAgentKey.publicKey,
+        });
+        await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
+        registeredOk = true;
+        try {
+          // Mint a SIGNED VC so downstream verifiers can cryptographically
+          // walk the chain (the unsigned form forces a SelfAsserted trust
+          // label even on otherwise-trusted publishes). The signer is the
+          // relay's compliance ECDSA wallet acting on the OAuth-bearer's
+          // authenticated behalf.
+          const newAgent = profile.authorizedAgents.find(a => a.agentId === agentId)!;
+          const signer = await getDelegationSigner();
+          const credential = await createSignedDelegationCredential(
+            profile,
+            newAgent,
+            podUrl as IRI,
+            signer,
+          );
+          await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
+        } catch { /* delegation credential is nice-to-have; registry is authoritative */ }
+      } else if (me.encryptionPublicKey !== relayAgentKey.publicKey) {
+        const updated = {
+          ...profile,
+          authorizedAgents: Object.freeze(
+            profile.authorizedAgents.map(a =>
+              a.agentId === agentId && !a.revoked
+                ? { ...a, encryptionPublicKey: relayAgentKey.publicKey }
+                : a,
+            ),
           ),
-        ),
-      };
-      await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
+        };
+        await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
+        registeredOk = true;
+      } else {
+        registeredOk = true;
+      }
+      if (registeredOk) {
+        if (agentRegistrationCache.size >= AGENT_REGISTRATION_CACHE_MAX) {
+          const oldestKey = agentRegistrationCache.keys().next().value;
+          if (oldestKey !== undefined) agentRegistrationCache.delete(oldestKey);
+        }
+        agentRegistrationCache.set(agentRegCacheKey, {
+          expiresAt: Date.now() + AGENT_REGISTRATION_CACHE_TTL_MS,
+        });
+      }
+    } catch (err) {
+      log(`WARN: could not ensure agent registration: ${(err as Error).message}`);
     }
-  } catch (err) {
-    log(`WARN: could not ensure agent registration: ${(err as Error).message}`);
   }
 
   const builder = ContextDescriptor.create(descId)
