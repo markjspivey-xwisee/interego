@@ -587,11 +587,12 @@ async function ensureRegistry(): Promise<void> {
       encryptionPublicKey: agentKeyPair.publicKey,
     });
 
-    await writeAgentRegistry(profile, homePod.url, { fetch: solidFetch });
-
     const agent = profile.authorizedAgents.find(a => a.agentId === MY_AGENT_ID)!;
     const credential = createDelegationCredential(profile, agent, homePod.url as IRI);
-    await writeDelegationCredential(credential, homePod.url, { fetch: solidFetch });
+    await Promise.all([
+      writeAgentRegistry(profile, homePod.url, { fetch: solidFetch }),
+      writeDelegationCredential(credential, homePod.url, { fetch: solidFetch }),
+    ]);
     log(`Delegation credential written for ${MY_AGENT_ID}`);
   } else if (!existingHasKey) {
     // Agent was registered before we had a keypair (or key rotated). Re-register
@@ -1262,12 +1263,14 @@ async function toolRegisterAgent(args: {
     return (err as Error).message;
   }
 
-  await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
   profileCache.set(podUrl, { profile, at: Date.now() });
 
   const agent = profile.authorizedAgents.find(a => a.agentId === args.agent_id)!;
   const credential = createDelegationCredential(profile, agent, podUrl as IRI);
-  const credUrl = await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
+  const [, credUrl] = await Promise.all([
+    writeAgentRegistry(profile, podUrl, { fetch: solidFetch }),
+    writeDelegationCredential(credential, podUrl, { fetch: solidFetch }),
+  ]);
 
   return [
     `Registered agent ${args.agent_id}`,
@@ -1416,15 +1419,12 @@ async function toolSubscribeAll(_args: Record<string, never>): Promise<string> {
   const pods = podRegistry.list();
   const results: string[] = [];
   let subscribed = 0;
-  let skipped = 0;
   let failed = 0;
 
-  for (const pod of pods) {
-    if (pod.subscription) {
-      skipped++;
-      continue;
-    }
+  const toSubscribe = pods.filter(p => !p.subscription);
+  const skipped = pods.length - toSubscribe.length;
 
+  await Promise.allSettled(toSubscribe.map(async (pod) => {
     try {
       const sub = await subscribe(pod.url, (event: ContextChangeEvent) => {
         notificationLog.push(event);
@@ -1439,7 +1439,7 @@ async function toolSubscribeAll(_args: Record<string, never>): Promise<string> {
       results.push(`  Failed: ${pod.url} — ${(err as Error).message}`);
       failed++;
     }
-  }
+  }));
 
   return [
     `Subscribe all: ${subscribed} new, ${skipped} already subscribed, ${failed} failed`,
@@ -1603,11 +1603,12 @@ async function toolSetupIdentity(args: {
       scope: 'ReadWrite',
       validFrom: new Date().toISOString(),
     });
-    await writeAgentRegistry(profileWithAgent, podUrl, { fetch: solidFetch });
-
     const agent = profileWithAgent.authorizedAgents.find(a => a.agentId === agentIri)!;
     const credential = createDelegationCredential(profileWithAgent, agent, podUrl as IRI);
-    await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
+    await Promise.all([
+      writeAgentRegistry(profileWithAgent, podUrl, { fetch: solidFetch }),
+      writeDelegationCredential(credential, podUrl, { fetch: solidFetch }),
+    ]);
 
     return [
       `Identity created (local mode)!`,
@@ -1680,11 +1681,12 @@ async function toolSetupIdentity(args: {
     scope: 'ReadWrite',
     validFrom: new Date().toISOString(),
   });
-  await writeAgentRegistry(profileWithAgent, podUrl, { fetch: solidFetch });
-
   const agent = profileWithAgent.authorizedAgents.find(a => a.agentId === `urn:agent:anthropic:${agentId}`)!;
   const credential = createDelegationCredential(profileWithAgent, agent, podUrl as IRI);
-  await writeDelegationCredential(credential, podUrl, { fetch: solidFetch });
+  await Promise.all([
+    writeAgentRegistry(profileWithAgent, podUrl, { fetch: solidFetch }),
+    writeDelegationCredential(credential, podUrl, { fetch: solidFetch }),
+  ]);
 
   return [
     `Identity created successfully!`,
