@@ -71,7 +71,7 @@ The underlying surface is a small categorical kernel — eight verbs: `mint`, `d
 | Understand the spec / category-theoretic foundations | [`spec/architecture.md`](spec/architecture.md) + [`docs/ARCHITECTURAL-FOUNDATIONS.md`](docs/ARCHITECTURAL-FOUNDATIONS.md) |
 | Run a SOC 2 / EU AI Act / NIST RMF audit against an Interego pod | [`spec/SOC2-PREPARATION.md`](spec/SOC2-PREPARATION.md) |
 | Set up Interego for a non-technical friend or family member | [The hosted front door](https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/) — they enroll a passkey or wallet directly (~30s, no command line), or their MCP client drives it on first call |
-| Browse the protocol primitives via web UI | [Dashboard](https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io) + [PGSL Browser](https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io) |
+| Browse the protocol primitives via web UI | [Identity Dashboard](https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/dashboard) + [PGSL Browser](https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io) |
 
 ---
 
@@ -429,7 +429,6 @@ Open one of the deployed web UIs in your browser — no install required:
 - **Landing page / enroll:** https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io — passkey / wallet / DID enrollment, friendly first-time-user surface
 - **Your dashboard:** https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/dashboard — your DID, registered credentials, pod inbox (requires you've enrolled first)
 - **PGSL Browser:** https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io
-- **Compliance Dashboard:** https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io
 
 ### 👶 I'm new — what's the actual first-hour experience?
 
