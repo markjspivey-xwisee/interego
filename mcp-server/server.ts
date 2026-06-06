@@ -839,27 +839,25 @@ async function toolPublishContext(args: {
   // Pin to IPFS if configured. `local-unpinned` (formerly `local`) means
   // we compute a CID but DO NOT upload — the caller MUST surface that
   // distinction. See crypto/ipfs.ts:localPin.
+  //
+  // The descriptor is already on the pod by this point. The public IPFS
+  // pin and the anchor-receipt PUT are post-publish bookkeeping; both
+  // are deferred to a background task so the caller isn't held on
+  // external HTTPS round-trips. The CID is content-addressed, so the
+  // value we return now is the same value the pin will carry.
   const turtle = toTurtle(descriptor);
-  let ipfsCid: string | undefined;
-  let ipfsUrl: string | undefined;
-  let ipfsProvider: string = 'local-unpinned';
+  const ipfsCid: string = cryptoComputeCid(turtle);
+  const ipfsUrl: string = `ipfs://${ipfsCid}`;
+  const ipfsProvider: string = IPFS_PROVIDER !== 'local-unpinned' ? 'pending' : 'local-unpinned';
 
   if (IPFS_PROVIDER !== 'local-unpinned') {
-    try {
-      const pinResult = await pinToIpfs(turtle, `descriptor-${descriptor.id}`, IPFS_CONFIG, solidFetch);
-      ipfsCid = pinResult.cid;
-      ipfsUrl = pinResult.url;
-      ipfsProvider = pinResult.provider;
-      lines.push(`  IPFS: ${ipfsCid}`);
-      lines.push(`  IPFS URL: ${ipfsUrl}`);
-      lines.push(`  IPFS Provider: ${ipfsProvider}`);
-    } catch (err) {
-      lines.push(`  IPFS: failed — ${(err as Error).message}`);
-    }
+    lines.push(`  IPFS: ${ipfsCid}`);
+    lines.push(`  IPFS URL: ${ipfsUrl}`);
+    lines.push(`  IPFS Provider: pending (pin deferred to background)`);
+    void pinToIpfs(turtle, `descriptor-${descriptor.id}`, IPFS_CONFIG, solidFetch)
+      .then(r => log(`IPFS pin completed for ${descriptor.id}: ${r.cid} via ${r.provider}`))
+      .catch(err => log(`IPFS pin failed for ${descriptor.id}: ${(err as Error).message}`));
   } else {
-    ipfsCid = cryptoComputeCid(turtle);
-    ipfsProvider = 'local-unpinned';
-    ipfsUrl = `ipfs://${ipfsCid}`;
     lines.push(`  CID (local-unpinned): ${ipfsCid}`);
     lines.push(`  IPFS: not pinned to public gateway (set PINATA_API_KEY or WEB3STORAGE_TOKEN to enable)`);
   }
@@ -873,32 +871,32 @@ async function toolPublishContext(args: {
     publishedAt: new Date().toISOString(),
     publishedBy: MY_AGENT_ID,
     onBehalfOf: MY_OWNER_WEBID,
-    ipfs: ipfsCid ? { cid: ipfsCid, url: ipfsUrl, provider: ipfsProvider } : undefined,
+    ipfs: { cid: ipfsCid, url: ipfsUrl, provider: ipfsProvider },
     contentHash: typeof sha256 === 'function' ? sha256(turtle) : 'unavailable',
     facetTypes: descriptor.facets.map(f => f.type),
     confidence: (descriptor.facets.find(f => f.type === 'Semiotic') as any)?.epistemicConfidence,
     modalStatus: (descriptor.facets.find(f => f.type === 'Semiotic') as any)?.modalStatus,
   };
 
-  try {
-    const slug = result.descriptorUrl.split('/').pop()?.replace('.ttl', '');
-    const anchorUrl = `${podUrl}anchors/${slug}.json`;
-    log(`Writing anchor to ${anchorUrl}`);
-    const anchorResp = await fetch(anchorUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(anchor, null, 2),
-    });
-    if (anchorResp.ok) {
-      lines.push(`  Anchor: ${anchorUrl}`);
-    } else {
-      const errText = await anchorResp.text().catch(() => '');
-      log(`Anchor write failed: ${anchorResp.status} ${anchorResp.statusText} ${errText}`);
-      lines.push(`  Anchor: failed (${anchorResp.status})`);
+  const slug = result.descriptorUrl.split('/').pop()?.replace('.ttl', '');
+  const anchorUrl = `${podUrl}anchors/${slug}.json`;
+  lines.push(`  Anchor: ${anchorUrl} (deferred)`);
+  void (async () => {
+    try {
+      log(`Writing anchor to ${anchorUrl}`);
+      const anchorResp = await fetch(anchorUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(anchor, null, 2),
+      });
+      if (!anchorResp.ok) {
+        const errText = await anchorResp.text().catch(() => '');
+        log(`Anchor write failed: ${anchorResp.status} ${anchorResp.statusText} ${errText}`);
+      }
+    } catch (err) {
+      log(`Anchor write error: ${(err as Error).message}\n${(err as Error).stack}`);
     }
-  } catch (err) {
-    log(`Anchor write error: ${(err as Error).message}\n${(err as Error).stack}`);
-  }
+  })();
 
   lines.push('', 'Turtle:', turtle);
 
