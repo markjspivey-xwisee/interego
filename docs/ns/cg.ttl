@@ -1022,17 +1022,17 @@ cg:CoherenceCertificateShape a sh:NodeShape ; rdfs:label "CoherenceCertificate S
 
 cg:CoherenceCertificate a owl:Class ; rdfs:label "Coherence Certificate" ; rdfs:comment "Record asserting two agents' fragments are coherent at a given time." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:CoherenceObstruction a owl:Class ; rdfs:label "Coherence Obstruction" ; rdfs:comment "Specific atom/position where two agents' fragments disagree." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:CoherenceStatus a owl:Class ; rdfs:label "Coherence Status" ; rdfs:comment "Enum: Equal, Divergent, Subset, Intersect, Union, Exclude." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:CoherenceStatus a owl:Class ; rdfs:label "Coherence Status" ; rdfs:comment "Enum: Verified, Divergent, Unexamined." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:AtomCoherence a owl:Class ; rdfs:label "Atom Coherence" ; rdfs:comment "Per-atom coherence snapshot used when rolling up to fragment-level status." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
-cg:Equal a cg:CoherenceStatus, cg:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Equal" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:Divergent a cg:CoherenceStatus ; rdfs:label "Divergent" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:Subset a cg:CoherenceStatus, cg:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Subset" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:Intersect a cg:CoherenceStatus, cg:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Intersect" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:Union a cg:CoherenceStatus, cg:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Union" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:Exclude a cg:CoherenceStatus, cg:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Exclude" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:Verified a owl:NamedIndividual ; rdfs:label "Verified" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:Unexamined a owl:NamedIndividual ; rdfs:label "Unexamined" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Equal a cg:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Equal" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Divergent a cg:CoherenceStatus, owl:NamedIndividual ; rdfs:label "Divergent" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Subset a cg:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Subset" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Intersect a cg:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Intersect" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Union a cg:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Union" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Exclude a cg:ParadigmOperation, owl:NamedIndividual ; rdfs:label "Exclude" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Verified a cg:CoherenceStatus, owl:NamedIndividual ; rdfs:label "Verified" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Unexamined a cg:CoherenceStatus, owl:NamedIndividual ; rdfs:label "Unexamined" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Decision & Strategies
