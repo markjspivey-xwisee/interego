@@ -11,7 +11,7 @@ on:
   push:
     branches: [master]
     paths:
-      - 'src/**'
+      - 'packages/**'
       - 'deploy/identity/**'
       - 'deploy/mcp-relay/**'
       - 'mcp-server/**'
@@ -21,7 +21,7 @@ on:
   pull_request:
     branches: [master]
     paths:
-      - 'src/**'
+      - 'packages/**'
       - 'deploy/identity/**'
       - 'deploy/mcp-relay/**'
       - 'mcp-server/**'

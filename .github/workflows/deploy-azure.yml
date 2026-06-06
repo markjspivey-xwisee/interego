@@ -16,7 +16,7 @@ on:
   push:
     branches: [master]
     paths:
-      - 'src/**'
+      - 'packages/**'
       - 'deploy/Dockerfile.dashboard'
       - 'deploy/Dockerfile.pgsl-browser'
       - 'deploy/Dockerfile.relay'
@@ -33,6 +33,7 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'
+      - 'tsconfig.base.json'
       - '.github/workflows/deploy-azure.yml'
   workflow_dispatch:
     inputs:
@@ -145,6 +146,7 @@ jobs:
           - image: interego-css-gate
             dockerfile: deploy/Dockerfile.css-gate
             filter: css-gate
+            node_base: public.ecr.aws/docker/library/node:20-alpine
 
     steps:
       - name: Checkout
@@ -224,7 +226,7 @@ jobs:
                  --image "${{ matrix.image }}:${{ github.sha }}" \
                  --image "${{ matrix.image }}:latest" \
                  --file "${{ matrix.dockerfile }}" \
-                 --build-arg "NODE_BASE=public.ecr.aws/docker/library/node:20-slim" \
+                 --build-arg "NODE_BASE=${{ matrix.node_base || 'public.ecr.aws/docker/library/node:20-slim' }}" \
                  .; then
               echo "ACR build succeeded on attempt $attempt"
               exit 0
