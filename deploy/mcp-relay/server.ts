@@ -5915,7 +5915,17 @@ app.get('/identity-token', async (req, res) => {
  *     short of asserting key-binding. The token's freshness + the
  *     gate's path-scope check are the trust bar at the gate boundary.
  */
-app.post('/verify-token', async (req, res) => {
+// Per-IP rate limit on /verify-token. The bearer compare is timing-safe,
+// but with no throttle a leaked/guessed secret turns this into an
+// unbounded oracle over oauthProvider.introspectAccessToken. 60/min is
+// generous for the gate's normal traffic and kills sustained abuse.
+const verifyTokenLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post('/verify-token', verifyTokenLimiter, async (req, res) => {
   // Config sanity. If the operator forgot to set the shared secret on
   // this relay, fail closed with 503 so the gate can fall back to its
   // identity-only path without thinking the introspection said
