@@ -23,6 +23,7 @@ import { test, expect, request, type Page } from '@playwright/test';
 import { createHash, randomBytes } from 'node:crypto';
 
 const RELAY_URL = process.env.BASE_URL ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const IDENTITY_URL = process.env.IDENTITY_URL ?? 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 
 async function enableVirtualAuthenticator(page: Page): Promise<string> {
   const client = await page.context().newCDPSession(page);
@@ -162,11 +163,7 @@ test('passkey OAuth dance issues a usable MCP token', async ({ page }) => {
     if (itResp.ok()) {
       const { identityToken } = await itResp.json() as { identityToken?: string };
       if (identityToken) {
-        // Identity is on a different host; hit it directly. Resolve via
-        // the relay's /.well-known/oauth-authorization-server which
-        // exposes the identity issuer, OR derive from the relay host.
-        const identityUrl = RELAY_URL.replace('interego-relay', 'interego-identity');
-        const delResp = await api.post(`${identityUrl}/users/me/delete`, {
+        const delResp = await api.post(`${IDENTITY_URL}/users/me/delete`, {
           headers: { 'Authorization': `Bearer ${identityToken}` },
         });
         if (!delResp.ok()) {
