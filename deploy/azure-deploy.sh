@@ -290,10 +290,21 @@ echo "    Observatory:   https://$BROWSER_FQDN/observatory"
 # already aligned is a no-op (`az containerapp update` is convergent).
 if [ -n "$CSS_GATE_FQDN" ]; then
   echo ">>> Configuring gate↔relay introspection secret..."
-  GATE_SECRET=$(az containerapp show --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" \
-    --query "properties.template.containers[0].env[?name=='RELAY_INTROSPECTION_SECRET'].value | [0]" -o tsv 2>/dev/null || true)
-  RELAY_SECRET=$(az containerapp show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
-    --query "properties.template.containers[0].env[?name=='RELAY_INTROSPECTION_SECRET'].value | [0]" -o tsv 2>/dev/null || true)
+  # Read existing values from Container Apps secrets (preferred) with a
+  # fallback to legacy plain env vars so re-deploys against an older
+  # revision still align rather than rotating unnecessarily.
+  GATE_SECRET=$(az containerapp secret show --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" \
+    --secret-name relay-introspection-secret --query value -o tsv 2>/dev/null || true)
+  if [ -z "$GATE_SECRET" ]; then
+    GATE_SECRET=$(az containerapp show --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" \
+      --query "properties.template.containers[0].env[?name=='RELAY_INTROSPECTION_SECRET'].value | [0]" -o tsv 2>/dev/null || true)
+  fi
+  RELAY_SECRET=$(az containerapp secret show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
+    --secret-name relay-introspection-secret --query value -o tsv 2>/dev/null || true)
+  if [ -z "$RELAY_SECRET" ]; then
+    RELAY_SECRET=$(az containerapp show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
+      --query "properties.template.containers[0].env[?name=='RELAY_INTROSPECTION_SECRET'].value | [0]" -o tsv 2>/dev/null || true)
+  fi
   if [ -n "$GATE_SECRET" ] && [ "$GATE_SECRET" = "$RELAY_SECRET" ]; then
     INTROSPECT_SECRET="$GATE_SECRET"
     echo "    introspection secret already aligned on both apps (no change)"
@@ -304,14 +315,23 @@ if [ -n "$CSS_GATE_FQDN" ]; then
     echo "    generated new 64-char introspection secret; syncing to both apps"
   fi
 
+  # Store as a Container Apps secret (not a plain env var) so the value
+  # never appears in the revision spec or ARM activity logs, then bind
+  # the env var by secretref.
+  az containerapp secret set --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
+    --secrets "relay-introspection-secret=$INTROSPECT_SECRET" \
+    --output none
   az containerapp update --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
-    --set-env-vars "RELAY_INTROSPECTION_SECRET=$INTROSPECT_SECRET" \
+    --set-env-vars "RELAY_INTROSPECTION_SECRET=secretref:relay-introspection-secret" \
+    --output none
+  az containerapp secret set --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" \
+    --secrets "relay-introspection-secret=$INTROSPECT_SECRET" \
     --output none
   az containerapp update --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" \
-    --set-env-vars "RELAY_INTROSPECTION_SECRET=$INTROSPECT_SECRET" "RELAY_VERIFY_URL=https://$RELAY_FQDN" \
+    --set-env-vars "RELAY_INTROSPECTION_SECRET=secretref:relay-introspection-secret" "RELAY_VERIFY_URL=https://$RELAY_FQDN" \
     --output none
-  echo "    relay     : RELAY_INTROSPECTION_SECRET set"
-  echo "    css-gate  : RELAY_INTROSPECTION_SECRET + RELAY_VERIFY_URL=https://$RELAY_FQDN set"
+  echo "    relay     : RELAY_INTROSPECTION_SECRET set (secretref)"
+  echo "    css-gate  : RELAY_INTROSPECTION_SECRET (secretref) + RELAY_VERIFY_URL=https://$RELAY_FQDN set"
 else
   echo ">>> Skipping gate↔relay introspection secret config — $CSS_GATE_APP not deployed."
 fi
