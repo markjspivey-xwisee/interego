@@ -17,9 +17,9 @@
  *
  * A regression that (a) populates `bootstrappedPods` on failure (poisons
  * the cache), (b) treats a 5xx HEAD response as 200, or (c) drops a
- * pod-aware tool from `POD_AWARE_TOOLS` would only be caught by a
- * manual run of scripts/verify-lazy-init.mjs against deployed infra.
- * This vitest gives us a fast in-process gate.
+ * pod-aware tool from `POD_AWARE_TOOLS` would otherwise only be caught
+ * by a manual probe against deployed infra. This vitest gives us a fast
+ * in-process gate.
  */
 
 import { describe, it, expect } from 'vitest';
