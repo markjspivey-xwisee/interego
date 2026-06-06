@@ -782,7 +782,7 @@ jobs:
               SET_ARGS+=("$v=$val")
               echo "  preserve $v (plain)"
             else
-              echo "::warning::$v unset on live $APP revision — skipping; seed it once before the next redeploy"
+              echo "[note] $v unset on live $APP revision — skipping; seed it once before the next redeploy"
             fi
           done
           for v in "${SECRET_VARS[@]}"; do
@@ -806,7 +806,7 @@ jobs:
               SET_ARGS+=("$v=secretref:$sname")
               echo "  bind $v->secretref:$sname (secret already configured)"
             else
-              echo "::warning::$v unset on live $APP revision — skipping; seed it once before the next redeploy"
+              echo "[note] $v unset on live $APP revision — skipping; seed it once before the next redeploy"
             fi
           done
           if [ "${#SET_ARGS[@]}" -gt 0 ]; then
