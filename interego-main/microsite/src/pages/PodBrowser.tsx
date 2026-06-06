@@ -34,8 +34,12 @@ const label: React.CSSProperties = {
 // Default pod URLs. Two sources: the tenant pod and the federation
 // peer pod. The dropdown lets the user swap between them; any pod URL
 // can be typed in to browse arbitrary Interego pods.
-const TENANT_POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/';
-const PEER_POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/federation-peer/';
+// CSS itself is internal-only; browser code reaches the pod through the
+// public css-gate. Override at build time via VITE_CSS_POD_URL.
+const CSS_BASE = (import.meta.env.VITE_CSS_POD_URL as string | undefined)
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const TENANT_POD = `${CSS_BASE}/foxxi/`;
+const PEER_POD = `${CSS_BASE}/foxxi/federation-peer/`;
 
 interface ManifestEntry {
   descriptorUrl: string;
