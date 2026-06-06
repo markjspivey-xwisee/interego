@@ -115,6 +115,34 @@ function* walkFiles(dir) {
   }
 }
 
+// Map JS template-variable names (e.g. `${CG}Foo`, `${CGH_NS}Foo`) back
+// to the lint prefix they emit. Code that constructs full IRIs via
+// template literals over a namespace constant is otherwise invisible to
+// the curie-only refRegex below — which is how cg:MintResult /
+// cg:ToolResult / cg:RelayEntryPoint drift accumulated unnoticed even
+// with ontology-lint in CI.
+const TEMPLATE_VAR_TO_PREFIX = {
+  CG: 'cg', CG_NS: 'cg',
+  CGH: 'cgh', CGH_NS: 'cgh',
+  PGSL: 'pgsl', PGSL_NS: 'pgsl',
+  IE: 'ie', IE_NS: 'ie', INTEREGO: 'ie', INTEREGO_NS: 'ie',
+  ALIGN: 'align', ALIGN_NS: 'align', ALIGNMENT: 'align', ALIGNMENT_NS: 'align',
+  HYPRCAT: 'hyprcat', HYPRCAT_NS: 'hyprcat',
+  HYPRAGENT: 'hypragent', HYPRAGENT_NS: 'hypragent',
+  HELA: 'hela', HELA_NS: 'hela',
+  SAT: 'sat', SAT_NS: 'sat',
+  CTS: 'cts', CTS_NS: 'cts',
+  OLKE: 'olke', OLKE_NS: 'olke',
+  AMTA: 'amta', AMTA_NS: 'amta',
+  ABAC: 'abac', ABAC_NS: 'abac',
+  REGISTRY: 'registry', REGISTRY_NS: 'registry',
+  PASSPORT: 'passport', PASSPORT_NS: 'passport',
+  CODE: 'code', CODE_NS: 'code',
+  EU_AI_ACT: 'eu-ai-act', EU_AI_ACT_NS: 'eu-ai-act', EUAI: 'eu-ai-act', EUAI_NS: 'eu-ai-act',
+  NIST_RMF: 'nist-rmf', NIST_RMF_NS: 'nist-rmf', NISTRMF: 'nist-rmf', NISTRMF_NS: 'nist-rmf',
+  SOC2: 'soc2', SOC2_NS: 'soc2',
+};
+
 function findReferencesInFile(tsPath, prefixes) {
   const body = readFileSync(tsPath, 'utf8');
   const refs = [];
@@ -128,6 +156,11 @@ function findReferencesInFile(tsPath, prefixes) {
     `(?<![:\\w])(${prefixes.join('|')}):([A-Za-z][A-Za-z0-9_]*)`,
     'g',
   );
+  const templateVars = Object.keys(TEMPLATE_VAR_TO_PREFIX);
+  const tmplRegex = new RegExp(
+    `\\$\\{(${templateVars.join('|')})\\}([A-Za-z][A-Za-z0-9_]*)`,
+    'g',
+  );
   let offset = 0;
   for (const rawLine of body.split('\n')) {
     const commentIdx = rawLine.indexOf('//');
@@ -136,6 +169,13 @@ function findReferencesInFile(tsPath, prefixes) {
     refRegex.lastIndex = 0;
     while ((m = refRegex.exec(line)) !== null) {
       refs.push({ prefix: m[1], term: m[2], path: tsPath, offset: offset + m.index });
+    }
+    tmplRegex.lastIndex = 0;
+    while ((m = tmplRegex.exec(line)) !== null) {
+      const prefix = TEMPLATE_VAR_TO_PREFIX[m[1]];
+      if (prefix) {
+        refs.push({ prefix, term: m[2], path: tsPath, offset: offset + m.index });
+      }
     }
     offset += rawLine.length + 1;
   }

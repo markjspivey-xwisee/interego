@@ -37,6 +37,14 @@ soc2:P4
 # placeholder predicate (cg:evidenceForControl) that's mentioned as a
 # future extension to ManifestEntry. Not actually emitted to RDF.
 cg:evidenceForControl
+# CGContextType.Causal / .Projection in packages/core/src/rdf/namespaces.ts
+# are emitted via `${CG}Causal` / `${CG}Projection` template literals.
+# The corresponding cg:CausalFacet / cg:ProjectionFacet classes ARE
+# defined in docs/ns/cg.ttl; the bare context-type individuals are not
+# yet declared. Pre-existing drift surfaced by the template-literal
+# scan extension.
+cg:Causal
+cg:Projection
 
 # ── align: ──
 # False positive from CSS text-align property in HTML style attributes
