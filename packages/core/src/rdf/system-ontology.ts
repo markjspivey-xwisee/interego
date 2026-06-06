@@ -240,7 +240,7 @@ cg:Retracted a owl:NamedIndividual, cg:ModalStatusEnum ;
 
 cg:epistemicConfidence a owl:DatatypeProperty, owl:FunctionalProperty ;
     rdfs:domain cg:SemioticFacet ;
-    rdfs:range xsd:decimal ;
+    rdfs:range xsd:double ;
     rdfs:label "epistemic confidence" ;
     rdfs:comment "Confidence level between 0.0 and 1.0." .
 
@@ -419,14 +419,14 @@ cg:Decision a owl:Class ;
     rdfs:comment "A selected affordance from a paradigm set." .
 
 cg:DecisionStrategy a owl:Class ;
-    owl:oneOf ( cg:Exploit cg:Explore cg:Delegate cg:Abstain ) ;
+    owl:oneOf ( cg:Exploit cg:Explore cg:DelegateStrategy cg:Abstain ) ;
     rdfs:label "Decision Strategy" .
 
 cg:Exploit a owl:NamedIndividual, cg:DecisionStrategy ;
     rdfs:label "Exploit" .
 cg:Explore a owl:NamedIndividual, cg:DecisionStrategy ;
     rdfs:label "Explore" .
-cg:Delegate a owl:NamedIndividual, cg:DecisionStrategy ;
+cg:DelegateStrategy a owl:NamedIndividual, cg:DecisionStrategy ;
     rdfs:label "Delegate" .
 cg:Abstain a owl:NamedIndividual, cg:DecisionStrategy ;
     rdfs:label "Abstain" .
