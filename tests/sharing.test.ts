@@ -244,3 +244,94 @@ describe('publish_context recipient-set computation (share-with-author fix)', ()
     expect(out.recipientAgents).toEqual(['urn:agent:author-alice', BOB_POD, CAROL_POD]);
   });
 });
+
+/**
+ * Regression: `visibility-drops-share-with-warn`.
+ *
+ * The relay's publish_context visibility branch (deploy/mcp-relay/server.ts
+ * ~line 918) MUST drop share_with when visibility is 'public' or 'private'
+ * AND emit a warn — only 'shared' supports per-recipient routing. A silent
+ * use of share_with under visibility='private' would envelope the graph to
+ * share_with recipients, leaking what the author explicitly scoped to
+ * themselves.
+ *
+ * This unit-tests the visibility-branch as a pure function over
+ * (visibility, shareWith, authorKey) — the same shape used by
+ * deploy/mcp-relay/server.ts.
+ */
+describe('publish_context visibility branch (drops share_with + warns when not shared)', () => {
+  const AUTHOR_KEY = 'KEY_AUTHOR_ALICE';
+  const BOB_POD = 'https://host/bob/';
+
+  /** Reproduces the relay's visibility-branch as a pure function. */
+  function computeVisibilityRecipients(
+    rawVisibility: string | undefined,
+    shareWith: string[],
+    authorKey: string,
+  ): { visibility: 'public' | 'shared' | 'private'; recipients: string[]; warnings: string[] } {
+    const warnings: string[] = [];
+    const visibility: 'public' | 'shared' | 'private' =
+      rawVisibility === 'public' || rawVisibility === 'private' || rawVisibility === 'shared'
+        ? rawVisibility
+        : 'shared';
+    if (visibility !== 'shared' && shareWith.length > 0) {
+      warnings.push(
+        `WARN: publish_context visibility="${visibility}" ignores share_with (${shareWith.length} handle(s) dropped) — only 'shared' supports per-recipient routing`,
+      );
+    }
+    let recipients: string[] = [];
+    if (visibility === 'private') {
+      recipients = [authorKey];
+    }
+    // visibility === 'public': recipients stays empty (plaintext payload).
+    // visibility === 'shared': handled by the share-with-author branch above.
+    return { visibility, recipients, warnings };
+  }
+
+  it('visibility="private" + non-empty share_with: recipients == [authorKey] and warn emitted', () => {
+    const out = computeVisibilityRecipients('private', [BOB_POD], AUTHOR_KEY);
+    expect(out.visibility).toBe('private');
+    expect(out.recipients).toEqual([AUTHOR_KEY]);
+    expect(out.warnings).toHaveLength(1);
+    expect(out.warnings[0]).toContain('visibility="private"');
+    expect(out.warnings[0]).toContain('ignores share_with');
+  });
+
+  it('visibility="public" + non-empty share_with: no envelope recipients and warn emitted', () => {
+    const out = computeVisibilityRecipients('public', [BOB_POD, 'https://host/carol/'], AUTHOR_KEY);
+    expect(out.visibility).toBe('public');
+    expect(out.recipients).toEqual([]);
+    expect(out.warnings).toHaveLength(1);
+    expect(out.warnings[0]).toContain('visibility="public"');
+    expect(out.warnings[0]).toContain('2 handle(s) dropped');
+  });
+
+  it('visibility="private" with empty share_with: author-only, no warn', () => {
+    const out = computeVisibilityRecipients('private', [], AUTHOR_KEY);
+    expect(out.visibility).toBe('private');
+    expect(out.recipients).toEqual([AUTHOR_KEY]);
+    expect(out.warnings).toEqual([]);
+  });
+
+  it('visibility="public" with empty share_with: no recipients, no warn', () => {
+    const out = computeVisibilityRecipients('public', [], AUTHOR_KEY);
+    expect(out.visibility).toBe('public');
+    expect(out.recipients).toEqual([]);
+    expect(out.warnings).toEqual([]);
+  });
+
+  it('visibility="shared" with non-empty share_with: no warn (per-recipient routing is supported)', () => {
+    const out = computeVisibilityRecipients('shared', [BOB_POD], AUTHOR_KEY);
+    expect(out.visibility).toBe('shared');
+    expect(out.warnings).toEqual([]);
+  });
+
+  it('omitted/invalid visibility defaults to "shared" — share_with is preserved, no warn', () => {
+    const out = computeVisibilityRecipients(undefined, [BOB_POD], AUTHOR_KEY);
+    expect(out.visibility).toBe('shared');
+    expect(out.warnings).toEqual([]);
+    const out2 = computeVisibilityRecipients('bogus', [BOB_POD], AUTHOR_KEY);
+    expect(out2.visibility).toBe('shared');
+    expect(out2.warnings).toEqual([]);
+  });
+});
