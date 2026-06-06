@@ -2233,15 +2233,13 @@ async function handleSubscribeAll(args: ToolArgs): Promise<string> {
   // per-call; de-duped on URL against persisted peers.
   const pods = await knownPodsWithSelf(args);
   let subscribed = 0;
-  let skipped = 0;
   let failed = 0;
   const failures: Array<{ pod: string; error: string }> = [];
 
-  for (const pod of pods) {
-    if (subscriptions.has(pod.url)) {
-      skipped++;
-      continue;
-    }
+  const toSubscribe = pods.filter(p => !subscriptions.has(p.url));
+  const skipped = pods.length - toSubscribe.length;
+
+  await Promise.allSettled(toSubscribe.map(async (pod) => {
     try {
       const sub = await subscribe(pod.url, (event: ContextChangeEvent) => {
         notificationLog.push(event);
@@ -2256,7 +2254,7 @@ async function handleSubscribeAll(args: ToolArgs): Promise<string> {
       failed++;
       failures.push({ pod: pod.url, error: (err as Error).message });
     }
-  }
+  }));
 
   return JSON.stringify({
     total: pods.length,
