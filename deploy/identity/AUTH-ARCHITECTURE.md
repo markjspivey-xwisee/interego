@@ -16,10 +16,14 @@ This note captures the first-principles shape of identity in Interego so future 
 │ identity server       │         │ Solid pod (per user)     │
 │ (stateless verifier)  │         │                          │
 │                       │  read   │  /auth-methods.jsonld    │
-│  - resolves DIDs      │ ◄─────► │    walletAddresses[]     │
+│  - resolves DIDs      │ ◄────── │    walletAddresses[]     │
 │  - verifies sigs      │         │    webAuthnCredentials[] │
 │  - issues challenges  │  write  │    didKeys[]             │
-│  - issues tokens      │         │                          │
+│  - issues tokens      │ ──────► │                          │
+│  - in-memory cache    │ (async, │  (in-memory cache is     │
+│    authoritative      │ deferred│   authoritative until    │
+│    pre-write)         │  after  │   deferred write lands)  │
+│                       │  resp.) │                          │
 └───────────────────────┘         └──────────────────────────┘
          ▲                                 ▲
          │ OAuth 2.1 + PKCE + DCR          │ stored as JSON-LD
@@ -37,9 +41,17 @@ This note captures the first-principles shape of identity in Interego so future 
 
 | Method | Key custody | First-time flow | Repeat sign-in |
 |---|---|---|---|
-| **SIWE** (ERC-4361) | User's Ethereum wallet (MetaMask, Coinbase, hardware, etc.) | Connect wallet → sign SIWE message with fresh nonce → server recovers address via `ethers.verifyMessage` → mints `u-eth-<addr[0:12]>` userId → writes `walletAddresses[]` to pod | Same signature path; `walletIndex[address]` lookup resolves user |
-| **WebAuthn / passkey** | OS secure enclave (iCloud Keychain / Google Password Manager / hardware key) | `navigator.credentials.create` (userHandle is a transient `u-pend-<rand>` at options time) → `verifyRegistrationResponse` → server derives `u-pk-<sha256(credId)[0:12]>` → credential stored in pod's `webAuthnCredentials[]` | Discoverable credentials: `navigator.credentials.get` with empty `allowCredentials` → `credentialIndex[response.id]` resolves user → `verifyAuthenticationResponse`, counter bumped in pod |
-| **DID Ed25519** | User-managed `did:key` or `did:web` with off-server private key | Client signs server nonce with private key → server verifies with public key → mints `u-did-<sha256(did)[0:12]>` → writes `didKeys[]` to pod | Same signature path; `didIndex[did]` lookup resolves user |
+| **SIWE** (ERC-4361) | User's Ethereum wallet (MetaMask, Coinbase, hardware, etc.) | Connect wallet → sign SIWE message with fresh nonce → server recovers address via `ethers.verifyMessage` → mints `u-eth-<addr[0:12]>` userId → applies `walletAddresses[]` to the in-memory cache and returns the token; the pod write is mirrored asynchronously after the response (see [Deferred pod writes](#deferred-pod-writes)) | Same signature path; `walletIndex[address]` lookup resolves user |
+| **WebAuthn / passkey** | OS secure enclave (iCloud Keychain / Google Password Manager / hardware key) | `navigator.credentials.create` (userHandle is a transient `u-pend-<rand>` at options time) → `verifyRegistrationResponse` → server derives `u-pk-<sha256(credId)[0:12]>` → credential applied to the in-memory cache; the pod write to `webAuthnCredentials[]` is mirrored asynchronously after the response (see [Deferred pod writes](#deferred-pod-writes)) | Discoverable credentials: `navigator.credentials.get` with empty `allowCredentials` → `credentialIndex[response.id]` resolves user → `verifyAuthenticationResponse`, counter bumped in pod |
+| **DID Ed25519** | User-managed `did:key` or `did:web` with off-server private key | Client signs server nonce with private key → server verifies with public key → mints `u-did-<sha256(did)[0:12]>` → applies `didKeys[]` to the in-memory cache and returns the token; the pod write is mirrored asynchronously after the response (see [Deferred pod writes](#deferred-pod-writes)) | Same signature path; `didIndex[did]` lookup resolves user |
+
+### Deferred pod writes
+
+`/auth/*` enrollment endpoints do **not** block the response on the pod write. The server first calls `inlineApplyAuthMethods` (in-memory cache + index rebuild), returns the token, and then schedules the pod write via `scheduleDeferredAuthMethodsWrite` (`deploy/identity/server.ts`):
+
+- The write runs on the next event-loop tick (`setImmediate`, after the response socket flush), under a **per-userId mutex** so a fast subsequent read still sees the freshest data via the cache and writes serialize cleanly.
+- Failures retry with backoff: **3 retries at 1s / 2s / 4s** (4 attempts total). On final failure the in-memory record stays authoritative for the process lifetime — the next successful login with the same credential re-derives the same content-addressed userId and re-attempts the write, so the system is self-healing on next sign-in.
+- Final failure logs at ERROR with the metric name `identity_deferred_authmethods_failed` (userId + context tagged). **Operators should alert on this log line** — sustained occurrences mean enrollments are surviving in memory but not persisting to the pod, and a container restart before a successful re-login would lose them.
 
 ### `did:key` encoding (Ed25519)
 
@@ -145,6 +157,8 @@ A deployment that always serves a single surface (e.g. a dedicated mobile-only r
 **Tokens are bearer tokens** by default (stolen token = usable token). DPoP (RFC 9449) is the standard mitigation — cryptographic proof-of-possession on every request. MCP spec lists DPoP as optional and most clients don't implement it yet, so we haven't forced it. When MCP client support matures, DPoP slots into this architecture with no other changes (add a per-request JWT signed by a client-held key, server verifies on `/mcp`).
 
 **Pod durability** depends on CSS persistence. The identity server is provably stateless, but CSS itself runs in-memory by default on Azure Container Apps. Long-term durability requires configuring CSS with a persistent backend (file store on Azure Files volume, quadstore in Postgres, etc.). This is a deploy-level concern separate from the identity-layer architecture.
+
+**Deferred pod writes trade a small durability window for response latency.** `/auth/*` enrollment responses race ahead of the pod write (see [Deferred pod writes](#deferred-pod-writes)). The window between response and pod-write completion is small (single-digit seconds in the happy path) but non-zero: a process crash inside that window loses the persisted record, though the user can recover by signing in again with the same credential. The mitigation is the `identity_deferred_authmethods_failed` ERROR-level log line plus the 3-attempt 1s/2s/4s backoff — operators alert on the metric and the in-memory cache stays authoritative until the write lands.
 
 ## Extending
 
