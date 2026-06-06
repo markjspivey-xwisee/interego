@@ -419,6 +419,72 @@ az containerapp update \
   --set-env-vars "${RELAY_ENV_VARS[@]}" \
   --output none
 
+# Relay env wiring — same drift trap as the foxxi-bridge wire step. The
+# relay reads ~16 env vars (see grep process.env in deploy/mcp-relay/
+# server.ts + oauth-client-store.ts), but the create call above only sets
+# CSS_URL / RELAY_OAUTH_STORE_POD / PUBLIC_BASE_URL / IDENTITY_URL. On any
+# subsequent re-run that rotates the image, the rest would silently drop
+# off the new revision and the relay would boot half-configured — and the
+# five credential-bearing vars would silently downgrade to plain env vars
+# in the revision spec. Source of truth = the live revision. Each var is
+# read off the live revision and re-asserted; sensitive ones are promoted
+# to Container Apps secretrefs. Vars unset on the live revision are
+# skipped with a warning; the operator must seed them once before the
+# next redeploy.
+echo ">>> Wiring relay env vars..."
+relay_read_env() {
+  az containerapp show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
+    --query "properties.template.containers[0].env[?name=='$1'].value | [0]" -o tsv 2>/dev/null || true
+}
+relay_read_secretref() {
+  az containerapp show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
+    --query "properties.template.containers[0].env[?name=='$1'].secretRef | [0]" -o tsv 2>/dev/null || true
+}
+relay_read_secret_value() {
+  az containerapp secret show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
+    --secret-name "$1" --query value -o tsv 2>/dev/null || true
+}
+RELAY_PLAIN_VARS=(RELAY_AGENT_KEY_FILE RELAY_COMPLIANCE_WALLET_FILE RELAY_DEFAULT_SURFACE_AGENT RELAY_MAINTAINER_POD_NAME RELAY_POD_HOST_ALLOWLIST RELAY_REQUIRE_DPOP RELAY_SURFACE_AGENT IPFS_PROVIDER)
+RELAY_SECRET_VARS=(RELAY_MCP_API_KEY CDP_API_KEY_NAME CDP_API_KEY_PRIVATE IPFS_API_KEY PINATA_API_KEY)
+RELAY_SET_ARGS=()
+for v in "${RELAY_PLAIN_VARS[@]}"; do
+  val=$(relay_read_env "$v")
+  if [ -n "$val" ]; then
+    RELAY_SET_ARGS+=("$v=$val")
+    echo "    preserve $v (plain)"
+  else
+    echo "    WARN: $v unset on live $RELAY_APP revision — skipping; seed it once before the next redeploy"
+  fi
+done
+for v in "${RELAY_SECRET_VARS[@]}"; do
+  sname=$(echo "$v" | tr 'A-Z_' 'a-z-')
+  existing_ref=$(relay_read_secretref "$v")
+  if [ -n "$existing_ref" ]; then
+    RELAY_SET_ARGS+=("$v=secretref:$existing_ref")
+    echo "    preserve $v (secretref:$existing_ref)"
+    continue
+  fi
+  val=$(relay_read_env "$v")
+  if [ -n "$val" ]; then
+    az containerapp secret set --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
+      --secrets "$sname=$val" --output none
+    RELAY_SET_ARGS+=("$v=secretref:$sname")
+    echo "    promote $v plain->secretref:$sname"
+    continue
+  fi
+  existing_secret=$(relay_read_secret_value "$sname")
+  if [ -n "$existing_secret" ]; then
+    RELAY_SET_ARGS+=("$v=secretref:$sname")
+    echo "    bind $v->secretref:$sname (secret already configured)"
+  else
+    echo "    WARN: $v unset on live $RELAY_APP revision — skipping; seed it once before the next redeploy"
+  fi
+done
+if [ "${#RELAY_SET_ARGS[@]}" -gt 0 ]; then
+  az containerapp update --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" \
+    --set-env-vars "${RELAY_SET_ARGS[@]}" --output none
+fi
+
 # Wire the four extra dashboard env vars the CI's "Wire dashboard env vars"
 # step sets — IDENTITY_URL (/api/identity proxy), RELAY_URL (OAuth code
 # exchange + /identity-token), PUBLIC_RELAY_URL (browser-side /authorize
@@ -469,6 +535,16 @@ az containerapp create \
   --output none
 
 BROWSER_FQDN=$(az containerapp show --name "$BROWSER_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
+
+# Second pass: set PUBLIC_BASE_URL once the browser's own FQDN exists.
+# server.ts's /.well-known/security.txt body is built from PUBLIC_BASE_URL
+# (RFC 9116); without it the response is malformed.
+az containerapp update \
+  --name "$BROWSER_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --set-env-vars "PUBLIC_BASE_URL=https://$BROWSER_FQDN" \
+  --output none
+
 echo "    Browser:       https://$BROWSER_FQDN"
 echo "    Observatory:   https://$BROWSER_FQDN/observatory"
 

@@ -443,6 +443,59 @@ jobs:
         run: |
           IDENTITY_FQDN=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
           RELAY_FQDN=$(az containerapp show --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          # Preserve identity tunables already wired on the live revision so
+          # a redeploy doesn't blow them away. BOOTSTRAP_INVITES gates seeded
+          # userId access (per CLAUDE.md) — sensitive, kept as a secretref.
+          APP=interego-identity
+          RG="${{ env.AZURE_RESOURCE_GROUP }}"
+          read_env() {
+            az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.template.containers[0].env[?name=='$1'].value | [0]" -o tsv 2>/dev/null || true
+          }
+          read_secretref() {
+            az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.template.containers[0].env[?name=='$1'].secretRef | [0]" -o tsv 2>/dev/null || true
+          }
+          read_secret_value() {
+            az containerapp secret show --name "$APP" --resource-group "$RG" \
+              --secret-name "$1" --query value -o tsv 2>/dev/null || true
+          }
+          PLAIN_VARS=(WEBAUTHN_RP_NAME SECURITY_CONTACT REPO_URL JANITOR_INTERVAL_MS TEST_AGENT_PATTERN TEST_USER_GRACE_MS TRY_USER_TTL_MS)
+          SECRET_VARS=(BOOTSTRAP_INVITES)
+          declare -a EXTRA_ARGS
+          for v in "${PLAIN_VARS[@]}"; do
+            val=$(read_env "$v")
+            if [ -n "$val" ]; then
+              EXTRA_ARGS+=("$v=$val")
+              echo "  preserve $v (plain)"
+            else
+              echo "[note] $v unset on live $APP revision — skipping; seed it once before the next redeploy"
+            fi
+          done
+          for v in "${SECRET_VARS[@]}"; do
+            sname=$(echo "$v" | tr 'A-Z_' 'a-z-')
+            existing_ref=$(read_secretref "$v")
+            if [ -n "$existing_ref" ]; then
+              EXTRA_ARGS+=("$v=secretref:$existing_ref")
+              echo "  preserve $v (secretref:$existing_ref)"
+              continue
+            fi
+            val=$(read_env "$v")
+            if [ -n "$val" ]; then
+              az containerapp secret set --name "$APP" --resource-group "$RG" \
+                --secrets "$sname=$val" --output none
+              EXTRA_ARGS+=("$v=secretref:$sname")
+              echo "  promote $v plain->secretref:$sname"
+              continue
+            fi
+            existing_secret=$(read_secret_value "$sname")
+            if [ -n "$existing_secret" ]; then
+              EXTRA_ARGS+=("$v=secretref:$sname")
+              echo "  bind $v->secretref:$sname (secret already configured)"
+            else
+              echo "[note] $v unset on live $APP revision — skipping; seed it once before the next redeploy"
+            fi
+          done
           # TOKEN_SIGNING_KEY: HMAC secret used to sign stateless bearer
           # tokens. Without it the identity server falls back to an
           # ephemeral random key — which means every deploy / pod restart
@@ -484,6 +537,7 @@ jobs:
                 "RELAY_URL=https://$RELAY_FQDN" \
                 "TOKEN_SIGNING_KEY=secretref:token-signing-key" \
                 "IDENTITY_TIMING=1" \
+                "${EXTRA_ARGS[@]}" \
               --output none
           else
             echo "TOKEN_SIGNING_KEY already configured (length: ${#EXISTING_TOKEN_KEY}) — preserving so sessions survive this deploy."
@@ -505,6 +559,7 @@ jobs:
                 "RELAY_URL=https://$RELAY_FQDN" \
                 "TOKEN_SIGNING_KEY=secretref:token-signing-key" \
                 "IDENTITY_TIMING=1" \
+                "${EXTRA_ARGS[@]}" \
               --output none
           fi
           # Same Multiple-vs-Single revision-mode handling as the dashboard
@@ -559,6 +614,73 @@ jobs:
               "IDENTITY_URL=https://$IDENTITY_FQDN" \
               "PUBLIC_BASE_URL=https://$RELAY_FQDN" \
             --output none
+          # Re-assert the remaining ~13 vars the relay reads (see grep
+          # process.env in deploy/mcp-relay/server.ts + oauth-client-store.ts).
+          # The block above only sets CSS_URL/RELAY_OAUTH_STORE_POD/
+          # IDENTITY_URL/PUBLIC_BASE_URL; on this CI redeploy the rest would
+          # silently drop off the new revision (same drift trap the foxxi-
+          # bridge step closes), and the five credential-bearing vars would
+          # silently downgrade to plain env vars in the revision spec. We
+          # read each off the live revision, promote the sensitive ones to
+          # Container Apps secretrefs, and re-assert the plain ones. Vars
+          # unset on the live revision are skipped — operator seeds them
+          # once via `az containerapp update` before the next CI redeploy.
+          APP=interego-relay
+          RG="${{ env.AZURE_RESOURCE_GROUP }}"
+          read_env() {
+            az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.template.containers[0].env[?name=='$1'].value | [0]" -o tsv 2>/dev/null || true
+          }
+          read_secretref() {
+            az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.template.containers[0].env[?name=='$1'].secretRef | [0]" -o tsv 2>/dev/null || true
+          }
+          read_secret_value() {
+            az containerapp secret show --name "$APP" --resource-group "$RG" \
+              --secret-name "$1" --query value -o tsv 2>/dev/null || true
+          }
+          PLAIN_VARS=(RELAY_AGENT_KEY_FILE RELAY_COMPLIANCE_WALLET_FILE RELAY_DEFAULT_SURFACE_AGENT RELAY_MAINTAINER_POD_NAME RELAY_POD_HOST_ALLOWLIST RELAY_REQUIRE_DPOP RELAY_SURFACE_AGENT IPFS_PROVIDER)
+          SECRET_VARS=(RELAY_MCP_API_KEY CDP_API_KEY_NAME CDP_API_KEY_PRIVATE IPFS_API_KEY PINATA_API_KEY)
+          declare -a SET_ARGS
+          for v in "${PLAIN_VARS[@]}"; do
+            val=$(read_env "$v")
+            if [ -n "$val" ]; then
+              SET_ARGS+=("$v=$val")
+              echo "  preserve $v (plain)"
+            else
+              echo "[note] $v unset on live $APP revision — skipping; seed it once before the next redeploy"
+            fi
+          done
+          for v in "${SECRET_VARS[@]}"; do
+            sname=$(echo "$v" | tr 'A-Z_' 'a-z-')
+            existing_ref=$(read_secretref "$v")
+            if [ -n "$existing_ref" ]; then
+              SET_ARGS+=("$v=secretref:$existing_ref")
+              echo "  preserve $v (secretref:$existing_ref)"
+              continue
+            fi
+            val=$(read_env "$v")
+            if [ -n "$val" ]; then
+              az containerapp secret set --name "$APP" --resource-group "$RG" \
+                --secrets "$sname=$val" --output none
+              SET_ARGS+=("$v=secretref:$sname")
+              echo "  promote $v plain->secretref:$sname"
+              continue
+            fi
+            existing_secret=$(read_secret_value "$sname")
+            if [ -n "$existing_secret" ]; then
+              SET_ARGS+=("$v=secretref:$sname")
+              echo "  bind $v->secretref:$sname (secret already configured)"
+            else
+              echo "[note] $v unset on live $APP revision — skipping; seed it once before the next redeploy"
+            fi
+          done
+          if [ "${#SET_ARGS[@]}" -gt 0 ]; then
+            az containerapp update --name "$APP" --resource-group "$RG" \
+              --set-env-vars "${SET_ARGS[@]}" --output none
+          else
+            echo "No additional relay env vars present on live revision - nothing to wire."
+          fi
           # Same Multiple-vs-Single revision-mode handling as the dashboard
           # / identity steps: in Multiple mode an env-var update creates a
           # new revision that ingress won't serve until traffic is
@@ -728,6 +850,51 @@ jobs:
               echo "  preserve $VAR=$val"
             fi
           done
+          az containerapp update --name "$APP" --resource-group "$RG" \
+            --set-env-vars "${SET_ARGS[@]}" --output none
+          # Same Multiple-vs-Single revision-mode handling as the other
+          # wiring steps: in Multiple mode an env-var update creates a
+          # new revision that ingress won't serve until traffic is
+          # explicitly shifted.
+          MODE=$(az containerapp show --name "$APP" --resource-group "$RG" --query "properties.configuration.activeRevisionsMode" -o tsv)
+          echo "activeRevisionsMode=$MODE"
+          if [ "$MODE" = "Multiple" ]; then
+            az containerapp ingress traffic set --name "$APP" --resource-group "$RG" --revision-weight latest=100 --output none
+            LATEST=$(az containerapp show --name "$APP" --resource-group "$RG" --query "properties.latestRevisionName" -o tsv)
+            az containerapp revision list --name "$APP" --resource-group "$RG" --query "[?name!='$LATEST' && properties.active].name" -o tsv | while read -r rev; do
+              [ -z "$rev" ] && continue
+              az containerapp revision deactivate --name "$APP" --resource-group "$RG" --revision "$rev" --output none || true
+            done
+            echo "Latest active revision: $LATEST"
+          fi
+
+      # PGSL browser env wiring. The browser's /.well-known/security.txt body
+      # (RFC 9116) is built from PUBLIC_BASE_URL, and KNOWN_PODS is the
+      # federation peer list read at boot. Neither is baked into the image
+      # and the create call in `deploy/azure-deploy.sh §8` only seeds
+      # CSS_URL/PORT/POD_NAME. On any CI redeploy that rotates the image,
+      # the new revision would boot with security.txt malformed and the
+      # federation peer list empty — same trap the foxxi-bridge / css-gate
+      # wire steps were added to close.
+      - name: Wire pgsl-browser env vars
+        if: steps.decide.outputs.build == 'true' && matrix.image == 'interego-pgsl-browser'
+        run: |
+          APP=interego-pgsl-browser
+          RG="${{ env.AZURE_RESOURCE_GROUP }}"
+          read_env() {
+            az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.template.containers[0].env[?name=='$1'].value | [0]" -o tsv 2>/dev/null || true
+          }
+          BROWSER_FQDN=$(az containerapp show --name "$APP" --resource-group "$RG" --query "properties.configuration.ingress.fqdn" -o tsv)
+          declare -a SET_ARGS
+          SET_ARGS+=("PUBLIC_BASE_URL=https://$BROWSER_FQDN")
+          KNOWN_PODS=$(read_env KNOWN_PODS)
+          if [ -n "$KNOWN_PODS" ]; then
+            SET_ARGS+=("KNOWN_PODS=$KNOWN_PODS")
+            echo "  preserve KNOWN_PODS"
+          else
+            echo "[note] KNOWN_PODS unset on live $APP revision — skipping; seed it once before the next redeploy"
+          fi
           az containerapp update --name "$APP" --resource-group "$RG" \
             --set-env-vars "${SET_ARGS[@]}" --output none
           # Same Multiple-vs-Single revision-mode handling as the other
