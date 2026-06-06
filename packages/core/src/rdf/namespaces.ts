@@ -105,7 +105,7 @@ export const CGClass = {
 export const CGProp = {
   describes:            `${CG}describes`,
   hasFacet:             `${CG}hasFacet`,
-  facetType:            `${CG}facetType`,
+  hasFacetType:         `${CG}hasFacetType`,
   compositionOp:        `${CG}compositionOp`,
   operand:              `${CG}operand`,
   restrictToType:       `${CG}restrictToType`,
