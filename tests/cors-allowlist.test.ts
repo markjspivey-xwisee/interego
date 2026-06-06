@@ -70,9 +70,8 @@ describe('CORS allowlist — module', () => {
     const list = buildCorsAllowlist({ ownOrigin: RELAY_OWN });
     for (const sibling of [
       RELAY_OWN, IDENTITY_OWN, CSS_GATE_OWN,
-      'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+      'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io',
       'https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-      'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io',
       'https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io',
     ]) {
       expect(isAllowedOrigin(sibling, list)).toBe(true);
@@ -207,10 +206,9 @@ const CANONICAL_SIBLINGS = [
   'interego-relay.livelysky-8b81abb0',
   'interego-identity.livelysky-8b81abb0',
   'interego-dashboard.livelysky-8b81abb0',
-  'interego-css.livelysky-8b81abb0',
+  'interego-css.internal.livelysky-8b81abb0',
   'interego-css-gate.livelysky-8b81abb0',
   'interego-pgsl-browser.livelysky-8b81abb0',
-  'interego-acme-id.livelysky-8b81abb0',
 ];
 
 const CANONICAL_BROWSER_HOSTS = [

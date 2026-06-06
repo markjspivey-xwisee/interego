@@ -29,19 +29,12 @@ const SIBLING_DEPLOYMENT_ORIGINS: readonly string[] = [
   'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  // CSS pod — BOTH the legacy public-host origin AND the post-migration
-  // canonical internal-FQDN are kept on the allowlist (mirrors the
-  // mcp-relay/cors-allowlist.ts entry; the cross-file invariant test in
-  // tests/cors-allowlist.test.ts requires these three copies stay in sync).
-  'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  // CSS pod — internal FQDN only. The bare public-host origin was
+  // removed when CSS became internal-only; browser writes now go
+  // through interego-css-gate's public FQDN (listed below).
   'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-scorm-player.livelysky-8b81abb0.eastus.azurecontainerapps.io',
 ];
 
 const BROWSER_MCP_CLIENT_ORIGINS: readonly string[] = [

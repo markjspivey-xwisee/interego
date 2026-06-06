@@ -34,9 +34,9 @@
  *
  * Allowlist composition:
  *   - The service's own PUBLIC_BASE_URL (origin only).
- *   - The sibling deployment FQDNs (relay, identity, dashboard, css-gate,
- *     pgsl-browser, acme-id, foxxi-bridge, foxxi-dashboard,
- *     foxxi-microsite, foxxi-scorm-player).
+ *   - The sibling deployment FQDNs (relay, identity, dashboard, css
+ *     internal, css-gate, pgsl-browser) — the apps actually managed
+ *     by deploy/azure-deploy.sh and the deploy-azure.yml CI matrix.
  *   - Browser-based MCP client hosts: https://claude.ai, https://chatgpt.com,
  *     https://chat.openai.com.
  *   - Localhost dev ports: 3000, 4000, 5000, 9999, plus 8080/8090/8094
@@ -72,21 +72,12 @@ const SIBLING_DEPLOYMENT_ORIGINS: readonly string[] = [
   'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  // CSS pod — BOTH the legacy public-host origin AND the post-migration
-  // canonical internal-FQDN are kept on the allowlist. The relay rewrites
-  // OLD-host URLs to the internal host at the HTTP boundary (see
-  // `server.ts:normalizeCssUrl`), so browser callers still presenting the
-  // OLD origin (cached descriptors / wallet snapshots / third-party
-  // indexes) get a clean CORS echo and dereferences succeed.
-  'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  // CSS pod — internal FQDN only. The bare public-host origin was
+  // removed when CSS became internal-only; browser writes now go
+  // through interego-css-gate's public FQDN (listed below).
   'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io',
-  'https://interego-foxxi-scorm-player.livelysky-8b81abb0.eastus.azurecontainerapps.io',
 ];
 
 const BROWSER_MCP_CLIENT_ORIGINS: readonly string[] = [
