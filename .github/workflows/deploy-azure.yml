@@ -503,12 +503,16 @@ jobs:
           # FQDN is now of the form `<app>.internal.<envDomain>`; that
           # value flows through unchanged.
           CSS_FQDN=$(az containerapp show --name interego-css --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          IDENTITY_FQDN=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          RELAY_FQDN=$(az containerapp show --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
           az containerapp update \
             --name interego-relay \
             --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
             --set-env-vars \
               "CSS_URL=https://$CSS_FQDN/" \
               "RELAY_OAUTH_STORE_POD=https://$CSS_FQDN/svc-relay-dcr/" \
+              "IDENTITY_URL=https://$IDENTITY_FQDN" \
+              "PUBLIC_BASE_URL=https://$RELAY_FQDN" \
             --output none
           # Same Multiple-vs-Single revision-mode handling as the dashboard
           # / identity steps: in Multiple mode an env-var update creates a

@@ -410,6 +410,27 @@ az containerapp create \
 RELAY_FQDN=$(az containerapp show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
 echo "    MCP Relay: https://$RELAY_FQDN"
 
+# Wire the relay env vars the CI's "Wire relay env vars" step sets that
+# couldn't be supplied at create time — PUBLIC_BASE_URL (OAuth issuer +
+# hydra:target on every affordance + security.txt body + authorize
+# redirect; defaults to http://localhost:8080 when unset, breaking
+# OAuth) and IDENTITY_URL (/tokens/verify, /me, /agents/me, identity-
+# token mint; defaults to http://localhost:8090 when unset). Identity
+# isn't created by this script; tolerate its absence the same way the
+# dashboard step does.
+RELAY_IDENTITY_FQDN=$(az containerapp show --name interego-identity --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
+RELAY_ENV_VARS=("PUBLIC_BASE_URL=https://$RELAY_FQDN")
+if [ -n "$RELAY_IDENTITY_FQDN" ]; then
+  RELAY_ENV_VARS+=("IDENTITY_URL=https://$RELAY_IDENTITY_FQDN")
+else
+  echo "    WARNING: interego-identity not deployed yet — relay IDENTITY_URL left unset; re-run after identity is up."
+fi
+az containerapp update \
+  --name "$RELAY_APP" \
+  --resource-group "$RESOURCE_GROUP" \
+  --set-env-vars "${RELAY_ENV_VARS[@]}" \
+  --output none
+
 # Wire the four extra dashboard env vars the CI's "Wire dashboard env vars"
 # step sets — IDENTITY_URL (/api/identity proxy), RELAY_URL (OAuth code
 # exchange + /identity-token), PUBLIC_RELAY_URL (browser-side /authorize
