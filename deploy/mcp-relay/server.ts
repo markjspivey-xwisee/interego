@@ -6584,9 +6584,17 @@ app.get('/tools', (req, res) => {
   });
 });
 
-// Call a tool directly via REST (auth enforced on write operations)
-app.post('/tool/:name', async (req, res) => {
-  const toolName = req.params.name;
+// Call a tool directly via REST (auth enforced on write operations).
+// Rate-limited to bound anonymous DoS surface on the PUBLIC_TOOLS path
+// (paired with the AUTH_REQUIRED_TOOLS gate below for stateful tools).
+const toolInvokeLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
+  const toolName = req.params.name as string;
   const tool = TOOLS[toolName];
   if (!tool) {
     res.status(404).type('application/ld+json').json({
