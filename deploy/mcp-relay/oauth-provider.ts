@@ -1005,11 +1005,24 @@ async function didSubmit() {
     this.pendingAuthorizations.delete(pendingId);
 
     const code = randomBytes(32).toString('hex');
+    // FIX D — default to ['mcp'] (full access) ONLY when the client
+    // requested no scope at all. An EMPTY scopes array from the SDK
+    // means the client passed no `scope` query parameter; an array
+    // with members (e.g. ['mcp:read']) is an explicit narrowing
+    // request that we MUST honor verbatim. The legacy `||` short-
+    // circuit treated `[]` as truthy and would have silently kept
+    // an empty array — not a bug in practice because every legacy
+    // client either passed `scope=mcp` or no scope at all, but it
+    // becomes load-bearing now that scope-narrowing is supported.
+    const requestedScopes = pending.params.scopes;
+    const grantedScopes = requestedScopes && requestedScopes.length > 0
+      ? requestedScopes
+      : ['mcp'];
     this.authCodes.set(code, {
       clientId: pending.client.client_id,
       codeChallenge: pending.params.codeChallenge,
       redirectUri: pending.params.redirectUri,
-      scopes: pending.params.scopes || ['mcp'],
+      scopes: grantedScopes,
       identity,
       expiresAt: Date.now() + 10 * 60 * 1000,
     });

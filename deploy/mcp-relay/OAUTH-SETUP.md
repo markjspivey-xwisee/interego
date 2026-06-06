@@ -143,20 +143,125 @@ usable from the mobile app once you're signed in.
 
 ## OAuth scopes
 
-The relay's authorization page asks for three scopes — accept all
-for full functionality:
+The relay advertises three OAuth scopes in its
+`/.well-known/oauth-authorization-server` metadata
+(`scopes_supported`). A client picks one by passing it as the
+standard `scope` query parameter on `/authorize`:
 
-| Scope | What the client can do |
+| Scope | Semantics |
 |---|---|
-| `cg:publish` | Write descriptors to your pod |
-| `cg:discover` | Read descriptors from your pod + subscribed pods |
-| `cg:identity` | Read your DID + WebID (for sharing) |
+| `mcp` | Full access. Read AND write. Default when no `scope` parameter is supplied. |
+| `mcp:read` | Read-only. Discover / get-descriptor / list-pods etc. work; every write tool (publish_context, register_agent, pgsl_ingest, …) returns 403 `insufficient_scope`. |
+| `mcp:write` | Explicit write-side. Currently a synonym for `mcp`. Advertised so the read/write vocabulary is symmetric. |
 
 The relay issues:
 
 - **Access token** — bearer, 1h TTL, carries `userId` / `agentId` /
-  `podUrl` in the token's `extra` field
+  `podUrl` in the token's `extra` field AND the granted scope set in
+  its `scope` claim
 - **Refresh token** — 14d TTL, rotating on every use (RFC 6749 §10.4)
+
+### Two scope layers — not the same thing
+
+The OAuth scope above (`mcp` / `mcp:read` / `mcp:write`) is enforced
+at the OAUTH LAYER — it gates on the bearer's `scope` claim. It is
+independent of the SUBSTRATE-LAYER per-agent scope
+(`cg:scope: ReadWrite | ReadOnly | PublishOnly | DiscoverOnly`)
+declared in the pod's agent registry, which is gated by the signed
+delegation chain.
+
+Either gate can independently produce a 403:
+
+- A bearer with `scope=mcp:read` calling `publish_context` → 403
+  from the OAuth gate (this is the path FIX D exposes).
+- A bearer with `scope=mcp` whose underlying delegated agent has
+  `cg:scope: ReadOnly` calling `publish_context` → 403 from the
+  substrate gate (this is FIX 4, pre-existing).
+
+Verifiers should test both, because they enforce different
+invariants.
+
+### Verifying the read-only 403 (FIX D)
+
+External verifiers can drive the OAuth-layer 403 entirely through
+the public OAuth flow — no admin / introspection secret required:
+
+1. **Register a client** (standard RFC 7591 DCR):
+
+   ```bash
+   curl -s -X POST https://your-relay-host/register \
+     -H 'content-type: application/json' \
+     -d '{"client_name":"scope-verifier","redirect_uris":["http://localhost:8765/cb"]}'
+   ```
+
+   Note the returned `client_id`.
+
+2. **Start the authorize flow with `scope=mcp:read`** in a browser:
+
+   ```
+   https://your-relay-host/authorize
+     ?response_type=code
+     &client_id=<CLIENT_ID>
+     &redirect_uri=http://localhost:8765/cb
+     &code_challenge=<PKCE_S256>
+     &code_challenge_method=S256
+     &scope=mcp:read
+     &state=verify
+   ```
+
+   The consent page shows `scopes: mcp:read`. Sign in.
+
+3. **Exchange the code for a token** (PKCE):
+
+   ```bash
+   curl -s -X POST https://your-relay-host/token \
+     -d grant_type=authorization_code \
+     -d code=<CODE> \
+     -d client_id=<CLIENT_ID> \
+     -d code_verifier=<PKCE_VERIFIER> \
+     -d redirect_uri=http://localhost:8765/cb
+   ```
+
+   The response is `{ "access_token":"…", "scope":"mcp:read", … }`
+   — confirm the `scope` claim is exactly `mcp:read`.
+
+4. **Attempt a write tool with that bearer**:
+
+   ```bash
+   curl -s -X POST https://your-relay-host/mcp \
+     -H "Authorization: Bearer $ACCESS_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+       "name":"publish_context",
+       "arguments":{"descriptor_id":"urn:cg:verify:1","graph_content":"<#x> <#p> <#o> ."}
+     }}'
+   ```
+
+   The response wraps a 403 envelope:
+
+   ```json
+   {
+     "error":"insufficient_scope",
+     "code":403,
+     "requiredScope":["mcp","mcp:write"],
+     "grantedScope":["mcp:read"],
+     "reason":"tool \"publish_context\" requires OAuth scope \"mcp\" or \"mcp:write\"; bearer was issued with [\"mcp:read\"]"
+   }
+   ```
+
+5. **Confirm read tools still work** with the same bearer:
+
+   ```bash
+   curl -s -X POST https://your-relay-host/mcp \
+     -H "Authorization: Bearer $ACCESS_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+       "name":"discover_context","arguments":{}
+     }}'
+   ```
+
+   Returns descriptors normally — proving the gate is scope-typed,
+   not a blanket block.
 
 ## Per-surface agent minting
 

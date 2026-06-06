@@ -1074,6 +1074,82 @@ const agentScopeCache = new Map<string, { scope: string; valid: boolean; expires
 
 const WRITE_ELIGIBLE_SCOPES = new Set(['ReadWrite', 'PublishOnly']);
 
+// ── OAuth-level read/write scope split ──────────────────────────
+//
+// The substrate scope above (cg:scope: ReadWrite / ReadOnly / PublishOnly
+// / DiscoverOnly) lives in the pod's agent registry and is keyed on the
+// AGENT delegation chain — every publish_context invocation walks it
+// before the CSS write. That gate is mature.
+//
+// What was missing — and what FIX D adds — is an OAuth-LAYER read/write
+// split that an external verifier can drive entirely through the
+// standard OAuth authorize/token flow, without needing to mint an
+// agent in the registry first. The relay now advertises three scopes
+// in its OAuth metadata:
+//
+//   - `mcp`       — full access (read + write). Default.
+//   - `mcp:read`  — read-only. Refused by every write-side tool.
+//   - `mcp:write` — explicit write-side. Currently a synonym for `mcp`.
+//
+// A client requests narrowed scope via the standard query parameter
+// (`GET /authorize?...&scope=mcp:read`); the MCP SDK's authorize handler
+// passes it through to oauthProvider.authorize() as params.scopes,
+// which propagates into the issued authorization code and (after the
+// /token exchange) into the access token's `scopes` claim.
+//
+// The /mcp middleware admits the token if ANY of {mcp, mcp:read,
+// mcp:write} is present (so a read-only bearer can still hit /mcp);
+// per-tool enforcement below checks WRITE_SIDE_OAUTH_SCOPES and
+// returns 403 insufficient_scope for write tools when the bearer
+// carries `mcp:read` only.
+//
+// This is intentionally INDEPENDENT of the substrate-level scope gate
+// — the two gates compose. A bearer might pass the OAuth scope check
+// (carries `mcp` or `mcp:write`) and still be refused by the substrate
+// gate because the delegated agent's cg:scope is ReadOnly. Either gate
+// can independently produce a 403; verifiers need both to be
+// independently testable, hence FIX D.
+const OAUTH_SCOPE_FULL = 'mcp';
+const OAUTH_SCOPE_READ = 'mcp:read';
+const OAUTH_SCOPE_WRITE = 'mcp:write';
+const ALL_MCP_OAUTH_SCOPES = new Set<string>([OAUTH_SCOPE_FULL, OAUTH_SCOPE_READ, OAUTH_SCOPE_WRITE]);
+// Tools that mutate pod state. A bearer with only `mcp:read` is refused
+// here BEFORE the substrate scope gate runs. (Read-side tools —
+// discover_context, get_descriptor, list_known_pods, etc. — are not in
+// this set, so a read-only bearer reaches them normally.)
+const WRITE_SIDE_OAUTH_SCOPES = new Set<string>([OAUTH_SCOPE_FULL, OAUTH_SCOPE_WRITE]);
+const WRITE_SIDE_TOOLS = new Set<string>([
+  'publish_context',
+  'register_agent',
+  'revoke_agent',
+  'compose_contexts',
+  'add_pod',
+  'remove_pod',
+  'subscribe_to_pod',
+  'unsubscribe_from_pod',
+  'subscribe_all',
+  'pgsl_ingest',
+  'publish_context_descriptor',
+  'publish_directory',
+  'link_wallet',
+  'setup_identity',
+  'invoke_affordance',
+]);
+
+/** Any scope acceptable as a /mcp resource bearer. */
+function hasAnyMcpScope(scopes: readonly string[] | undefined): boolean {
+  if (!scopes) return false;
+  for (const s of scopes) if (ALL_MCP_OAUTH_SCOPES.has(s)) return true;
+  return false;
+}
+
+/** Returns true iff the bearer is permitted to invoke write-side tools. */
+function hasWriteOauthScope(scopes: readonly string[] | undefined): boolean {
+  if (!scopes) return false;
+  for (const s of scopes) if (WRITE_SIDE_OAUTH_SCOPES.has(s)) return true;
+  return false;
+}
+
 async function runScopeGate(
   agentId: string,
   podUrl: string,
@@ -5043,7 +5119,7 @@ just demo a publish + discover round-trip on their own pod.`,
 // One Server instance per /mcp request (stateless mode). Wires ListTools
 // and CallTool to the same handler registry used by the REST routes.
 
-function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } | null): Server {
+function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[] } | null): Server {
   const server = new Server(
     { name: '@interego/mcp-relay', version: '0.3.0' },
     {
@@ -5130,6 +5206,45 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
     if (!tool) {
       return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
     }
+
+    // FIX D — OAuth-scope write gate. An OAuth bearer issued with only
+    // `mcp:read` scope is refused by every write-side tool here, BEFORE
+    // any pod state is touched and BEFORE the substrate-level scope
+    // gate (which would also refuse but for a different reason — the
+    // delegated agent's cg:scope rather than the OAuth bearer's scope).
+    //
+    // External verifiers can drive this gate end-to-end via the
+    // standard OAuth flow:
+    //   1. GET /authorize?...&scope=mcp:read → consent → redirect with code
+    //   2. POST /token (PKCE exchange) → access_token w/ scope="mcp:read"
+    //   3. POST /mcp { tools/call: publish_context, ... } with that bearer
+    //   4. observe 403 insufficient_scope from this branch
+    //
+    // Legacy clients (no oauthScopes — e.g. RELAY_MCP_API_KEY path or
+    // the open-mode default) are NOT subject to this gate; they fall
+    // through and are still gated by the substrate scope check inside
+    // each write handler. Only an OAuth-issued bearer carries an OAuth
+    // scope claim to gate on.
+    if (
+      authContext?.oauthScopes
+      && WRITE_SIDE_TOOLS.has(name)
+      && !hasWriteOauthScope(authContext.oauthScopes)
+    ) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            error: 'insufficient_scope',
+            code: 403,
+            requiredScope: ['mcp', 'mcp:write'],
+            grantedScope: Array.from(authContext.oauthScopes),
+            reason: `tool "${name}" requires OAuth scope "mcp" or "mcp:write"; bearer was issued with ${JSON.stringify(Array.from(authContext.oauthScopes))}`,
+          }),
+        }],
+        isError: true,
+      };
+    }
+
     const args: ToolArgs = { ...(rawArgs ?? {}) };
     // Inject identity from auth context so the authenticated user's default
     // pod / agent / WebID fill in when the caller doesn't specify them.
@@ -5384,7 +5499,31 @@ app.get('/.well-known/oauth-authorization-server', (req, res) => {
     grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
-    scopes_supported: ['mcp'],
+    // OAuth 2.1 scopes advertised by this resource:
+    //   - `mcp`       — full access (read + write). Default for clients
+    //                   that request no scope or just `mcp`.
+    //   - `mcp:read`  — read-only access. A bearer with ONLY this scope
+    //                   may invoke discover_context / get_descriptor /
+    //                   any other read-side tool but is refused by every
+    //                   write-side tool (publish_context, register_agent,
+    //                   pgsl_ingest, ...) with 403 insufficient_scope.
+    //                   This is the OAuth-layer read/write split — it is
+    //                   independent of the substrate-level per-agent
+    //                   scope (ReadOnly / ReadWrite / PublishOnly /
+    //                   DiscoverOnly) declared in the pod's agent
+    //                   registry, which gates the same write tools at a
+    //                   different layer (cryptographic delegation chain).
+    //   - `mcp:write` — explicit write-side access. Currently a synonym
+    //                   for `mcp` (every write-eligible bearer carries
+    //                   both). Advertised so external verifiers can
+    //                   request it explicitly and so the scope vocabulary
+    //                   is symmetric.
+    // A bearer with `mcp:read` only does NOT include `mcp` — that is the
+    // whole point of the narrowed scope. External verifiers can mint
+    // such a bearer via the standard OAuth authorize flow:
+    //   GET /authorize?...&scope=mcp:read
+    // and then observe the 403 insufficient_scope from any write tool.
+    scopes_supported: ['mcp', 'mcp:read', 'mcp:write'],
     // RFC 9449 §5.1 — advertise DPoP support to clients.
     dpop_signing_alg_values_supported: DPOP_SIGNING_ALGS,
     // Hydra affordances — every OAuth endpoint as a hydra:Operation so
@@ -5428,7 +5567,9 @@ app.get('/.well-known/oauth-protected-resource', (req, res) => {
     conformsToShape: 'urn:cg:shape:OAuthProtectedResourceMetadata',
     resource: issuerHref + '/',
     authorization_servers: [DEFAULT_ISSUER.href],
-    scopes_supported: ['mcp'],
+    // Mirror the authorization-server metadata's scope vocabulary. See
+    // the long comment above for the read/write split rationale.
+    scopes_supported: ['mcp', 'mcp:read', 'mcp:write'],
     resource_name: 'Interego MCP',
     // RFC 9449 §5.1 — advertise DPoP support at the resource as well so
     // clients that only fetch the protected-resource metadata document
@@ -5747,7 +5888,14 @@ app.post('/token', tokenLimiter, express.urlencoded({ extended: false }), tokenD
 app.use(mcpAuthRouter({
   provider: oauthProvider,
   issuerUrl: DEFAULT_ISSUER,
-  scopesSupported: ['mcp'],
+  // Same vocabulary as the well-known metadata. The SDK passes the
+  // requested `scope=` query parameter on /authorize through to
+  // oauthProvider.authorize() as params.scopes; from there it propagates
+  // into the issued authorization code and (after token exchange) into
+  // the access token's `scopes` claim, which is what the /mcp middleware
+  // and the per-tool write-side gate (see WRITE_SIDE_OAUTH_SCOPES below
+  // and handlePublishContext) inspect to decide read vs. write.
+  scopesSupported: ['mcp', 'mcp:read', 'mcp:write'],
   resourceName: 'Interego MCP',
 }));
 
@@ -8003,9 +8151,9 @@ app.post('/messages', messagesLimiter, async (req, res) => {
 //   1. req.auth populated by requireBearerAuth (OAuth token verified by provider)
 //   2. Authorization: Bearer <RELAY_MCP_API_KEY> (legacy API key, for curl/scripts)
 //   3. Unauthenticated (if RELAY_MCP_API_KEY unset AND no OAuth token) — open mode
-function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId: string; userId: string; podUrl?: string; identityToken?: string } | null {
+function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId: string; userId: string; podUrl?: string; identityToken?: string; oauthScopes?: readonly string[] } | null {
   // OAuth-verified request: bearerAuth middleware already set req.auth
-  const reqAuth = (req as express.Request & { auth?: { extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } } }).auth;
+  const reqAuth = (req as express.Request & { auth?: { scopes?: string[]; extra?: { agentId?: string; ownerWebId?: string; userId?: string; podUrl?: string; identityToken?: string } } }).auth;
   if (reqAuth?.extra?.agentId && reqAuth.extra.ownerWebId && reqAuth.extra.userId) {
     return {
       agentId: reqAuth.extra.agentId,
@@ -8022,6 +8170,13 @@ function resolveAuthContext(req: express.Request): { agentId: string; ownerWebId
       // name + primary-agent DID from IDENTITY_URL/me without another
       // auth hop.
       ...(reqAuth.extra.identityToken ? { identityToken: reqAuth.extra.identityToken } : {}),
+      // FIX D — thread the OAuth scope claim through so the per-tool
+      // write gate in buildMcpServer's CallToolRequest handler can
+      // refuse write tools when the bearer was issued with `mcp:read`
+      // only. Only OAuth-issued bearers carry scopes; the legacy
+      // API-key path below produces no oauthScopes field, so write
+      // tools remain accessible via that path (unchanged behavior).
+      ...(Array.isArray(reqAuth.scopes) ? { oauthScopes: reqAuth.scopes } : {}),
     };
   }
   // Legacy API-key path: Authorization: Bearer <RELAY_MCP_API_KEY>
@@ -8054,9 +8209,19 @@ const resourceMetadataUrl = PUBLIC_BASE_URL
   ? `${PUBLIC_BASE_URL.replace(/\/$/, '')}/.well-known/oauth-protected-resource`
   : undefined;
 
+// FIX D — the SDK's `requireBearerAuth` middleware enforces an
+// INTERSECTION semantics on `requiredScopes` (every listed scope must
+// be present on the bearer). Hard-coding `['mcp']` here would refuse a
+// bearer issued with `mcp:read` only, defeating the read-scope path.
+// We pass no required scopes to the SDK middleware and instead enforce
+// the "any of {mcp, mcp:read, mcp:write}" rule ourselves in the
+// `oauthDpopOrBearer` Case 3 branch below (and in Case 1 / DPoP
+// already). The SDK middleware still handles the 401 + discovery
+// WWW-Authenticate header on missing/invalid tokens — that behavior
+// is unchanged.
 const oauthBearer = requireBearerAuth({
   verifier: oauthProvider,
-  requiredScopes: ['mcp'],
+  requiredScopes: [],
   ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}),
 });
 
@@ -8152,9 +8317,14 @@ const oauthDpopOrBearer: express.RequestHandler = async (req, res, next) => {
         return;
       }
       // Scope + expiry checks mirror requireBearerAuth.
-      if (!authInfo.scopes.includes('mcp')) {
-        res.set('WWW-Authenticate', dpopWwwAuth('insufficient_scope', 'Required scope: mcp'));
-        res.status(403).json({ error: 'insufficient_scope', error_description: 'Required scope: mcp' });
+      // Resource access (any /mcp call): any of `mcp`, `mcp:read`, or
+      // `mcp:write` is sufficient. The read/write SPLIT is enforced
+      // per-tool downstream — see WRITE_SIDE_OAUTH_SCOPES + the
+      // per-tool gate in buildMcpServer, which refuses write tools when
+      // the bearer carries `mcp:read` only.
+      if (!hasAnyMcpScope(authInfo.scopes)) {
+        res.set('WWW-Authenticate', dpopWwwAuth('insufficient_scope', 'Required scope: mcp (or mcp:read / mcp:write)'));
+        res.status(403).json({ error: 'insufficient_scope', error_description: 'Required scope: mcp (or mcp:read / mcp:write)' });
         return;
       }
       if (typeof authInfo.expiresAt !== 'number' || authInfo.expiresAt < Date.now() / 1000) {
@@ -8201,8 +8371,19 @@ const oauthDpopOrBearer: express.RequestHandler = async (req, res, next) => {
       return;
     }
     // Case 3: legacy unbound Bearer — accept. Delegate to oauthBearer
-    // for the scope + expiry checks (it'll re-verify the token, harmless).
-    oauthBearer(req, res, next);
+    // for the expiry checks + req.auth population (it re-verifies the
+    // token, harmless). After it succeeds we enforce the "any mcp*
+    // scope" rule ourselves — see comment on `oauthBearer` above for
+    // why we don't push the scope check into the SDK middleware.
+    oauthBearer(req, res, () => {
+      const rAuth = (req as express.Request & { auth?: { scopes?: string[] } }).auth;
+      if (!hasAnyMcpScope(rAuth?.scopes)) {
+        res.set('WWW-Authenticate', dpopWwwAuth('insufficient_scope', 'Required scope: mcp (or mcp:read / mcp:write)'));
+        res.status(403).json({ error: 'insufficient_scope', error_description: 'Required scope: mcp (or mcp:read / mcp:write)' });
+        return;
+      }
+      next();
+    });
     return;
   }
 
