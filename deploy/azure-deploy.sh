@@ -626,6 +626,57 @@ IDENTITY_APP="${IDENTITY_APP:-interego-identity}"
 IDENTITY_FQDN=$(az containerapp show --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null || true)
 if [ -n "$IDENTITY_FQDN" ]; then
   echo ">>> Wiring identity env vars..."
+  # Preserve identity tunables already wired on the live revision so a
+  # redeploy doesn't blow them away. BOOTSTRAP_INVITES gates seeded
+  # userId access (per CLAUDE.md) — sensitive, kept as a secretref.
+  _id_read_env() {
+    az containerapp show --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" \
+      --query "properties.template.containers[0].env[?name=='$1'].value | [0]" -o tsv 2>/dev/null || true
+  }
+  _id_read_secretref() {
+    az containerapp show --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" \
+      --query "properties.template.containers[0].env[?name=='$1'].secretRef | [0]" -o tsv 2>/dev/null || true
+  }
+  _id_read_secret_value() {
+    az containerapp secret show --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" \
+      --secret-name "$1" --query value -o tsv 2>/dev/null || true
+  }
+  ID_PLAIN_VARS=(WEBAUTHN_RP_NAME SECURITY_CONTACT REPO_URL JANITOR_INTERVAL_MS TEST_AGENT_PATTERN TEST_USER_GRACE_MS TRY_USER_TTL_MS)
+  ID_SECRET_VARS=(BOOTSTRAP_INVITES)
+  ID_EXTRA_ARGS=()
+  for v in "${ID_PLAIN_VARS[@]}"; do
+    val=$(_id_read_env "$v")
+    if [ -n "$val" ]; then
+      ID_EXTRA_ARGS+=("$v=$val")
+      echo "    preserve $v (plain)"
+    else
+      echo "    [note] $v unset on live $IDENTITY_APP revision — skipping; seed it once before the next redeploy"
+    fi
+  done
+  for v in "${ID_SECRET_VARS[@]}"; do
+    sname=$(echo "$v" | tr 'A-Z_' 'a-z-')
+    existing_ref=$(_id_read_secretref "$v")
+    if [ -n "$existing_ref" ]; then
+      ID_EXTRA_ARGS+=("$v=secretref:$existing_ref")
+      echo "    preserve $v (secretref:$existing_ref)"
+      continue
+    fi
+    val=$(_id_read_env "$v")
+    if [ -n "$val" ]; then
+      az containerapp secret set --name "$IDENTITY_APP" --resource-group "$RESOURCE_GROUP" \
+        --secrets "$sname=$val" --output none
+      ID_EXTRA_ARGS+=("$v=secretref:$sname")
+      echo "    promote $v plain->secretref:$sname"
+      continue
+    fi
+    existing_secret=$(_id_read_secret_value "$sname")
+    if [ -n "$existing_secret" ]; then
+      ID_EXTRA_ARGS+=("$v=secretref:$sname")
+      echo "    bind $v->secretref:$sname (secret already configured)"
+    else
+      echo "    [note] $v unset on live $IDENTITY_APP revision — skipping; seed it once before the next redeploy"
+    fi
+  done
   # Idempotent on TOKEN_SIGNING_KEY: only generate a new HMAC key if
   # one isn't already configured, so existing user sessions survive
   # this deploy. Same check the CI workflow uses. Check the Container
@@ -655,6 +706,7 @@ if [ -n "$IDENTITY_FQDN" ]; then
         "RELAY_URL=https://$RELAY_FQDN" \
         "TOKEN_SIGNING_KEY=secretref:token-signing-key" \
         "IDENTITY_TIMING=1" \
+        "${ID_EXTRA_ARGS[@]}" \
       --output none
   else
     echo "    TOKEN_SIGNING_KEY already configured — preserving so sessions survive this deploy."
@@ -676,6 +728,7 @@ if [ -n "$IDENTITY_FQDN" ]; then
         "RELAY_URL=https://$RELAY_FQDN" \
         "TOKEN_SIGNING_KEY=secretref:token-signing-key" \
         "IDENTITY_TIMING=1" \
+        "${ID_EXTRA_ARGS[@]}" \
       --output none
   fi
 else
