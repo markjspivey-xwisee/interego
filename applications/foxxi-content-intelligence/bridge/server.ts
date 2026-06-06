@@ -50,7 +50,7 @@ import { randomUUID } from 'node:crypto';
       }
       return originalFetch(input, init);
     }) as typeof globalThis.fetch;
-    console.log(`[foxxi-bridge] pod-write auth installed (writes to ${tenantOrigin} carry Authorization: Bearer ${writeSecret.slice(0, 6)}…)`);
+    console.log(`[foxxi-bridge] pod-write auth installed (writes to ${tenantOrigin} carry Authorization header)`);
   }
 }
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
