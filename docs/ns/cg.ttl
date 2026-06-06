@@ -1443,6 +1443,13 @@ cg:iri a owl:DatatypeProperty ;
 cg:status a owl:DatatypeProperty ;
     rdfs:label "status" ;
     rdfs:comment "Substrate-level status code on a kernel-verb response (ok / encrypted-no-key / not-found / error)." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:httpStatus a owl:DatatypeProperty ;
+    rdfs:label "http status" ;
+    rdfs:comment "Numeric HTTP status code echoed by kernel.act and dereference result envelopes when the underlying transport is HTTP." ;
+    rdfs:range xsd:integer ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
 
 cg:apex a owl:ObjectProperty ;

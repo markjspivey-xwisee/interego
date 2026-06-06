@@ -274,7 +274,7 @@ cg:ComposeResultShape a sh:NodeShape ;
 cg:ActResultShape a sh:NodeShape ;
     rdfs:comment "Result of kernel.act — wraps an HTTP response and echoes the followed affordance." ;
     sh:property [
-        sh:path cg:status ;
+        sh:path cg:httpStatus ;
         sh:minCount 1 ;
         sh:datatype xsd:integer ;
     ] .
