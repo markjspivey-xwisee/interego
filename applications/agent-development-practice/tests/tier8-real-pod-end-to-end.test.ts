@@ -35,7 +35,7 @@ import type {
   IRI,
 } from '@interego/core';
 
-const AZURE_CSS_BASE = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const AZURE_CSS_BASE = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const TEST_POD_BASE = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;
 
 function uniquePodUrl(): string {

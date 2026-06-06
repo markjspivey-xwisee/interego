@@ -18,7 +18,7 @@
 //
 // CG_DEMO_POD_BASE swaps the host root if you keep the same usernames.
 const DEFAULT_HOST = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 export const POD = process.env.CG_DEMO_POD ?? `${DEFAULT_HOST}/markj/`;
 export const POD_B = process.env.CG_DEMO_POD_B ?? `${DEFAULT_HOST}/u-pk-0a7f04106a54/`;
 export const MANIFEST_URL = `${POD}.well-known/context-graphs`;

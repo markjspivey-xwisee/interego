@@ -23,7 +23,7 @@ import {
   toTurtle,
 } from '../dist/index.js';
 
-const POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
 const SHARED_GRAPH = 'urn:graph:shared:av-safer-than-humans:v1';
 
 // ── Reconstruct the three perspective descriptors from their pod IDs.

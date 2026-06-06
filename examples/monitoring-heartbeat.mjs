@@ -15,7 +15,7 @@
 
 import { spawnSync } from 'node:child_process';
 
-const POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 const AUDIT_SHAPE = `${POD}schemas/audit-result-v1.ttl`;
 const ERC_SHAPE = `${POD}schemas/erc8004-attestation-v1.ttl`;

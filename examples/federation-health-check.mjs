@@ -18,8 +18,8 @@
 
 import { ethers } from 'ethers';
 
-const POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
-const POD_B = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/u-pk-0a7f04106a54/';
+const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD_B = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/u-pk-0a7f04106a54/';
 const IDENTITY = 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 const AUDIT_SHAPE = `${POD}schemas/audit-result-v1.ttl`;

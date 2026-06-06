@@ -16,7 +16,7 @@
 //      in the output is traceable back to trust in the capability
 //      via the same walks we've been using all session.
 
-const POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 const CAP_SHAPE = `${POD}schemas/capability-manifest-v1.ttl`;
 const BRIDGE_LENS = 'urn:agent:affordance-bridge:v1';

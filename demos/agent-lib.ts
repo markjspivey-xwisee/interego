@@ -26,7 +26,7 @@ const REPO_ROOT = join(import.meta.dirname ?? '', '..');
 // ── Pod target ────────────────────────────────────────────────────────
 
 export const AZURE_CSS_BASE =
-  'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const TEST_POD_BASE = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;
 
 export function uniquePodUrl(prefix: string): string {

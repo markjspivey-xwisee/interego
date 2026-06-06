@@ -74,7 +74,7 @@ import {
 
 // ── configuration ────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const SCENARIO_DATE = process.env.TTA_DATE ?? new Date().toISOString().slice(0, 10);
 const POD = `${CSS}/demos/emergent-time-travel-audit-${SCENARIO_DATE}/`;
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;

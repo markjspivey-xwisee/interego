@@ -122,7 +122,7 @@ const postGraphIri = 'urn:graph:blog:mark/vocabulary-emergence-notes-2026-04-24'
 const postDescriptorIri = 'urn:cg:blog:mark/vocabulary-emergence-notes-2026-04-24';
 const author = 'urn:agent:mark';
 const ownerWebId = 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/markj/profile#me';
-const podUrl = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const podUrl = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
 const postedAt = new Date().toISOString();
 
 const descriptor = ContextDescriptor.create(postDescriptorIri)

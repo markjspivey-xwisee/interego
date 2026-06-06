@@ -98,7 +98,7 @@ import {
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const SCENARIO_DATE = process.env.FORGE_AND_FLOOD_DATE
   ?? new Date().toISOString().slice(0, 10);
 const POD = `${CSS}/demos/emergent-forge-and-flood-${SCENARIO_DATE}/`;

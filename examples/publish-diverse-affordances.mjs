@@ -3,7 +3,7 @@
 // discover. In production each would live on the descriptor most
 // relevant to the action; here we bundle them for demo clarity.
 
-const POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
 const MANIFEST_URL = `${POD}.well-known/context-graphs`;
 
 async function fetchText(url) {

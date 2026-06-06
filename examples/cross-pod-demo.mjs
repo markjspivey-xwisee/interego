@@ -8,7 +8,7 @@
 // (a pre-existing second pod on the same CSS) and show discover +
 // audit works across the boundary.
 
-const CSS = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+const CSS = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const POD_A = `${CSS}/markj/`;
 const POD_B = `${CSS}/u-pk-0a7f04106a54/`;
 const ERC_SHAPE = `${POD_A}schemas/erc8004-attestation-v1.ttl`;  // shape still hosted on A; B references it

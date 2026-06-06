@@ -20,7 +20,7 @@ import { POD, fetchText, putText, MANIFEST_URL } from './_lib.mjs';
 
 console.log('=== Progressive discovery — all 7 tiers ===\n');
 
-const POD_B = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/u-pk-0a7f04106a54/';
+const POD_B = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/u-pk-0a7f04106a54/';
 const IDENTITY = 'https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 
 // ── T0: raw pod URL ────────────────────────────────────────

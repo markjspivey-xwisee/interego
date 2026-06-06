@@ -70,7 +70,7 @@ import {
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const TOURNAMENT_DATE = process.env.TICTAC_DATE ?? '2026-05-31';
 const TOURNAMENT_POD = `${CSS}/demos/tic-tac-toe-${TOURNAMENT_DATE}/`;
 const MODEL = process.env.TICTAC_MODEL ?? 'claude-sonnet-4-6';

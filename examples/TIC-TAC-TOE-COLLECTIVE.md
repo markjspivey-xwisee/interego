@@ -17,11 +17,11 @@ the loop: the tournament *builds* the collective, the watcher *keeps
 it online*, the challenger *joins it*.
 
 - Tournament pod:
-  `https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/demos/tic-tac-toe-2026-05-31/`
+  `https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/demos/tic-tac-toe-2026-05-31/`
 - Manifest (federation-discoverable):
-  `https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/demos/tic-tac-toe-2026-05-31/.well-known/context-graphs`
+  `https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/demos/tic-tac-toe-2026-05-31/.well-known/context-graphs`
 - Final standings descriptor:
-  `https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/demos/tic-tac-toe-2026-05-31/standings.ttl`
+  `https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/demos/tic-tac-toe-2026-05-31/standings.ttl`
 
 Override the pod base with `CG_DEMO_POD_BASE` and the date with
 `TICTAC_DATE` if you want to run your own copy alongside.

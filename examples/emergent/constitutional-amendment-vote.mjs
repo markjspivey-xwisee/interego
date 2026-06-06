@@ -92,7 +92,7 @@ import {
 
 // ── Configuration ─────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const SCENARIO_DATE = process.env.CAV_DATE ?? new Date().toISOString().slice(0, 10);
 const SCENARIO_POD = `${CSS}/demos/emergent-constitutional-amendment-vote-${SCENARIO_DATE}/`;
 const MANIFEST_URL = `${SCENARIO_POD}.well-known/context-graphs`;

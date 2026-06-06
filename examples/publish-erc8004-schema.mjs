@@ -17,7 +17,7 @@
 // T0 claims are already forward-compatible: T1-T3 just add facets,
 // never remove.
 
-const POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
 const SHAPE_URL = `${POD}schemas/erc8004-attestation-v1.ttl`;
 
 const SHAPE_TTL = `@prefix sh: <http://www.w3.org/ns/shacl#> .

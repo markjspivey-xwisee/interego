@@ -59,7 +59,7 @@ import {
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const ARENA_DATE = process.env.DISPUTED_FACT_DATE ?? '2026-06-01';
 const ARENA_POD = `${CSS}/demos/emergent-disputed-fact-arena-${ARENA_DATE}/`;
 

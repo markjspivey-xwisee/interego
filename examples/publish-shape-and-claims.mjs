@@ -8,7 +8,7 @@
 // directly via HTTP PUT with custom Trust.issuer values. The pod
 // accepts anonymous PUT (verified during earlier debugging).
 
-const POD = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
+const POD = 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/';
 
 const SHAPE_URL = `${POD}schemas/high-confidence-asserted-v1.ttl`;
 const SHAPE_IRI = SHAPE_URL; // use the URL as the schema IRI

@@ -78,7 +78,7 @@ import {
 
 // ── configuration ────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const SCENARIO_DATE = process.env.PSR_DATE ?? new Date().toISOString().slice(0, 10);
 const RUN_ID = process.env.PSR_RUN ?? `r${Date.now().toString(36)}`;
 const POD_ROOT = `${CSS}/demos/emergent-partitioned-saga-replay-${SCENARIO_DATE}/`;

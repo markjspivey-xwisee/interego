@@ -76,7 +76,7 @@ import { recordHeartbeatTickIfChanged } from '../../dist/passport/index.js';
 
 // ── config ──────────────────────────────────────────────────────────
 const CSS = process.env.CG_DEMO_POD_BASE
-  ?? 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const SCENARIO_DATE = process.env.WATCHER_DATE ?? new Date().toISOString().slice(0, 10);
 const SCENARIO_POD = `${CSS}/demos/emergent-watcher-vigil-compressed-${SCENARIO_DATE}/`;
 
