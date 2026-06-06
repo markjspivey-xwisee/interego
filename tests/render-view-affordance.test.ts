@@ -294,3 +294,45 @@ describe('cg:renderView affordance pattern', () => {
     expect(result.status).toBe(401);
   });
 });
+
+describe('parseDistributionFromDescriptorTurtle legacy fallback', () => {
+  // Regression pin for the `cg:hasDistribution [ ... ]` fallback branch
+  // in client.ts:913-915. Descriptors written before the ontology
+  // realignment use this predicate; dropping the fallback would make
+  // every such descriptor silently undereferenceable.
+  it('parses the legacy cg:hasDistribution form identically to cg:affordance', () => {
+    const accessUrl = 'https://pod.test/alice/demo-graph.envelope.jose.json';
+    const mediaType = 'application/jose+json';
+    const canonical = `
+      @prefix cg: <https://w3id.org/context-graphs#> .
+      @prefix dcat: <http://www.w3.org/ns/dcat#> .
+      @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+      <urn:graph:alice:demo:v1> cg:affordance [
+        a cg:Affordance, dcat:Distribution ;
+        cg:action cg:canDecrypt ;
+        hydra:target <${accessUrl}> ;
+        dcat:mediaType "${mediaType}" ;
+        cg:encrypted true
+      ] .`;
+    const legacy = `
+      @prefix cg: <https://w3id.org/context-graphs#> .
+      @prefix dcat: <http://www.w3.org/ns/dcat#> .
+      @prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+      <urn:graph:alice:demo:v1> cg:hasDistribution [
+        a dcat:Distribution ;
+        hydra:target <${accessUrl}> ;
+        dcat:mediaType "${mediaType}" ;
+        cg:encrypted true
+      ] .`;
+
+    const canonicalDist = parseDistributionFromDescriptorTurtle(canonical);
+    const legacyDist = parseDistributionFromDescriptorTurtle(legacy);
+
+    expect(canonicalDist).not.toBeNull();
+    expect(legacyDist).not.toBeNull();
+    expect(legacyDist).toEqual(canonicalDist);
+    expect(legacyDist!.accessURL).toBe(accessUrl);
+    expect(legacyDist!.mediaType).toBe(mediaType);
+    expect(legacyDist!.encrypted).toBe(true);
+  });
+});
