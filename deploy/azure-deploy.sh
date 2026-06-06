@@ -91,21 +91,10 @@ az acr build \
   --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
   .
 
-echo ">>> Building Foxxi Dashboard image..."
-az acr build \
-  --registry "$ACR_NAME" \
-  --image interego-foxxi-dashboard:latest \
-  --file deploy/Dockerfile.foxxi-dashboard \
-  --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
-  .
-
-echo ">>> Building Foxxi Microsite image..."
-az acr build \
-  --registry "$ACR_NAME" \
-  --image interego-foxxi-microsite:latest \
-  --file deploy/Dockerfile.foxxi-microsite \
-  --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
-  .
+# NOTE: Foxxi Dashboard + Microsite are Vite SPAs that bake
+# VITE_FOXXI_BRIDGE_URL at build time. We can't resolve the bridge
+# FQDN until §10 (Deploy Foxxi Bridge), so their `az acr build`
+# calls live next to §11/§12 below, not here.
 
 echo ">>> Building Foxxi SCORM Player image..."
 az acr build \
@@ -707,6 +696,17 @@ if [ "${#FB_SET_ARGS[@]}" -gt 0 ]; then
 fi
 
 # ── 11. Deploy Foxxi Dashboard ────────────────────────────────
+# Build now (not in §3) so VITE_FOXXI_BRIDGE_URL points at the live
+# bridge FQDN resolved in §10 instead of a hardcoded env subdomain.
+echo ">>> Building Foxxi Dashboard image..."
+az acr build \
+  --registry "$ACR_NAME" \
+  --image interego-foxxi-dashboard:latest \
+  --file deploy/Dockerfile.foxxi-dashboard \
+  --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
+  --build-arg "VITE_FOXXI_BRIDGE_URL=https://$FOXXI_BRIDGE_FQDN" \
+  .
+
 FOXXI_DASHBOARD_APP="${FOXXI_DASHBOARD_APP:-interego-foxxi-dashboard}"
 echo ">>> Deploying Foxxi Dashboard..."
 az containerapp create \
@@ -729,6 +729,17 @@ FOXXI_DASHBOARD_FQDN=$(az containerapp show --name "$FOXXI_DASHBOARD_APP" --reso
 echo "    Foxxi Dashboard: https://$FOXXI_DASHBOARD_FQDN"
 
 # ── 12. Deploy Foxxi Microsite ────────────────────────────────
+# Build now (not in §3) so VITE_FOXXI_BRIDGE_URL points at the live
+# bridge FQDN resolved in §10 instead of a hardcoded env subdomain.
+echo ">>> Building Foxxi Microsite image..."
+az acr build \
+  --registry "$ACR_NAME" \
+  --image interego-foxxi-microsite:latest \
+  --file deploy/Dockerfile.foxxi-microsite \
+  --build-arg NODE_BASE=public.ecr.aws/docker/library/node:20-slim \
+  --build-arg "VITE_FOXXI_BRIDGE_URL=https://$FOXXI_BRIDGE_FQDN" \
+  .
+
 FOXXI_MICROSITE_APP="${FOXXI_MICROSITE_APP:-interego-foxxi-microsite}"
 echo ">>> Deploying Foxxi Microsite..."
 az containerapp create \
