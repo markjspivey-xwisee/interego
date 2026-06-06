@@ -67,22 +67,26 @@ jobs:
 
       - name: Read library version
         id: version
+        working-directory: packages/core
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Library version: $VERSION"
 
       - name: Build library
+        working-directory: packages/core
         run: npm run build
 
       - name: Publish to npm (with provenance)
         if: ${{ !inputs.dry_run }}
+        working-directory: packages/core
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Dry-run publish
         if: ${{ inputs.dry_run }}
+        working-directory: packages/core
         run: npm publish --dry-run --access public
 
       - name: Summary
@@ -135,10 +139,11 @@ jobs:
         if: ${{ inputs.dry_run }}
         run: |
           npm install
+          cd packages/core
           npm run build
-          npm pack
-          mv *.tgz mcp-server/lib.tgz
-          cd mcp-server
+          npm pack --pack-destination ../../mcp-server/
+          mv ../../mcp-server/interego-core-*.tgz ../../mcp-server/lib.tgz
+          cd ../../mcp-server
           npm install ./lib.tgz --no-save
 
       - name: Install mcp-server deps from npm
