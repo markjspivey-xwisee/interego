@@ -710,6 +710,28 @@ const AGENT_REGISTRATION_CACHE_TTL_MS = 60 * 1000;
 const AGENT_REGISTRATION_CACHE_MAX = 1024;
 const agentRegistrationCache = new Map<string, { expiresAt: number }>();
 
+// Per-pod unfiltered-manifest cache. publish_context auto-supersede plus
+// the get_pod_status / verify_agent / register_agent / revoke_agent paths
+// all GET the full manifest (10s-100s of KB on busy pods) and re-run
+// parseManifest. Short TTL coalesces burst publishes while staying small
+// enough that competing publishers' writes become visible quickly.
+// Invalidated locally on publish since this handler just changed it.
+const MANIFEST_CACHE_TTL_MS = 10 * 1000;
+const MANIFEST_CACHE_MAX = 1024;
+const manifestCache = new Map<string, { entries: ManifestEntry[]; expiresAt: number }>();
+async function getCachedManifest(podUrl: string): Promise<ManifestEntry[]> {
+  const hit = manifestCache.get(podUrl);
+  if (hit && hit.expiresAt > Date.now()) return hit.entries;
+  if (hit) manifestCache.delete(podUrl);
+  const entries = await discover(podUrl, undefined, { fetch: solidFetch });
+  if (manifestCache.size >= MANIFEST_CACHE_MAX) {
+    const oldestKey = manifestCache.keys().next().value;
+    if (oldestKey !== undefined) manifestCache.delete(oldestKey);
+  }
+  manifestCache.set(podUrl, { entries, expiresAt: Date.now() + MANIFEST_CACHE_TTL_MS });
+  return entries;
+}
+
 async function handlePublishContext(args: ToolArgs): Promise<string> {
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
@@ -759,7 +781,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   const priorVersions: IRI[] = [];
   if (args.auto_supersede_prior !== false && args.graph_iri) {
     try {
-      const entries = await discover(podUrl, undefined, { fetch: solidFetch });
+      const entries = await getCachedManifest(podUrl);
       for (const e of entries) {
         if (e.describes.includes((args.graph_iri as string) as IRI) && e.descriptorUrl !== descId) {
           priorVersions.push(e.descriptorUrl as IRI);
@@ -1017,6 +1039,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       }
     : { fetch: solidFetch, visibility };
   const result = await publish(descriptor, args.graph_content as string, podUrl, publishOptions);
+  manifestCache.delete(podUrl);
 
   // For 'public' visibility, write per-resource .acl entries that
   // explicitly grant acl:Read to acl:agentClass foaf:Agent on the
@@ -1472,7 +1495,7 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   // demoted to one entry in the `agents` list.
   const sessionAgentDid = args._session_agent_did as string | undefined;
   const sessionAgentIdRaw = args._session_agent_id as string | undefined;
-  const entries = await discover(podUrl, undefined, { fetch: solidFetch }).catch(() => []);
+  const entries = await getCachedManifest(podUrl).catch(() => []);
   const profile = await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null);
 
   // Resolve the calling user's display name (set at WebAuthn / DID
