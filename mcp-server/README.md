@@ -195,7 +195,7 @@ See [`deploy/mcp-relay/`](../deploy/mcp-relay/) in the parent repo for deploymen
 ## Documentation
 
 - **Architecture:** [`docs/e2ee.md`](../docs/e2ee.md) — envelope format, recipient sets, hypermedia link pattern, key lifecycle.
-- **Ontology:** [`docs/ns/README.md`](../docs/ns/README.md) — 12 ontologies, 607 defined terms, CI-gated consistency.
+- **Ontology:** [`docs/ns/README.md`](../docs/ns/README.md) — 20 ontologies + 3 SHACL shape files (~880 terms), CI-gated consistency.
 - **Auth:** [`deploy/identity/AUTH-ARCHITECTURE.md`](../deploy/identity/AUTH-ARCHITECTURE.md) — SIWE / WebAuthn / did:key flows, DID as canonical identity.
 
 ## License
