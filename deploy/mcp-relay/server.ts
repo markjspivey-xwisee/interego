@@ -651,6 +651,11 @@ const oauthStoreCfg: OAuthClientStoreConfig = {
   relayDid: relayDidFromAddress(_oauthStoreWallet.wallet.address),
   fetch: solidFetch,
   log: (msg: string) => log(msg),
+  // At-rest seal for client_secret in each persisted DCR descriptor.
+  // CSS leaves GETs anonymous, so the descriptor graph is reachable to
+  // any caller that knows the slug pattern; wrapping the secret in a
+  // self-recipient X25519 envelope keeps the on-pod literal opaque.
+  encryptionKey: relayAgentKey,
 };
 const _oauthInitialClients = await loadOAuthClients(oauthStoreCfg);
 log(`OAuth DCR store: pod=${oauthStorePodUrl} relayDid=${oauthStoreCfg.relayDid} loaded=${_oauthInitialClients.size}`);

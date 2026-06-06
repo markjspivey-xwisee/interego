@@ -49,6 +49,10 @@ import type {
 
 import {
   ContextDescriptor,
+  decryptFacetValue,
+  encryptFacetValue,
+  type EncryptedFacetValue,
+  type EncryptionKeyPair,
   type FetchFn,
   findSubjectsOfType,
   type IRI,
@@ -268,6 +272,7 @@ function parseDateTimeOrUnixSeconds(s: string): number | undefined {
 function buildGraphContent(
   descId: IRI,
   client: OAuthClientInformationFull,
+  cfg?: OAuthClientStoreConfig,
 ): string {
   const lines: string[] = [];
   const subj = `<${descId}>`;
@@ -289,7 +294,8 @@ function buildGraphContent(
   push(RELAY_CLIENT_ID, typedLit(client.client_id, XSD_STRING));
 
   if (client.client_secret !== undefined) {
-    push(RELAY_CLIENT_SECRET, typedLit(client.client_secret, XSD_STRING));
+    const secretLit = cfg ? sealClientSecret(client.client_secret, cfg) : client.client_secret;
+    push(RELAY_CLIENT_SECRET, typedLit(secretLit, XSD_STRING));
   }
   if (client.client_id_issued_at !== undefined) {
     push(
@@ -360,6 +366,7 @@ function buildGraphContent(
  */
 function reconstructClientFromSubject(
   subject: ParsedSubject,
+  cfg?: OAuthClientStoreConfig,
 ): OAuthClientInformationFull | undefined {
   const client_id = readStringValue(subject, RELAY_CLIENT_ID);
   if (!client_id) return undefined;
@@ -382,8 +389,11 @@ function reconstructClientFromSubject(
   if (grant_types.length > 0) out.grant_types = grant_types;
   if (response_types.length > 0) out.response_types = response_types;
 
-  const client_secret = readStringValue(subject, RELAY_CLIENT_SECRET);
-  if (client_secret !== undefined) out.client_secret = client_secret;
+  const client_secret_raw = readStringValue(subject, RELAY_CLIENT_SECRET);
+  if (client_secret_raw !== undefined) {
+    const unsealed = cfg ? unsealClientSecret(client_secret_raw, cfg) : client_secret_raw;
+    if (unsealed !== undefined) out.client_secret = unsealed;
+  }
 
   if (issuedAtRaw !== undefined) {
     const t = parseDateTimeOrUnixSeconds(issuedAtRaw);
@@ -429,6 +439,51 @@ export interface OAuthClientStoreConfig {
   readonly fetch?: FetchFn;
   /** Optional logger — defaults to silent. */
   readonly log?: (msg: string) => void;
+  /**
+   * Optional X25519 keypair used to envelope-encrypt `client_secret` at
+   * rest. CSS leaves GET/HEAD/OPTIONS anonymous by design, so the
+   * descriptor graph is reachable to anyone who knows the slug — wrapping
+   * the secret in a self-recipient envelope keyed to this keypair keeps
+   * the on-pod literal opaque while a single relay process round-trips
+   * encrypt/decrypt locally. When omitted (legacy / tests), the secret
+   * is persisted as plaintext for backwards compatibility.
+   */
+  readonly encryptionKey?: EncryptionKeyPair;
+}
+
+// Sentinel marker prefixed on a sealed client_secret literal. Bytes after
+// the prefix are base64(JSON(EncryptedFacetValue)). The marker lets the
+// reconstruct path detect sealed values without changing the graph's
+// triple shape (still a plain xsd:string literal under the same predicate).
+const SEALED_SECRET_PREFIX = 'enc:v1:';
+
+function sealClientSecret(
+  secret: string,
+  cfg: OAuthClientStoreConfig,
+): string {
+  if (!cfg.encryptionKey) return secret;
+  const env = encryptFacetValue(
+    secret,
+    [cfg.encryptionKey.publicKey],
+    cfg.encryptionKey,
+  );
+  const b64 = Buffer.from(JSON.stringify(env), 'utf8').toString('base64');
+  return `${SEALED_SECRET_PREFIX}${b64}`;
+}
+
+function unsealClientSecret(
+  value: string,
+  cfg: OAuthClientStoreConfig,
+): string | undefined {
+  if (!value.startsWith(SEALED_SECRET_PREFIX)) return value;
+  if (!cfg.encryptionKey) return undefined;
+  try {
+    const json = Buffer.from(value.slice(SEALED_SECRET_PREFIX.length), 'base64').toString('utf8');
+    const env = JSON.parse(json) as EncryptedFacetValue;
+    return decryptFacetValue(env, cfg.encryptionKey) ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ── load ────────────────────────────────────────────────────
@@ -500,7 +555,7 @@ export async function loadClients(
         log(`[oauth-client-store] no relay:OAuthClient subject in ${graphUrl}; skipping ${clientId}.`);
         return;
       }
-      const reconstructed = reconstructClientFromSubject(subjects[0]!);
+      const reconstructed = reconstructClientFromSubject(subjects[0]!, cfg);
       if (!reconstructed) {
         log(`[oauth-client-store] could not reconstruct OAuthClientInformationFull ` +
             `from ${graphUrl}; skipping ${clientId}.`);
@@ -554,7 +609,7 @@ export async function saveClient(
   // directives inside a graph block are an awkward shape that some
   // parsers don't accept. Full IRIs round-trip cleanly through
   // `parseTrig`.
-  const graphContent = buildGraphContent(descId, clientData);
+  const graphContent = buildGraphContent(descId, clientData, cfg);
 
   const descriptor = ContextDescriptor.create(descId)
     .describes(graphIri)
