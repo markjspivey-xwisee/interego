@@ -453,6 +453,7 @@ cg:modalStatus a owl:ObjectProperty ;
     rdfs:label "modal status" ;
     rdfs:comment "The modal status of the assertion: Asserted, Hypothetical, Counterfactual, Quoted, or Retracted." ;
     rdfs:domain cg:SemioticFacet ;
+    rdfs:range cg:ModalStatusEnum ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 cg:epistemicConfidence a owl:DatatypeProperty ;
@@ -487,6 +488,7 @@ cg:proofMechanism a owl:DatatypeProperty ;
 cg:trustLevel a owl:ObjectProperty ;
     rdfs:label "trust level" ;
     rdfs:comment "Level of trust: SelfAsserted, ThirdPartyAttested, or CryptographicallyVerified." ;
+    rdfs:range cg:TrustLevelEnum ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 cg:revocationStatus a owl:DatatypeProperty ;
@@ -773,37 +775,37 @@ cg:override a cg:CompositionOperator ;
 
 # ── Modal Status ──────────────────────────────────────────────
 
-cg:Asserted a owl:NamedIndividual ;
+cg:Asserted a owl:NamedIndividual, cg:ModalStatusEnum ;
     rdfs:label "Asserted" ;
     rdfs:comment "The content is presented as true/factual by the asserting agent.".
 
-cg:Hypothetical a owl:NamedIndividual ;
+cg:Hypothetical a owl:NamedIndividual, cg:ModalStatusEnum ;
     rdfs:label "Hypothetical" ;
     rdfs:comment "The content is presented as a hypothesis or possibility.".
 
-cg:Counterfactual a owl:NamedIndividual ;
+cg:Counterfactual a owl:NamedIndividual, cg:ModalStatusEnum ;
     rdfs:label "Counterfactual" ;
     rdfs:comment "The content describes a scenario known not to be the case.".
 
-cg:Quoted a owl:NamedIndividual ;
+cg:Quoted a owl:NamedIndividual, cg:ModalStatusEnum ;
     rdfs:label "Quoted" ;
     rdfs:comment "The content is quoted from another source without endorsement.".
 
-cg:Retracted a owl:NamedIndividual ;
+cg:Retracted a owl:NamedIndividual, cg:ModalStatusEnum ;
     rdfs:label "Retracted" ;
     rdfs:comment "The content was previously asserted but has been retracted.".
 
 # ── Trust Levels ──────────────────────────────────────────────
 
-cg:SelfAsserted a owl:NamedIndividual ;
+cg:SelfAsserted a owl:NamedIndividual, cg:TrustLevelEnum ;
     rdfs:label "Self-Asserted" ;
     rdfs:comment "Trust based on the identity of the asserting agent alone.".
 
-cg:ThirdPartyAttested a owl:NamedIndividual ;
+cg:ThirdPartyAttested a owl:NamedIndividual, cg:TrustLevelEnum ;
     rdfs:label "Third-Party Attested" ;
     rdfs:comment "Trust backed by a third-party attestation.".
 
-cg:CryptographicallyVerified a owl:NamedIndividual ;
+cg:CryptographicallyVerified a owl:NamedIndividual, cg:TrustLevelEnum ;
     rdfs:label "Cryptographically Verified" ;
     rdfs:comment "Trust backed by cryptographic proof (signed VC, DID-based verification).".
 
@@ -1039,9 +1041,10 @@ cg:Unexamined a cg:CoherenceStatus, owl:NamedIndividual ; rdfs:label "Unexamined
 # ══════════════════════════════════════════════════════════════
 
 cg:Decision a owl:Class ; rdfs:label "Decision" ; rdfs:comment "A recorded decision (selected affordance + strategy + justification)." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:DecisionStrategy a owl:Class ; rdfs:label "Decision Strategy" ; rdfs:comment "Enum class for Exploit / Explore / Abstain." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:DecisionStrategy a owl:Class ; rdfs:label "Decision Strategy" ; rdfs:comment "Enum class for Exploit / Explore / DelegateStrategy / Abstain." ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:Exploit a cg:DecisionStrategy ; rdfs:label "Exploit" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:Explore a cg:DecisionStrategy ; rdfs:label "Explore" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:DelegateStrategy a cg:DecisionStrategy ; rdfs:label "Delegate" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:Abstain a cg:DecisionStrategy ; rdfs:label "Abstain" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 # ══════════════════════════════════════════════════════════════
@@ -1088,8 +1091,8 @@ cg:Memory a owl:Class ; rdfs:subClassOf cg:ContextDescriptor ; rdfs:label "Memor
 cg:ObservationSection a owl:Class ; rdfs:label "Observation Section" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:ProjectionFacet a owl:Class ; rdfs:subClassOf cg:ContextFacet ; rdfs:label "Projection Facet" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:Delegate a owl:Class ; rdfs:subClassOf cg:AuthorizedAgent ; rdfs:label "Delegate" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:ModalStatusEnum a owl:Class ; rdfs:label "Modal Status Enum" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:TrustLevelEnum a owl:Class ; rdfs:label "Trust Level Enum" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ModalStatusEnum a owl:Class ; rdfs:label "Modal Status Enum" ; owl:oneOf ( cg:Asserted cg:Hypothetical cg:Counterfactual cg:Quoted cg:Retracted ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:TrustLevelEnum a owl:Class ; rdfs:label "Trust Level Enum" ; owl:oneOf ( cg:SelfAsserted cg:ThirdPartyAttested cg:CryptographicallyVerified ) ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 # ══════════════════════════════════════════════════════════════
 #  Properties (long tail)
