@@ -1460,6 +1460,144 @@ async function walkSupersedesChain(
 }
 
 /**
+ * Read `cg:validFrom` from a descriptor body — the canonical sort key
+ * for `traversal: 'full'` lineage ordering. parseTrig recovers literal
+ * values via {kind:'literal', value:string}; the value is an ISO 8601
+ * dateTime string. Returns undefined when validFrom is absent or the
+ * body is unparseable; the sort then falls back to lexical ordering of
+ * the descriptor IRI so the canonical order is still deterministic.
+ */
+const REDUCE_CG_VALID_FROM = 'https://markjspivey-xwisee.github.io/interego/ns/cg#validFrom';
+function readValidFrom(body: string): string | undefined {
+  if (!body) return undefined;
+  try {
+    const parsed = parseTrig(body);
+    for (const subject of parsed.subjects) {
+      const terms = subject.properties.get(REDUCE_CG_VALID_FROM as IRI);
+      if (!terms) continue;
+      for (const t of terms) {
+        if (t.kind === 'literal' && t.value) return t.value;
+      }
+    }
+  } catch {
+    // Fall through to regex fallback.
+  }
+  // Regex fallback — pod descriptors routinely embed vocabularies
+  // without explicit @prefix declarations; the well-formed
+  // `cg:validFrom "<iso>"^^xsd:dateTime` triple still scans cleanly.
+  const m = body.match(/cg:validFrom\s+"([^"]+)"/);
+  if (m && m[1]) return m[1];
+  return undefined;
+}
+
+/**
+ * Collect every cg:supersedes back-link IRI declared in a descriptor
+ * body — used by the `'full'` traversal to walk every branch of the
+ * lineage DAG rather than picking the first link the way the
+ * shortest-path walker does.
+ */
+function readAllSupersedes(body: string): IRI[] {
+  const out: IRI[] = [];
+  const seen = new Set<string>();
+  try {
+    const parsed = parseTrig(body);
+    for (const subject of parsed.subjects) {
+      const terms = subject.properties.get(REDUCE_CG_SUPERSEDES as IRI);
+      if (!terms) continue;
+      for (const t of terms) {
+        if (t.kind === 'iri' && !seen.has(t.iri)) {
+          seen.add(t.iri);
+          out.push(t.iri as IRI);
+        }
+      }
+    }
+  } catch {
+    // Fall through to regex fallback.
+  }
+  // Regex fallback — match every `cg:supersedes <IRI>` (with optional
+  // comma-separated continuations) in the body. parseTrig may have
+  // succeeded but missed the property (e.g., subject `<>` with implicit
+  // base IRI); we always run the fallback so we union the two sets.
+  const re = /cg:supersedes\s+((?:<[^>]+>\s*,?\s*)+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) !== null) {
+    const list = m[1] ?? '';
+    const iriRe = /<([^>]+)>/g;
+    let im: RegExpExecArray | null;
+    while ((im = iriRe.exec(list)) !== null) {
+      const iri = im[1]!;
+      if (!seen.has(iri)) {
+        seen.add(iri);
+        out.push(iri as IRI);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Walk EVERY cg:supersedes branch transitively from `headIri`, then
+ * return the union in canonical lineage order:
+ *
+ *   1. BFS/DFS the transitive supersedes closure (cycle-guarded). Any
+ *      descriptor reachable from the head through any chain of
+ *      `cg:supersedes` arrows is collected.
+ *   2. Sort the collected links by `cg:validFrom` ascending (oldest
+ *      first). Falls back to descriptor-IRI lexical sort for ties OR
+ *      missing validFrom values — keeps the order deterministic across
+ *      independent verifiers.
+ *
+ * Why this matters: `auto_supersede_prior` in publish_context writes a
+ * cg:supersedes link to EVERY prior descriptor that names the same
+ * graph, not just the immediate predecessor. The shortest-path walker
+ * sees only one branch (chainLength = 2 for a 3-version chain); the
+ * full walker recovers the entire lineage so a verifier can audit it
+ * end-to-end.
+ */
+async function walkSupersedesChainFull(
+  headIri: IRI,
+  fetcher: (iri: IRI) => Promise<string | null>,
+  maxChain: number,
+): Promise<Array<{ iri: IRI; body: string }>> {
+  const collected = new Map<IRI, string>();
+  const visited = new Set<IRI>();
+  const queue: IRI[] = [headIri];
+
+  while (queue.length > 0 && collected.size < maxChain) {
+    const current = queue.shift()!;
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const body = await fetcher(current);
+    if (body === null) continue; // unresolved link — skip but keep walking siblings
+
+    collected.set(current, body);
+
+    for (const next of readAllSupersedes(body)) {
+      if (!visited.has(next)) queue.push(next);
+    }
+  }
+
+  // Canonical lineage sort: validFrom ascending, then IRI lexical for
+  // ties or missing keys.
+  const entries: Array<{ iri: IRI; body: string; validFrom: string | undefined }> = [];
+  for (const [iri, body] of collected) {
+    entries.push({ iri, body, validFrom: readValidFrom(body) });
+  }
+  entries.sort((a, b) => {
+    const av = a.validFrom;
+    const bv = b.validFrom;
+    if (av && bv && av !== bv) return av < bv ? -1 : 1;
+    if (av && !bv) return -1;
+    if (!av && bv) return 1;
+    // Tie or both-missing — fall back to lexical IRI sort.
+    return a.iri < b.iri ? -1 : a.iri > b.iri ? 1 : 0;
+  });
+
+  return entries.map(e => ({ iri: e.iri, body: e.body }));
+}
+
+/**
  * Read `cg:reducer <iri>` from a chain head's Turtle body. Returns
  * the first reducer IRI found, or undefined when none is declared.
  */
@@ -1566,8 +1704,17 @@ export async function reduce(
       return r.representation;
     });
 
-  // 1. Walk the chain back to its origin.
-  const chain = await walkSupersedesChain(chainHeadIri, fetcher, maxChain);
+  // 1. Walk the chain back to its origin. Traversal mode picks which
+  //    walker we use:
+  //      - 'shortest' (default) — follow the first cg:supersedes
+  //        per link; fast and preserves historical behaviour.
+  //      - 'full' — collect the transitive supersedes closure, then
+  //        sort by cg:validFrom ascending (lexical IRI tiebreak) so
+  //        the fold is over the entire lineage in canonical order.
+  const traversal = options?.traversal ?? 'shortest';
+  const chain = traversal === 'full'
+    ? await walkSupersedesChainFull(chainHeadIri, fetcher, maxChain)
+    : await walkSupersedesChain(chainHeadIri, fetcher, maxChain);
   if (chain.length === 0) {
     throw new TypeError(`reduce(${chainHeadIri}) found no resolvable chain links`);
   }

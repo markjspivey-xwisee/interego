@@ -304,7 +304,34 @@ export interface ReduceOptions {
    * supply a stub so the fold can be exercised without touching HTTP.
    */
   readonly fetch?: (iri: IRI) => Promise<string | null>;
+  /**
+   * How the walker reconstructs the chain from `cg:supersedes`
+   * back-links:
+   *
+   *   - `'shortest'` (default) — preserves historical behaviour: at each
+   *     link the walker follows the FIRST cg:supersedes IRI it finds
+   *     (effectively a breadth-shortest path back to an origin). Fast,
+   *     deterministic, and correct when each descriptor declares a
+   *     single back-link.
+   *
+   *   - `'full'` — collects every descriptor reachable through the
+   *     transitive cg:supersedes closure of the head, then folds them
+   *     in canonical lineage order: sorted by `cg:validFrom` ascending
+   *     (oldest first), falling back to descriptor-URL lexical sort for
+   *     ties. The ReplayProof's `chainCids[]` are emitted in that same
+   *     sorted order so independent verifiers reproduce the same head.
+   *     Use when `auto_supersede_prior` writes ALL priors per version
+   *     and you need a full lineage audit rather than just one branch.
+   */
+  readonly traversal?: 'shortest' | 'full';
 }
+
+/**
+ * Reducer-shape options shared by every traversal mode. Surfaced as its
+ * own alias so the MCP layer can typecheck against the same shape the
+ * kernel signature consumes.
+ */
+export type ReducerOptions = ReduceOptions;
 
 /**
  * A single checkpoint in the ReplayProof. `index` is the link's

@@ -218,4 +218,87 @@ ex:MergeShape a sh:NodeShape ;
     expect(r.head).toContain('beta');
     expect(r.head).toContain('gamma');
   });
+
+  it('traversal:"full" vs "shortest" — auto_supersede_prior writes ALL priors per version; full mode recovers the entire lineage, shortest mode sees only the breadth-shortest path', async () => {
+    // Simulates auto_supersede_prior semantics: each version's body
+    // back-links to EVERY prior version that names the same graph,
+    // not just the immediate predecessor. The shortest-path walker
+    // sees only one branch — usually the breadth-shortest (g3 -> g1
+    // directly) — so chainLength comes back as 2. The full walker
+    // walks the entire transitive supersedes closure and folds in
+    // canonical (validFrom-ascending) order, recovering chainLength 3.
+    const v1Iri = 'urn:graph:reduce-test:lineage:v1' as IRI;
+    const v2Iri = 'urn:graph:reduce-test:lineage:v2' as IRI;
+    const v3Iri = 'urn:graph:reduce-test:lineage:v3' as IRI;
+
+    const v1Body = `
+@prefix ex:  <https://example.org/test#> .
+@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+<${v1Iri}> cg:validFrom "2026-01-01T00:00:00Z"^^xsd:dateTime .
+ex:item1 ex:value "v1-alpha" .
+`.trim();
+
+    const v2Body = `
+@prefix ex:  <https://example.org/test#> .
+@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+<${v2Iri}> cg:supersedes <${v1Iri}> ;
+           cg:validFrom "2026-02-01T00:00:00Z"^^xsd:dateTime .
+ex:item2 ex:value "v2-beta" .
+`.trim();
+
+    // v3 supersedes BOTH v1 AND v2 — the auto_supersede_prior pattern.
+    const v3Body = `
+@prefix ex:  <https://example.org/test#> .
+@prefix cg:  <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+<${v3Iri}> cg:supersedes <${v1Iri}>, <${v2Iri}> ;
+           cg:validFrom "2026-03-01T00:00:00Z"^^xsd:dateTime .
+ex:item3 ex:value "v3-gamma" .
+`.trim();
+
+    const map: Record<string, string> = {
+      [v1Iri]: v1Body,
+      [v2Iri]: v2Body,
+      [v3Iri]: v3Body,
+    };
+    const fetcher = async (iri: IRI): Promise<string | null> => map[iri] ?? null;
+
+    // shortest path — auto_supersede_prior makes v3's first
+    // cg:supersedes target the breadth-shortest hop, so the walker
+    // collapses the lineage to v3 + one ancestor (chainLength 2).
+    const shortest = await reduce(v3Iri, {
+      fetch: fetcher,
+      reducerSpec: { kind: 'turtle-template', template: '# {?prior}\n{?current}' },
+      traversal: 'shortest',
+    });
+    expect(shortest.chainLength).toBe(2);
+    expect(shortest.replayProof.chainCids).toHaveLength(2);
+
+    // full traversal — every reachable supersedes target is collected,
+    // sorted oldest-first by validFrom, then folded in that order.
+    // All three versions land in the head state and the ReplayProof
+    // chainCids are emitted in the same canonical order so independent
+    // verifiers re-fetching by CID reproduce the result byte-for-byte.
+    const full = await reduce(v3Iri, {
+      fetch: fetcher,
+      reducerSpec: { kind: 'turtle-template', template: '# {?prior}\n{?current}' },
+      traversal: 'full',
+    });
+    expect(full.chainLength).toBe(3);
+    expect(full.replayProof.chainCids).toHaveLength(3);
+    expect(full.head).toContain('v1-alpha');
+    expect(full.head).toContain('v2-beta');
+    expect(full.head).toContain('v3-gamma');
+
+    // Deterministic re-run — same inputs produce the same proof.
+    const fullAgain = await reduce(v3Iri, {
+      fetch: fetcher,
+      reducerSpec: { kind: 'turtle-template', template: '# {?prior}\n{?current}' },
+      traversal: 'full',
+    });
+    expect(fullAgain.replayProof.chainCids).toEqual(full.replayProof.chainCids);
+    expect(fullAgain.replayProof.headStateCid).toBe(full.replayProof.headStateCid);
+  });
 });
