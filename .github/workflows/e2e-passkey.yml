@@ -60,6 +60,9 @@ jobs:
       - name: Install relay deps
         run: npm ci --no-audit --no-fund
 
+      - name: Run relay unit tests (DPoP / federation / OAuth tokens / PGSL shim)
+        run: npm test
+
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
