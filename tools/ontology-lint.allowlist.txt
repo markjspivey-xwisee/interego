@@ -37,11 +37,6 @@ soc2:P4
 # placeholder predicate (cg:evidenceForControl) that's mentioned as a
 # future extension to ManifestEntry. Not actually emitted to RDF.
 cg:evidenceForControl
-# JSDoc example in packages/pgsl/src/types.ts showing RDF 1.2 triple
-# annotation syntax for ContainmentAnnotation. Annotation predicates
-# for edge contextual metadata; pending an ontology-definition pass.
-cg:position
-cg:contextualDepth
 
 # ── align: ──
 # False positive from CSS text-align property in HTML style attributes
