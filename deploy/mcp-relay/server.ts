@@ -18,6 +18,7 @@ import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { WebSocket } from 'ws';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -1080,12 +1081,16 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // future tightening of the parent ACL. Best-effort: log + continue
   // on failure (the parent ACL still applies).
   if (visibility === 'public') {
-    await writePublicReadAcl(result.descriptorUrl, ownerWebId as IRI).catch(err =>
-      log(`[publish/public] warn: descriptor .acl PUT failed: ${(err as Error).message}`),
-    );
-    await writePublicReadAcl(result.graphUrl, ownerWebId as IRI).catch(err =>
-      log(`[publish/public] warn: payload .acl PUT failed: ${(err as Error).message}`),
-    );
+    const aclResults = await Promise.allSettled([
+      writePublicReadAcl(result.descriptorUrl, ownerWebId as IRI),
+      writePublicReadAcl(result.graphUrl, ownerWebId as IRI),
+    ]);
+    const aclLabels = ['descriptor', 'payload'] as const;
+    aclResults.forEach((settled, idx) => {
+      if (settled.status === 'rejected') {
+        log(`[publish/public] warn: ${aclLabels[idx]} .acl PUT failed: ${(settled.reason as Error).message}`);
+      }
+    });
   }
 
   // Pin to IPFS if configured (org-level or user override).
@@ -3755,6 +3760,8 @@ interface DocResource {
   candidatePaths: string[][];
 }
 
+const DOC_CONTENT_CACHE = new Map<string, string>();
+
 const DOC_RESOURCES: readonly DocResource[] = [
   {
     uri: 'docs://interego/playbook',
@@ -3983,7 +3990,11 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
       };
     }
     try {
-      const text = readFileSync(path, 'utf8');
+      let text = DOC_CONTENT_CACHE.get(path);
+      if (text === undefined) {
+        text = await readFile(path, 'utf8');
+        DOC_CONTENT_CACHE.set(path, text);
+      }
       return { contents: [{ uri: req.params.uri, mimeType: doc.mimeType, text }] };
     } catch (err) {
       return {
