@@ -522,6 +522,117 @@ const didIndex: Map<string, string> = new Map();
 const authMethodsCache: Map<string, { value: AuthMethods; fetchedAt: number }> = new Map();
 const AUTH_METHODS_TTL_MS = 10 * 1000;
 
+// ── Per-userId pod-write mutex (FIX A) ──────────────────────
+//
+// Mirrors deploy/mcp-relay/server.ts:podWriteMutexes — but keyed by
+// userId (not podUrl) because every putPodAuthMethods call targets the
+// same `<CSS_URL><userId>/auth-methods.jsonld` URL for a given userId.
+// Used to serialise the deferred background PUT scheduled off the hot
+// /auth/did response path against any other inline putPodAuthMethods
+// call sites that touch the same user (webauthn counter-persist, /try
+// provisioning, admin/account routes) — one writer per userId at a
+// time so a fast in-flight deferred write is never clobbered by a
+// concurrent reader's createIfMissing refresh.
+const identityPodWriteMutexes = new Map<string, Promise<unknown>>();
+
+// Tracks userIds whose deferred pod write is still in flight. The
+// readAuthMethods cache-eviction path checks this set and treats the
+// in-memory cache value as authoritative while a write is pending,
+// avoiding a refresh fetch racing the in-flight write.
+const identityPendingPodWrites = new Set<string>();
+
+async function withIdentityPodMutex<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = identityPodWriteMutexes.get(userId) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  // Chain so the next caller waits for THIS call's gate, not the prior
+  // one. Errors from prior callers must not propagate to the next caller.
+  identityPodWriteMutexes.set(userId, prev.then(() => gate, () => gate));
+  try {
+    await prev.catch(() => undefined);
+    return await fn();
+  } finally {
+    release();
+    queueMicrotask(() => {
+      if (identityPodWriteMutexes.get(userId) === gate) identityPodWriteMutexes.delete(userId);
+    });
+  }
+}
+
+// Set of userIds for which the canonical auth-methods.jsonld has been
+// observed to exist on the pod (a putPodAuthMethods completed at least
+// once in this process lifetime). Same shape as the relay's
+// `bootstrappedPods` Set — lets a process restart short-circuit the
+// repeated empty-doc materialisation that fetchPodAuthMethods's
+// createIfMissing path triggers when a deferred write has not landed.
+const bootstrapUserIds = new Set<string>();
+
+/**
+ * Apply an authoritative AuthMethods record to the in-process truth
+ * (cache + indexes) BEFORE the pod-side PUT lands. Lets /auth/did
+ * race ahead of the network round-trip — any concurrent /auth/did
+ * or verifyToken from the same userId immediately sees the new
+ * credential in didIndex / authMethodsCache.
+ *
+ * This is the same pair of side-effects putPodAuthMethods runs AFTER
+ * its successful PUT (see lines below); hoisting them lets the hot
+ * response path skip the await.
+ */
+function inlineApplyAuthMethods(userId: string, methods: AuthMethods): void {
+  authMethodsCache.set(userId, { value: methods, fetchedAt: Date.now() });
+  rebuildIndexesForUser(userId, methods);
+}
+
+/**
+ * Schedule a putPodAuthMethods to run in the background under the
+ * per-userId mutex. The caller has already applied `inlineApplyAuthMethods`
+ * so the response can race ahead. Failures retry with backoff (3 attempts
+ * at 1s/2s/4s); final failure is logged at ERROR level. The in-memory
+ * record stays authoritative for the process lifetime in that case —
+ * the user's next /auth/did with the same DID re-derives the same
+ * (content-addressed) userId and the next putPodAuthMethods writes the
+ * canonical record. Effectively self-healing on next login.
+ */
+function scheduleDeferredAuthMethodsWrite(
+  userId: string,
+  methods: AuthMethods,
+  context: string,
+): void {
+  identityPendingPodWrites.add(userId);
+  // setImmediate (not setTimeout) so the background task runs on the
+  // next event-loop tick AFTER res.json's socket flush — minimises the
+  // window where a process restart loses the in-flight write.
+  setImmediate(() => {
+    void withIdentityPodMutex(userId, async () => {
+      const podWriteStart = timingEnabled() ? startTiming() : 0;
+      const delays = [1000, 2000, 4000];
+      let lastErr: Error | null = null;
+      for (let attempt = 0; attempt < delays.length + 1; attempt++) {
+        try {
+          await putPodAuthMethods(userId, methods);
+          if (timingEnabled()) logTiming('did-pod-write-completed', podWriteStart, { context, attempt });
+          bootstrapUserIds.add(userId);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err as Error;
+          if (attempt < delays.length) {
+            await new Promise(r => setTimeout(r, delays[attempt]));
+          }
+        }
+      }
+      if (lastErr) {
+        // ERROR-level — operators need to see this. The in-memory
+        // record stays authoritative; metric for alerting:
+        // identity_deferred_authmethods_failed.
+        log(`ERROR: identity_deferred_authmethods_failed userId=${userId} context=${context} err=${lastErr.message}`);
+      }
+    }).finally(() => {
+      identityPendingPodWrites.delete(userId);
+    });
+  });
+}
+
 function podAuthMethodsUrl(userId: string): string {
   return `${CSS_URL}${userId}/auth-methods.jsonld`;
 }
@@ -582,6 +693,9 @@ async function putPodAuthMethods(userId: string, methods: AuthMethods): Promise<
   // Update cache + indexes for this user
   authMethodsCache.set(userId, { value: methods, fetchedAt: Date.now() });
   rebuildIndexesForUser(userId, methods);
+  // Record that auth-methods.jsonld now exists on the pod so future
+  // restarts can short-circuit re-writes (relay's bootstrappedPods pattern).
+  bootstrapUserIds.add(userId);
 }
 
 // ── Pod-side WebID profile/card mirror (DEPRECATED — see FIX A) ──
@@ -827,15 +941,24 @@ async function readAuthMethods(userId: string, allowStale = false): Promise<Auth
   if (cached && now - cached.fetchedAt < AUTH_METHODS_TTL_MS) {
     return cached.value;
   }
+  // FIX A: if a deferred pod write is in flight for this user, the
+  // in-memory cache value is authoritative — a refresh fetch could
+  // race the pending PUT (404→createIfMissing would clobber the
+  // in-flight write). Hold the cached value until the deferred write
+  // releases the mutex; serialise any forced refresh behind it.
+  if (cached && identityPendingPodWrites.has(userId)) {
+    return cached.value;
+  }
   if (cached && allowStale) {
-    // Refresh in background; return stale now
-    fetchPodAuthMethods(userId).then(fresh => {
+    // Refresh in background, serialised behind any pending write on
+    // this userId so the refresh fetch never races the in-flight PUT.
+    void withIdentityPodMutex(userId, () => fetchPodAuthMethods(userId)).then(fresh => {
       authMethodsCache.set(userId, { value: fresh, fetchedAt: Date.now() });
       rebuildIndexesForUser(userId, fresh);
     }).catch(() => {});
     return cached.value;
   }
-  const fresh = await fetchPodAuthMethods(userId);
+  const fresh = await withIdentityPodMutex(userId, () => fetchPodAuthMethods(userId));
   authMethodsCache.set(userId, { value: fresh, fetchedAt: now });
   rebuildIndexesForUser(userId, fresh);
   return fresh;
@@ -2591,14 +2714,16 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
       keyType: 'Ed25519VerificationKey2020',
       createdAt: new Date().toISOString(),
     });
-    const podWriteStart = timingEnabled() ? startTiming() : 0;
-    try {
-      await putPodAuthMethods(user.id, methods);
-    } catch (err) {
-      res.status(500).json({ error: `Failed to persist DID to pod: ${(err as Error).message}` });
-      return;
-    }
-    if (timingEnabled()) logTiming('did-pod-write', podWriteStart, { branch: 'first-time' });
+    // FIX A: defer the pod-side PUT off the hot response path. The
+    // in-memory record (cache + didIndex + walletIndex + credentialIndex)
+    // is updated SYNCHRONOUSLY first so any concurrent /auth/did or
+    // verifyToken from this user immediately sees the new credential —
+    // no pod read required for the new user's first token to verify.
+    // The actual ~2.5s CSS PUT runs in the background under the per-
+    // userId mutex; failures retry + log at ERROR for operator alerting.
+    inlineApplyAuthMethods(user.id, methods);
+    scheduleDeferredAuthMethodsWrite(user.id, methods, 'did-first-time');
+    if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'first-time' });
     // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
     // Single authoritative pod-side writer is the relay's /oauth/verify
     // handler. See SIWE first-touch comment above for background.
@@ -2613,14 +2738,10 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
         keyType: 'Ed25519VerificationKey2020',
         createdAt: new Date().toISOString(),
       });
-      const podWriteStart = timingEnabled() ? startTiming() : 0;
-      try {
-        await putPodAuthMethods(user.id, methods);
-      } catch (err) {
-        res.status(500).json({ error: `Failed to persist DID to pod: ${(err as Error).message}` });
-        return;
-      }
-      if (timingEnabled()) logTiming('did-pod-write', podWriteStart, { branch: 'add-did' });
+      // FIX A: defer the pod-side PUT — same shape as first-time branch.
+      inlineApplyAuthMethods(user.id, methods);
+      scheduleDeferredAuthMethodsWrite(user.id, methods, 'did-add-did');
+      if (timingEnabled()) logTiming('did-pod-write-scheduled', requestStart, { branch: 'add-did' });
       log(`DID ${did} linked to existing user ${user.id}`);
     }
   }
