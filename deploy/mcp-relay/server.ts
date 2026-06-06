@@ -1875,21 +1875,41 @@ function unpersistFederationEntry(podUrl: string): Promise<void> {
 // container, a transport error, or zero entries all yield an empty
 // load and the relay starts with just the per-call synthetic `self`
 // entry — same legacy behaviour as before persistence existed.
-{
-  const _loaded = await loadFederationEntries(federationStoreCfg);
-  for (const entry of _loaded) {
-    // Defensive: loadEntries already filters via:'self', but double-
-    // check at the insertion point so future writers can't sneak one in.
-    if (entry.via === 'self') continue;
-    knownPods.set(entry.url, {
-      url: entry.url,
-      via: entry.via,
-      addedAt: entry.addedAt,
-      ...(entry.label !== undefined ? { label: entry.label } : {}),
-      ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
-    });
-  }
-  log(`Federation store: pod=${oauthStorePodUrl} loaded=${_loaded.length}`);
+//
+// Promise-cached + lazy: the original top-level `await` blocked module
+// evaluation on a CSS round-trip, so a slow/unreachable CSS during a
+// container roll froze the entire relay process in import — health
+// checks failed, container restarted, hydration retried from scratch.
+// Mirrors `startInitialIndexRebuild` in identity/server.ts:1142.
+let federationHydrateReady: Promise<void> | null = null;
+function startFederationHydrate(): Promise<void> {
+  return (federationHydrateReady ??= loadFederationEntries(federationStoreCfg).then(loaded => {
+    for (const entry of loaded) {
+      // Defensive: loadEntries already filters via:'self', but double-
+      // check at the insertion point so future writers can't sneak one in.
+      if (entry.via === 'self') continue;
+      knownPods.set(entry.url, {
+        url: entry.url,
+        via: entry.via,
+        addedAt: entry.addedAt,
+        ...(entry.label !== undefined ? { label: entry.label } : {}),
+        ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
+      });
+    }
+    log(`Federation store: pod=${oauthStorePodUrl} loaded=${loaded.length}`);
+  }).catch(err => {
+    log(`WARN: federation hydrate failed: ${(err as Error).message}`);
+  }));
+}
+startFederationHydrate();
+
+function awaitFederationHydrateWithBudget(budgetMs: number): Promise<void> {
+  const ready = federationHydrateReady;
+  if (!ready) return Promise.resolve();
+  return Promise.race([
+    ready,
+    new Promise<void>(resolve => setTimeout(resolve, budgetMs)),
+  ]);
 }
 
 // Resolve the calling user's OWN pod URL from the auth-context-
@@ -1949,6 +1969,7 @@ async function knownPodsWithSelf(args: ToolArgs): Promise<Array<{ url: string; l
 }
 
 async function handleDiscoverAll(args: ToolArgs): Promise<string> {
+  await awaitFederationHydrateWithBudget(50);
   const pods = await knownPodsWithSelf(args);
   if (pods.length === 0) {
     return JSON.stringify({ message: 'No known pods. Use add_pod or discover_directory first.' });
@@ -1977,6 +1998,7 @@ async function handleListKnownPods(args: ToolArgs): Promise<string> {
   // Surface `lastPersistedAt` so operators can verify the federation
   // store is being written through. Null until the first successful
   // persist (cold-start with zero mutations yet).
+  await awaitFederationHydrateWithBudget(50);
   return JSON.stringify({
     pods: await knownPodsWithSelf(args),
     lastPersistedAt: federationLastPersistedAt,
