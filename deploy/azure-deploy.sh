@@ -723,7 +723,6 @@ az containerapp create \
   --max-replicas 2 \
   --cpu 0.25 \
   --memory 0.5Gi \
-  --env-vars "BRIDGE_URL=https://$FOXXI_BRIDGE_FQDN" \
   --output none
 
 FOXXI_DASHBOARD_FQDN=$(az containerapp show --name "$FOXXI_DASHBOARD_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
@@ -746,7 +745,6 @@ az containerapp create \
   --max-replicas 2 \
   --cpu 0.25 \
   --memory 0.5Gi \
-  --env-vars "BRIDGE_URL=https://$FOXXI_BRIDGE_FQDN" \
   --output none
 
 FOXXI_MICROSITE_FQDN=$(az containerapp show --name "$FOXXI_MICROSITE_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
@@ -769,7 +767,6 @@ az containerapp create \
   --max-replicas 2 \
   --cpu 0.25 \
   --memory 0.5Gi \
-  --env-vars "BRIDGE_URL=https://$FOXXI_BRIDGE_FQDN" \
   --output none
 
 FOXXI_SCORM_FQDN=$(az containerapp show --name "$FOXXI_SCORM_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
