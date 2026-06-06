@@ -250,6 +250,12 @@ let cssReady = false;
 // have no local CSS binary and no remote CSS configured.
 let cssUnavailable = false;
 let registryInitialized = false;
+// Throttle the per-call presence re-check in ensureRegistry. Without this
+// every mutating tool pays one extra CSS round-trip (~100-400ms) just to
+// confirm the agent is still authorized; a stale entry is caught by the
+// next failed write anyway.
+let registryReverifiedAt = 0;
+const REGISTRY_REVERIFY_TTL_MS = 30 * 1000;
 let notificationLog: ContextChangeEvent[] = [];
 let lastPublishedDescriptor: ContextDescriptorData | null = null;
 
@@ -513,9 +519,13 @@ async function ensureRegistry(): Promise<void> {
   // Check actual pod state — skip only if we've verified this session AND
   // we haven't been idle long enough for external changes
   if (registryInitialized) {
+    if (Date.now() - registryReverifiedAt < REGISTRY_REVERIFY_TTL_MS) {
+      return; // recently re-verified, trust cache
+    }
     // Quick re-check: is the registry still there?
     const check = await readAgentRegistry(homePod.url, { fetch: solidFetch });
     if (check && check.authorizedAgents.some(a => a.agentId === MY_AGENT_ID && !a.revoked)) {
+      registryReverifiedAt = Date.now();
       return; // still valid
     }
     log('Registry was deleted or agent removed — re-provisioning');
@@ -567,6 +577,7 @@ async function ensureRegistry(): Promise<void> {
   }
 
   registryInitialized = true;
+  registryReverifiedAt = Date.now();
   log(`Agent registry initialized — ${profile.authorizedAgents.filter(a => !a.revoked).length} active agent(s)`);
 }
 
