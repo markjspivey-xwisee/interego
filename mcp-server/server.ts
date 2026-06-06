@@ -1037,11 +1037,16 @@ async function toolDiscoverContext(args: {
   if (args.valid_until) filter.validUntil = args.valid_until;
   if (args.effective_at) filter.effectiveAt = args.effective_at;
 
-  const entries = await discover(
-    args.pod_url,
-    Object.keys(filter).length > 0 ? filter as Parameters<typeof discover>[1] : undefined,
-    { fetch: solidFetch },
-  );
+  const [entries, delegationProfile] = await Promise.all([
+    discover(
+      args.pod_url,
+      Object.keys(filter).length > 0 ? filter as Parameters<typeof discover>[1] : undefined,
+      { fetch: solidFetch },
+    ),
+    args.verify_delegation
+      ? readAgentRegistry(args.pod_url, { fetch: solidFetch })
+      : Promise.resolve(null),
+  ]);
 
   if (entries.length === 0) {
     return `No context descriptors found on ${args.pod_url}`;
@@ -1050,7 +1055,7 @@ async function toolDiscoverContext(args: {
   const lines: string[] = [`Found ${entries.length} descriptor(s) on ${args.pod_url}:`, ''];
 
   if (args.verify_delegation) {
-    const profile = await readAgentRegistry(args.pod_url, { fetch: solidFetch });
+    const profile = delegationProfile;
     if (profile) {
       lines.push(`  Pod owner: ${profile.webId}${profile.name ? ` (${profile.name})` : ''}`);
       lines.push(`  Authorized agents: ${profile.authorizedAgents.filter(a => !a.revoked).length}`);
@@ -1144,8 +1149,13 @@ async function toolGetPodStatus(args: { pod_url?: string }): Promise<string> {
     '',
   ];
 
-  try {
-    const profile = await getCachedRegistry(podUrl);
+  const [registryResult, manifestResult] = await Promise.allSettled([
+    getCachedRegistry(podUrl),
+    getCachedManifest(podUrl),
+  ]);
+
+  if (registryResult.status === 'fulfilled') {
+    const profile = registryResult.value;
     if (profile) {
       lines.push(`Registry:`);
       lines.push(`  Owner: ${profile.webId}${profile.name ? ` (${profile.name})` : ''}`);
@@ -1157,22 +1167,22 @@ async function toolGetPodStatus(args: { pod_url?: string }): Promise<string> {
     } else {
       lines.push('Registry: not found');
     }
-  } catch (err) {
-    lines.push(`Registry: ${(err as Error).message}`);
+  } else {
+    lines.push(`Registry: ${(registryResult.reason as Error).message}`);
   }
 
   lines.push('');
 
-  try {
-    const entries = await getCachedManifest(podUrl);
+  if (manifestResult.status === 'fulfilled') {
+    const entries = manifestResult.value;
     lines.push(`Descriptors: ${entries.length}`);
     for (const e of entries) {
       lines.push(`  ${e.descriptorUrl}`);
       lines.push(`    Graphs: ${e.describes.join(', ')}`);
       lines.push(`    Facets: ${e.facetTypes.join(', ')}`);
     }
-  } catch (err) {
-    lines.push(`Manifest: ${(err as Error).message}`);
+  } else {
+    lines.push(`Manifest: ${(manifestResult.reason as Error).message}`);
   }
 
   if (notificationLog.length > 0) {

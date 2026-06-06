@@ -893,6 +893,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
           ),
         };
         await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
+        relayProfileCache.delete(podUrl);
         registeredOk = true;
       } else {
         registeredOk = true;
@@ -1281,16 +1282,21 @@ async function handleDiscoverContext(args: ToolArgs): Promise<string> {
   if (args.valid_until) filter.validUntil = args.valid_until;
   if (args.effective_at) filter.effectiveAt = args.effective_at;
 
-  const entries = await discover(
-    podUrl,
-    Object.keys(filter).length > 0 ? filter as Parameters<typeof discover>[1] : undefined,
-    { fetch: solidFetch },
-  );
+  const [entries, delegationProfile] = await Promise.all([
+    discover(
+      podUrl,
+      Object.keys(filter).length > 0 ? filter as Parameters<typeof discover>[1] : undefined,
+      { fetch: solidFetch },
+    ),
+    args.verify_delegation
+      ? getCachedRelayProfile(podUrl)
+      : Promise.resolve(null),
+  ]);
 
   // Optionally include registry info
   let registry = null;
   if (args.verify_delegation) {
-    const profile = await getCachedRelayProfile(podUrl);
+    const profile = delegationProfile;
     if (profile) {
       registry = {
         owner: profile.webId,
@@ -1525,8 +1531,10 @@ async function handleGetPodStatus(args: ToolArgs): Promise<string> {
   // demoted to one entry in the `agents` list.
   const sessionAgentDid = args._session_agent_did as string | undefined;
   const sessionAgentIdRaw = args._session_agent_id as string | undefined;
-  const entries = await getCachedManifest(podUrl).catch(() => []);
-  const profile = await getCachedRelayProfile(podUrl).catch(() => null);
+  const [entries, profile] = await Promise.all([
+    getCachedManifest(podUrl).catch(() => []),
+    getCachedRelayProfile(podUrl).catch(() => null),
+  ]);
 
   // Resolve the calling user's display name (set at WebAuthn / DID
   // registration and stored in auth-methods.jsonld#name on identity).
@@ -1726,6 +1734,7 @@ async function handleRegisterAgent(args: ToolArgs): Promise<string> {
     writeAgentRegistry(profile, podUrl, { fetch: solidFetch }),
     credentialAndWrite,
   ]);
+  relayProfileCache.delete(podUrl);
 
   return JSON.stringify({
     registered: true,
@@ -2195,6 +2204,7 @@ async function handleRevokeAgent(args: ToolArgs): Promise<string> {
   if (!profile) return JSON.stringify({ error: 'No registry found' });
   profile = removeAuthorizedAgent(profile, (args.agent_id as string) as IRI);
   await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
+  relayProfileCache.delete(podUrl);
   return JSON.stringify({ revoked: true, agent: args.agent_id });
 }
 
@@ -4583,6 +4593,34 @@ const tokenDpopMiddleware: express.RequestHandler = async (req, res, next) => {
 // mount order, so mounting this here makes it run BEFORE the SDK handler.
 app.post('/token', express.urlencoded({ extended: false }), tokenDpopMiddleware);
 
+// The SDK's mcpAuthRouter sub-routers (/register, /token, /revoke,
+// /.well-known/*) each call `router.use(cors())` with default wildcard
+// config, which would overwrite the allowlist headers set above with
+// `Access-Control-Allow-Origin: *`. Freeze the CORS-related response
+// headers our allowlist middleware just set so the SDK's late
+// res.setHeader calls cannot re-open the wildcard.
+const FROZEN_CORS_HEADERS = new Set([
+  'access-control-allow-origin',
+  'access-control-allow-methods',
+  'access-control-allow-headers',
+  'access-control-expose-headers',
+  'access-control-allow-credentials',
+  'vary',
+]);
+app.use((_req, res, next) => {
+  const original = res.setHeader.bind(res);
+  (res as unknown as { setHeader: typeof res.setHeader }).setHeader = function (
+    name: string,
+    value: number | string | readonly string[],
+  ): express.Response {
+    if (typeof name === 'string' && FROZEN_CORS_HEADERS.has(name.toLowerCase())) {
+      return res;
+    }
+    return original(name, value);
+  };
+  next();
+});
+
 app.use(mcpAuthRouter({
   provider: oauthProvider,
   issuerUrl: DEFAULT_ISSUER,
@@ -5175,8 +5213,6 @@ async function bootstrapPod(params: {
         surfaceAgentIri,
       });
     }
-    await writeAgentRegistry(nextProfile, podUrl, { fetch: solidFetch });
-
     // FIX C: write the cg:PodBootstrap descriptor in the same
     // single-writer block as /agents + /profile/card. Idempotent
     // (fixed IRI urn:cg:pod-bootstrap:<userId>:v1) so re-bootstraps
@@ -5187,14 +5223,20 @@ async function bootstrapPod(params: {
     // dynamic surface-agent list lives on /agents and is read from
     // there. Subsequent surface adds don't need to re-publish the
     // bootstrap descriptor.
-    if (firstTouch) {
-      await publishPodBootstrapDescriptor({
-        podUrl,
-        ownerWebId,
-        userId,
-        surfaceAgentIri,
-      });
-    }
+    // The bootstrap descriptor targets a distinct CSS path from
+    // /agents — run the two PUTs concurrently.
+    await Promise.all([
+      writeAgentRegistry(nextProfile, podUrl, { fetch: solidFetch }),
+      firstTouch
+        ? publishPodBootstrapDescriptor({
+            podUrl,
+            ownerWebId,
+            userId,
+            surfaceAgentIri,
+          })
+        : Promise.resolve(),
+    ]);
+    relayProfileCache.delete(podUrl);
 
     // Post-write verify: re-read and confirm our surface agent landed.
     // If a concurrent writer (different replica, or anything outside
@@ -6394,6 +6436,7 @@ app.post('/agents/:agentIri/revoke', bearerVerifyLimiter, async (req, res) => {
     }
     const updated = removeAuthorizedAgent(profile, agentIri);
     await writeAgentRegistry(updated, podUrl, { fetch: solidFetch });
+    relayProfileCache.delete(podUrl);
     const remaining = updated.authorizedAgents.filter(a => !a.revoked).length;
 
     // Emit a SOC 2 access-change descriptor — every agent revocation
