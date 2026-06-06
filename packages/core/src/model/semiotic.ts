@@ -238,7 +238,7 @@ export function semioticField(descriptor: ContextDescriptorData): {
   readonly confidence: number;
   readonly interpretationFrame?: IRI;
   readonly signSystem?: IRI;
-  readonly groundTruth: boolean;
+  readonly groundTruth?: boolean;
 }[] {
   return descriptor.facets
     .filter(f => f.type === 'Semiotic')
@@ -246,10 +246,10 @@ export function semioticField(descriptor: ContextDescriptorData): {
       const s = f as Extract<ContextFacetData, { type: 'Semiotic' }>;
       return {
         modalStatus: s.modalStatus ?? 'Asserted',
-        confidence: s.epistemicConfidence ?? 1.0,
+        confidence: s.epistemicConfidence ?? 0.5,
         interpretationFrame: s.interpretationFrame,
         signSystem: s.signSystem,
-        groundTruth: s.groundTruth ?? true,
+        groundTruth: s.groundTruth,
       };
     });
 }
