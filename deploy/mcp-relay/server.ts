@@ -5291,9 +5291,21 @@ const app = express();
 // without opening up header-spoofing from arbitrary callers.
 app.set('trust proxy', 1);
 
-app.use(express.json());
+// Body limit: the relay accepts inbound `publish_context` MCP tool calls
+// that wrap the caller's `graph_content` payload inside a JSON-RPC
+// envelope. With sign_authorship signatures, X25519-XSalsa20-Poly1305
+// envelope inflation (~33% base64 overhead per recipient), descriptor
+// Turtle, and JSON tool-call framing, a ~50KB user payload routinely
+// exceeds the express.json default 100kb cap. The cap surfaces as a
+// PayloadTooLargeError at the parser, which the MCP transport then
+// reports to the caller as a generic "fetch failed". 4mb matches the
+// upstream substrate's default DEFAULT_MAX_GRAPH_BYTES guard in
+// `packages/solid/src/client.ts` and is far above any realistic single-
+// descriptor publish (oversized payloads are content-addressed into
+// PGSL instead, per the size guard's error message).
+app.use(express.json({ limit: '4mb' }));
 // Login form POSTs x-www-form-urlencoded; OAuth token endpoint does too.
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: '4mb' }));
 
 // CORS: explicit allowlist, never wildcard. See cors-allowlist.ts for the
 // full rationale. Summary:

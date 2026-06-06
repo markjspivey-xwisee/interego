@@ -762,6 +762,15 @@ export async function publish(
     graphContentType = TRIG_CONTENT_TYPE;
   }
 
+  // The graph PUT carries the bulk of the payload bytes — typically the
+  // largest single request in the publish path. Under upstream envoy
+  // churn (Azure Container Apps' fronting proxy) a mid-write socket
+  // reset surfaces here as a generic "fetch failed". The default
+  // schedule (4 attempts, 1s/2s/4s/8s) can exhaust within a single
+  // envoy reload window; bump to 6 attempts with a 500ms base
+  // (~0.5s/1s/2s/4s/8s/16s, ~32s ceiling) so we ride out longer blips
+  // without changing the overall budget more than necessary. Descriptor
+  // PUT below uses the same tuning for symmetry.
   await withTransientRetry(async () => {
     const graphResponse = await fetchFn(graphUrl, {
       method: 'PUT',
@@ -776,7 +785,7 @@ export async function publish(
         `Failed to write graph to ${graphUrl}: ${graphResponse.status} ${graphResponse.statusText}`,
       );
     }
-  });
+  }, { maxAttempts: 6, baseMs: 500 });
 
   // 2. PUT the descriptor as standalone Turtle — augmented with a
   //    hypermedia Distribution block linking to the graph payload.
@@ -829,7 +838,7 @@ export async function publish(
         `Failed to write descriptor to ${descriptorUrl}: ${descResponse.status} ${descResponse.statusText}`,
       );
     }
-  });
+  }, { maxAttempts: 6, baseMs: 500 });
 
   // 3. Update the manifest — CAS-safe via HTTP If-Match.
   //
