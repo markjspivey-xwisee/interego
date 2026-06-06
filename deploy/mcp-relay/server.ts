@@ -74,8 +74,11 @@ import {
   compose as kernelCompose,
   ContextDescriptor,
   createDelegationCredential,
+  createSignedAuthorship,
   createSignedDelegationCredential,
   createOwnerProfile,
+  verifySignedAuthorship,
+  type AuthorshipProof,
   cryptoComputeCid,
   decompose as kernelDecompose,
   decorateKernelResult,
@@ -106,7 +109,9 @@ import {
   type DelegationVerifier,
   toTurtle,
   validate,
+  validateAgainstShape,
   verifyDescriptorSignature,
+  type ShaclResult,
 } from '@interego/core';
 import {
   buildAccessChangeEvent,
@@ -145,7 +150,9 @@ import {
   resolveRecipients,
   computePublishRecipients,
   parseDistributionFromDescriptorTurtle,
+  parseAuthorshipProofFromDescriptorTurtle,
   predictDescriptorUrl,
+  PublishPreconditionFailedError,
 } from '@interego/solid';
 
 // PGSL — `@interego/pgsl`.
@@ -768,6 +775,207 @@ async function getCachedManifest(podUrl: string): Promise<ManifestEntry[]> {
   return entries;
 }
 
+// ── Conformance gate (SHACL) ────────────────────────────────
+//
+// FIX 4 — at publish time, look up `cg:conformsTo <shapeIri>` triples
+// declared on the target pod's container metadata, fetch each shape,
+// and validate the inbound graph_content against it. On non-conformance
+// reject 422 BEFORE the CSS write so a violating descriptor never lands
+// on the pod. Cached per-podUrl to avoid the manifest GET on every
+// publish.
+//
+// Container-shape lookup precedence:
+//   1. <container>.well-known/container-shape  (Turtle, listing
+//      cg:conformsTo IRIs as cg:declares-shape triples — purpose-built
+//      home for shape declarations that isn't tied to the manifest CAS
+//      dance).
+//   2. The pod manifest (.well-known/context-graphs) — any cg:conformsTo
+//      / dct:conformsTo on the manifest collection subject is treated
+//      as a container-level declaration.
+//
+// Either source is fine; #1 is preferred because it doesn't compete with
+// publish() for manifest etags.
+const CONTAINER_SHAPE_CACHE_TTL_MS = 60 * 1000;
+const CONTAINER_SHAPE_CACHE_MAX = 256;
+const containerShapeCache = new Map<string, { shapes: readonly string[]; expiresAt: number }>();
+const shapeBodyCache = new Map<string, { body: string | null; expiresAt: number }>();
+
+async function fetchContainerShapes(podUrl: string): Promise<readonly string[]> {
+  const cached = containerShapeCache.get(podUrl);
+  if (cached && cached.expiresAt > Date.now()) return cached.shapes;
+  if (cached) containerShapeCache.delete(podUrl);
+
+  const shapes = new Set<string>();
+  const containerShapeUrl = `${podUrl.replace(/\/$/, '')}/.well-known/container-shape`;
+  try {
+    const r = await solidFetch(containerShapeUrl, { method: 'GET', headers: { 'Accept': 'text/turtle' } });
+    if (r.ok) {
+      const body = await r.text();
+      for (const m of body.matchAll(/cg:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
+      for (const m of body.matchAll(/dct:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
+      for (const m of body.matchAll(/cg:declares-shape\s+<([^>]+)>/g)) shapes.add(m[1]!);
+    }
+  } catch { /* ignore — fall through to manifest scan */ }
+
+  if (shapes.size === 0) {
+    const manifestUrl = `${podUrl.replace(/\/$/, '')}/.well-known/context-graphs`;
+    try {
+      const r = await solidFetch(manifestUrl, { method: 'GET', headers: { 'Accept': 'text/turtle' } });
+      if (r.ok) {
+        const body = await r.text();
+        // Restrict the scan to the manifest collection's own subject —
+        // we only want CONTAINER-level conformance, not random conformsTo
+        // triples on individual ManifestEntry rows (which belong to
+        // descriptors, not to the container).
+        const escapedManifest = manifestUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const collectionBlock = body.match(
+          new RegExp(`<${escapedManifest}>[\\s\\S]*?(?=\\n<|$)`),
+        )?.[0];
+        if (collectionBlock) {
+          for (const m of collectionBlock.matchAll(/cg:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
+          for (const m of collectionBlock.matchAll(/dct:conformsTo\s+<([^>]+)>/g)) shapes.add(m[1]!);
+        }
+      }
+    } catch { /* ignore — pod has no manifest yet */ }
+  }
+
+  const result = Object.freeze([...shapes]);
+  if (containerShapeCache.size >= CONTAINER_SHAPE_CACHE_MAX) {
+    const oldestKey = containerShapeCache.keys().next().value;
+    if (oldestKey !== undefined) containerShapeCache.delete(oldestKey);
+  }
+  containerShapeCache.set(podUrl, { shapes: result, expiresAt: Date.now() + CONTAINER_SHAPE_CACHE_TTL_MS });
+  return result;
+}
+
+async function fetchShapeBody(shapeIri: string): Promise<string | null> {
+  const cached = shapeBodyCache.get(shapeIri);
+  if (cached && cached.expiresAt > Date.now()) return cached.body;
+  if (cached) shapeBodyCache.delete(shapeIri);
+
+  let body: string | null = null;
+  try {
+    const r = await solidFetch(shapeIri, { method: 'GET', headers: { 'Accept': 'text/turtle' } });
+    if (r.ok) body = await r.text();
+  } catch { /* network failures → treat as missing shape */ }
+
+  if (shapeBodyCache.size >= CONTAINER_SHAPE_CACHE_MAX) {
+    const oldestKey = shapeBodyCache.keys().next().value;
+    if (oldestKey !== undefined) shapeBodyCache.delete(oldestKey);
+  }
+  shapeBodyCache.set(shapeIri, { body, expiresAt: Date.now() + CONTAINER_SHAPE_CACHE_TTL_MS });
+  return body;
+}
+
+/**
+ * Run every container-declared shape against the inbound graph_content.
+ * Returns either { conforms: true } or the violation list ready to
+ * surface in the 422 error envelope. Missing shape bodies (404 etc.)
+ * are ignored — they can't constrain a publish if the relay can't
+ * fetch them.
+ */
+async function runConformanceGate(
+  podUrl: string,
+  graphContent: string,
+): Promise<{ conforms: true } | { conforms: false; shape: string; violations: readonly ShaclResult[] }> {
+  const shapeIris = await fetchContainerShapes(podUrl);
+  if (shapeIris.length === 0) return { conforms: true };
+  for (const shapeIri of shapeIris) {
+    const shapeTurtle = await fetchShapeBody(shapeIri);
+    if (!shapeTurtle) continue;
+    const report = validateAgainstShape(graphContent, shapeTurtle, { entailment: 'rdfs' });
+    if (!report.conforms) {
+      return { conforms: false, shape: shapeIri, violations: report.results };
+    }
+  }
+  return { conforms: true };
+}
+
+// ── Scope gate ──────────────────────────────────────────────
+//
+// FIX 4 — registry-declared cg:scope (ReadWrite / ReadOnly / PublishOnly
+// / DiscoverOnly) was previously decorative: handlePublishContext didn't
+// check it at all, so a Read-scoped agent could call publish_context and
+// the relay would happily write the descriptor + payload on their pod.
+// This gate makes scope normative: any scope NOT in the write-eligible
+// set short-circuits to a 403 error envelope BEFORE the CSS write.
+//
+// Cached per (agentId, podUrl) for AGENT_REGISTRATION_CACHE_TTL_MS so
+// the verify round-trip doesn't fire on every publish from the same
+// session.
+const SCOPE_CACHE_TTL_MS = AGENT_REGISTRATION_CACHE_TTL_MS;
+const SCOPE_CACHE_MAX = AGENT_REGISTRATION_CACHE_MAX;
+const agentScopeCache = new Map<string, { scope: string; valid: boolean; expiresAt: number }>();
+
+const WRITE_ELIGIBLE_SCOPES = new Set(['ReadWrite', 'PublishOnly']);
+
+async function runScopeGate(
+  agentId: string,
+  podUrl: string,
+): Promise<{ allowed: true } | { allowed: false; scope: string; reason: string }> {
+  const key = `${podUrl}|${agentId}`;
+  const cached = agentScopeCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    if (cached.valid && WRITE_ELIGIBLE_SCOPES.has(cached.scope)) return { allowed: true };
+    return {
+      allowed: false,
+      scope: cached.scope,
+      reason: cached.valid
+        ? `scope "${cached.scope}" cannot publish`
+        : 'agent is not registered on this pod',
+    };
+  }
+  if (cached) agentScopeCache.delete(key);
+
+  // Prefer the more-recently-verified value: walk the signed chain when
+  // we have a verifier configured (the relay always does — see
+  // delegationVerifier above) so the scope we read is the one the
+  // owner cryptographically attested to. Falls back to the registry-only
+  // check if the chain walk fails for any reason.
+  let scope: string | undefined;
+  let valid = false;
+  try {
+    const verified = await verifyAgentDelegation(
+      agentId as IRI,
+      podUrl,
+      { fetch: solidFetch, verifier: delegationVerifier },
+    );
+    valid = verified.valid;
+    scope = verified.scope;
+    if (!valid) {
+      const registryOnly = await verifyAgentDelegation(
+        agentId as IRI,
+        podUrl,
+        { fetch: solidFetch },
+      );
+      valid = registryOnly.valid;
+      scope = registryOnly.scope ?? scope;
+    }
+  } catch (err) {
+    log(`WARN: scope gate verification threw for ${agentId} on ${podUrl}: ${(err as Error).message}`);
+  }
+
+  const resolvedScope = scope ?? 'Unknown';
+  if (agentScopeCache.size >= SCOPE_CACHE_MAX) {
+    const oldestKey = agentScopeCache.keys().next().value;
+    if (oldestKey !== undefined) agentScopeCache.delete(oldestKey);
+  }
+  agentScopeCache.set(key, {
+    scope: resolvedScope,
+    valid,
+    expiresAt: Date.now() + SCOPE_CACHE_TTL_MS,
+  });
+
+  if (valid && WRITE_ELIGIBLE_SCOPES.has(resolvedScope)) return { allowed: true };
+  return {
+    allowed: false,
+    scope: resolvedScope,
+    reason: valid
+      ? `scope "${resolvedScope}" cannot publish — only ReadWrite or PublishOnly may write`
+      : 'agent is not registered on this pod',
+  };
+}
+
 async function handlePublishContext(args: ToolArgs): Promise<string> {
   const podName = (args.pod_name as string) ?? 'default';
   const podUrl = `${CSS_URL}${podName}/`;
@@ -814,6 +1022,21 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // for the same graph_iri as superseded. Keeps federation queries
   // returning the canonical current version. Disable via
   // auto_supersede_prior: false.
+  //
+  // CAS precondition (if_match): when the caller passes if_match, we
+  // bypass the manifest cache (so we read the freshest server state)
+  // before computing priorVersions. The same value is threaded into
+  // publish() as ifMatchSupersedes / ifMatchCid — the substrate-level
+  // gate at packages/solid/src/client.ts then rejects with 412 if the
+  // resolved head doesn't match what the caller asserted. Without this,
+  // two concurrent republishes of the same graph_iri see the same
+  // stale manifest snapshot, each emit a cg:supersedes back-link to the
+  // same prior head, and both succeed — producing a forked chain with
+  // two competing HEADs.
+  const ifMatch = args.if_match as string | undefined;
+  if (ifMatch !== undefined) {
+    manifestCache.delete(podUrl);
+  }
   const priorVersions: IRI[] = [];
   if (args.auto_supersede_prior !== false && args.graph_iri) {
     try {
@@ -827,6 +1050,16 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       // Manifest not yet present, or pod unreachable — proceed without supersedes.
     }
   }
+
+  // Heuristic: distinguish URL-form (URI scheme present) from CID-form
+  // (base32 multibase, typically starting with `bafkrei...`). A real
+  // CIDv1 raw-codec b32 is 59 chars; we accept anything without a URI
+  // scheme as a CID candidate so the wire stays simple. The substrate
+  // gate accepts both shapes, so degradation is graceful if a caller
+  // passes the wrong form.
+  const ifMatchLooksLikeUrl = ifMatch !== undefined && /^(https?:|urn:|file:|did:|\w+:\/\/)/i.test(ifMatch);
+  const ifMatchSupersedes = ifMatchLooksLikeUrl ? ifMatch : undefined;
+  const ifMatchCid = (ifMatch !== undefined && !ifMatchLooksLikeUrl) ? ifMatch : undefined;
 
   // Ensure the calling agent is registered + has a signed delegation VC
   // BEFORE the trust facet evaluates — the compliance grade upgrade
@@ -1006,6 +1239,41 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // credential to verify. See the block immediately following the
   // privacy-screen + auto-supersede preprocessing above.
 
+  // ── FIX 4: gates before the CSS write ───────────────────────
+  //
+  // Two sub-gates run BEFORE publish() touches the pod. Order matters:
+  // conformance is the cheap local computation, scope walks the chain
+  // (one CSS GET worst-case, cached), so we run conformance first to
+  // fail fast on shape violations and skip the chain walk when the
+  // payload was never going to be accepted anyway.
+  const conformance = await runConformanceGate(podUrl, (args.graph_content as string) ?? '');
+  if (conformance.conforms === false) {
+    return JSON.stringify({
+      error: 'shape_violation',
+      code: 422,
+      shape: conformance.shape,
+      violations: conformance.violations.map(r => ({
+        focusNode: r.focusNode,
+        path: r.path,
+        value: r.value,
+        constraint: r.constraintComponent,
+        severity: r.severity,
+        message: r.message,
+      })),
+    });
+  }
+
+  const scopeCheck = await runScopeGate(agentId, podUrl);
+  if (scopeCheck.allowed === false) {
+    return JSON.stringify({
+      error: 'scope_violation',
+      code: 403,
+      scope: scopeCheck.scope,
+      requiredScope: ['ReadWrite', 'PublishOnly'],
+      reason: scopeCheck.reason,
+    });
+  }
+
   // ── Visibility branch ──────────────────────────────────────────
   //
   // `visibility` is the explicit audience-class knob. Before this knob
@@ -1073,15 +1341,96 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // affordance (cg:canDecrypt remains the only path), so behavior is
   // unchanged for dev runs that don't set PUBLIC_BASE_URL.
   const publishRelayBase = (PUBLIC_BASE_URL || '').replace(/\/$/, '');
+
+  // ── Authorship proof (opt-in, default false) ─────────────────
+  //
+  // `sign_authorship: true` mints a small ECDSA signature over the
+  // canonical (agentId, ownerWebId, descriptorId, created, agentDid?)
+  // tuple — the AgentFacet's identity claim, bound to THIS descriptor.
+  // Embedded into the descriptor Turtle as `cg:authorshipProof [...]`
+  // and verified on read from the descriptor ALONE (no pod-storage
+  // trust). Default off preserves SelfAsserted neutrality for callers
+  // that have not opted into agent-level signing.
+  //
+  // Independent of the compliance branch below:
+  //   - cg:proof on TrustFacet (compliance branch): operator-grade
+  //     signature over the WHOLE descriptor turtle, lands in
+  //     <descriptor>.sig.json, opt-in via `compliance: true`.
+  //   - cg:authorshipProof (this block): agent-grade signature over
+  //     the AgentFacet payload, embedded INSIDE the descriptor turtle,
+  //     opt-in via `sign_authorship: true`.
+  // The two stack: a publish can carry both, neither, or either.
+  const signAuthorship = args.sign_authorship === true;
+  let authorshipProof: AuthorshipProof | undefined;
+  let authorshipError: string | undefined;
+  if (signAuthorship) {
+    try {
+      const signer = await getDelegationSigner();
+      const agentDidArg = typeof args.agent_did === 'string' ? args.agent_did : undefined;
+      authorshipProof = await createSignedAuthorship(
+        {
+          agentId: agentId as IRI,
+          ownerWebId: ownerWebId as IRI,
+          descriptorId: descriptor.id,
+          created: now,
+          ...(agentDidArg ? { agentDid: agentDidArg } : {}),
+        },
+        signer,
+      );
+    } catch (err) {
+      authorshipError = (err as Error).message;
+      log(`WARN: sign_authorship requested but signing failed for ${agentId}: ${authorshipError}`);
+    }
+  }
+
   const publishOptions: Parameters<typeof publish>[3] = recipients.length > 0
     ? {
         fetch: solidFetch,
         encrypt: { recipients, senderKeyPair: relayAgentKey },
         visibility,
         ...(publishRelayBase ? { relayBaseUrl: publishRelayBase } : {}),
+        ...(authorshipProof ? { authorshipProof } : {}),
+        ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
+        ...(ifMatchCid ? { ifMatchCid } : {}),
       }
-    : { fetch: solidFetch, visibility };
-  const result = await publish(descriptor, args.graph_content as string, podUrl, publishOptions);
+    : {
+        fetch: solidFetch,
+        visibility,
+        ...(authorshipProof ? { authorshipProof } : {}),
+        ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
+        ...(ifMatchCid ? { ifMatchCid } : {}),
+      };
+  // Per-pod mutex: serialize same-process publishers to this pod so the
+  // read-check-write (auto-supersede manifest read above + substrate CAS
+  // gate inside publish() + manifest CAS) is atomic from this relay's
+  // perspective. Cross-process / cross-replica writers still hit the
+  // CSS-side ETag CAS plus the supersedes substrate gate, which is the
+  // cross-host portion of the precondition.
+  let result: Awaited<ReturnType<typeof publish>>;
+  try {
+    result = await withPodMutex(podUrl, () =>
+      publish(descriptor, args.graph_content as string, podUrl, publishOptions),
+    );
+  } catch (err) {
+    if (err instanceof PublishPreconditionFailedError) {
+      // Surface the precondition-failed response as a tool result the
+      // caller can act on (re-read, rebuild, retry). HTTP semantic is 412.
+      manifestCache.delete(podUrl);
+      return JSON.stringify({
+        error: 'precondition_failed',
+        code: 412,
+        message: err.message,
+        expected: err.expected,
+        currentHead: {
+          descriptorUrl: err.actual.descriptorUrl,
+          cid: err.actual.cid,
+          supersedesList: err.actual.supersedesList,
+        },
+        retryHint: 'Re-read the manifest (or call get_current_head with the urn:graph IRI) and resend publish_context with the fresh if_match value.',
+      });
+    }
+    throw err;
+  }
   manifestCache.delete(podUrl);
 
   // For 'public' visibility, write per-resource .acl entries that
@@ -1192,11 +1541,41 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     manifestUrl: result.manifestUrl,
     ipfs,
     supersedesPriorVersions: priorVersions.length > 0 ? priorVersions : undefined,
+    // CAS chain head — content-CID + URL of the prior head this publish
+    // was gated against (or, if no precondition was supplied, an
+    // observational read of the first supersedes target). Pass back as
+    // `if_match` on the next publish_context to detect concurrent writers
+    // — see fix CAS-supersession.
+    previousHeadCid: result.previousHeadCid,
+    previousHeadUrl: result.previousHeadUrl,
     // Privacy-hygiene preflight (see docs://interego/playbook §2). Empty
     // string means no flags. The calling agent — and any LLM in the
     // loop — should surface the warning to the user before treating the
     // publish as final.
     sensitivityPreflight: sensitivityWarning || undefined,
+    // Agent-level authorship-signing report (when args.sign_authorship
+    // === true). The signed proof block is embedded directly in the
+    // descriptor turtle (cg:authorshipProof [...]); this object echoes
+    // back what was signed for downstream callers + audit. Verifiers
+    // re-derive the canonical payload from the descriptor turtle and
+    // run delegationVerifier on dereference — see handleGetDescriptor.
+    ...(signAuthorship
+      ? {
+          authorship: authorshipProof
+            ? {
+                signed: true,
+                signer: authorshipProof.issuer,
+                verificationMethod: authorshipProof.verificationMethod,
+                signerAddress: authorshipProof.signerAddress,
+                created: authorshipProof.created,
+                scheme: authorshipProof.scheme,
+              }
+            : {
+                signed: false,
+                reason: authorshipError ?? 'unknown signing failure',
+              },
+        }
+      : {}),
     // Compliance-grade fields (when args.compliance === true): sign
     // the descriptor turtle with the relay's ECDSA wallet, write a
     // sibling .sig.json to the pod, and return the check report.
@@ -1378,7 +1757,84 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
     } catch { /* link present but fetch/decrypt failed; return descriptor only */ }
   }
 
-  return JSON.stringify({ url, turtle, ...(graph ? { graph } : {}) });
+  // ── Authorship verification (automatic, not opt-in) ──────────
+  //
+  // When the descriptor embeds `cg:authorshipProof [...]`, re-derive
+  // the canonical payload and run delegationVerifier against the
+  // descriptor turtle ALONE. Verifiers do not need to trust the pod's
+  // storage layer — the verification method (did:ethr:<addr>) lets us
+  // recover the public key, and any tampering with the signed payload
+  // invalidates the signature.
+  //
+  // Trust-label upgrade per substrate semantics: when authorship
+  // verifies AND the agent's delegation chain verifies on the owner's
+  // pod, the EFFECTIVE trust is CryptographicallyVerified — even if
+  // the descriptor body ships TrustFacet.trustLevel = SelfAsserted.
+  // Substrate-derived trust is what counts, not the declared body.
+  //
+  // Failure surfaces as `{ authorshipVerified: false, reason }` so
+  // callers see the diagnostic; we never reject the read because of a
+  // bad authorship proof — that's the caller's policy decision.
+  let authorship: {
+    authorshipVerified: boolean;
+    signedBy?: IRI;
+    verificationMethod?: IRI;
+    effectiveTrustLevel?: 'CryptographicallyVerified' | 'SelfAsserted';
+    reason?: string;
+  } | undefined;
+  const parsedProof = parseAuthorshipProofFromDescriptorTurtle(turtle);
+  if (parsedProof) {
+    try {
+      const verifyResult = await verifySignedAuthorship(parsedProof, delegationVerifier);
+      if (verifyResult.valid) {
+        let effective: 'CryptographicallyVerified' | 'SelfAsserted' = 'SelfAsserted';
+        try {
+          // Find the pod URL for this descriptor — strip back to the
+          // container so the chain walk knows where the agent registry
+          // and credentials live. Pattern matches the publish-side
+          // `${pod}context-graphs/...` layout produced by `publish()`.
+          const m = url.match(/^(https?:\/\/[^/]+\/[^/]+\/)context-graphs\//);
+          const inferredPodUrl = m ? m[1]! : undefined;
+          if (inferredPodUrl) {
+            const chainResult = await verifyAgentDelegation(
+              parsedProof.issuer,
+              inferredPodUrl,
+              { fetch: solidFetch, verifier: delegationVerifier },
+            );
+            if (chainResult.valid && chainResult.trustLevel === 'CryptographicallyVerified') {
+              effective = 'CryptographicallyVerified';
+            }
+          }
+        } catch { /* chain-walk best-effort; fall back to SelfAsserted */ }
+        authorship = {
+          authorshipVerified: true,
+          signedBy: parsedProof.issuer,
+          verificationMethod: parsedProof.verificationMethod,
+          effectiveTrustLevel: effective,
+        };
+      } else {
+        authorship = {
+          authorshipVerified: false,
+          signedBy: parsedProof.issuer,
+          verificationMethod: parsedProof.verificationMethod,
+          reason: verifyResult.reason ?? 'verification returned false',
+        };
+      }
+    } catch (err) {
+      authorship = {
+        authorshipVerified: false,
+        signedBy: parsedProof.issuer,
+        reason: `verifier threw: ${(err as Error).message}`,
+      };
+    }
+  }
+
+  return JSON.stringify({
+    url,
+    turtle,
+    ...(graph ? { graph } : {}),
+    ...(authorship ? { authorship } : {}),
+  });
 }
 
 // Per-user identity cache for the IDENTITY_URL/me lookup. The display
@@ -2551,6 +3007,100 @@ async function handlePgslToTurtle(_args: ToolArgs): Promise<string> {
   return JSON.stringify({ turtle: pgslToTurtle(getKernelPGSL(pgslProvenance)) });
 }
 
+// ── get_current_head ────────────────────────────────────────
+//
+// Returns the current chain head for a given urn:graph IRI — the
+// descriptorUrl plus the content-CID of that descriptor's Turtle. Used
+// as the read half of a CAS supersession chain: a multi-writer
+// composition flow calls get_current_head first to obtain the
+// `if_match` token, builds the new descriptor, and posts publish_context
+// with that token. If a competing writer republished the same graph_iri
+// in between, the substrate-level precondition gate at
+// packages/solid/src/client.ts rejects with 412 and the caller re-reads.
+//
+// Resolution strategy:
+//   1. Read the pod's .well-known/context-graphs manifest (cache-bypassed
+//      so we observe fresh server state).
+//   2. Filter to entries whose cg:describes contains the supplied urn.
+//   3. Pick the entry that is NOT supersededBy any other entry — i.e.
+//      the chain HEAD. If multiple unsuperseded entries exist (the
+//      forked-chain symptom this fix is meant to prevent), all are
+//      returned so the caller can see the divergence.
+//   4. GET the descriptor Turtle, compute computeCid.
+async function handleGetCurrentHead(args: ToolArgs): Promise<string> {
+  const urn = args.urn as string | undefined;
+  if (!urn) {
+    return JSON.stringify({ error: 'urn is required' });
+  }
+  const podName = (args.pod_name as string) ?? 'default';
+  const rawPodUrl = (args.pod_url as string) ?? `${CSS_URL}${podName}/`;
+  const podUrl = rawPodUrl.endsWith('/') ? rawPodUrl : `${rawPodUrl}/`;
+  // Read freshest manifest — bypass the cache so concurrent writers see
+  // each other's just-published HEAD on the next get_current_head call.
+  manifestCache.delete(podUrl);
+  let entries: ManifestEntry[] = [];
+  try {
+    entries = await getCachedManifest(podUrl);
+  } catch (err) {
+    return JSON.stringify({ error: `Could not read manifest from ${podUrl}: ${(err as Error).message}` });
+  }
+
+  const describing = entries.filter((e) => e.describes.includes(urn as IRI));
+  if (describing.length === 0) {
+    return JSON.stringify({ urn, podUrl, head: null, message: 'No descriptor on this pod describes the requested urn.' });
+  }
+  // An entry is a chain head iff no other entry's cg:supersedes points
+  // at it. The manifest mirrors cg:supersedes (see manifestEntryTurtle),
+  // so we can compute this without fetching descriptors.
+  const superseded = new Set<string>();
+  for (const e of describing) {
+    for (const s of (e.supersedes ?? [])) {
+      superseded.add(s);
+    }
+  }
+  const heads = describing.filter((e) => !superseded.has(e.descriptorUrl));
+  // Compute CIDs for each candidate head. If there are multiple, the
+  // chain has forked — the caller needs to see all of them.
+  const headResults = await Promise.all(
+    heads.map(async (h) => {
+      try {
+        const resp = await solidFetch(h.descriptorUrl, {
+          method: 'GET',
+          headers: { 'Accept': 'text/turtle', 'Cache-Control': 'no-cache' },
+        });
+        if (!resp.ok) {
+          return { descriptorUrl: h.descriptorUrl, cid: null, error: `${resp.status} ${resp.statusText}` };
+        }
+        const turtle = await resp.text();
+        return { descriptorUrl: h.descriptorUrl, cid: cryptoComputeCid(turtle) };
+      } catch (err) {
+        return { descriptorUrl: h.descriptorUrl, cid: null, error: (err as Error).message };
+      }
+    }),
+  );
+  if (headResults.length === 0) {
+    // All describing entries have been superseded by something — pick
+    // the most-recent superseder (i.e. an entry that's both describing
+    // AND that supersedes another describing entry, and isn't itself
+    // superseded by anything in the describing set). Edge case: if every
+    // describing entry has been superseded by entries OUTSIDE the
+    // describing set, fall back to the lexicographic max of describing
+    // entries as a best-effort tip.
+    return JSON.stringify({ urn, podUrl, head: null, forked: false, message: 'All descriptors describing this urn are superseded; no current head.' });
+  }
+  const forked = headResults.length > 1;
+  return JSON.stringify({
+    urn,
+    podUrl,
+    head: forked ? null : headResults[0],
+    heads: forked ? headResults : undefined,
+    forked,
+    message: forked
+      ? `Chain has ${headResults.length} unresolved heads (forked supersession chain — likely a missed CAS). Pick one as if_match or compose them.`
+      : undefined,
+  });
+}
+
 // ── Generic affordance follower ─────────────────────────────
 //
 // Proxies a `cg:Affordance` invocation through the MCP layer so a single
@@ -2783,6 +3333,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   decompose: { description: 'Kernel verb — PGSL fibration vertical movement downward', handler: handleKernelDecompose },
   // ── Core tools (compatibility shims; internal implementation routes through kernel where natural) ──
   publish_context: { description: 'Publish a context-annotated knowledge graph', handler: handlePublishContext },
+  get_current_head: { description: 'Resolve the current chain head (descriptorUrl + content-CID) for a urn:graph:* on a pod — used as the read half of CAS supersession', handler: handleGetCurrentHead },
   discover_context: { description: 'Discover descriptors on a pod', handler: handleDiscoverContext },
   get_descriptor: { description: 'Fetch a descriptor\'s Turtle', handler: handleGetDescriptor },
   get_pod_status: { description: 'Check pod status', handler: handleGetPodStatus },
@@ -2905,6 +3456,14 @@ const PUBLISH_CONTEXT_OUTPUT = mcpOutputSchema({
       description: 'When auto_supersede_prior was active: prior descriptor URLs marked superseded',
       items: { type: 'string' },
     },
+    previousHeadCid: {
+      type: 'string',
+      description: 'Content-CID (CIDv1 raw codec, base32) of the prior chain head this publish was gated against. Pass back as `if_match` on the next publish_context to detect concurrent writers (CAS supersession). Absent when descriptor had no supersedes target.',
+    },
+    previousHeadUrl: {
+      type: 'string',
+      description: 'Descriptor URL of the prior chain head this publish was gated against. Companion to previousHeadCid; either may be used as `if_match` on the next publish.',
+    },
     ipfs: {
       type: 'object',
       description: 'IPFS pin result (or local CID when no provider configured)',
@@ -3001,6 +3560,17 @@ const GET_DESCRIPTOR_OUTPUT = mcpOutputSchema({
         mediaType: { type: 'string' },
         encrypted: { type: 'boolean' },
         content: { type: 'string' },
+      },
+    },
+    authorship: {
+      type: 'object',
+      description: 'When the descriptor embeds a cg:authorshipProof, the relay automatically re-derives the canonical authorship payload and runs the delegation verifier from the descriptor turtle alone. authorshipVerified=true means the signature matched and the named agent really signed the AgentFacet. When BOTH the authorship proof and the delegation chain verify, effectiveTrustLevel becomes CryptographicallyVerified even if the descriptor body shipped SelfAsserted.',
+      properties: {
+        authorshipVerified: { type: 'boolean' },
+        signedBy: { type: 'string', description: 'Agent IRI claimed in the proof' },
+        verificationMethod: { type: 'string', description: 'did:ethr:<addr> or other key-resolution IRI' },
+        effectiveTrustLevel: { type: 'string', enum: ['CryptographicallyVerified', 'SelfAsserted'] },
+        reason: { type: 'string', description: 'Diagnostic when authorshipVerified is false' },
       },
     },
     error: { type: 'string', description: 'HTTP error from the pod when the fetch failed' },
@@ -3301,6 +3871,10 @@ const TOOL_SCHEMAS = [
           type: 'boolean',
           description: 'When true (default), automatically add cg:supersedes links to any prior descriptor on this pod that describes the same graph_iri. Makes republish-to-add-recipients cleanly mark the older version as superseded. Set to false to allow multiple coexisting descriptors for the same graph.',
         },
+        if_match: {
+          type: 'string',
+          description: 'CAS precondition — the descriptor URL (https://.../foo.ttl) OR content-CID (bafkrei...) of the chain head this publish is meant to supersede. publish() resolves the current head for descriptor.supersedes and rejects with code 412 {currentHead, expected} if the assertion does not match what the pod currently holds. Use the `previousHeadCid` field returned by a prior publish_context (or call get_current_head first) as the next publish_context\'s if_match — that gives you atomic compare-and-swap on the supersession chain, preventing two concurrent writers from forking the chain into two competing HEADs.',
+        },
         compliance: {
           type: 'boolean',
           description: 'When true, publish as compliance-grade evidence (regulatory audit trail). Forces trust to HighAssurance, requires non-Hypothetical modal status. Response carries a complianceCheck report.',
@@ -3309,6 +3883,14 @@ const TOOL_SCHEMAS = [
           type: 'string',
           enum: ['eu-ai-act', 'nist-rmf', 'soc2'],
           description: 'Optional regulatory framework this descriptor provides evidence for. The graph_content should cite the relevant control IRIs (e.g., soc2:CC6.1) so framework reports can aggregate.',
+        },
+        sign_authorship: {
+          type: 'boolean',
+          description: 'When true, embed an agent-level cg:authorshipProof block in the descriptor turtle. The proof signs a canonical payload of (agentId, ownerWebId, descriptorId, created, agentDid?) with the agent\'s delegation key (same ECDSA key the signed delegation VC chain uses). Verifiable from the descriptor ALONE: the verificationMethod (did:ethr:<addr>) lets a reader recover the public key without trusting pod storage. On dereference (get_descriptor), the relay automatically runs the verifier and returns { authorshipVerified, signedBy, verificationMethod, effectiveTrustLevel }. When BOTH the authorship proof AND the delegation chain verify, the EFFECTIVE trustLevel is CryptographicallyVerified even when the descriptor body ships TrustFacet.trustLevel = SelfAsserted. Default false to preserve SelfAsserted neutrality. Independent of `compliance` (the trust-facet operator-grade cg:proof block) — the two stack: a publish can carry both, neither, or either.',
+        },
+        agent_did: {
+          type: 'string',
+          description: 'Optional DID for the calling agent. When present and sign_authorship is true, the DID is included in the canonical authorship payload (so verifiers have a resolution hint without an extra round-trip).',
         },
       },
       required: ['graph_iri', 'graph_content'],
@@ -3333,6 +3915,48 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: PUBLISH_CONTEXT_OUTPUT,
     annotations: { title: 'Publish context graph', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: 'get_current_head',
+    description: 'Resolve the current chain head for a urn:graph:* IRI on a pod — returns the descriptorUrl + content-CID of the descriptor that no other descriptor supersedes. Used as the read half of a CAS supersession chain: call this BEFORE composing a new descriptor that supersedes the urn, pass the returned `cid` (or `descriptorUrl`) as `if_match` on the follow-up publish_context, and the substrate-level precondition gate detects any concurrent writer that raced ahead of you. Returns `forked: true` + a `heads` array when the chain has diverged into multiple unresolved tips — a CAS miss that already happened — so the caller can pick one or compose them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        urn: { type: 'string', description: 'The urn:graph:* IRI whose current chain head is being resolved.' },
+        pod_url: { type: 'string', description: 'Pod URL (default: ${CSS_URL}${pod_name}/). Provide either pod_url or pod_name.' },
+        pod_name: { type: 'string', description: 'Pod name on the relay\'s CSS_URL (default: "default"). Ignored when pod_url is provided.' },
+      },
+      required: ['urn'],
+    },
+    outputSchema: mcpOutputSchema({
+      type: 'object',
+      properties: {
+        urn: { type: 'string' },
+        podUrl: { type: 'string' },
+        head: {
+          type: 'object',
+          description: 'The current chain head when the chain is well-formed (one unsuperseded tip).',
+          properties: {
+            descriptorUrl: { type: 'string' },
+            cid: { type: 'string', description: 'CIDv1 raw codec, base32 multihash — same value you pass back as `if_match` on the next publish_context.' },
+          },
+        },
+        heads: {
+          type: 'array',
+          description: 'When the chain has forked (forked: true), every unresolved tip is listed here. A missed CAS produced this — pick one and supersede the others, or compose them via a union/intersection.',
+          items: {
+            type: 'object',
+            properties: {
+              descriptorUrl: { type: 'string' },
+              cid: { type: 'string' },
+            },
+          },
+        },
+        forked: { type: 'boolean' },
+        message: { type: 'string' },
+      },
+    }),
+    annotations: { title: 'Get current chain head for a urn:graph', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'discover_context',

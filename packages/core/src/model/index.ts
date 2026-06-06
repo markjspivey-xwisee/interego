@@ -15,6 +15,9 @@ export {
   createDelegationCredential,
   createSignedDelegationCredential,
   canonicalCredentialPayload,
+  canonicalAuthorshipPayload,
+  createSignedAuthorship,
+  verifySignedAuthorship,
   ownerProfileToTurtle,
   parseOwnerProfile,
   delegationCredentialToJsonLd,
@@ -26,6 +29,8 @@ export type {
   DelegationSigner,
   DelegationVerifier,
   DelegationVerificationOptions,
+  AuthorshipProof,
+  AuthorshipProofInputs,
 } from './delegation.js';
 export {
   registerFacetType,

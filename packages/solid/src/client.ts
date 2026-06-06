@@ -18,8 +18,12 @@ import { toTurtle } from '@interego/core';
 import { turtlePrefixes } from '@interego/core';
 import { ownerProfileToTurtle, parseOwnerProfile, delegationCredentialToJsonLd, parseDelegationCredential, verifyDelegation } from '@interego/core';
 import { createEncryptedEnvelope, openEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
+import { computeCid } from '@interego/core';
 import { withTransientRetry } from '@interego/core/http';
 import { getDefaultFetch, getDefaultWebSocket } from '@interego/core/http';
+
+import { PublishPreconditionFailedError, PublishShapeViolationError } from './types.js';
+import { validateAgainstShape } from '@interego/core';
 
 import type { FetchFn } from '@interego/core/http';
 import type {
@@ -523,6 +527,34 @@ function matchesFilter(entry: ManifestEntry, filter: DiscoverFilter): boolean {
  */
 const DEFAULT_MAX_GRAPH_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Read a descriptor's Turtle representation directly from the pod for
+ * the purposes of the CAS supersession precondition. The fetch is
+ * cache-bypassing (Cache-Control: no-cache) so we always observe the
+ * freshest server-side state. Returns null on 404 (head was deleted)
+ * so the caller can mark the head as "missing" in the observed list
+ * without throwing. Any other non-200 surfaces as an Error.
+ */
+async function fetchDescriptorTurtleForCas(
+  descriptorUrl: string,
+  fetchFn: FetchFn,
+): Promise<string | null> {
+  const resp = await withTransientRetry(() => fetchFn(descriptorUrl, {
+    method: 'GET',
+    headers: {
+      'Accept': TURTLE_CONTENT_TYPE,
+      'Cache-Control': 'no-cache',
+    },
+  }));
+  if (resp.status === 404) return null;
+  if (!resp.ok) {
+    throw new Error(
+      `publish: CAS precondition check could not read current head <${descriptorUrl}>: ${resp.status} ${resp.statusText}`,
+    );
+  }
+  return await resp.text();
+}
+
 export async function publish(
   descriptor: ContextDescriptorData,
   graphContent: string,
@@ -549,7 +581,159 @@ export async function publish(
     );
   }
 
-  const descriptorTurtle = toTurtle(descriptor);
+  // FIX 4 — optional conformance gate. When the caller passes a list of
+  // shape graphs (typically derived from the target container's
+  // .well-known/container-shape declaration), run each one against the
+  // inbound graphContent BEFORE any pod write. On violation throw 422
+  // semantics — the descriptor + payload never land on the pod.
+  if (options.conformsToShapes && options.conformsToShapes.length > 0) {
+    for (const { shapeIri, shapeTurtle } of options.conformsToShapes) {
+      const report = validateAgainstShape(graphContent, shapeTurtle, { entailment: 'rdfs' });
+      if (!report.conforms) {
+        throw new PublishShapeViolationError(
+          `publish: inbound graph violates shape ${shapeIri}`,
+          shapeIri,
+          report.results.map(r => ({
+            focusNode: r.focusNode,
+            path: r.path,
+            value: r.value,
+            constraint: r.constraintComponent,
+            severity: r.severity,
+            message: r.message,
+          })),
+        );
+      }
+    }
+  }
+
+  // ── CAS supersession precondition ────────────────────────────
+  //
+  // When the caller passes `ifMatchSupersedes` / `ifMatchCid` they are
+  // asserting that the current chain head for THIS descriptor's
+  // supersedes target is the specified descriptor (or has the specified
+  // content-CID). The check is a substrate-level gate: zero CSS writes
+  // happen if the precondition fails, so two concurrent writers can't
+  // both succeed in forking the chain.
+  //
+  // Resolution rules:
+  //   - If descriptor.supersedes is empty/absent and either precondition
+  //     option is set, this is a contract bug — throw immediately so the
+  //     caller notices.
+  //   - For each supersedes target we GET the descriptor Turtle (fresh
+  //     read, no cache) and compute its content-CID. The "current head"
+  //     is the union of (a) the explicit supersedes targets and (b) any
+  //     other descriptor turtles those targets resolve to via further
+  //     cg:supersedes back-links — but we only walk one hop and gate on
+  //     the explicit targets. Manifest-level head resolution belongs in
+  //     the caller (see relay's auto_supersede_prior block) so the
+  //     substrate primitive stays cheap.
+  //   - If ifMatchSupersedes is set it must equal one of descriptor.supersedes.
+  //   - If ifMatchCid is set it must equal the CID of one of those targets'
+  //     descriptor Turtles.
+  //   - On mismatch we throw PublishPreconditionFailedError carrying the
+  //     observed current head — the caller re-reads and rebuilds before
+  //     retrying.
+  //
+  // The precondition is observable downstream too: when either match
+  // option is supplied AND succeeds, we emit the witness predicate
+  // cg:supersedesPredicate (a custom audit predicate) into the descriptor
+  // Turtle by appending it after the body — that lets verifiers
+  // reconstruct which prior head the precondition was gated against.
+  let resolvedHeadUrl: string | null = null;
+  let resolvedHeadCid: string | null = null;
+  let preconditionWitness: { matched: string; via: 'supersedes' | 'cid' } | null = null;
+  const supersedesList: readonly string[] = descriptor.supersedes ?? [];
+  if (options.ifMatchSupersedes !== undefined || options.ifMatchCid !== undefined) {
+    if (supersedesList.length === 0) {
+      throw new PublishPreconditionFailedError(
+        'publish: ifMatchSupersedes/ifMatchCid was provided but descriptor.supersedes is empty — nothing to compare against. Add the prior head IRI to descriptor.supersedes (or drop the precondition).',
+        {
+          ...(options.ifMatchSupersedes !== undefined ? { supersedes: options.ifMatchSupersedes } : {}),
+          ...(options.ifMatchCid !== undefined ? { cid: options.ifMatchCid } : {}),
+        },
+        { descriptorUrl: null, cid: null, supersedesList: [] },
+      );
+    }
+    // Walk each supersedes target; collect descriptor URL + CID pairs so
+    // the error response (on mismatch) carries the full observed head set.
+    const observed: { descriptorUrl: string; cid: string }[] = [];
+    for (const target of supersedesList) {
+      // Use a transient retry so a transient 5xx doesn't masquerade as a
+      // precondition failure. Skip-on-404 — the head was deleted, which
+      // is a precondition failure of its own kind.
+      const headTurtle = await fetchDescriptorTurtleForCas(target, fetchFn);
+      if (headTurtle === null) {
+        observed.push({ descriptorUrl: target, cid: '' });
+        continue;
+      }
+      const cid = computeCid(headTurtle);
+      observed.push({ descriptorUrl: target, cid });
+    }
+
+    // Try ifMatchSupersedes first — direct URL equality against the
+    // declared supersedes set.
+    if (options.ifMatchSupersedes !== undefined) {
+      const hit = observed.find((o) => o.descriptorUrl === options.ifMatchSupersedes);
+      if (!hit) {
+        throw new PublishPreconditionFailedError(
+          `publish: ifMatchSupersedes precondition failed — ${options.ifMatchSupersedes} is not among the declared supersedes targets [${supersedesList.join(', ')}].`,
+          { supersedes: options.ifMatchSupersedes, ...(options.ifMatchCid !== undefined ? { cid: options.ifMatchCid } : {}) },
+          { descriptorUrl: observed[0]?.descriptorUrl ?? null, cid: observed[0]?.cid ?? null, supersedesList: observed.map((o) => o.descriptorUrl) },
+        );
+      }
+      preconditionWitness = { matched: hit.descriptorUrl, via: 'supersedes' };
+      resolvedHeadUrl = hit.descriptorUrl;
+      resolvedHeadCid = hit.cid || null;
+    }
+
+    if (options.ifMatchCid !== undefined) {
+      const hit = observed.find((o) => o.cid === options.ifMatchCid);
+      if (!hit) {
+        throw new PublishPreconditionFailedError(
+          `publish: ifMatchCid precondition failed — CID ${options.ifMatchCid} does not match any current supersedes head (observed CIDs: [${observed.map((o) => o.cid).filter(Boolean).join(', ')}]).`,
+          { ...(options.ifMatchSupersedes !== undefined ? { supersedes: options.ifMatchSupersedes } : {}), cid: options.ifMatchCid },
+          { descriptorUrl: observed[0]?.descriptorUrl ?? null, cid: observed[0]?.cid ?? null, supersedesList: observed.map((o) => o.descriptorUrl) },
+        );
+      }
+      // If both supersedes + cid options are given, the URL match above
+      // must also point at this same head — otherwise the caller's view
+      // of the world is inconsistent.
+      if (preconditionWitness && preconditionWitness.matched !== hit.descriptorUrl) {
+        throw new PublishPreconditionFailedError(
+          `publish: ifMatchSupersedes and ifMatchCid identified different heads (${preconditionWitness.matched} vs ${hit.descriptorUrl}).`,
+          { supersedes: options.ifMatchSupersedes, cid: options.ifMatchCid },
+          { descriptorUrl: hit.descriptorUrl, cid: hit.cid, supersedesList: observed.map((o) => o.descriptorUrl) },
+        );
+      }
+      preconditionWitness = { matched: hit.descriptorUrl, via: preconditionWitness ? 'supersedes' : 'cid' };
+      resolvedHeadUrl = hit.descriptorUrl;
+      resolvedHeadCid = hit.cid;
+    }
+  } else if (supersedesList.length > 0) {
+    // No precondition was requested, but the descriptor IS superseding
+    // something. Compute the head CID anyway so callers can pass it back
+    // as ifMatchCid on the next publish. Best-effort: a transient read
+    // failure here just leaves previousHeadCid absent in the result.
+    try {
+      const headTurtle = await fetchDescriptorTurtleForCas(supersedesList[0]!, fetchFn);
+      if (headTurtle !== null) {
+        resolvedHeadUrl = supersedesList[0]!;
+        resolvedHeadCid = computeCid(headTurtle);
+      }
+    } catch { /* best-effort */ }
+  }
+
+  const baseDescriptorTurtle = toTurtle(descriptor);
+  // When the precondition matched, append a Turtle comment witness so
+  // downstream auditors can verify which prior head this publish was
+  // gated against, without introducing a new cg: term (the ontology
+  // lint blocks unregistered cg:* IRIs). The witness rides on top of
+  // the existing cg:supersedes triple already in the descriptor — the
+  // comment names the precondition source (URL vs CID) and which one
+  // of the supersedes targets satisfied it.
+  const descriptorTurtle = preconditionWitness
+    ? `${baseDescriptorTurtle.trimEnd()}\n# ── CAS supersession witness (precondition matched at publish time, via ${preconditionWitness.via}) ──\n# cg:supersedes precondition gated against <${preconditionWitness.matched}>\n`
+    : baseDescriptorTurtle;
   const primaryGraph = descriptor.describes[0]!;
 
   // 1. PUT the graph payload — plaintext TriG OR encrypted envelope.
@@ -612,7 +796,28 @@ export async function publish(
     descriptorId: descriptor.id,
     relayBaseUrl: options.relayBaseUrl,
   });
-  const descriptorWithDistribution = descriptorTurtle.trimEnd() + '\n\n' + distributionBlock + '\n';
+  // Optional authorship-proof block. When the caller minted a signed
+  // authorship proof for THIS publish (typically via `sign_authorship:
+  // true` in the relay shim → `createSignedAuthorship` with the
+  // calling agent's delegation key), embed it as
+  //   <> cg:authorshipProof [ a cg:SignedAuthorship ; ... ] .
+  // adjacent to the AgentFacet block. Independent of the trust-facet
+  // cg:proof block (which signs the whole descriptor turtle and is
+  // operator-grade): authorship binds the AgentFacet to THIS agent's
+  // delegation key so any reader can verify "the named agent actually
+  // signed this AgentFacet" without trusting pod storage.
+  //
+  // Also asserts `dct:conformsTo <cg:SignedAuthorship>` so readers
+  // can detect a signed-authorship descriptor by feature, not by
+  // probe-parse.
+  const authorshipBlock = options.authorshipProof
+    ? buildAuthorshipProofBlock(options.authorshipProof)
+    : '';
+  const descriptorWithDistribution =
+    descriptorTurtle.trimEnd()
+    + '\n\n' + distributionBlock
+    + (authorshipBlock ? ('\n\n' + authorshipBlock) : '')
+    + '\n';
   await withTransientRetry(async () => {
     const descResponse = await fetchFn(descriptorUrl, {
       method: 'PUT',
@@ -791,6 +996,12 @@ export async function publish(
   if (encryptedFlag) (result as { encrypted?: boolean }).encrypted = true;
   if (pgslUri !== undefined) (result as { pgslUri?: string }).pgslUri = pgslUri;
   if (pgslLevel !== undefined) (result as { pgslLevel?: number }).pgslLevel = pgslLevel;
+  // CAS chain head — included whenever we resolved one, regardless of
+  // whether a precondition was supplied. Callers can use these to chain
+  // a sequence of supersessions atomically (publish → previousHeadCid →
+  // ifMatchCid on next publish → ...).
+  if (resolvedHeadCid !== null) (result as { previousHeadCid?: string }).previousHeadCid = resolvedHeadCid;
+  if (resolvedHeadUrl !== null) (result as { previousHeadUrl?: string }).previousHeadUrl = resolvedHeadUrl;
   return result;
 }
 
@@ -885,6 +1096,100 @@ function buildDistributionBlock(d: {
     lines.push(`] .`);
   }
   return lines.join('\n');
+}
+
+/**
+ * Build the Turtle block embedding an authorship proof in the
+ * descriptor. Shape:
+ *
+ *   <> dct:conformsTo <https://markjspivey-xwisee.github.io/interego/ns/cg#SignedAuthorship> .
+ *   <> cg:authorshipProof [
+ *     a cg:SignedAuthorship ;
+ *     cg:scheme "EcdsaSecp256k1Signature2019" ;
+ *     cg:issuer <agentId> ;
+ *     cg:verificationMethod <did:ethr:0x...> ;
+ *     cg:signerAddress "0x..." ;
+ *     cg:created "2026-06-06T..." ;
+ *     cg:ownerWebId <https://...> ;
+ *     cg:descriptorId <descriptorIRI> ;
+ *     cg:proofValue "0x..."
+ *   ] .
+ *
+ * Verifiable from the descriptor ALONE: the embedded
+ * `cg:verificationMethod` resolves to a public key (did:ethr:0x...
+ * recovers directly; other DID methods would be resolved). The
+ * canonical payload is reconstructed from (issuer, ownerWebId,
+ * descriptorId, created, agentDid?) at verify time so any tampering
+ * with those fields invalidates the signature.
+ */
+function buildAuthorshipProofBlock(p: import('@interego/core').AuthorshipProof): string {
+  // Escape minimal Turtle-literal hazards in the proof value + signer
+  // address (they are hex / base64 in practice but defensive).
+  const esc = (s: string): string => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const lines: string[] = [
+    '# ── Authorship Proof (cg:SignedAuthorship) ──',
+    `<> dct:conformsTo <https://markjspivey-xwisee.github.io/interego/ns/cg#SignedAuthorship> .`,
+    `<> cg:authorshipProof [`,
+    `    a cg:SignedAuthorship ;`,
+    `    cg:scheme "${esc(p.scheme)}" ;`,
+    `    cg:issuer <${p.issuer}> ;`,
+    `    cg:verificationMethod <${p.verificationMethod}> ;`,
+    `    cg:signerAddress "${esc(p.signerAddress)}" ;`,
+    `    cg:created "${esc(p.created)}"^^xsd:dateTime ;`,
+    `    cg:ownerWebId <${p.ownerWebId}> ;`,
+    `    cg:descriptorId <${p.descriptorId}> ;`,
+  ];
+  if (p.agentDid) {
+    lines.push(`    cg:agentDid "${esc(p.agentDid)}" ;`);
+  }
+  lines.push(`    cg:proofValue "${esc(p.proofValue)}"`);
+  lines.push(`] .`);
+  return lines.join('\n');
+}
+
+/**
+ * Parse the `cg:authorshipProof [...]` block embedded in a descriptor
+ * Turtle document. Returns null when no authorship proof is present.
+ * Forgiving regex-based parser (mirrors the existing
+ * `parseDistributionFromDescriptorTurtle` style) so it stays in step
+ * with the relay's hand-built emitter without dragging a full Turtle
+ * parser into the runtime.
+ */
+export function parseAuthorshipProofFromDescriptorTurtle(
+  turtle: string,
+): import('@interego/core').AuthorshipProof | null {
+  const blockMatch = turtle.match(/cg:authorshipProof\s+\[([^\]]+)\]/);
+  if (!blockMatch) return null;
+  const body = blockMatch[1]!;
+  const read = (re: RegExp): string | undefined => {
+    const m = body.match(re);
+    return m?.[1];
+  };
+  const issuer = read(/cg:issuer\s+<([^>]+)>/);
+  const verificationMethod = read(/cg:verificationMethod\s+<([^>]+)>/);
+  const signerAddress = read(/cg:signerAddress\s+"([^"]+)"/);
+  const created = read(/cg:created\s+"([^"]+)"/);
+  const ownerWebId = read(/cg:ownerWebId\s+<([^>]+)>/);
+  const descriptorId = read(/cg:descriptorId\s+<([^>]+)>/);
+  const proofValue = read(/cg:proofValue\s+"([^"]+)"/);
+  const scheme = read(/cg:scheme\s+"([^"]+)"/) ?? 'EcdsaSecp256k1Signature2019';
+  const agentDid = read(/cg:agentDid\s+"([^"]+)"/);
+  if (!issuer || !verificationMethod || !signerAddress || !created
+      || !ownerWebId || !descriptorId || !proofValue) {
+    return null;
+  }
+  type IRIType = import('@interego/core').IRI;
+  return {
+    issuer: issuer as IRIType,
+    verificationMethod: verificationMethod as IRIType,
+    signerAddress,
+    created,
+    ownerWebId: ownerWebId as IRIType,
+    descriptorId: descriptorId as IRIType,
+    proofValue,
+    scheme,
+    ...(agentDid ? { agentDid } : {}),
+  };
 }
 
 export interface DistributionLink {

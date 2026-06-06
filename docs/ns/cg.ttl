@@ -573,6 +573,74 @@ cg:proofSigner a owl:DatatypeProperty ;
     rdfs:range xsd:string ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
+# ── Authorship Proof (agent-level signed identity claim) ──────
+#
+# Independent of cg:proof on TrustFacet (which is the operator-grade
+# whole-descriptor signature lodged in a sibling .sig.json). cg:authorshipProof
+# is an inline, agent-level signature over a canonical payload containing
+# the agent IRI, owner WebID, descriptor IRI, and timestamp — the
+# AgentFacet's identity claim, bound to the descriptor it lives in.
+#
+# Verifiable from the descriptor ALONE: the verificationMethod IRI
+# (typically did:ethr:<addr>) lets a reader recover the public key
+# without trusting the pod's storage layer.
+
+cg:SignedAuthorship a owl:Class ;
+    rdfs:label "Signed Authorship" ;
+    rdfs:comment "An agent-level cryptographic claim that a specific agent IRI signed a descriptor's AgentFacet. Embedded into the descriptor turtle alongside the AgentFacet block via cg:authorshipProof. Independent of the operator-grade descriptor-level cg:proof on the TrustFacet." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:authorshipProof a owl:ObjectProperty ;
+    rdfs:label "authorship proof" ;
+    rdfs:comment "Links a ContextDescriptor to an embedded cg:SignedAuthorship blank node. The proof signs a canonical payload of (agentId, ownerWebId, descriptorId, created, agentDid?) with the agent's delegation key (same key the signed delegation VC chain uses). Verifiable from the descriptor alone via the embedded cg:verificationMethod." ;
+    rdfs:range cg:SignedAuthorship ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:scheme a owl:DatatypeProperty ;
+    rdfs:label "signature scheme" ;
+    rdfs:comment "Cryptographic suite used for a signed block (e.g. EcdsaSecp256k1Signature2019, Ed25519Signature2020, BbsBlsSignature2020)." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:verificationMethod a owl:ObjectProperty ;
+    rdfs:label "verification method" ;
+    rdfs:comment "IRI naming the public key that verifies a signed block. Typically did:ethr:<addr> (self-describing, no extra DID-document fetch needed) or <webId>#key-1." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:signerAddress a owl:DatatypeProperty ;
+    rdfs:label "signer address" ;
+    rdfs:comment "Authoritative public identifier of the signer (Ethereum address, did:key fingerprint). Verifiers recover the address from the signature and check it matches this field." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:created a owl:DatatypeProperty ;
+    rdfs:label "created" ;
+    rdfs:comment "ISO 8601 timestamp at which the signed claim was minted. Included in the canonical payload so replay-resistance can be evaluated from the descriptor alone." ;
+    rdfs:range xsd:dateTime ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:proofValue a owl:DatatypeProperty ;
+    rdfs:label "proof value" ;
+    rdfs:comment "The hex- or base64-encoded signature value over the canonical payload. Verifiers re-derive the canonical payload from the descriptor and re-run the signature check." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:ownerWebId a owl:ObjectProperty ;
+    rdfs:label "owner WebID" ;
+    rdfs:comment "On a SignedAuthorship block: the pod owner WebID the signing agent acts on behalf of. Included in the canonical authorship payload so tampering with the owner-attribution invalidates the signature." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:descriptorId a owl:ObjectProperty ;
+    rdfs:label "descriptor id" ;
+    rdfs:comment "On a SignedAuthorship block: the descriptor IRI the authorship claim is bound to. Included in the canonical authorship payload so a proof from one descriptor cannot be replayed onto another." ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
+cg:agentDid a owl:DatatypeProperty ;
+    rdfs:label "agent DID" ;
+    rdfs:comment "Optional DID hint for the signing agent, surfaced in the canonical authorship payload for verifiers that want a resolution shortcut. Independent of cg:verificationMethod (which is the authoritative key-name)." ;
+    rdfs:range xsd:string ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+
 # ── Federation properties ─────────────────────────────────────
 
 cg:origin a owl:ObjectProperty ;

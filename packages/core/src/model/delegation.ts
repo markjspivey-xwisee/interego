@@ -573,6 +573,177 @@ export async function verifyDelegation(
   return verifyDelegationChain(agentId, podUrl, profile, fetchProfile, options);
 }
 
+// ── Authorship Proof ─────────────────────────────────────────
+//
+// Independent of the descriptor-level compliance signature (cg:proof on
+// the TrustFacet, which covers the whole descriptor Turtle and is the
+// pod-operator anchor), the authorship proof is an agent-level claim
+// that THIS agent IRI is the one that minted the descriptor's
+// AgentFacet. It signs a small, stable payload — agent IRI + delegating
+// owner WebID + descriptor IRI + timestamp — using the same key that
+// backs the agent's signed delegation VC.
+//
+// Why split it from cg:proof:
+//   - cg:proof is opt-in (compliance===true) and operator-grade
+//   - authorship proof can ship on every publish (cheap, single ECDSA
+//     signature) so a reader of any descriptor can independently
+//     confirm "did this agent really sign this AgentFacet?" without
+//     trusting the pod's storage layer
+//
+// The canonical payload is a stable-key-order JSON string mirroring
+// canonicalCredentialPayload's discipline so any two parties holding
+// the same logical inputs produce byte-identical signing input.
+
+/**
+ * Inputs to an authorship proof — the minimal stable triple that pins
+ * the AgentFacet's identity claim to the descriptor it's embedded in.
+ */
+export interface AuthorshipProofInputs {
+  /** Agent IRI claiming authorship (must match AgentFacet.assertingAgent). */
+  readonly agentId: IRI;
+  /** Owner WebID the agent acts on behalf of (matches AgentFacet.onBehalfOf). */
+  readonly ownerWebId: IRI;
+  /** Descriptor IRI this authorship claim is bound to. */
+  readonly descriptorId: IRI;
+  /** ISO 8601 timestamp at which the authorship was asserted. */
+  readonly created: string;
+  /** Optional agent DID, surfaced for verifiers that need the resolution hint. */
+  readonly agentDid?: string;
+}
+
+/**
+ * Embedded authorship-proof block. Matches the Turtle shape
+ *   <descriptor> cg:authorshipProof [
+ *     a cg:SignedAuthorship ;
+ *     cg:issuer <agentId> ;
+ *     cg:verificationMethod <did:ethr:0x...> ;
+ *     cg:created "2026-06-06T..." ;
+ *     cg:proofValue "0x..."
+ *   ] .
+ */
+export interface AuthorshipProof {
+  readonly issuer: IRI;
+  readonly verificationMethod: IRI;
+  readonly created: string;
+  readonly proofValue: string;
+  readonly signerAddress: string;
+  readonly ownerWebId: IRI;
+  readonly descriptorId: IRI;
+  readonly agentDid?: string;
+  /** Signature scheme — defaults to ECDSA-secp256k1 / EcdsaSecp256k1Signature2019. */
+  readonly scheme: string;
+}
+
+/**
+ * Build the canonical JSON payload of an authorship claim for signing
+ * or verification. Stable key order (alphabetical-by-construction below)
+ * so two parties holding the same logical inputs agree byte-for-byte.
+ *
+ * Mirrors `canonicalCredentialPayload`'s discipline: no proof block, no
+ * variant fields, no whitespace-sensitive layout — `JSON.stringify`
+ * over a literal-object with deterministic insertion order.
+ */
+export function canonicalAuthorshipPayload(
+  inputs: AuthorshipProofInputs,
+): string {
+  const ordered: Record<string, unknown> = {
+    '@context': [
+      'https://www.w3.org/2018/credentials/v1',
+      'https://markjspivey-xwisee.github.io/interego/ns/cg/authorship/v1',
+    ],
+    agentId: inputs.agentId,
+    created: inputs.created,
+    descriptorId: inputs.descriptorId,
+    ownerWebId: inputs.ownerWebId,
+    type: 'SignedAuthorship',
+  };
+  if (inputs.agentDid) {
+    ordered['agentDid'] = inputs.agentDid;
+  }
+  return JSON.stringify(ordered);
+}
+
+/**
+ * Sign an authorship claim with the calling agent's delegation key.
+ *
+ * Reuses the same `DelegationSigner` shape used by signed VCs — typically
+ * the relay's secp256k1 wallet (`makeWalletDelegationSigner`). The
+ * returned `AuthorshipProof` is shaped to embed directly in the
+ * descriptor Turtle alongside the AgentFacet (`cg:authorshipProof [...]`).
+ */
+export async function createSignedAuthorship(
+  inputs: AuthorshipProofInputs,
+  signer: DelegationSigner,
+): Promise<AuthorshipProof> {
+  const payload = canonicalAuthorshipPayload(inputs);
+  const { signature, signerAddress, verificationMethod } = await signer(payload);
+  return {
+    issuer: inputs.agentId,
+    verificationMethod,
+    created: inputs.created,
+    proofValue: signature,
+    signerAddress,
+    ownerWebId: inputs.ownerWebId,
+    descriptorId: inputs.descriptorId,
+    ...(inputs.agentDid ? { agentDid: inputs.agentDid } : {}),
+    scheme: 'EcdsaSecp256k1Signature2019',
+  };
+}
+
+/**
+ * Verify a parsed authorship proof against the canonical payload it
+ * claims to sign. Recovers the signer from `(payload, signature)` and
+ * checks it matches `proof.signerAddress` — symmetric with
+ * `verifyDelegationChain`'s proof check, using the same
+ * `DelegationVerifier` shape.
+ *
+ * Returns `{ valid: false, reason }` on any mismatch (bad signature,
+ * tampered payload, mismatched signer) so the caller can surface the
+ * reason without rejecting the whole descriptor read.
+ */
+export async function verifySignedAuthorship(
+  proof: AuthorshipProof,
+  verifier: DelegationVerifier,
+): Promise<{ valid: boolean; signer: IRI; reason?: string }> {
+  const inputs: AuthorshipProofInputs = {
+    agentId: proof.issuer,
+    ownerWebId: proof.ownerWebId,
+    descriptorId: proof.descriptorId,
+    created: proof.created,
+    ...(proof.agentDid ? { agentDid: proof.agentDid } : {}),
+  };
+  const payload = canonicalAuthorshipPayload(inputs);
+  // DelegationProof.type is a string-literal union — coerce the
+  // free-string scheme into it. The verifier (makeWalletDelegationVerifier)
+  // ignores the `type` field at verify time (recovery is a pure
+  // function of payload + signature), so the literal cast is safe.
+  const proofBlock: DelegationProof = {
+    type: 'EcdsaSecp256k1Signature2019',
+    created: proof.created,
+    proofPurpose: 'assertionMethod',
+    verificationMethod: proof.verificationMethod,
+    proofValue: proof.proofValue,
+    signerAddress: proof.signerAddress,
+  };
+  try {
+    const ok = await verifier(payload, proofBlock);
+    if (!ok) {
+      return {
+        valid: false,
+        signer: proof.issuer,
+        reason: 'Authorship proof signature did not verify against canonical payload',
+      };
+    }
+    return { valid: true, signer: proof.issuer };
+  } catch (err) {
+    return {
+      valid: false,
+      signer: proof.issuer,
+      reason: `Authorship verifier threw: ${(err as Error).message}`,
+    };
+  }
+}
+
 /**
  * Walk a signed delegation chain from `agentId` up to the pod owner's
  * WebID, verifying each VC's signature in turn.

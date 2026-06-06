@@ -51,6 +51,84 @@ export interface PublishResult {
    * Level 0 = atom, Level N = N-item overlapping pair construction.
    */
   readonly pgslLevel?: number;
+  /**
+   * When `descriptor.supersedes` was set AND the precondition path resolved
+   * a current chain head, this is the content-CID of that head's descriptor
+   * Turtle at the moment of publish. Callers performing a series of
+   * supersession publishes should pass this back as `ifMatchCid` on the
+   * next publish to detect concurrent writers — see {@link PublishOptions.ifMatchCid}.
+   */
+  readonly previousHeadCid?: string;
+  /**
+   * When `descriptor.supersedes` was set, the descriptor URL of the
+   * resolved current chain head at publish time. Companion to
+   * `previousHeadCid` for callers that prefer URL-based CAS.
+   */
+  readonly previousHeadUrl?: string;
+}
+
+/**
+ * Thrown when a publish() call carries a CAS precondition
+ * ({@link PublishOptions.ifMatchSupersedes} or
+ * {@link PublishOptions.ifMatchCid}) and the precondition fails. The HTTP
+ * mapping is 412 Precondition Failed; callers can `instanceof`-check this
+ * and re-read the current head before retrying.
+ */
+export class PublishPreconditionFailedError extends Error {
+  readonly code = 412;
+  /** Descriptor URL(s) the caller asserted as current head. */
+  readonly expected: { supersedes?: string; cid?: string };
+  /** Actual current head observed on the pod at precondition-check time. */
+  readonly actual: { descriptorUrl: string | null; cid: string | null; supersedesList: readonly string[] };
+  constructor(
+    message: string,
+    expected: { supersedes?: string; cid?: string },
+    actual: { descriptorUrl: string | null; cid: string | null; supersedesList: readonly string[] },
+  ) {
+    super(message);
+    this.name = 'PublishPreconditionFailedError';
+    this.expected = expected;
+    this.actual = actual;
+  }
+}
+
+/**
+ * Thrown when a publish() call's optional SHACL conformance gate
+ * ({@link PublishOptions.conformsToShapes}) rejects the inbound graph
+ * content. HTTP mapping is 422 Unprocessable Entity. The `violations`
+ * array carries the SHACL result rows so callers can surface the
+ * exact constraint that failed.
+ */
+export class PublishShapeViolationError extends Error {
+  readonly code = 422;
+  /** Shape IRI whose constraint(s) were violated. */
+  readonly shape: string;
+  /** Violation rows from the SHACL engine. */
+  readonly violations: readonly {
+    readonly focusNode: string;
+    readonly path?: string;
+    readonly value?: string;
+    readonly constraint: string;
+    readonly severity: string;
+    readonly message: string;
+  }[];
+  constructor(
+    message: string,
+    shape: string,
+    violations: readonly {
+      readonly focusNode: string;
+      readonly path?: string;
+      readonly value?: string;
+      readonly constraint: string;
+      readonly severity: string;
+      readonly message: string;
+    }[],
+  ) {
+    super(message);
+    this.name = 'PublishShapeViolationError';
+    this.shape = shape;
+    this.violations = violations;
+  }
 }
 
 /** Options for the publish function. */
@@ -122,6 +200,21 @@ export interface PublishOptions {
   readonly relayBaseUrl?: string;
 
   /**
+   * Optional agent-level authorship proof, embedded in the descriptor
+   * Turtle adjacent to the AgentFacet block as a `cg:authorshipProof`
+   * blank node. Independent of the descriptor-level compliance signature
+   * (`cg:proof` on the TrustFacet, which covers the whole descriptor
+   * Turtle and is the pod-operator anchor): authorship binds an agent's
+   * identity claim to the AgentFacet via the agent's own delegation
+   * key, so any reader can re-derive the canonical payload and
+   * re-verify the signature WITHOUT trusting the pod's storage layer.
+   *
+   * Mint via `createSignedAuthorship` from `@interego/core` (uses the
+   * same `DelegationSigner` shape as the signed delegation VC).
+   */
+  readonly authorshipProof?: import('@interego/core').AuthorshipProof;
+
+  /**
    * Maximum permitted graph payload size in bytes. Default 4 MiB.
    * publish() throws before serialization if the named-graph content
    * exceeds this — keeps pathological inputs (multi-GB serialization,
@@ -131,6 +224,54 @@ export interface PublishOptions {
    * pgsl:contains / dct:hasPart instead of inlining.
    */
   readonly maxGraphBytes?: number;
+
+  /**
+   * CAS precondition — descriptor URL of the chain head the caller
+   * believes is current. publish() resolves the current head for every
+   * IRI in `descriptor.supersedes` and rejects with
+   * {@link PublishPreconditionFailedError} (HTTP 412 semantics) if
+   * `ifMatchSupersedes` is not present in the resolved head set.
+   *
+   * Pairs with `ifMatchCid`: if both are supplied, BOTH must match.
+   * If `descriptor.supersedes` is empty, this option is a no-op
+   * (nothing to compare against).
+   *
+   * Fixes the auto-supersede race in the MCP shim: without this gate,
+   * two concurrent publishers republishing the same graph_iri each see
+   * the same prior head, each emit a cg:supersedes back-link to it, and
+   * both succeed — producing a forked chain with two heads. The
+   * precondition forces the second writer to re-read first.
+   */
+  readonly ifMatchSupersedes?: string;
+
+  /**
+   * CAS precondition — content-CID (SHA-256 multihash, base32 CIDv1) of
+   * the current chain head's descriptor Turtle that the caller observed.
+   * publish() recomputes the head's CID at precondition-check time and
+   * rejects with {@link PublishPreconditionFailedError} on mismatch.
+   *
+   * Pairs with `ifMatchSupersedes`. Use the `previousHeadCid` field on
+   * {@link PublishResult} from a prior publish as the next call's CAS token.
+   */
+  readonly ifMatchCid?: string;
+
+  /**
+   * Optional SHACL conformance gate, run BEFORE any pod write. Lets the
+   * caller (typically the MCP relay, but anything calling publish()
+   * directly) declare a list of shape graphs the inbound `graphContent`
+   * MUST conform to. If the gate rejects, publish() throws
+   * `PublishShapeViolationError` before the descriptor or payload land
+   * on the pod.
+   *
+   * The kernel does not synthesize shapes — every shape graph in
+   * `shapes` is supplied verbatim by the caller (typically fetched from
+   * the target container's `.well-known/container-shape` declaration).
+   * Passing an empty array (or omitting the field) skips the gate.
+   *
+   * Pair with {@link validateAgainstShape} from `@interego/core`'s
+   * validation surface for the engine that runs each shape.
+   */
+  readonly conformsToShapes?: readonly { readonly shapeIri: string; readonly shapeTurtle: string }[];
 }
 
 /** Options for the discover function. */

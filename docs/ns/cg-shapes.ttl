@@ -241,3 +241,89 @@ cg:VisibilityShape a sh:NodeShape ;
             }
         """
     ] .
+
+# ──────────────────────────────────────────────────────────────
+#  7. AuthorshipProof — required fields for cg:SignedAuthorship
+#
+#  When a descriptor embeds cg:authorshipProof [...], the embedded
+#  blank node MUST declare every field the canonical-payload reconstructor
+#  reads. Missing any of these makes the proof unverifiable from the
+#  descriptor alone, defeating the whole point of embedded authorship.
+#
+#  Required:
+#    cg:scheme              — signature suite name
+#    cg:issuer              — agent IRI claiming authorship
+#    cg:verificationMethod  — IRI naming the public key (did:ethr:<addr>)
+#    cg:signerAddress       — authoritative public-id of the signer
+#    cg:created             — ISO 8601 timestamp
+#    cg:ownerWebId          — pod owner WebID
+#    cg:descriptorId        — descriptor IRI the proof binds to
+#    cg:proofValue          — the signature itself
+#
+#  Optional:
+#    cg:agentDid            — DID-resolution hint
+# ──────────────────────────────────────────────────────────────
+cg:AuthorshipProofShape a sh:NodeShape ;
+    sh:targetClass cg:SignedAuthorship ;
+    sh:property [
+        sh:path cg:scheme ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "cg:SignedAuthorship MUST declare cg:scheme (signature suite)."
+    ] ;
+    sh:property [
+        sh:path cg:issuer ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "cg:SignedAuthorship MUST declare cg:issuer (agent IRI)."
+    ] ;
+    sh:property [
+        sh:path cg:verificationMethod ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "cg:SignedAuthorship MUST declare cg:verificationMethod (key IRI)."
+    ] ;
+    sh:property [
+        sh:path cg:signerAddress ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "cg:SignedAuthorship MUST declare cg:signerAddress."
+    ] ;
+    sh:property [
+        sh:path cg:created ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "cg:SignedAuthorship MUST declare cg:created (ISO 8601 timestamp)."
+    ] ;
+    sh:property [
+        sh:path cg:ownerWebId ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "cg:SignedAuthorship MUST declare cg:ownerWebId."
+    ] ;
+    sh:property [
+        sh:path cg:descriptorId ;
+        sh:nodeKind sh:IRI ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "cg:SignedAuthorship MUST declare cg:descriptorId (the descriptor IRI the proof binds to)."
+    ] ;
+    sh:property [
+        sh:path cg:proofValue ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "cg:SignedAuthorship MUST declare cg:proofValue (the signature)."
+    ] ;
+    sh:property [
+        sh:path cg:agentDid ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+        sh:message "cg:agentDid is optional but MUST be at most one when present."
+    ] .

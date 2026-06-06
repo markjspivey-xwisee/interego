@@ -2,6 +2,7 @@ export {
   publish, discover, subscribe, parseManifest,
   fetchGraphContent,
   parseDistributionFromDescriptorTurtle,
+  parseAuthorshipProofFromDescriptorTurtle,
   writeAgentRegistry, readAgentRegistry,
   writeDelegationCredential, readDelegationCredential, verifyAgentDelegation,
   buildVerifyAgentEnvelope,
@@ -25,7 +26,7 @@ export type {
   ContextGraphsManifest,
   RegistryOptions,
 } from './types.js';
-export { AGENT_REGISTRY_PATH, CREDENTIALS_PATH } from './types.js';
+export { AGENT_REGISTRY_PATH, CREDENTIALS_PATH, PublishPreconditionFailedError, PublishShapeViolationError } from './types.js';
 
 // ── Shape discovery (spec §6.5b) ─────────────────────────────
 export {

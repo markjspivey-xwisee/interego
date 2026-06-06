@@ -42,6 +42,9 @@ export {
   createDelegationCredential,
   createSignedDelegationCredential,
   canonicalCredentialPayload,
+  canonicalAuthorshipPayload,
+  createSignedAuthorship,
+  verifySignedAuthorship,
   ownerProfileToTurtle,
   parseOwnerProfile,
   delegationCredentialToJsonLd,
@@ -106,6 +109,8 @@ export type {
   DelegationSigner,
   DelegationVerifier,
   DelegationVerificationOptions,
+  AuthorshipProof,
+  AuthorshipProofInputs,
 } from './model/index.js';
 
 // ── Causality (Pearl's SCM Framework) ───────────────────────
@@ -285,6 +290,11 @@ export {
   assertValid,
   getShaclShapesTurtle,
   SHACL_SHAPES_TURTLE,
+  validateAgainstShape,
+  type ShaclReport,
+  type ShaclResult,
+  type ShaclSeverity,
+  type ValidateAgainstShapeOptions,
 } from './validation/index.js';
 
 // ── SPARQL Patterns ──────────────────────────────────────────
