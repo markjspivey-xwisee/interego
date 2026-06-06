@@ -89,7 +89,7 @@ browser. Pick the credential you enrolled in Step 1, sign the challenge,
 and the page closes automatically. Your client is now bound to your
 identity.
 
-Your client now has access to ~60 substrate primitives. The most useful ones are:
+Your client now has access to ~35 substrate primitives (8 categorical kernel verbs + 27 named compatibility shims). The most useful ones are:
 
 | Primitive | What it does |
 |---|---|
