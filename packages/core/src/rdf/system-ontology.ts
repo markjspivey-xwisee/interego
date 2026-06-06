@@ -379,18 +379,18 @@ cg:PersistenceRecord a owl:Class ;
     rdfs:comment "Tier metadata tracking where a node is stored." .
 
 cg:PersistenceTier a owl:Class ;
-    owl:oneOf ( cg:Memory cg:Local cg:Pod cg:IPFS cg:Chain ) ;
+    owl:oneOf ( cg:MemoryTier cg:Local cg:PodTier cg:IPFS cg:ChainTier ) ;
     rdfs:label "Persistence Tier" .
 
-cg:Memory a owl:NamedIndividual, cg:PersistenceTier ;
+cg:MemoryTier a owl:NamedIndividual, cg:PersistenceTier ;
     rdfs:label "Memory" .
 cg:Local a owl:NamedIndividual, cg:PersistenceTier ;
     rdfs:label "Local" .
-cg:Pod a owl:NamedIndividual, cg:PersistenceTier ;
+cg:PodTier a owl:NamedIndividual, cg:PersistenceTier ;
     rdfs:label "Pod" .
 cg:IPFS a owl:NamedIndividual, cg:PersistenceTier ;
     rdfs:label "IPFS" .
-cg:Chain a owl:NamedIndividual, cg:PersistenceTier ;
+cg:ChainTier a owl:NamedIndividual, cg:PersistenceTier ;
     rdfs:label "Chain" .
 
 cg:persistenceUri a owl:DatatypeProperty ;
@@ -668,7 +668,7 @@ cg:PersistenceRecordShape a sh:NodeShape ;
         sh:path cg:persistenceTier ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
-        sh:in ( cg:Memory cg:Local cg:Pod cg:IPFS cg:Chain ) ;
+        sh:in ( cg:MemoryTier cg:Local cg:PodTier cg:IPFS cg:ChainTier ) ;
         sh:name "tier (required)"
     ] ;
     sh:property [

@@ -1082,9 +1082,12 @@ cg:ParadigmOperation a owl:Class ; rdfs:subClassOf cg:Operation ; rdfs:label "Pa
 cg:SyntagmaticPattern a owl:Class ; rdfs:label "Syntagmatic Pattern" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 cg:PersistenceRecord a owl:Class ; rdfs:label "Persistence Record" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:PersistenceTier a owl:Class ; rdfs:label "Persistence Tier" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:Local a cg:PersistenceTier ; rdfs:label "Local" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
-cg:IPFS a cg:PersistenceTier ; rdfs:label "IPFS" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PersistenceTier a owl:Class ; owl:oneOf ( cg:MemoryTier cg:Local cg:PodTier cg:IPFS cg:ChainTier ) ; rdfs:label "Persistence Tier" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:MemoryTier a owl:NamedIndividual, cg:PersistenceTier ; rdfs:label "Memory" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:Local a owl:NamedIndividual, cg:PersistenceTier ; rdfs:label "Local" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:PodTier a owl:NamedIndividual, cg:PersistenceTier ; rdfs:label "Pod" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:IPFS a owl:NamedIndividual, cg:PersistenceTier ; rdfs:label "IPFS" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+cg:ChainTier a owl:NamedIndividual, cg:PersistenceTier ; rdfs:label "Chain" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 
 cg:CausalFacet a owl:Class ; rdfs:subClassOf cg:ContextFacet ; rdfs:label "Causal Facet" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
 cg:CausalVariable a owl:Class ; rdfs:label "Causal Variable" ; rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
