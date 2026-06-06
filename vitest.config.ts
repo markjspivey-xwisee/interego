@@ -28,13 +28,13 @@ export default defineConfig({
       // V8-native; no Babel transform, lower memory than istanbul.
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
-      include: ['src/**/*.ts'],
+      include: ['packages/*/src/**/*.ts'],
       // Add to exclude only with a comment explaining why.
       exclude: [
-        'src/**/*.d.ts',
-        'src/**/types.ts',           // pure type modules (no runtime to measure)
-        'src/connectors/index.ts',   // network-dependent; mocked tests cover dispatch only
-        'src/extractors/index.ts',   // wraps platform extractors; e2e tests live elsewhere
+        'packages/*/src/**/*.d.ts',
+        'packages/*/src/**/types.ts',           // pure type modules (no runtime to measure)
+        'packages/connectors/src/index.ts',     // network-dependent; mocked tests cover dispatch only
+        'packages/extractors/src/index.ts',     // wraps platform extractors; e2e tests live elsewhere
       ],
       // Coverage thresholds active only when --coverage flag is passed
       // (i.e., `npm run test:coverage`). The default `npm test` runs
@@ -49,10 +49,10 @@ export default defineConfig({
         statements: 50,
         // Per-glob overrides for modules where coverage is expected to
         // stay high — these have dedicated test files and small surface.
-        'src/compliance/**/*.ts': { lines: 80, branches: 70, functions: 80, statements: 80 },
-        'src/security-txt/**/*.ts': { lines: 90, branches: 80, functions: 100, statements: 90 },
-        'src/ops/**/*.ts': { lines: 80, branches: 70, functions: 90, statements: 80 },
-        'src/privacy/**/*.ts': { lines: 80, branches: 70, functions: 80, statements: 80 },
+        'packages/compliance/src/**/*.ts': { lines: 80, branches: 70, functions: 80, statements: 80 },
+        'packages/security-txt/src/**/*.ts': { lines: 90, branches: 80, functions: 100, statements: 90 },
+        'packages/ops/src/**/*.ts': { lines: 80, branches: 70, functions: 90, statements: 80 },
+        'packages/privacy/src/**/*.ts': { lines: 80, branches: 70, functions: 80, statements: 80 },
       },
     },
   },
