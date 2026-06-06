@@ -60,8 +60,9 @@ memories.
 
 ## Reaching the whole substrate without tool bloat
 
-`get_tool_schemas()` deliberately exposes **three** tools, not the ~15
-relay tools (or ~60 MCP tools) flat. Every result from `interego_recall`
+`get_tool_schemas()` deliberately exposes **three** tools, not the ~35
+substrate tools (8 kernel verbs + 27 compatibility shims, identical on
+relay and stdio) flat. Every result from `interego_recall`
 / `interego_discover` is decorated with an `affordances` list — the
 actions available on that item — and `interego_act` follows any one of
 them. Capability travels as data, not as preloaded tool schemas: the
