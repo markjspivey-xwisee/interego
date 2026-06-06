@@ -1694,6 +1694,7 @@ const tokenLimiter = rateLimit('tokens', { windowMs: 60_000, max: 60 });
 // general auth-enroll limiter to keep unauthenticated CPU exhaustion off
 // the table.
 const siweVerifyLimiter = rateLimit('siwe-verify', { windowMs: 60_000, max: 10 });
+const webfingerLimiter = rateLimit('webfinger', { windowMs: 60_000, max: 120 });
 
 // ── Browser-friendly landing page ─────────────────────────────────
 //
@@ -3157,7 +3158,7 @@ app.options('/.well-known/webfinger', (_req, res) => {
   res.status(204).end();
 });
 
-app.get('/.well-known/webfinger', (req, res) => {
+app.get('/.well-known/webfinger', webfingerLimiter, (req, res) => {
   setWebFingerCors(res);
   const handle = parseWebFingerResource(req.query.resource);
   if (handle === null) {
