@@ -451,7 +451,7 @@ describe('CausalFacet Serialization', () => {
 
     const turtle = toTurtle(desc);
     expect(turtle).toContain('cg:CausalFacet');
-    expect(turtle).toContain('cg:causalRole cg:Observation');
+    expect(turtle).toContain('cg:causalRole "Observation"');
     expect(turtle).toContain('cg:causalModel <urn:scm:test>');
   });
 
@@ -499,7 +499,7 @@ describe('CausalFacet Serialization', () => {
 
     const jsonld = toJsonLdString(desc, { pretty: true });
     expect(jsonld).toContain('cg:CausalFacet');
-    expect(jsonld).toContain('cg:Observation');
+    expect(jsonld).toContain('"cg:causalRole": "Observation"');
   });
 });
 

@@ -215,7 +215,7 @@ function serializeFederationFacet(f: FederationFacetData): Record<string, unknow
 function serializeCausalFacet(f: CausalFacetData): Record<string, unknown> {
   const result: Record<string, unknown> = {
     '@type': 'cg:CausalFacet',
-    'cg:causalRole': `cg:${f.causalRole}`,
+    'cg:causalRole': f.causalRole,
   };
   if (f.causalModel) result['cg:causalModel'] = { '@id': f.causalModel };
   if (f.parentObservation) result['cg:parentObservation'] = { '@id': f.parentObservation };

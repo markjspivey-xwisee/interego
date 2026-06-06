@@ -237,7 +237,7 @@ function serializeFederationFacet(f: FederationFacetData): string {
 
 function serializeCausalFacet(f: CausalFacetData): string {
   const props: string[] = ['a cg:CausalFacet'];
-  props.push(`cg:causalRole cg:${f.causalRole}`);
+  props.push(`cg:causalRole "${f.causalRole}"`);
 
   if (f.causalModel) props.push(`cg:causalModel ${iri(f.causalModel)}`);
   if (f.parentObservation) props.push(`cg:parentObservation ${iri(f.parentObservation)}`);
