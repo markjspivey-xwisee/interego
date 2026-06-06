@@ -28,7 +28,7 @@ substrate."
 
 ## The bloat problem
 
-Interego has ~15 relay tools and ~60 in the full MCP server
+Interego has ~35 substrate tools on both the relay and the full MCP server (8 kernel verbs + 27 compatibility shims)
 (`publish_context`, `register_agent`, `verify_agent`, `discover_all`,
 `compose_contexts`, `subscribe_to_pod`, …). Register them flat and every
 one costs context budget on every turn, forever — whether the agent
