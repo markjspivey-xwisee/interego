@@ -417,22 +417,22 @@ export async function loadAccessTokens(
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
-  for (const url of urls) {
+  await Promise.allSettled(urls.map(async url => {
     try {
       const r = await fetchFn(url, { method: 'GET' });
       if (!r.ok) {
         log(`[oauth-token-store] GET ${url} -> ${r.status}; skipping`);
-        continue;
+        return;
       }
       const body = JSON.parse(await r.text()) as PersistedAccessToken;
       if (!body.token_sha256 || !body.clientId) {
         log(`[oauth-token-store] malformed access-token at ${url}; skipping`);
-        continue;
+        return;
       }
       if (body.expiresAt && body.expiresAt < nowSec) {
         // Lazy GC: drop expired files during startup walk.
         void removeAccessToken(body.token_sha256, cfg);
-        continue;
+        return;
       }
       const info: InteregoAuthInfo = {
         // Placeholder: we don't know the raw token string, only its
@@ -454,9 +454,8 @@ export async function loadAccessTokens(
       out.set(body.token_sha256, info);
     } catch (err) {
       log(`[oauth-token-store] failed to read ${url}: ${(err as Error).message}`);
-      continue;
     }
-  }
+  }));
 
   log(`[oauth-token-store] loaded ${out.size} access token(s) from ${containerUrl}`);
   return out;
@@ -483,21 +482,21 @@ export async function loadRefreshTokens(
   }
 
   const nowMs = Date.now();
-  for (const url of urls) {
+  await Promise.allSettled(urls.map(async url => {
     try {
       const r = await fetchFn(url, { method: 'GET' });
       if (!r.ok) {
         log(`[oauth-token-store] GET ${url} -> ${r.status}; skipping`);
-        continue;
+        return;
       }
       const body = JSON.parse(await r.text()) as PersistedRefreshToken;
       if (!body.token_sha256 || !body.clientId || !body.identity) {
         log(`[oauth-token-store] malformed refresh-token at ${url}; skipping`);
-        continue;
+        return;
       }
       if (body.expiresAt && body.expiresAt < nowMs) {
         void removeRefreshToken(body.token_sha256, cfg);
-        continue;
+        return;
       }
       const rec: RefreshTokenRecord = {
         clientId: body.clientId,
@@ -509,9 +508,8 @@ export async function loadRefreshTokens(
       out.set(body.token_sha256, rec);
     } catch (err) {
       log(`[oauth-token-store] failed to read ${url}: ${(err as Error).message}`);
-      continue;
     }
-  }
+  }));
 
   log(`[oauth-token-store] loaded ${out.size} refresh token(s) from ${containerUrl}`);
   return out;

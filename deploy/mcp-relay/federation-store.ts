@@ -307,24 +307,24 @@ export async function loadEntries(
     return out;
   }
 
-  for (const url of urls) {
+  await Promise.allSettled(urls.map(async url => {
     try {
       const r = await fetchFn(url, { method: 'GET' });
       if (!r.ok) {
         log(`[federation-store] GET ${url} -> ${r.status}; skipping`);
-        continue;
+        return;
       }
       const body = JSON.parse(await r.text()) as PersistedEntry;
       if (!body.url || !body.via) {
         log(`[federation-store] malformed federation entry at ${url}; skipping`);
-        continue;
+        return;
       }
       if (body.via === 'self') {
         // Defensive: an older buggy writer might have leaked a self
         // entry to disk. Drop it on load — self is projected
         // per-call, never persisted.
         log(`[federation-store] dropping leaked 'self' entry at ${url}`);
-        continue;
+        return;
       }
       const entry: FederationEntry = {
         url: body.url,
@@ -336,9 +336,8 @@ export async function loadEntries(
       out.push(entry);
     } catch (err) {
       log(`[federation-store] failed to read ${url}: ${(err as Error).message}`);
-      continue;
     }
-  }
+  }));
 
   log(`[federation-store] loaded ${out.length} federation entry/entries from ${containerUrl}`);
   return out;

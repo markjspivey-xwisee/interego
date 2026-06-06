@@ -473,7 +473,7 @@ export async function loadClients(
     return out;
   }
 
-  for (const entry of ours) {
+  await Promise.allSettled(ours.map(async entry => {
     // Each descriptor publishes one graph IRI — derive the graph URL
     // from the descriptor URL using the slug convention publish() uses.
     // The descriptor's distribution block also points at it, but the
@@ -482,7 +482,7 @@ export async function loadClients(
     const m = descriptorUrl.match(/\/oauth-client-([0-9a-f]+)\.ttl$/);
     if (!m) {
       log(`[oauth-client-store] skipping descriptor with unrecognized slug: ${descriptorUrl}`);
-      continue;
+      return;
     }
     const clientId = m[1]!;
     const graphUrl = graphUrlForClient(cfg.podUrl, clientId);
@@ -492,31 +492,30 @@ export async function loadClients(
         fetchGraphContent(graphUrl, { fetch: cfg.fetch }));
       if (!content) {
         log(`[oauth-client-store] graph at ${graphUrl} returned no content; skipping ${clientId}.`);
-        continue;
+        return;
       }
       const doc = parseTrig(content);
       const subjects = findSubjectsOfType(doc, RELAY_OAUTH_CLIENT_TYPE);
       if (subjects.length === 0) {
         log(`[oauth-client-store] no relay:OAuthClient subject in ${graphUrl}; skipping ${clientId}.`);
-        continue;
+        return;
       }
       const reconstructed = reconstructClientFromSubject(subjects[0]!);
       if (!reconstructed) {
         log(`[oauth-client-store] could not reconstruct OAuthClientInformationFull ` +
             `from ${graphUrl}; skipping ${clientId}.`);
-        continue;
+        return;
       }
       if (reconstructed.client_id !== clientId) {
         log(`[oauth-client-store] client_id mismatch in ${graphUrl} (descriptor says ${clientId}, ` +
             `payload says ${reconstructed.client_id}); skipping.`);
-        continue;
+        return;
       }
       out.set(clientId, reconstructed);
     } catch (err) {
       log(`[oauth-client-store] failed to read ${graphUrl}: ${(err as Error).message}; skipping.`);
-      continue;
     }
-  }
+  }));
 
   log(`[oauth-client-store] loaded ${out.size} OAuth client registration(s) from ${cfg.podUrl}.`);
   return out;
