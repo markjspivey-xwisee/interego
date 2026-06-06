@@ -41,6 +41,7 @@ const populatedMethods: AuthMethodsLike = {
 // so the helper test stays focused on branch selection, not hashing.
 const deriveFromAddress = (addr: string) => `u-eth-${addr.slice(0, 12)}`;
 const deriveFromCredentialId = (id: string) => `u-pk-${id.slice(0, 12)}`;
+const deriveFromDid = (did: string) => `u-did-${did.slice(8, 20)}`;
 
 // Default verifyInvite: only accepts the (markj, token-good) pair.
 function verifyInviteFactory(opts?: { accept?: Array<[string, string]> }) {
@@ -66,6 +67,49 @@ test('(a) mode A — SIWE derives from recoveredAddress', () => {
     assert.equal(out.mode, 'derive');
     assert.equal(out.targetUserId, 'u-eth-d8da6bf26964');
   }
+});
+
+test('(a) mode A — DID derives from did:key string', () => {
+  const out = resolveTargetUserId({
+    did: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSrnGoVgJpwbsXjPLwzx',
+    existingAuthMethods: emptyMethods,
+    deriveFromAddress,
+    deriveFromCredentialId,
+    deriveFromDid,
+    verifyInvite: () => false,
+  });
+  assert.equal(out.ok, true);
+  if (out.ok) {
+    assert.equal(out.mode, 'derive');
+    assert.equal(out.targetUserId, 'u-did-z6MkpTHR8VNs');
+  }
+});
+
+test('(b) mode B locked-out response is byte-identical across SIWE / WebAuthn / DID', () => {
+  // Pins enumeration-safety across ALL three credential families: the
+  // /auth/did handler shares the same resolver as SIWE + WebAuthn, so a
+  // future refactor that diverges any one of them surfaces here.
+  const lockedSiwe = resolveTargetUserId({
+    bootstrapUserId: 'markj',
+    bootstrapInvite: 'token-good',
+    recoveredAddress: 'd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    existingAuthMethods: populatedMethods,
+    deriveFromAddress,
+    deriveFromCredentialId,
+    deriveFromDid,
+    verifyInvite: () => true,
+  });
+  const lockedDid = resolveTargetUserId({
+    bootstrapUserId: 'markj',
+    bootstrapInvite: 'token-good',
+    did: 'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSrnGoVgJpwbsXjPLwzx',
+    existingAuthMethods: populatedMethods,
+    deriveFromAddress,
+    deriveFromCredentialId,
+    deriveFromDid,
+    verifyInvite: () => true,
+  });
+  assert.deepEqual(lockedSiwe, lockedDid);
 });
 
 test('(a) mode A — WebAuthn derives from credentialId', () => {
@@ -219,4 +263,23 @@ test('mode B — verifyInvite is consulted only after the existing-credential gu
   });
   assert.equal(out.ok, false);
   assert.equal(calls.length, 0);
+});
+
+test('mode A — no derive input supplied is a 400 (caller logic-bug fallthrough)', () => {
+  // Pins the final fallthrough: when none of addDeviceUserId,
+  // bootstrapUserId/bootstrapInvite, recoveredAddress, credentialId, or
+  // did is supplied, the helper MUST return a 400 with a clear error
+  // rather than silently deriving from undefined (which would produce a
+  // `u-eth-undefined`-shape userId).
+  const out = resolveTargetUserId({
+    existingAuthMethods: emptyMethods,
+    deriveFromAddress,
+    deriveFromCredentialId,
+    verifyInvite: () => false,
+  });
+  assert.equal(out.ok, false);
+  if (!out.ok) {
+    assert.equal(out.status, 400);
+    assert.match(out.body.error, /credential material/);
+  }
 });

@@ -2702,25 +2702,28 @@ app.post('/auth/did', authEnrollLimiter, async (req, res) => {
   const canonicalPublicKeyMultibase = encodeEd25519Multibase(publicKeyRaw);
 
   if (!user) {
-    let targetUserId: string;
-    if (bootstrapUserId || bootstrapInvite) {
-      if (!bootstrapUserId || !bootstrapInvite) {
-        res.status(400).json({ error: 'bootstrapUserId and bootstrapInvite must both be supplied' });
-        return;
-      }
-      const existing = await readAuthMethods(bootstrapUserId, /* allowStale */ true);
-      if (hasAnyCredential(existing)) {
-        res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
-        return;
-      }
-      if (!verifyBootstrapInvite(bootstrapUserId, bootstrapInvite)) {
-        res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
-        return;
-      }
-      targetUserId = bootstrapUserId;
-    } else {
-      targetUserId = deriveUserIdFromDid(did);
+    // Mode (C) add-device handled upstream (bearer populated `user`);
+    // resolveTargetUserId covers (A) derive and (B) bootstrap-claim with
+    // the enumeration-safe ordering pinned by tests/resolve-target-userid.test.ts.
+    const existingForBootstrap = (bootstrapUserId && bootstrapInvite)
+      ? await readAuthMethods(bootstrapUserId, /* allowStale */ true)
+      : { walletAddresses: [], webAuthnCredentials: [], didKeys: [] };
+    const resolved = resolveTargetUserId({
+      bootstrapUserId,
+      bootstrapInvite,
+      did,
+      existingAuthMethods: existingForBootstrap,
+      deriveFromAddress: deriveUserIdFromWallet,
+      deriveFromCredentialId: deriveUserIdFromCredentialId,
+      deriveFromDid: deriveUserIdFromDid,
+      verifyInvite: verifyBootstrapInvite,
+    });
+    if (resolved.ok === false) {
+      const err = resolved as { status: 400 | 401; body: { error: string } };
+      res.status(err.status).json(err.body);
+      return;
     }
+    const targetUserId = resolved.targetUserId;
 
     if (!identities.has(targetUserId)) {
       const displayName = String(name ?? targetUserId);

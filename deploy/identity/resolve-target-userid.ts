@@ -48,9 +48,12 @@ export type ResolveInput = {
   recoveredAddress?: string;
   /** Mode (A) input: WebAuthn credential id (base64url). */
   credentialId?: string;
+  /** Mode (A) input: did:key string the caller just proved control of. */
+  did?: string;
   existingAuthMethods: AuthMethodsLike;
   deriveFromAddress: (addr: string) => string;
   deriveFromCredentialId: (credId: string) => string;
+  deriveFromDid?: (did: string) => string;
   verifyInvite: (userId: string, token: string | undefined) => boolean;
 };
 
@@ -107,6 +110,13 @@ export function resolveTargetUserId(input: ResolveInput): ResolveResult {
       ok: true,
       mode: 'derive',
       targetUserId: input.deriveFromCredentialId(input.credentialId),
+    };
+  }
+  if (input.did && input.deriveFromDid) {
+    return {
+      ok: true,
+      mode: 'derive',
+      targetUserId: input.deriveFromDid(input.did),
     };
   }
   // Caller logic-bug: no derive input supplied for mode (A).
