@@ -26,6 +26,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  identity-unit:
+    name: Identity unit tests (WebFinger)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install workspace deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Run identity unit tests
+        run: npm test --workspace @interego/identity
+
   playwright:
     name: Passkey OAuth (Playwright, virtual authenticator)
     runs-on: ubuntu-latest

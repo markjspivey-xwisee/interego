@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test": "node --test --import tsx tests/webfinger.test.ts"
   },
   "dependencies": {
     "express": "^4.21.0",
