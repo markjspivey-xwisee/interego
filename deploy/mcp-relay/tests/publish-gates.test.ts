@@ -296,6 +296,182 @@ cg:NoteShape a sh:NodeShape ;
     }
   }
 
+  // ── Scenario A3: SHACL shape declared inside a TriG named graph ──
+  //
+  // FIX A — the conformance gate used to silently let publishes through
+  // when the declared shape was served as application/trig with the
+  // sh:NodeShape sitting INSIDE a named-graph block. Two failure modes:
+  //
+  //   1. fetchShapeBody sent `Accept: text/turtle` only → strict CSS
+  //      negotiator answers 406 for a trig resource → returns null →
+  //      gate treats shape as "missing" → publish accepted.
+  //   2. Even if the bytes came back, the TriG parser only recognized
+  //      `<iri> { ... }` graph blocks — NOT the `GRAPH <iri> { ... }`
+  //      keyword form — so the inner sh:NodeShape was lost.
+  //
+  // The fix broadens Accept (text/turtle + trig + n-quads + ld+json)
+  // and teaches parseTrig the GRAPH keyword. We assert the second half
+  // directly here because the unit under test (validateAgainstShape)
+  // exercises the parser; the Accept-header half is structurally
+  // covered (we don't drive a real HTTP server here, but the broadened
+  // header is a single-line constant which type-checks above).
+  //
+  // Three sub-cases:
+  //   (a) IRI-prefix graph form  → already worked; regression guard.
+  //   (b) GRAPH-keyword form     → newly handled; regression target.
+  //   (c) Multiple named graphs declaring the same shape IRI with
+  //       different constraints → constraints merge, violation still
+  //       caught (defensive — shouldn't happen in practice).
+  {
+    const baseGraph = `
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+<urn:note:1> a cg:Note .
+`;
+
+    // (a) IRI-prefix graph block.
+    {
+      const trigShape = `
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:graph:shapes> {
+  cg:NoteShape a sh:NodeShape ;
+      sh:targetClass cg:Note ;
+      sh:property [
+          sh:path dct:title ;
+          sh:minCount 1 ;
+          sh:datatype xsd:string ;
+          sh:message "Note requires exactly one dct:title literal."
+      ] .
+}
+`;
+      const report = validateAgainstShape(baseGraph, trigShape);
+      ok(report.conforms === false,
+        'trig shape (IRI-prefix graph block) — violation is reported');
+      ok(report.results.some(r => r.constraintComponent.endsWith('MinCountConstraintComponent')),
+        'trig shape (IRI-prefix graph block) — MinCount constraint surfaces');
+    }
+
+    // (b) GRAPH-keyword form (the FIX A regression target).
+    {
+      const trigShape = `
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+GRAPH <urn:graph:shapes> {
+  cg:NoteShape a sh:NodeShape ;
+      sh:targetClass cg:Note ;
+      sh:property [
+          sh:path dct:title ;
+          sh:minCount 1 ;
+          sh:datatype xsd:string ;
+          sh:message "Note requires exactly one dct:title literal."
+      ] .
+}
+`;
+      const report = validateAgainstShape(baseGraph, trigShape);
+      ok(report.conforms === false,
+        'trig shape (GRAPH keyword) — violation is reported');
+      ok(report.results.some(r => r.constraintComponent.endsWith('MinCountConstraintComponent')),
+        'trig shape (GRAPH keyword) — MinCount constraint surfaces');
+    }
+
+    // (b2) End-to-end: publish() with a TriG `GRAPH`-form shape body
+    // threaded through conformsToShapes — same path the relay's
+    // runConformanceGate hands to the substrate.
+    {
+      const shapeIri = 'https://shapes.example/trig/NoteShape';
+      const trigShape = `
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+GRAPH <urn:graph:shapes> {
+  cg:NoteShape a sh:NodeShape ;
+      sh:targetClass cg:Note ;
+      sh:property [
+          sh:path dct:title ;
+          sh:minCount 1 ;
+          sh:datatype xsd:string ;
+          sh:message "Note requires exactly one dct:title literal."
+      ] .
+}
+`;
+      const pod = makeMemoryPod();
+      const descriptor = ContextDescriptor.create('urn:cg:test:gate:trig-graph-shape' as IRI)
+        .describes('urn:graph:note:1' as IRI)
+        .semiotic({ modalStatus: 'Asserted' })
+        .build();
+
+      let caught: PublishShapeViolationError | null = null;
+      try {
+        await publish(descriptor, baseGraph, 'https://pod.example/u/', {
+          fetch: pod.fetch,
+          conformsToShapes: [{ shapeIri, shapeTurtle: trigShape }],
+        });
+      } catch (err) {
+        if (err instanceof PublishShapeViolationError) caught = err;
+      }
+      ok(caught !== null,
+        'trig shape (GRAPH keyword) — publish() throws PublishShapeViolationError end-to-end');
+      ok(caught?.code === 422,
+        'trig shape (GRAPH keyword) — error.code === 422 (the diag-prescribed envelope)');
+      ok(caught?.shape === shapeIri,
+        'trig shape (GRAPH keyword) — error.shape carries the trig shape IRI');
+      const sawWrite = pod.calls.some(c => c.method === 'PUT' && c.url.includes('context-graphs/'));
+      ok(sawWrite === false,
+        'trig shape (GRAPH keyword) — no descriptor/graph PUT after the 422 (gate skipped CSS write)');
+    }
+
+    // (c) Same shape IRI declared in two graphs — constraints union.
+    // The parser drops graph-parentage, so both copies' property
+    // lists merge into a single subject; the compiler reads every
+    // sh:property the merged subject carries and validates against
+    // each — so a violation in either survives.
+    {
+      const trigShape = `
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<urn:graph:shapes:base> {
+  cg:NoteShape a sh:NodeShape ;
+      sh:targetClass cg:Note ;
+      sh:property [
+          sh:path dct:title ;
+          sh:minCount 1 ;
+          sh:datatype xsd:string
+      ] .
+}
+
+GRAPH <urn:graph:shapes:extension> {
+  cg:NoteShape sh:property [
+      sh:path dct:creator ;
+      sh:minCount 1 ;
+      sh:nodeKind sh:IRI
+  ] .
+}
+`;
+      const report = validateAgainstShape(baseGraph, trigShape);
+      ok(report.conforms === false,
+        'trig shape (split across two graphs) — violation still caught');
+      // BOTH constraints (dct:title minCount + dct:creator minCount)
+      // must fire; the merged shape carries property-shapes from both
+      // graphs.
+      const paths = new Set(report.results.map(r => r.path));
+      ok(paths.has('http://purl.org/dc/terms/title'),
+        'trig shape (split across two graphs) — dct:title violation surfaces');
+      ok(paths.has('http://purl.org/dc/terms/creator'),
+        'trig shape (split across two graphs) — dct:creator violation also surfaces');
+    }
+  }
+
   // ── Scenario B: scope gate rejects a Read-scoped agent ──
   //
   // We seed the pod's agent registry with a single ReadOnly agent and

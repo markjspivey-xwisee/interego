@@ -252,6 +252,14 @@ function tokenize(src: string): Tok[] {
         out.push({ type: 'keyword', value: prefix.toLowerCase(), pos: startPos });
         continue;
       }
+      // TriG GRAPH keyword: `GRAPH <iri> { ... }` / `GRAPH prefix:name { ... }`.
+      // Recognized case-insensitively (the TriG spec admits both `GRAPH` and
+      // `graph` lexically). The parser dispatch in parseTrig() branches on
+      // this keyword to consume the following IRI/pname + `{`-block.
+      if (prefix === 'GRAPH' || prefix === 'graph' || prefix === 'Graph') {
+        out.push({ type: 'keyword', value: 'GRAPH', pos: startPos });
+        continue;
+      }
       throw new ParseError(`unknown bareword "${prefix}"`, startPos);
     }
 
@@ -497,6 +505,29 @@ export function parseTrig(src: string): ParsedDocument {
         expectPunct(state, '}');
         continue;
       }
+    }
+
+    // TriG GRAPH keyword form: `GRAPH <iri> { triples }` or
+    // `GRAPH prefix:name { triples }`. Tokenizer emits the keyword
+    // up-front so we just consume keyword + IRI/pname + `{` and walk
+    // the inner triples the same way the IRI-prefix form does.
+    // Like the IRI-prefix form, the graph IRI is dropped — every
+    // contained triple lands in the flat ParsedDocument.subjects list,
+    // so a sh:NodeShape declared inside a named graph stays
+    // discoverable by compileShapes / findSubjectsOfType.
+    if (t.type === 'keyword' && t.value === 'GRAPH') {
+      consume(state); // GRAPH
+      const graphName = peek(state);
+      if (graphName?.type === 'iri' || graphName?.type === 'pname') {
+        consume(state); // graph IRI / pname
+      }
+      // Default-graph form: `GRAPH { ... }` (no name) — also tolerated.
+      expectPunct(state, '{');
+      while (peek(state) && !(peek(state)!.type === 'punct' && (peek(state) as any).value === '}')) {
+        parseTriplesBlock(state);
+      }
+      expectPunct(state, '}');
+      continue;
     }
 
     // Otherwise: a triples block at the document level

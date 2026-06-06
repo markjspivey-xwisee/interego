@@ -951,16 +951,51 @@ async function fetchContainerShapes(podUrl: string): Promise<readonly string[]> 
   return result;
 }
 
+// FIX A — Accept header for shape fetches.
+//
+// Advertises every serialization the in-process SHACL engine can
+// parse: parseTrig handles turtle + trig uniformly, and n-quads is
+// line-oriented quads that the TriG parser tolerates (each quad-line
+// terminates with a `.`). Without this header, a strict server
+// (CSS quad-store config, an nginx negotiator, or any reverse proxy)
+// facing a shape PUT'd as application/trig answers 406 Not Acceptable
+// for `text/turtle`-only requests — and the gate then silently lets
+// the publish through because fetchShapeBody returns null. JSON-LD is
+// advertised at low q so a JSON-LD-stored shape can at least signal
+// its presence; the parser will fail JSON-LD bodies but the WARN
+// below makes the miss observable rather than invisible.
+const SHAPE_ACCEPT_HEADER =
+  'text/turtle, application/trig;q=0.9, application/n-quads;q=0.8, application/ld+json;q=0.7';
+
 async function fetchShapeBody(shapeIri: string): Promise<string | null> {
   const cached = shapeBodyCache.get(shapeIri);
   if (cached && cached.expiresAt > Date.now()) return cached.body;
   if (cached) shapeBodyCache.delete(shapeIri);
 
   let body: string | null = null;
+  let warnReason: string | null = null;
   try {
-    const r = await solidFetch(shapeIri, { method: 'GET', headers: { 'Accept': 'text/turtle' } });
-    if (r.ok) body = await r.text();
-  } catch { /* network failures → treat as missing shape */ }
+    const r = await solidFetch(shapeIri, { method: 'GET', headers: { 'Accept': SHAPE_ACCEPT_HEADER } });
+    if (r.ok) {
+      const text = await r.text();
+      if (text && text.trim().length > 0) {
+        body = text;
+      } else {
+        warnReason = `empty body (HTTP ${r.status})`;
+      }
+    } else {
+      warnReason = `HTTP ${r.status} ${r.statusText}`;
+    }
+  } catch (err) {
+    // Network failures → treat as missing shape, but record the cause
+    // so a misconfigured / unreachable shape can't masquerade as "no
+    // shape declared". WARN-logged below, NOT silently swallowed.
+    warnReason = `fetch threw: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  if (body === null && warnReason !== null) {
+    log(`WARN conformance gate could not fetch shape ${shapeIri} — ${warnReason}. Publish will proceed UNVALIDATED against this shape.`);
+  }
 
   if (shapeBodyCache.size >= CONTAINER_SHAPE_CACHE_MAX) {
     const oldestKey = shapeBodyCache.keys().next().value;
