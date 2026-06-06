@@ -134,6 +134,13 @@ export interface TrustPolicy {
   readonly minTrustLevel: 'SelfAsserted' | 'ThirdPartyAttested' | 'CryptographicallyVerified';
   readonly minConfidence: number;
   readonly requiredForAction: AffordanceAction[];
+  /**
+   * If true, a descriptor with no Trust facet at all satisfies this policy's
+   * trust-level check. Default false: absence of a trust claim is NOT treated
+   * as a positive 'SelfAsserted' assertion and therefore does not pass any
+   * minTrustLevel.
+   */
+  readonly allowMissingTrustFacet?: boolean;
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -173,7 +180,14 @@ export interface Orientation {
 
 export interface TrustEvaluation {
   readonly source: IRI;
-  readonly trustLevel: string;
+  /**
+   * Trust level positively asserted by the descriptor's Trust facet
+   * (e.g. 'SelfAsserted' | 'ThirdPartyAttested' | 'CryptographicallyVerified').
+   * `undefined` means the descriptor carries no Trust facet at all —
+   * the caller has declined to make a trust claim. This is distinct
+   * from positively asserting 'SelfAsserted'.
+   */
+  readonly trustLevel: string | undefined;
   readonly verified: boolean;
   readonly lastVerified: string;
   readonly confidence: number;

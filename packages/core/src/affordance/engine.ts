@@ -9,6 +9,7 @@
  */
 
 import type { ContextDescriptorData, IRI } from '../model/types.js';
+import { DEFAULT_EPISTEMIC_CONFIDENCE } from '../model/types.js';
 import type {
   AgentProfile,
   AgentState,
@@ -286,7 +287,7 @@ export function evaluateSurprise(
 
   const semiotic = descriptor.facets.find(f => f.type === 'Semiotic') as any;
   const trust = descriptor.facets.find(f => f.type === 'Trust') as any;
-  const confidence = semiotic?.epistemicConfidence ?? 0.5;
+  const confidence = semiotic?.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
   const trustLevel = trust?.trustLevel ?? 'SelfAsserted';
 
   // Surprise factors:
@@ -295,7 +296,7 @@ export function evaluateSurprise(
   for (const [, belief] of state.beliefs) {
     if (belief.descriptor.describes.some(g => descriptor.describes.includes(g))) {
       // Same graph described — check for conflict
-      const existingConf = (belief.descriptor.facets.find(f => f.type === 'Semiotic') as any)?.epistemicConfidence ?? 0.5;
+      const existingConf = (belief.descriptor.facets.find(f => f.type === 'Semiotic') as any)?.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
       const confDelta = Math.abs(confidence - existingConf);
       surprise += confDelta * 2; // confidence disagreement is surprising
 
@@ -539,13 +540,26 @@ function evaluateTrust(descriptor: ContextDescriptorData): TrustEvaluation {
   const trust = descriptor.facets.find(f => f.type === 'Trust') as any;
   const provenance = descriptor.facets.find(f => f.type === 'Provenance') as any;
 
+  // Absence of a Trust facet is semantically distinct from positively
+  // asserting 'SelfAsserted': trustLevel is undefined and confidence
+  // collapses to 0 (no trust claim → no warranted confidence).
+  if (!trust) {
+    return {
+      source: provenance?.wasAttributedTo ?? ('unknown' as IRI),
+      trustLevel: undefined,
+      verified: false,
+      lastVerified: new Date().toISOString(),
+      confidence: 0,
+    };
+  }
+
   return {
     source: provenance?.wasAttributedTo ?? ('unknown' as IRI),
-    trustLevel: trust?.trustLevel ?? 'SelfAsserted',
-    verified: trust?.trustLevel === 'CryptographicallyVerified',
+    trustLevel: trust.trustLevel,
+    verified: trust.trustLevel === 'CryptographicallyVerified',
     lastVerified: new Date().toISOString(),
-    confidence: trust?.trustLevel === 'CryptographicallyVerified' ? 1.0
-      : trust?.trustLevel === 'ThirdPartyAttested' ? 0.85
+    confidence: trust.trustLevel === 'CryptographicallyVerified' ? 1.0
+      : trust.trustLevel === 'ThirdPartyAttested' ? 0.85
       : 0.7,
   };
 }

@@ -13,6 +13,7 @@
  */
 
 import type { ContextDescriptorData, ContextFacetData } from '../model/types.js';
+import { DEFAULT_EPISTEMIC_CONFIDENCE } from '../model/types.js';
 import type {
   AffordanceAction,
   AffordanceReason,
@@ -244,22 +245,34 @@ function evaluateTrustPolicy(
   for (const policy of policies) {
     if (!policy.requiredForAction.includes(action)) continue;
 
-    // Check trust level
+    // Check trust level. Absence of a Trust facet is semantically distinct
+    // from a positive 'SelfAsserted' assertion; by default it fails any
+    // minTrustLevel unless the policy opts in via allowMissingTrustFacet.
     const trustLevels = ['SelfAsserted', 'ThirdPartyAttested', 'CryptographicallyVerified'];
-    const actualLevel = trustFacet?.trustLevel ?? 'SelfAsserted';
-    const actualIdx = trustLevels.indexOf(actualLevel);
-    const requiredIdx = trustLevels.indexOf(policy.minTrustLevel);
+    if (!trustFacet) {
+      if (!policy.allowMissingTrustFacet) {
+        return {
+          satisfied: false,
+          constraint: `trust >= ${policy.minTrustLevel} for '${action}'`,
+          reason: `No Trust facet present; policy requires at least '${policy.minTrustLevel}'`,
+        };
+      }
+    } else {
+      const actualLevel = trustFacet.trustLevel;
+      const actualIdx = trustLevels.indexOf(actualLevel);
+      const requiredIdx = trustLevels.indexOf(policy.minTrustLevel);
 
-    if (actualIdx < requiredIdx) {
-      return {
-        satisfied: false,
-        constraint: `trust >= ${policy.minTrustLevel} for '${action}'`,
-        reason: `Trust level '${actualLevel}' below required '${policy.minTrustLevel}'`,
-      };
+      if (actualIdx < requiredIdx) {
+        return {
+          satisfied: false,
+          constraint: `trust >= ${policy.minTrustLevel} for '${action}'`,
+          reason: `Trust level '${actualLevel}' below required '${policy.minTrustLevel}'`,
+        };
+      }
     }
 
     // Check confidence
-    const confidence = semioticFacet?.epistemicConfidence ?? 0.5;
+    const confidence = semioticFacet?.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
     if (confidence < policy.minConfidence) {
       return {
         satisfied: false,
@@ -300,7 +313,7 @@ function evaluateSemioticConstraint(
 
   // Hypothetical descriptors require caution for 'apply' and 'forward'
   if (modalStatus === 'Hypothetical' && (action === 'apply' || action === 'forward')) {
-    const confidence = semiotic.epistemicConfidence ?? 0.5;
+    const confidence = semiotic.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
     if (confidence < 0.8) {
       return {
         satisfied: false,
@@ -392,7 +405,7 @@ function extractSignifiers(facet: ContextFacetData): Signifier[] {
     case 'Semiotic': {
       const f = facet as any;
       const modal = f.modalStatus ?? 'Asserted';
-      const conf = f.epistemicConfidence ?? 0.5;
+      const conf = f.epistemicConfidence ?? DEFAULT_EPISTEMIC_CONFIDENCE;
       signifiers.push({
         facetType: 'Semiotic',
         indicates: modal === 'Asserted' ? ['apply', 'compose', 'forward'] :
