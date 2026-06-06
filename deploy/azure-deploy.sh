@@ -243,7 +243,17 @@ az containerapp update \
 # the gate proxies to CSS_INTERNAL_URL and gates writes by bearer authz.
 CSS_GATE_APP="${CSS_GATE_APP:-interego-css-gate}"
 echo ">>> Deploying CSS Gate..."
-GATE_WRITE_SECRET=$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+# Idempotent on WRITE_SECRET: reuse the existing operator bearer if the
+# app + secret already exist so re-runs don't rotate the gate's write
+# credential. Falls back to a legacy plaintext env var on older revisions
+# so the value can be migrated into the secret store on this deploy.
+GATE_WRITE_SECRET=$(az containerapp secret show --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" --secret-name gate-write-secret --query value -o tsv 2>/dev/null || true)
+if [ -z "$GATE_WRITE_SECRET" ]; then
+  GATE_WRITE_SECRET=$(az containerapp show --name "$CSS_GATE_APP" --resource-group "$RESOURCE_GROUP" --query "properties.template.containers[0].env[?name=='WRITE_SECRET'].value | [0]" -o tsv 2>/dev/null || true)
+fi
+if [ -z "$GATE_WRITE_SECRET" ]; then
+  GATE_WRITE_SECRET=$(openssl rand -hex 32 2>/dev/null || node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+fi
 az containerapp create \
   --name "$CSS_GATE_APP" \
   --resource-group "$RESOURCE_GROUP" \
@@ -641,6 +651,72 @@ az containerapp create \
 
 FOXXI_BRIDGE_FQDN=$(az containerapp show --name "$FOXXI_BRIDGE_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
 echo "    Foxxi Bridge: https://$FOXXI_BRIDGE_FQDN"
+
+# Foxxi bridge env wiring — mirrors the CI workflow's
+# "Wire foxxi-bridge env vars" step. The bridge revision carries 19
+# vertical-specific vars (tenant pod URL, audience, admin WebID,
+# federation pod list, LRS basic-auth pairs, LLM API key, key seeds,
+# bridge private key, write secret, ...). The create above only sets
+# CSS_URL/IDENTITY_URL/RELAY_URL, so on any subsequent re-run the
+# create call would no-op while the bridge boots half-configured —
+# same trap as the old CSS_URL pattern. We read each var off the live
+# revision and re-assert it, promoting the five sensitive values to
+# Container Apps secrets. Vars unset on the live revision are skipped
+# with a warning; the operator must seed them once before the next
+# redeploy.
+echo ">>> Wiring foxxi-bridge env vars..."
+fb_read_env() {
+  az containerapp show --name "$FOXXI_BRIDGE_APP" --resource-group "$RESOURCE_GROUP" \
+    --query "properties.template.containers[0].env[?name=='$1'].value | [0]" -o tsv 2>/dev/null || true
+}
+fb_read_secretref() {
+  az containerapp show --name "$FOXXI_BRIDGE_APP" --resource-group "$RESOURCE_GROUP" \
+    --query "properties.template.containers[0].env[?name=='$1'].secretRef | [0]" -o tsv 2>/dev/null || true
+}
+fb_read_secret_value() {
+  az containerapp secret show --name "$FOXXI_BRIDGE_APP" --resource-group "$RESOURCE_GROUP" \
+    --secret-name "$1" --query value -o tsv 2>/dev/null || true
+}
+FB_PLAIN_VARS=(FOXXI_TENANT_POD_URL FOXXI_AUTHORITATIVE_SOURCE FOXXI_AUDIENCE FOXXI_DASHBOARD_ORIGIN BRIDGE_DEPLOYMENT_URL FOXXI_ADMIN_WEB_ID FOXXI_REQUIRE_AUTH FOXXI_TENANT_PROFILE_NAME FOXXI_LEARNING_ENGINEER_WEB_IDS FOXXI_LRS_BASIC_AUTH_PAIRS FOXXI_FEDERATION_PODS FOXXI_AGENTIC_RATE_LIMIT_PER_IP FOXXI_LRS_BACKEND)
+FB_SECRET_VARS=(FOXXI_LLM_API_KEY FOXXI_ADMIN_KEY_SEED FOXXI_ISSUER_KEY_SEED FOXXI_BRIDGE_PRIVATE_KEY FOXXI_POD_WRITE_SECRET)
+FB_SET_ARGS=()
+for v in "${FB_PLAIN_VARS[@]}"; do
+  val=$(fb_read_env "$v")
+  if [ -n "$val" ]; then
+    FB_SET_ARGS+=("$v=$val")
+    echo "    preserve $v (plain)"
+  else
+    echo "    WARN: $v unset on live $FOXXI_BRIDGE_APP revision — skipping; seed it once before the next redeploy"
+  fi
+done
+for v in "${FB_SECRET_VARS[@]}"; do
+  sname=$(echo "$v" | tr 'A-Z_' 'a-z-')
+  existing_ref=$(fb_read_secretref "$v")
+  if [ -n "$existing_ref" ]; then
+    FB_SET_ARGS+=("$v=secretref:$existing_ref")
+    echo "    preserve $v (secretref:$existing_ref)"
+    continue
+  fi
+  val=$(fb_read_env "$v")
+  if [ -n "$val" ]; then
+    az containerapp secret set --name "$FOXXI_BRIDGE_APP" --resource-group "$RESOURCE_GROUP" \
+      --secrets "$sname=$val" --output none
+    FB_SET_ARGS+=("$v=secretref:$sname")
+    echo "    promote $v plain->secretref:$sname"
+    continue
+  fi
+  existing_secret=$(fb_read_secret_value "$sname")
+  if [ -n "$existing_secret" ]; then
+    FB_SET_ARGS+=("$v=secretref:$sname")
+    echo "    bind $v->secretref:$sname (secret already configured)"
+  else
+    echo "    WARN: $v unset on live $FOXXI_BRIDGE_APP revision — skipping; seed it once before the next redeploy"
+  fi
+done
+if [ "${#FB_SET_ARGS[@]}" -gt 0 ]; then
+  az containerapp update --name "$FOXXI_BRIDGE_APP" --resource-group "$RESOURCE_GROUP" \
+    --set-env-vars "${FB_SET_ARGS[@]}" --output none
+fi
 
 # ── 11. Deploy Foxxi Dashboard ────────────────────────────────
 FOXXI_DASHBOARD_APP="${FOXXI_DASHBOARD_APP:-interego-foxxi-dashboard}"

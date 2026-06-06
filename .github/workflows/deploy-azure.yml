@@ -423,7 +423,13 @@ jobs:
           # invalidates every user's session. Idempotent: we only set it
           # if it isn't already configured, so subsequent deploys reuse
           # the original key and existing sessions survive.
-          EXISTING_TOKEN_KEY=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='TOKEN_SIGNING_KEY'].value | [0]" -o tsv)
+          # Prefer the Container Apps secret store; fall back to a legacy
+          # plaintext env var on older revisions so the value can be migrated
+          # into the secret store on this deploy.
+          EXISTING_TOKEN_KEY=$(az containerapp secret show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --secret-name token-signing-key --query value -o tsv 2>/dev/null || true)
+          if [ -z "$EXISTING_TOKEN_KEY" ]; then
+            EXISTING_TOKEN_KEY=$(az containerapp show --name interego-identity --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.template.containers[0].env[?name=='TOKEN_SIGNING_KEY'].value | [0]" -o tsv)
+          fi
           # IDENTITY_TIMING: when set to "1" the /auth/did handler emits 6
           # structured `[identity-timing] step=… ms=…` lines per request
           # (did-parse / did-verify / did-index-lookup / did-pod-write /
@@ -436,6 +442,11 @@ jobs:
           if [ -z "$EXISTING_TOKEN_KEY" ]; then
             echo "TOKEN_SIGNING_KEY not yet configured — generating fresh 32-byte HMAC key."
             NEW_TOKEN_KEY=$(openssl rand -base64 32)
+            az containerapp secret set \
+              --name interego-identity \
+              --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+              --secrets "token-signing-key=$NEW_TOKEN_KEY" \
+              --output none
             az containerapp update \
               --name interego-identity \
               --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
@@ -445,11 +456,18 @@ jobs:
                 "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
                 "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
                 "RELAY_URL=https://$RELAY_FQDN" \
-                "TOKEN_SIGNING_KEY=$NEW_TOKEN_KEY" \
+                "TOKEN_SIGNING_KEY=secretref:token-signing-key" \
                 "IDENTITY_TIMING=1" \
               --output none
           else
             echo "TOKEN_SIGNING_KEY already configured (length: ${#EXISTING_TOKEN_KEY}) — preserving so sessions survive this deploy."
+            # Ensure the key is stored as a secret + bound by secretref even
+            # if the prior deploy stored it as a plaintext env var.
+            az containerapp secret set \
+              --name interego-identity \
+              --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+              --secrets "token-signing-key=$EXISTING_TOKEN_KEY" \
+              --output none
             az containerapp update \
               --name interego-identity \
               --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
@@ -459,6 +477,7 @@ jobs:
                 "WEBAUTHN_RP_ORIGIN=https://$IDENTITY_FQDN" \
                 "WEBAUTHN_RP_ORIGINS=https://$IDENTITY_FQDN,https://$RELAY_FQDN" \
                 "RELAY_URL=https://$RELAY_FQDN" \
+                "TOKEN_SIGNING_KEY=secretref:token-signing-key" \
                 "IDENTITY_TIMING=1" \
               --output none
           fi
@@ -581,6 +600,101 @@ jobs:
             az containerapp revision list --name interego-css --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "[?name!='$LATEST' && properties.active].name" -o tsv | while read -r rev; do
               [ -z "$rev" ] && continue
               az containerapp revision deactivate --name interego-css --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --revision "$rev" --output none || true
+            done
+            echo "Latest active revision: $LATEST"
+          fi
+
+      # Foxxi bridge env wiring. The live `interego-foxxi-bridge` revision
+      # carries 19 vertical-specific env vars (tenant pod URL, audience,
+      # admin WebID, federation pod list, LRS basic-auth pairs, LLM API
+      # key, key seeds, bridge private key, write secret, ...). None of
+      # them are baked into the image, none ship from GitHub Actions
+      # secrets, and the create call in `deploy/azure-deploy.sh §10` only
+      # sets CSS_URL/IDENTITY_URL/RELAY_URL. On any CI redeploy that
+      # rotates the image, the new revision would boot with those 19 vars
+      # missing and the bridge would half-configure — same trap the
+      # CSS_URL pattern hit before identity-wiring was added.
+      #
+      # Source of truth = the live revision. We read each var off the
+      # currently-active revision and re-assert it on the new one,
+      # promoting the five sensitive values (FOXXI_LLM_API_KEY,
+      # FOXXI_ADMIN_KEY_SEED, FOXXI_ISSUER_KEY_SEED,
+      # FOXXI_BRIDGE_PRIVATE_KEY, FOXXI_POD_WRITE_SECRET) to Container
+      # Apps secrets so they no longer surface in revision specs / ARM
+      # activity logs. Vars that are unset on the live revision are
+      # skipped — the deployer is responsible for seeding them once via
+      # `az containerapp update` before the first CI redeploy.
+      - name: Wire foxxi-bridge env vars
+        if: steps.decide.outputs.build == 'true' && matrix.image == 'interego-foxxi-bridge'
+        run: |
+          APP=interego-foxxi-bridge
+          RG="${{ env.AZURE_RESOURCE_GROUP }}"
+          read_env() {
+            az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.template.containers[0].env[?name=='$1'].value | [0]" -o tsv 2>/dev/null || true
+          }
+          read_secretref() {
+            az containerapp show --name "$APP" --resource-group "$RG" \
+              --query "properties.template.containers[0].env[?name=='$1'].secretRef | [0]" -o tsv 2>/dev/null || true
+          }
+          read_secret_value() {
+            az containerapp secret show --name "$APP" --resource-group "$RG" \
+              --secret-name "$1" --query value -o tsv 2>/dev/null || true
+          }
+          PLAIN_VARS=(FOXXI_TENANT_POD_URL FOXXI_AUTHORITATIVE_SOURCE FOXXI_AUDIENCE FOXXI_DASHBOARD_ORIGIN BRIDGE_DEPLOYMENT_URL FOXXI_ADMIN_WEB_ID FOXXI_REQUIRE_AUTH FOXXI_TENANT_PROFILE_NAME FOXXI_LEARNING_ENGINEER_WEB_IDS FOXXI_LRS_BASIC_AUTH_PAIRS FOXXI_FEDERATION_PODS FOXXI_AGENTIC_RATE_LIMIT_PER_IP FOXXI_LRS_BACKEND)
+          SECRET_VARS=(FOXXI_LLM_API_KEY FOXXI_ADMIN_KEY_SEED FOXXI_ISSUER_KEY_SEED FOXXI_BRIDGE_PRIVATE_KEY FOXXI_POD_WRITE_SECRET)
+          declare -a SET_ARGS
+          for v in "${PLAIN_VARS[@]}"; do
+            val=$(read_env "$v")
+            if [ -n "$val" ]; then
+              SET_ARGS+=("$v=$val")
+              echo "  preserve $v (plain)"
+            else
+              echo "::warning::$v unset on live $APP revision — skipping; seed it once before the next redeploy"
+            fi
+          done
+          for v in "${SECRET_VARS[@]}"; do
+            sname=$(echo "$v" | tr 'A-Z_' 'a-z-')
+            existing_ref=$(read_secretref "$v")
+            if [ -n "$existing_ref" ]; then
+              SET_ARGS+=("$v=secretref:$existing_ref")
+              echo "  preserve $v (secretref:$existing_ref)"
+              continue
+            fi
+            val=$(read_env "$v")
+            if [ -n "$val" ]; then
+              az containerapp secret set --name "$APP" --resource-group "$RG" \
+                --secrets "$sname=$val" --output none
+              SET_ARGS+=("$v=secretref:$sname")
+              echo "  promote $v plain->secretref:$sname"
+              continue
+            fi
+            existing_secret=$(read_secret_value "$sname")
+            if [ -n "$existing_secret" ]; then
+              SET_ARGS+=("$v=secretref:$sname")
+              echo "  bind $v->secretref:$sname (secret already configured)"
+            else
+              echo "::warning::$v unset on live $APP revision — skipping; seed it once before the next redeploy"
+            fi
+          done
+          if [ "${#SET_ARGS[@]}" -gt 0 ]; then
+            az containerapp update --name "$APP" --resource-group "$RG" \
+              --set-env-vars "${SET_ARGS[@]}" --output none
+          else
+            echo "No foxxi-bridge env vars present on live revision - nothing to wire."
+          fi
+          # Same Multiple-vs-Single revision-mode handling as the other
+          # wiring steps: in Multiple mode an env-var update creates a
+          # new revision that ingress won't serve until traffic is
+          # explicitly shifted.
+          MODE=$(az containerapp show --name "$APP" --resource-group "$RG" --query "properties.configuration.activeRevisionsMode" -o tsv)
+          echo "activeRevisionsMode=$MODE"
+          if [ "$MODE" = "Multiple" ]; then
+            az containerapp ingress traffic set --name "$APP" --resource-group "$RG" --revision-weight latest=100 --output none
+            LATEST=$(az containerapp show --name "$APP" --resource-group "$RG" --query "properties.latestRevisionName" -o tsv)
+            az containerapp revision list --name "$APP" --resource-group "$RG" --query "[?name!='$LATEST' && properties.active].name" -o tsv | while read -r rev; do
+              [ -z "$rev" ] && continue
+              az containerapp revision deactivate --name "$APP" --resource-group "$RG" --revision "$rev" --output none || true
             done
             echo "Latest active revision: $LATEST"
           fi
