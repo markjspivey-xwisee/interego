@@ -161,8 +161,10 @@ Client Registration per RFC 7591) to a **surface slug**:
 | `client_name` | Surface slug | Minted agent ID |
 |---|---|---|
 | Claude Code (VS Code) | `claude-code-vscode` | `claude-code-vscode-<userId>` |
+| Claude Code | `claude-code` | `claude-code-<userId>` |
 | Claude Desktop | `claude-desktop` | `claude-desktop-<userId>` |
-| claude.ai | `claude-ai` | `claude-ai-<userId>` |
+| Claude Mobile | `claude-mobile` | `claude-mobile-<userId>` |
+| claude.ai (anything else Claude) | `claude` | `claude-<userId>` |
 | Cursor | `cursor` | `cursor-<userId>` |
 | Hermes Agent | `hermes-agent` | `hermes-agent-<userId>` |
 | OpenClaw | `openclaw` | `openclaw-<userId>` |
