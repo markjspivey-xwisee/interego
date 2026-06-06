@@ -474,20 +474,28 @@ async function dereferenceUrnGraph(
   }
 
   // Walk each candidate pod's manifest until we find an entry whose
-  // describes[] includes the URN. First match wins.
-  for (const pod of candidates) {
+  // describes[] includes the URN. First match wins. Manifest GETs run
+  // concurrently so cold lookups don't pay sequential round-trips per
+  // candidate pod; selection still walks candidates in podHint-first
+  // order to preserve preference on ties.
+  const manifestFetches = candidates.map(async (pod): Promise<string | null> => {
     const manifestUrl = `${pod}.well-known/context-graphs`;
-    let manifestTurtle: string;
     try {
       const resp = await withTransientRetry(() => fetchImpl(manifestUrl, {
         method: 'GET',
         headers: { 'Accept': 'text/turtle' },
       }));
-      if (!resp.ok) continue;
-      manifestTurtle = await resp.text();
+      if (!resp.ok) return null;
+      return await resp.text();
     } catch {
-      continue;
+      return null;
     }
+  });
+  const manifestTurtles = await Promise.all(manifestFetches);
+
+  for (let i = 0; i < candidates.length; i++) {
+    const manifestTurtle = manifestTurtles[i];
+    if (manifestTurtle === null || manifestTurtle === undefined) continue;
 
     const entries = solid.parseManifest(manifestTurtle);
     const match = entries.find(e => e.describes.includes(iri));
