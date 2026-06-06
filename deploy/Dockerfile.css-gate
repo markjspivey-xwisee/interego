@@ -42,11 +42,10 @@ ENV PORT=8080
 # FOXXI_POD_WRITE_SECRET env var; otherwise the bridge's writes get 401'd.
 ENV WRITE_SECRET=
 
-# ── Optional env vars ───────────────────────────────────────
-# CSS_INTERNAL_URL — upstream CSS origin the gate forwards to. Optional;
-# server.mjs falls back to the public CSS URL baked into the code. Override
-# this when the gate should reach CSS over an internal/private hostname
-# (e.g., Azure Container Apps internal DNS) instead of the public URL.
+# CSS_INTERNAL_URL — upstream CSS origin the gate forwards to.
+# REQUIRED: server.mjs exits at startup if unset. Set this to the internal/
+# private hostname for CSS (e.g., Azure Container Apps internal DNS such as
+# https://interego-css.internal.<env>.azurecontainerapps.io).
 ENV CSS_INTERNAL_URL=
 
 CMD ["node", "/app/server.mjs"]
