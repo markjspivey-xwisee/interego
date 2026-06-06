@@ -410,17 +410,23 @@ function log(msg: string): void {
 
 // ── Auth Middleware ──────────────────────────────────────────
 
-// Tools that require authentication (write operations)
+// Tools that require authentication (write operations).
+// Includes stateful "public" tools (subscribe_to_pod, add_pod,
+// resolve_webfinger) that mutate relay subscription slots or write
+// a federation entry to the maintainer pod — anonymous callers can
+// otherwise exhaust CG_MAX_SUBSCRIPTIONS or amplify writes to the
+// maintainer pod past the css-gate (the bridge holds WRITE_SECRET).
 const AUTH_REQUIRED_TOOLS = new Set([
   'publish_context', 'register_agent', 'revoke_agent',
   'publish_directory',
+  'subscribe_to_pod', 'add_pod', 'resolve_webfinger',
 ]);
 
 // Tools that are public (read operations)
 const PUBLIC_TOOLS = new Set([
   'discover_context', 'get_descriptor', 'get_pod_status',
-  'subscribe_to_pod', 'discover_all', 'list_known_pods',
-  'add_pod', 'remove_pod', 'discover_directory', 'resolve_webfinger',
+  'discover_all', 'list_known_pods',
+  'remove_pod', 'discover_directory',
   'verify_agent',
 ]);
 
@@ -4605,7 +4611,17 @@ const tokenDpopMiddleware: express.RequestHandler = async (req, res, next) => {
 };
 // /token is served by the SDK router below. Express runs middlewares in
 // mount order, so mounting this here makes it run BEFORE the SDK handler.
-app.post('/token', express.urlencoded({ extended: false }), tokenDpopMiddleware);
+// The DPoP verification below performs WebCrypto signature checks and a
+// JTI replay-cache lookup on every inbound request — without a per-IP gate
+// here an unauthenticated client could force unbounded crypto.verify work
+// before the SDK's own rate limiter is reached.
+const tokenLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.post('/token', tokenLimiter, express.urlencoded({ extended: false }), tokenDpopMiddleware);
 
 // The SDK's mcpAuthRouter sub-routers (/register, /token, /revoke,
 // /.well-known/*) each call `router.use(cors())` with default wildcard
