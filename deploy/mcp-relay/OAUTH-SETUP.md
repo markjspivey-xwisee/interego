@@ -37,6 +37,11 @@ These return JSON metadata pointing the client at the
 clients discover all of this automatically the first time they hit
 the relay** — you only need to give the client the relay URL.
 
+Separately, the identity server (not the relay) additionally exposes
+`/.well-known/webfinger` (RFC 7033) for resolving `acct:user@host`
+handles to WebID / DID / pod URL — used by `share_with`, the name
+service, and federation peer discovery.
+
 The relay's hosted reference:
 
 ```
@@ -232,5 +237,7 @@ the hosted reference.
 
 - `docs/integrations/agent-runtimes-mcp.md` — Path 1 integration map
 - `deploy/identity/AUTH-ARCHITECTURE.md` — first-principles auth model
+- `deploy/identity/webfinger.ts` — WebFinger (RFC 7033) at the
+  identity host; resolves `acct:user@host` to WebID / DID / pod URL
 - `https://datatracker.ietf.org/doc/html/rfc7591` — OAuth Dynamic
   Client Registration (the spec the relay implements)
