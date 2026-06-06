@@ -44,6 +44,7 @@ import {
   deriveUserIdFromWallet,
   deriveUserIdFromDid,
 } from './derive-userid.js';
+import { resolveTargetUserId } from './resolve-target-userid.js';
 
 // ── Lazy heavy imports ──────────────────────────────────────
 //
@@ -2072,30 +2073,29 @@ app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
 
   if (!user) {
     // Choose the target userId using the same three-mode logic as WebAuthn.
-    let targetUserId: string;
-    if (bootstrapUserId || bootstrapInvite) {
-      if (!bootstrapUserId || !bootstrapInvite) {
-        res.status(400).json({ error: 'bootstrapUserId and bootstrapInvite must both be supplied' });
-        return;
-      }
-      // Guard before consuming the invite.
-      const existing = await readAuthMethods(bootstrapUserId, /* allowStale */ true);
-      if (hasAnyCredential(existing)) {
-        // Uniform error — don't disclose whether `bootstrapUserId` is a
-        // valid seeded account. An attacker probing for legitimate
-        // userIds would otherwise see a distinguishable 409 vs the 401
-        // for "invalid invite," letting them enumerate seeded accounts.
-        res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
-        return;
-      }
-      if (!verifyBootstrapInvite(bootstrapUserId, bootstrapInvite)) {
-        res.status(401).json({ error: 'Bootstrap credential invalid or already consumed' });
-        return;
-      }
-      targetUserId = bootstrapUserId;
-    } else {
-      targetUserId = deriveUserIdFromWallet(recoveredAddress);
+    // Mode (C) add-device is handled upstream (bearer token already
+    // populated `user`); resolveTargetUserId here covers (A) derive and
+    // (B) bootstrap-claim, pinned by tests/resolve-target-userid.test.ts
+    // — in particular the enumeration-safe ordering of the existing-
+    // credential guard before the invite check.
+    const existingForBootstrap = (bootstrapUserId && bootstrapInvite)
+      ? await readAuthMethods(bootstrapUserId, /* allowStale */ true)
+      : { walletAddresses: [], webAuthnCredentials: [], didKeys: [] };
+    const resolved = resolveTargetUserId({
+      bootstrapUserId,
+      bootstrapInvite,
+      recoveredAddress,
+      existingAuthMethods: existingForBootstrap,
+      deriveFromAddress: deriveUserIdFromWallet,
+      deriveFromCredentialId: deriveUserIdFromCredentialId,
+      verifyInvite: verifyBootstrapInvite,
+    });
+    if (resolved.ok === false) {
+      const err = resolved as { status: 400 | 401; body: { error: string } };
+      res.status(err.status).json(err.body);
+      return;
     }
+    const targetUserId = resolved.targetUserId;
 
     if (!identities.has(targetUserId)) {
       const displayName = String(name ?? targetUserId);
