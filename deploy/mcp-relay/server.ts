@@ -2400,14 +2400,30 @@ async function handleSubscribeToPod(args: ToolArgs): Promise<string> {
       pod_slug: slug,
     });
   } catch (err) {
+    // Graceful degradation path. The upstream Solid Notifications
+    // discovery handshake (HEAD for a storageDescription Link header,
+    // then GET <pod>.well-known/solid as a fallback) is a Solid-spec
+    // compatibility layer, not the substrate's canonical wire. CSS
+    // routes the per-user .well-known/solid path to 501 Not Implemented
+    // because that endpoint is defined at the server origin
+    // (https://<host>/.well-known/solid) — not under a user-rooted
+    // storage container (https://<host>/<user>/.well-known/solid).
+    // When the discovery fails (501 / 404 / other 4xx / 5xx / network),
+    // we still have a fully functional SSE channel at
+    // /notifications/<podSlug>: it fans out every relay-mediated
+    // publish via emitNotification, independent of any upstream
+    // WebSocket subscription. So report subscribed:true with the SSE
+    // URL as the primary path and surface the upstream-discovery
+    // failure as a structured fallback_reason rather than a hard error.
+    const reason = (err as Error).message;
+    log(`[subscribe] upstream Solid Notifications discovery failed for ${podUrl}: ${reason}; falling back to substrate-native SSE at ${sseUrl}`);
     return JSON.stringify({
-      subscribed: false,
-      error: (err as Error).message,
-      // Even on upstream WebSocket failure, the SSE channel is still
-      // usable for relay-mediated publishes since emitNotification
-      // fans out independently of any upstream subscription.
+      subscribed: true,
+      upstream_websocket: false,
+      pod: podUrl,
       sse_url: sseUrl,
       pod_slug: slug,
+      fallback_reason: reason,
     });
   }
 }
