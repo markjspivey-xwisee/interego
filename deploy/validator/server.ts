@@ -62,6 +62,7 @@
  */
 
 import express from 'express';
+import { timingSafeEqual } from 'node:crypto';
 
 const PORT = parseInt(process.env['PORT'] ?? '9090');
 const IDENTITY_URL = (process.env['IDENTITY_URL'] ?? '').replace(/\/?$/, '');
@@ -69,6 +70,7 @@ const RELAY_URL = (process.env['RELAY_URL'] ?? '').replace(/\/?$/, '');
 const POD_URL = (process.env['POD_URL'] ?? '').replace(/\/?$/, '/');
 const AGENT_ID = process.env['AGENT_ID'] ?? 'urn:agent:validator:core-1.0:default';
 const AGENT_BEARER = process.env['AGENT_BEARER'] ?? '';
+const VALIDATOR_ADMIN_BEARER = process.env['VALIDATOR_ADMIN_BEARER'] ?? '';
 const OWNER_WEBID = process.env['OWNER_WEBID'] ?? '';
 const SHACL_ENDPOINT = process.env['SHACL_ENDPOINT'] ?? '';
 const SHACL_ENDPOINT_TOKEN = process.env['SHACL_ENDPOINT_TOKEN'] ?? '';
@@ -371,13 +373,43 @@ app.get('/health', (_req, res) => {
 });
 
 /**
+ * Constant-time bearer compare against the configured admin secret.
+ * VALIDATOR_ADMIN_BEARER takes precedence; falls back to AGENT_BEARER so
+ * deployments that only set the agent credential are still gated.
+ * Returns false when neither secret is configured — fail closed.
+ */
+function checkAdminBearer(header: string | undefined): boolean {
+  const expected = VALIDATOR_ADMIN_BEARER || AGENT_BEARER;
+  if (!expected) return false;
+  if (!header || !header.startsWith('Bearer ')) return false;
+  const provided = header.slice('Bearer '.length);
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
  * POST /validate — manual validation trigger. Body: { descriptorUrl }.
  * Useful for testing without a live subscription, and for CI smoke tests.
+ *
+ * Gated: requires Bearer matching VALIDATOR_ADMIN_BEARER (or AGENT_BEARER)
+ * and descriptorUrl must live under POD_URL when POD_URL is configured —
+ * the validator must not be drivable as an open fetch+publish relay by
+ * anonymous callers.
  */
 app.post('/validate', async (req, res) => {
+  if (!checkAdminBearer(req.header('authorization'))) {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
   const { descriptorUrl } = (req.body ?? {}) as { descriptorUrl?: string };
   if (!descriptorUrl) {
     res.status(400).json({ error: 'descriptorUrl is required' });
+    return;
+  }
+  if (POD_URL && !descriptorUrl.startsWith(POD_URL)) {
+    res.status(403).json({ error: 'descriptorUrl must be under POD_URL' });
     return;
   }
   const result = await validateAndPublish(descriptorUrl);
