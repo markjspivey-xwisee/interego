@@ -5630,6 +5630,19 @@ app.get('/audit/frameworks', (_req, res) => {
   res.json({ frameworks });
 });
 
+// Shared rate limiter for bearer-gated endpoints whose first step is an
+// OAuth bearer verification (oauthProvider.verifyAccessToken /
+// verifyBearerToken) — that call can round-trip to the identity server,
+// so an unbounded caller could DoS the verification path. 60/min/IP is
+// well above any legitimate UX (dashboard token exchange, agent revoke,
+// price setting).
+const bearerVerifyLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 /**
  * GET /inbox?pod=<pod-url>&since=<iso>
  *
@@ -5651,7 +5664,7 @@ app.get('/audit/frameworks', (_req, res) => {
  * adoption. This endpoint closes the visibility gap without leaking
  * the recipient graph at the manifest level.
  */
-app.get('/inbox', async (req, res) => {
+app.get('/inbox', bearerVerifyLimiter, async (req, res) => {
   const suppliedPodUrl = req.query.pod as string | undefined;
   if (!suppliedPodUrl) {
     res.status(400).json({
@@ -5700,7 +5713,7 @@ app.get('/inbox', async (req, res) => {
   }
 });
 
-app.get('/audit/events', async (req, res) => {
+app.get('/audit/events', bearerVerifyLimiter, async (req, res) => {
   const suppliedPodUrl = req.query.pod as string | undefined;
   if (!suppliedPodUrl) {
     res.status(400).json({
@@ -5738,7 +5751,7 @@ app.get('/audit/events', async (req, res) => {
   }
 });
 
-app.get('/audit/lineage', async (req, res) => {
+app.get('/audit/lineage', bearerVerifyLimiter, async (req, res) => {
   const descriptorUrl = req.query.descriptor as string | undefined;
   const suppliedPodUrl = req.query.pod as string | undefined;
   if (!descriptorUrl) {
@@ -5802,7 +5815,7 @@ app.get('/audit/lineage', async (req, res) => {
  * Public read; auditors can independently verify any compliance
  * descriptor's signature without trusting the relay.
  */
-app.get('/audit/verify-signature', async (req, res) => {
+app.get('/audit/verify-signature', bearerVerifyLimiter, async (req, res) => {
   const descriptorUrl = req.query.descriptor as string | undefined;
   if (!descriptorUrl) {
     res.status(400).json({ error: 'descriptor query param required' });
@@ -5843,7 +5856,7 @@ app.get('/audit/verify-signature', async (req, res) => {
   }
 });
 
-app.get('/audit/compliance/:framework', async (req, res) => {
+app.get('/audit/compliance/:framework', bearerVerifyLimiter, async (req, res) => {
   const framework = req.params.framework as ComplianceFramework;
   if (!['eu-ai-act', 'nist-rmf', 'soc2'].includes(framework)) {
     res.status(400).json({ error: `unknown framework; must be one of eu-ai-act / nist-rmf / soc2` });
@@ -5878,19 +5891,6 @@ app.get('/audit/compliance/:framework', async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: (err as Error).message });
   }
-});
-
-// Shared rate limiter for bearer-gated endpoints whose first step is an
-// OAuth bearer verification (oauthProvider.verifyAccessToken /
-// verifyBearerToken) — that call can round-trip to the identity server,
-// so an unbounded caller could DoS the verification path. 60/min/IP is
-// well above any legitimate UX (dashboard token exchange, agent revoke,
-// price setting).
-const bearerVerifyLimiter = rateLimit({
-  windowMs: 60_000,
-  limit: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
 });
 
 /**
