@@ -1,7 +1,7 @@
 {
   "meta": {
     "tenant": "Acme Training Co (demo)",
-    "tenant_pod": "https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/",
+    "tenant_pod": "https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/foxxi/",
     "tenant_did": "did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io",
     "tenant_did_document_url": "https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/.well-known/did.json",
     "admin_user_web_id": "https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/admin/profile/card#me",
