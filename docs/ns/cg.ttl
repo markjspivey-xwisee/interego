@@ -1530,6 +1530,38 @@ cg:Holon a owl:Class ;
     rdfs:comment "A dereferenceable IRI together with its level + kind in the substrate (atom / fragment / descriptor / manifest / opaque). The atomic unit kernel verbs operate on." ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
 
+# ─── Container + conformance gate vocabulary ────────────────────
+#
+# A cg:Container is a pod-side aggregate (LDP BasicContainer / Solid
+# folder) that hosts cg:Holon resources. Containers MAY declare
+# property/shape/capability metadata via cg:declares, and MAY constrain
+# every Holon written under them to satisfy a sh:NodeShape via
+# cg:conformsTo. The relay's publish gate enforces cg:conformsTo at
+# write time (deploy/mcp-relay/server.ts) — non-conformant Holons are
+# rejected before the CSS write so the container's invariants hold
+# everywhere a federation reader sees the container.
+
+cg:Container a owl:Class ;
+    rdfs:label "Container"@en ;
+    rdfs:comment "A pod-side aggregate (Solid / LDP BasicContainer or equivalent) that hosts cg:Holon resources. Containers MAY declare container-level metadata via cg:declares (properties, shapes, vocabulary terms, capabilities) and MAY constrain every Holon written under them to satisfy a sh:NodeShape via cg:conformsTo. Aligned with ldp:BasicContainer; treated as a kind of cg:Holon so the substrate can reason uniformly about the container and its contents."@en ;
+    rdfs:subClassOf cg:Holon ;
+    rdfs:seeAlso ldp:BasicContainer ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:conformsTo a owl:ObjectProperty ;
+    rdfs:label "conforms to"@en ;
+    rdfs:domain cg:Holon ;
+    rdfs:range sh:NodeShape ;
+    rdfs:comment "Asserts that the subject conforms to the indicated SHACL NodeShape. When attached to a container, every Holon written to that container MUST validate against the shape; the publish gate rejects non-conformant writes."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
+cg:declares a owl:ObjectProperty ;
+    rdfs:label "declares"@en ;
+    rdfs:domain cg:Container ;
+    rdfs:range owl:Thing ;
+    rdfs:comment "A container declares a property, shape, vocabulary term, or capability. Used to make container-level metadata discoverable (e.g. cg:declares cg:Conformant, cg:declares <shape IRI>)."@en ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+
 # ─── PGSL lattice holon subtypes ───────────────────────────────
 #
 # The kernel emits these substrate types in dereference responses
