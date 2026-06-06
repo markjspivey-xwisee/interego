@@ -53,7 +53,7 @@ Every published descriptor carries a `cg:modalStatus`. Use the right value:
 - **`Hypothetical`** — you're recording it as "this might be true" — a hunch, an inference, a partial observation. Use for: things the user said tentatively ("I think…"), inferences you drew from context, predictions, anything subject to revision.
 - **`Counterfactual`** — you're recording that something is NOT true, or HAS been retracted. Use for explicit retractions, refuted claims, hypotheticals known to be false.
 
-If you're tempted to use `Asserted` "for safety," use `Hypothetical` instead. Counterfactual is rare; only use it when you're explicitly negating something.
+An explicit `publish_context` call is a committed claim — `Asserted` is the default. Use `Hypothetical` only when you're recording an inferred, tentative, or predicted observation; use `Counterfactual` only when you're explicitly negating something.
 
 ---
 
