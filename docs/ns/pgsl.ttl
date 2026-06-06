@@ -155,6 +155,14 @@ pgsl:contains a owl:ObjectProperty , owl:TransitiveProperty ;
     rdfs:range pgsl:Node ;
     rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
 
+pgsl:containedIn a owl:ObjectProperty ;
+    rdfs:label "contained in" ;
+    rdfs:comment "Inverse of pgsl:contains." ;
+    rdfs:domain pgsl:Node ;
+    rdfs:range pgsl:Fragment ;
+    owl:inverseOf pgsl:contains ;
+    rdfs:isDefinedBy <https://markjspivey-xwisee.github.io/interego/ns/pgsl#>.
+
 # ── Pullback square structure ─────────────────────────────────
 
 pgsl:apex a owl:ObjectProperty , owl:FunctionalProperty ;

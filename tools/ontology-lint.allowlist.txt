@@ -43,11 +43,6 @@ cg:evidenceForControl
 cg:position
 cg:contextualDepth
 
-# ── pgsl: ──
-# Defined inline in packages/core/src/rdf/system-ontology.ts as the
-# owl:inverseOf pgsl:contains; pending migration to docs/ns/pgsl.ttl.
-pgsl:containedIn
-
 # ── align: ──
 # False positive from CSS text-align property in HTML style attributes
 # (e.g., style="text-align:center"). The lint's term regex matches
