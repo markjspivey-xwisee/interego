@@ -91,7 +91,7 @@ Once configured, your AI agent has 35 entries available — **8 categorical kern
 | Category | Tools |
 |---|---|
 | **Substrate kernel (primitives)** | `mint`, `dereference`, `compose`, `act`, `restrict`, `extend`, `promote`, `decompose` — the 8 categorical verbs realizing PGSL fibration + HELA topos + restriction/extension adjunction + Peircean correspondence per `docs/ARCHITECTURAL-FOUNDATIONS.md` §11 |
-| **Identity** | `setup_identity`, `link_wallet`, `register_agent`, `verify_agent`, `revoke_agent`, `whoami` |
+| **Identity** | `setup_identity`, `link_wallet`, `register_agent`, `verify_agent`, `revoke_agent` |
 | **Publishing** | `publish_context` (with optional `share_with`), `publish_directory` |
 | **Discovery** | `discover_context`, `discover_all`, `discover_directory`, `get_descriptor`, `resolve_webfinger`, `list_known_pods`, `get_pod_status` |
 | **Federation** | `add_pod`, `remove_pod`, `subscribe_to_pod`, `unsubscribe_from_pod`, `subscribe_all` |
