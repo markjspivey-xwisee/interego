@@ -1884,6 +1884,31 @@ async function toolAnalyzeQuestion(args: {
 
 // ── PGSL Tool Implementations ───────────────────────────────
 
+const PGSL_STATS_DEBOUNCE_MS = 500;
+let _pgslStatsPendingTimer: ReturnType<typeof setTimeout> | null = null;
+let _pgslStatsPendingPayload: string | null = null;
+
+function schedulePgslStatsPut(payload: string): void {
+  _pgslStatsPendingPayload = payload;
+  if (_pgslStatsPendingTimer) return;
+  _pgslStatsPendingTimer = setTimeout(() => {
+    const body = _pgslStatsPendingPayload;
+    _pgslStatsPendingTimer = null;
+    _pgslStatsPendingPayload = null;
+    if (body === null) return;
+    void (async () => {
+      try {
+        await ensureCSS();
+        await solidFetch(`${HOME_POD}pgsl-stats.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        });
+      } catch { /* best effort */ }
+    })();
+  }, PGSL_STATS_DEBOUNCE_MS);
+}
+
 async function toolPgslIngest(args: {
   content: string;
   publish_to_pod?: boolean;
@@ -1902,16 +1927,9 @@ async function toolPgslIngest(args: {
     `  Levels: ${Object.entries(stats.levels).map(([k, v]) => `L${k}=${v}`).join(', ')}`,
   ];
 
-  // Always write PGSL stats to the pod so the dashboard can observe
-  try {
-    await ensureCSS();
-    const statsJson = JSON.stringify({...stats, lastIngested: resolved, lastTopUri: topUri, updatedAt: new Date().toISOString() });
-    await solidFetch(`${HOME_POD}pgsl-stats.json`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: statsJson,
-    });
-  } catch { /* best effort */ }
+  // Dashboard-observability only; coalesce + fire-and-forget so the hot path isn't blocked.
+  const statsJson = JSON.stringify({...stats, lastIngested: resolved, lastTopUri: topUri, updatedAt: new Date().toISOString() });
+  schedulePgslStatsPut(statsJson);
 
   if (args.publish_to_pod) {
     await ensureCSS();
