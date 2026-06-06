@@ -14,8 +14,9 @@ FROM ${NODE_BASE} AS build
 
 WORKDIR /app
 
-ARG VITE_FOXXI_BRIDGE_URL=https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io
+ARG VITE_FOXXI_BRIDGE_URL
 ENV VITE_FOXXI_BRIDGE_URL=${VITE_FOXXI_BRIDGE_URL}
+RUN test -n "$VITE_FOXXI_BRIDGE_URL" || (echo "VITE_FOXXI_BRIDGE_URL build-arg is required (no hardcoded fallback — pass via --build-arg)" >&2 && exit 1)
 
 # Copy the imported sample data (the dashboard bundles it via Vite's
 # JSON imports for offline fallback). These live one level up from

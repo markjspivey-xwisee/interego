@@ -293,6 +293,21 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # Foxxi vite SPAs (dashboard, microsite) bake VITE_FOXXI_BRIDGE_URL
+      # at build time. Look up the live bridge FQDN instead of hardcoding
+      # the env subdomain hash in the Dockerfile — same lookup pattern
+      # used by `Wire foxxi-bridge env vars` below.
+      - name: Resolve foxxi bridge URL for vite build-arg
+        id: foxxi_bridge_url
+        if: steps.decide.outputs.build == 'true' && (matrix.image == 'interego-foxxi-dashboard' || matrix.image == 'interego-foxxi-microsite')
+        run: |
+          BRIDGE_FQDN=$(az containerapp show --name interego-foxxi-bridge --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.configuration.ingress.fqdn" -o tsv)
+          if [ -z "$BRIDGE_FQDN" ]; then
+            echo "::error::Could not resolve interego-foxxi-bridge FQDN; deploy the bridge first" >&2
+            exit 1
+          fi
+          echo "url=https://$BRIDGE_FQDN" >> "$GITHUB_OUTPUT"
+
       # SHA-tag every build so `az containerapp update --image` always
       # creates a fresh revision. The `:latest` tag is pushed too for
       # humans and for the existing ACR Task workflow, but the container
@@ -322,6 +337,13 @@ jobs:
           # `az acr build` gets a fresh agent. `set -e` does not abort on
           # a failure inside an `if` condition, so the loop is safe under
           # the shell's default `-e`.
+          # Extra build-args for vite SPAs that bake the bridge URL.
+          # Empty for everything else; bash leaves an unquoted empty
+          # variable out of the argv entirely, so no stray flag is passed.
+          EXTRA_ARGS=()
+          if [ -n "${{ steps.foxxi_bridge_url.outputs.url }}" ]; then
+            EXTRA_ARGS+=(--build-arg "VITE_FOXXI_BRIDGE_URL=${{ steps.foxxi_bridge_url.outputs.url }}")
+          fi
           for attempt in 1 2 3; do
             if az acr build \
                  --registry "${{ env.AZURE_ACR_NAME }}" \
@@ -329,6 +351,7 @@ jobs:
                  --image "${{ matrix.image }}:latest" \
                  --file "${{ matrix.dockerfile }}" \
                  --build-arg "NODE_BASE=${{ matrix.node_base || 'public.ecr.aws/docker/library/node:20-slim' }}" \
+                 "${EXTRA_ARGS[@]}" \
                  .; then
               echo "ACR build succeeded on attempt $attempt"
               exit 0

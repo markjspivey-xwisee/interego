@@ -72,9 +72,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # The deployed CSS pod. Same default as examples/_lib.mjs so a
-  # local `npx tsx examples/emergent/<name>.mjs` hits the same target.
-  CG_DEMO_POD_BASE: https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io
+  # The deployed CSS pod. Resolved from repository variables so an env
+  # recreation / region migration doesn't silently point at a dead FQDN.
+  # CSS_GATE_PUBLIC_URL wins if set; otherwise the URL is composed from
+  # AZURE_APPS_DOMAIN_SUFFIX. The literal fallback preserves prior
+  # behavior for repos that haven't seeded the variables yet.
+  CG_DEMO_POD_BASE: ${{ vars.CSS_GATE_PUBLIC_URL || format('https://interego-css-gate.{0}', vars.AZURE_APPS_DOMAIN_SUFFIX || 'livelysky-8b81abb0.eastus.azurecontainerapps.io') }}
   # Unique tag baked into every scenario's pod subpath so parallel
   # runs (and re-runs of the same workflow) never collide on the
   # manifest at .well-known/context-graphs.
@@ -372,7 +375,7 @@ jobs:
       - name: Run round-trip self-test
         id: run
         env:
-          RELAY_URL: https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io
+          RELAY_URL: ${{ vars.RELAY_PUBLIC_URL || format('https://interego-relay.{0}', vars.AZURE_APPS_DOMAIN_SUFFIX || 'livelysky-8b81abb0.eastus.azurecontainerapps.io') }}
           RUN_TAG: ci-${{ env.RUN_TAG }}-publish-deref-roundtrip
         run: |
           mkdir -p logs

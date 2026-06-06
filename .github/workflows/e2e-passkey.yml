@@ -99,7 +99,7 @@ jobs:
         run: |
           sleep 240
           deadline=$((SECONDS + 180))
-          until curl -fsS --max-time 5 https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io/health > /dev/null; do
+          until curl -fsS --max-time 5 "${{ vars.RELAY_PUBLIC_URL || format('https://interego-relay.{0}', vars.AZURE_APPS_DOMAIN_SUFFIX || 'livelysky-8b81abb0.eastus.azurecontainerapps.io') }}/health" > /dev/null; do
             if [ $SECONDS -ge $deadline ]; then
               echo "Relay /health did not become reachable within readiness window" >&2
               exit 1
@@ -109,7 +109,7 @@ jobs:
 
       - name: Run Playwright passkey suite
         env:
-          BASE_URL: https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io
+          BASE_URL: ${{ vars.RELAY_PUBLIC_URL || format('https://interego-relay.{0}', vars.AZURE_APPS_DOMAIN_SUFFIX || 'livelysky-8b81abb0.eastus.azurecontainerapps.io') }}
           CI: '1'
         run: npx playwright test --reporter=list
 
