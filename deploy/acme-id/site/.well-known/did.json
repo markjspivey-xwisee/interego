@@ -24,7 +24,7 @@
     {
       "id": "did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io#tenantPod",
       "type": "TenantPod",
-      "serviceEndpoint": "https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/"
+      "serviceEndpoint": "https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/"
     },
     {
       "id": "did:web:interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io#foxxiBridge",

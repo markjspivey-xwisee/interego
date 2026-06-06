@@ -30,7 +30,7 @@
     ] ;
     schema:department "People Ops" ;
     foaf:mbox  <mailto:admin@interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io> ;
-    pim:storage  <https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/> ;
+    pim:storage  <https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io/markj/> ;
     solid:account  <https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/admin/> ;
     solid:oidcIssuer  <https://interego-identity.livelysky-8b81abb0.eastus.azurecontainerapps.io/> ;
     fxd:audienceTag  "all-employees", "managers", "admin" ;
