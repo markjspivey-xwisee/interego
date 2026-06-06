@@ -1988,6 +1988,7 @@ app.post('/challenges', challengeLimiter, async (req, res) => {
  * }
  */
 app.post('/auth/siwe', authEnrollLimiter, async (req, res) => {
+  const requestStart = timingEnabled() ? startTiming() : 0;
   const {
     message, signature, nonce,
     name,
@@ -2406,12 +2407,14 @@ app.post('/auth/webauthn/register', authEnrollLimiter, async (req, res) => {
     transports: (response.response?.transports as string[] | undefined) ?? [],
     createdAt: new Date().toISOString(),
   });
-  try {
-    await putPodAuthMethods(targetUserId, methods);
-  } catch (err) {
-    res.status(500).json({ error: `Failed to persist passkey to pod: ${(err as Error).message}` });
-    return;
-  }
+  // Defer the ~2.5s CSS PUT off the hot response path — same shape as
+  // /auth/did and /auth/siwe. The credential is added to the in-memory
+  // index synchronously via inlineApplyAuthMethods so any concurrent
+  // verifyToken sees it; the pod write is just durability. Note: this
+  // does NOT apply to /auth/webauthn/authenticate, whose synchronous
+  // persist is load-bearing for WebAuthn §6.1.1 clone detection.
+  inlineApplyAuthMethods(targetUserId, methods);
+  scheduleDeferredAuthMethodsWrite(targetUserId, methods, 'webauthn-register');
   // FIX A: identity-server no longer mirrors /profile/card or /<id>/agents.
   // Single authoritative pod-side writer is the relay's /oauth/verify
   // handler — see deploy/mcp-relay/server.ts. See SIWE first-touch comment
@@ -3611,7 +3614,7 @@ app.delete('/auth-methods/me/did', authEnrollLimiter, async (req, res) => {
  * — any /identity-token call returns a stale string that identity then
  * rejects).
  */
-app.post('/tokens/me/sign-out-everywhere', async (req, res) => {
+app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
   const user = await requireUserFromBearer(req, res);
   if (!user) return;
   // Stateless revocation: bump the pod's sessionEpoch. Tokens were
@@ -3692,7 +3695,7 @@ async function deleteUserCompletely(userId: string): Promise<{ agents: string[];
   return { agents: ownedAgentIds, podCleanup };
 }
 
-app.post('/users/me/delete', async (req, res) => {
+app.post('/users/me/delete', tokenLimiter, async (req, res) => {
   const user = await requireUserFromBearer(req, res);
   if (!user) return;
   const result = await deleteUserCompletely(user.id);
@@ -3707,7 +3710,7 @@ app.post('/users/me/delete', async (req, res) => {
  * identities map (hydrated from pod scans). The dashboard uses this to
  * render per-agent management UIs.
  */
-app.get('/agents/me', async (req, res) => {
+app.get('/agents/me', tokenLimiter, async (req, res) => {
   const user = await requireUserFromBearer(req, res);
   if (!user) return;
   const userAgents = [...identities.values()]
