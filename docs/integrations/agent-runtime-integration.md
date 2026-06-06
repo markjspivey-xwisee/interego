@@ -176,7 +176,7 @@ The provider's `get_tool_schemas()` hook exposes a **fixed 3-tool
 HATEOAS surface** (`interego_recall` / `interego_discover` /
 `interego_act`): results are decorated with `affordances`, and the agent
 follows them — so it reaches *all* of Interego through three schemas
-instead of ~60 flat tools bloating its context. See
+instead of ~35 flat tools (8 kernel + 27 shims) bloating its context. See
 [hermes-full-substrate.md](hermes-full-substrate.md).
 
 **Read:** [path-5-hermes-memory-provider.md](path-5-hermes-memory-provider.md)
