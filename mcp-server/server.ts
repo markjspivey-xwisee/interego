@@ -41,6 +41,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
+import { readFile as readFileAsync } from 'node:fs/promises';
 import { WebSocket } from 'ws';
 
 // Substrate kernel + model + crypto + sparql + RDF + HTTP — `@interego/core`.
@@ -3595,7 +3596,7 @@ mcpServer.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       };
     }
     try {
-      const text = readFileSync(path, 'utf8');
+      const text = await readFileAsync(path, 'utf8');
       return { contents: [{ uri: request.params.uri, mimeType: doc.mimeType, text }] };
     } catch (err) {
       return {
