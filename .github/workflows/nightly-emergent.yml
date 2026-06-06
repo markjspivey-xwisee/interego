@@ -282,7 +282,7 @@ jobs:
 
       - name: Download workspace build artifact
         if: steps.cache-build.outputs.cache-hit != 'true'
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: workspace-build
           path: .
