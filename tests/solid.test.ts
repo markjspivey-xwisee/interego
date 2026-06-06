@@ -563,6 +563,178 @@ describe('publish — in-process concurrency (per-pod mutex)', () => {
 });
 
 // ═════════════════════════════════════════════════════════════
+//  publish() — CAS supersession precondition
+// ═════════════════════════════════════════════════════════════
+//
+// FIX 2: when two concurrent publishers republish the same urn:graph,
+// each reads the same prior chain head from the manifest, each emits a
+// cg:supersedes back-link to it, and (before this fix) both succeeded —
+// forking the chain into two competing HEADs. publish() now takes
+// ifMatchSupersedes / ifMatchCid CAS preconditions: the substrate-level
+// gate re-reads the current head and rejects with
+// PublishPreconditionFailedError (HTTP 412 semantics) on mismatch — zero
+// CSS writes happen on a failed precondition.
+
+describe('publish — CAS supersession precondition', () => {
+  const podUrl = 'https://alice.pod/';
+  const priorHeadUrl = 'https://alice.pod/context-graphs/prior.ttl';
+  const priorHeadTurtle = `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.
+<urn:cg:prior> a cg:ContextDescriptor ;
+    cg:describes <urn:graph:g1>.`;
+
+  function makeMockFetch(opts: { manifestStatus?: number } = {}) {
+    const writes: { url: string; method: string }[] = [];
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = init?.method ?? 'GET';
+      if (method !== 'GET') writes.push({ url: urlStr, method });
+
+      // GET prior head turtle (for CAS check) — returns canonical turtle
+      if (method === 'GET' && urlStr === priorHeadUrl) {
+        return mockResponse(priorHeadTurtle);
+      }
+      // GET manifest
+      if (method === 'GET' && urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: opts.manifestStatus ?? 404, ok: (opts.manifestStatus ?? 404) < 400 });
+      }
+      // PUTs succeed
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+    return { fetch, writes: writes };
+  }
+
+  function descWithSupersedes(id: string) {
+    return ContextDescriptor.create(id as IRI)
+.describes('urn:graph:g1' as IRI)
+.temporal({ validFrom: '2026-01-01T00:00:00Z' })
+.selfAsserted('did:web:alice.example' as IRI)
+.supersedes(priorHeadUrl as IRI)
+.build();
+  }
+
+  it('succeeds + returns previousHeadCid when ifMatchSupersedes matches', async () => {
+    const { fetch } = makeMockFetch();
+    const result = await publish(
+      descWithSupersedes('urn:cg:new-head'),
+      '',
+      podUrl,
+      { fetch, ifMatchSupersedes: priorHeadUrl },
+    );
+    expect(result.previousHeadUrl).toBe(priorHeadUrl);
+    expect(result.previousHeadCid).toBeDefined();
+    expect(result.previousHeadCid).toMatch(/^bafkrei/);
+  });
+
+  it('rejects with PublishPreconditionFailedError when ifMatchSupersedes does NOT match', async () => {
+    const { fetch, writes } = makeMockFetch();
+    const stale = 'https://alice.pod/context-graphs/some-OTHER-head.ttl';
+    let captured: unknown = null;
+    try {
+      await publish(
+        descWithSupersedes('urn:cg:new-head'),
+        '',
+        podUrl,
+        { fetch, ifMatchSupersedes: stale },
+      );
+    } catch (err) {
+      captured = err;
+    }
+    expect(captured).not.toBeNull();
+    expect((captured as Error).name).toBe('PublishPreconditionFailedError');
+    expect((captured as { code: number }).code).toBe(412);
+    // The substrate gate runs BEFORE any PUT, so no writes occurred.
+    expect(writes.length).toBe(0);
+  });
+
+  it('rejects with 412 when ifMatchCid does not match the head\'s CID', async () => {
+    const { fetch, writes } = makeMockFetch();
+    let captured: unknown = null;
+    try {
+      await publish(
+        descWithSupersedes('urn:cg:new-head'),
+        '',
+        podUrl,
+        { fetch, ifMatchCid: 'bafkreiSTALECIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx' },
+      );
+    } catch (err) {
+      captured = err;
+    }
+    expect((captured as Error).name).toBe('PublishPreconditionFailedError');
+    expect(writes.length).toBe(0);
+  });
+
+  it('returns previousHeadCid observationally when no precondition is supplied', async () => {
+    const { fetch } = makeMockFetch();
+    const result = await publish(descWithSupersedes('urn:cg:new-head'), '', podUrl, { fetch });
+    // Best-effort observational CID for downstream chaining.
+    expect(result.previousHeadUrl).toBe(priorHeadUrl);
+    expect(result.previousHeadCid).toBeDefined();
+  });
+
+  it('throws when precondition is supplied but descriptor.supersedes is empty', async () => {
+    const { fetch } = makeMockFetch();
+    const noSupersedes = ContextDescriptor.create('urn:cg:noprior' as IRI)
+.describes('urn:graph:g1' as IRI)
+.temporal({ validFrom: '2026-01-01T00:00:00Z' })
+.selfAsserted('did:web:alice.example' as IRI)
+.build();
+    let captured: unknown = null;
+    try {
+      await publish(noSupersedes, '', podUrl, { fetch, ifMatchSupersedes: priorHeadUrl });
+    } catch (err) {
+      captured = err;
+    }
+    expect((captured as Error).name).toBe('PublishPreconditionFailedError');
+  });
+
+  it('end-to-end CAS chain: publish, then a stale ifMatch on a second publish is rejected', async () => {
+    // First publish — establishes the chain. Use the prior head as the
+    // supersession target, get back a previousHeadCid.
+    const { fetch: fetch1 } = makeMockFetch();
+    const first = await publish(
+      descWithSupersedes('urn:cg:v2'),
+      '',
+      podUrl,
+      { fetch: fetch1, ifMatchSupersedes: priorHeadUrl },
+    );
+    expect(first.previousHeadCid).toBeDefined();
+
+    // Simulate a concurrent writer: between first.publish and the second
+    // publish, the chain head changed to a NEW descriptor at urn:cg:v3.
+    // The original caller still holds the stale previousHeadCid for v2's
+    // ancestor (priorHeadUrl) — but they're trying to supersede v3.
+    // The stale ifMatchSupersedes still points at priorHeadUrl, which is
+    // no longer the current head of the v3 we want to supersede.
+    const newHeadUrl = 'https://alice.pod/context-graphs/v3.ttl';
+    const newHeadTurtle = `<urn:cg:v3> a <https://markjspivey-xwisee.github.io/interego/ns/cg#ContextDescriptor> .`;
+    const fetch2 = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = init?.method ?? 'GET';
+      if (method === 'GET' && urlStr === newHeadUrl) return mockResponse(newHeadTurtle);
+      if (method === 'GET' && urlStr.includes('.well-known/context-graphs')) return mockResponse('', { status: 404, ok: false });
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const v4 = ContextDescriptor.create('urn:cg:v4' as IRI)
+.describes('urn:graph:g1' as IRI)
+.temporal({ validFrom: '2026-01-01T00:00:00Z' })
+.selfAsserted('did:web:alice.example' as IRI)
+.supersedes(newHeadUrl as IRI)
+.build();
+
+    let captured: unknown = null;
+    try {
+      await publish(v4, '', podUrl, { fetch: fetch2, ifMatchSupersedes: priorHeadUrl /* stale */ });
+    } catch (err) {
+      captured = err;
+    }
+    expect((captured as Error).name).toBe('PublishPreconditionFailedError');
+    // The error carries the actual observed head set so the caller can re-read.
+    expect((captured as { actual: { supersedesList: string[] } }).actual.supersedesList).toEqual([newHeadUrl]);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════
 //  discover()
 // ═════════════════════════════════════════════════════════════
 
