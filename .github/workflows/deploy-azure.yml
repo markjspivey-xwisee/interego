@@ -4,13 +4,23 @@ name: Deploy to Azure Container Apps
 # image cares about. Workflow_dispatch lets you also kick it off manually
 # from the Actions tab for ad-hoc redeploys.
 #
-# Five container apps are CI-managed:
+# CI-managed container apps:
 #   - interego-dashboard
 #   - interego-pgsl-browser
 #   - interego-relay
 #   - interego-identity
-#   - interego-css         (Solid pod server; file-backed storage on mounted volume)
-#   - interego-css-gate    (write-gate fronting CSS; only external face of CSS after Fix A)
+#   - interego-css                 (Solid pod server; file-backed storage on mounted volume)
+#   - interego-css-gate            (write-gate fronting CSS; only external face of CSS after Fix A)
+#   - interego-foxxi-bridge        (Foxxi vertical bridge: MCP/REST surface for content intelligence)
+#   - interego-foxxi-dashboard     (Foxxi vertical operator console; Vite SPA via nginx)
+#   - interego-foxxi-microsite     (Foxxi try-it-now demo; Vite SPA via nginx)
+#   - interego-foxxi-scorm-player  (playable SCORM 2004 sample emitting xAPI to the foxxi bridge)
+#   - interego-acme-id             (Acme Training Co demo tenant DID + WebID identity site)
+#   - interego-main                (Interego top-level main site; Vite SPA via nginx)
+#
+# Dockerfile.validator is intentionally NOT in the CI matrix — its own
+# comment marks it as "not deployed to the Azure matrix until its rules
+# are wired" (Layer 3 reference impl, no live container app yet).
 
 on:
   push:
@@ -23,12 +33,25 @@ on:
       - 'deploy/Dockerfile.identity'
       - 'deploy/Dockerfile.css'
       - 'deploy/Dockerfile.css-gate'
+      - 'deploy/Dockerfile.foxxi-bridge'
+      - 'deploy/Dockerfile.foxxi-dashboard'
+      - 'deploy/Dockerfile.foxxi-microsite'
+      - 'deploy/Dockerfile.foxxi-scorm-player'
+      - 'deploy/Dockerfile.acme-id'
+      - 'deploy/Dockerfile.interego-main'
       - 'deploy/mcp-relay/**'
       - 'deploy/identity/**'
       - 'deploy/css-gate/**'
+      - 'deploy/foxxi-scorm-player/**'
+      - 'deploy/acme-id/**'
       - 'examples/dashboard/**'
       - 'examples/pgsl-browser/**'
       - 'examples/multi-agent/css-config.json'
+      - 'applications/_shared/**'
+      - 'applications/foxxi-content-intelligence/**'
+      - 'applications/learner-performer-companion/src/**'
+      - 'applications/lrs-adapter/src/**'
+      - 'interego-main/**'
       - 'docs/ns/**'
       - 'package.json'
       - 'package-lock.json'
@@ -38,9 +61,9 @@ on:
   workflow_dispatch:
     inputs:
       images:
-        description: 'Comma-separated image names (default: all six)'
+        description: 'Comma-separated image names'
         required: false
-        default: 'dashboard,pgsl-browser,relay,identity,css,css-gate'
+        default: 'dashboard,pgsl-browser,relay,identity,css,css-gate,foxxi-bridge,foxxi-dashboard,foxxi-microsite,foxxi-scorm-player,acme-id,interego-main'
 
 # OIDC federated identity — no long-lived secrets. The id-token: write
 # permission is required for actions/federated-credentials to work.
@@ -74,6 +97,12 @@ jobs:
       identity: ${{ steps.filter.outputs.identity }}
       css: ${{ steps.filter.outputs.css }}
       css-gate: ${{ steps.filter.outputs.css-gate }}
+      foxxi-bridge: ${{ steps.filter.outputs.foxxi-bridge }}
+      foxxi-dashboard: ${{ steps.filter.outputs.foxxi-dashboard }}
+      foxxi-microsite: ${{ steps.filter.outputs.foxxi-microsite }}
+      foxxi-scorm-player: ${{ steps.filter.outputs.foxxi-scorm-player }}
+      acme-id: ${{ steps.filter.outputs.acme-id }}
+      interego-main: ${{ steps.filter.outputs.interego-main }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -116,6 +145,43 @@ jobs:
               - 'deploy/Dockerfile.css-gate'
               - 'deploy/css-gate/**'
               - '.github/workflows/deploy-azure.yml'
+            foxxi-bridge:
+              - 'deploy/Dockerfile.foxxi-bridge'
+              - 'applications/_shared/**'
+              - 'applications/foxxi-content-intelligence/**'
+              - 'applications/learner-performer-companion/src/**'
+              - 'applications/lrs-adapter/src/**'
+              - 'src/**'
+              - 'docs/ns/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'tsconfig.json'
+              - '.github/workflows/deploy-azure.yml'
+            foxxi-dashboard:
+              - 'deploy/Dockerfile.foxxi-dashboard'
+              - 'applications/foxxi-content-intelligence/dashboard-app/**'
+              - 'applications/foxxi-content-intelligence/src/**'
+              - 'applications/foxxi-content-intelligence/imported/**'
+              - 'applications/foxxi-content-intelligence/package.json'
+              - '.github/workflows/deploy-azure.yml'
+            foxxi-microsite:
+              - 'deploy/Dockerfile.foxxi-microsite'
+              - 'applications/foxxi-content-intelligence/microsite-app/**'
+              - 'applications/foxxi-content-intelligence/src/**'
+              - 'applications/foxxi-content-intelligence/package.json'
+              - '.github/workflows/deploy-azure.yml'
+            foxxi-scorm-player:
+              - 'deploy/Dockerfile.foxxi-scorm-player'
+              - 'deploy/foxxi-scorm-player/**'
+              - '.github/workflows/deploy-azure.yml'
+            acme-id:
+              - 'deploy/Dockerfile.acme-id'
+              - 'deploy/acme-id/**'
+              - '.github/workflows/deploy-azure.yml'
+            interego-main:
+              - 'deploy/Dockerfile.interego-main'
+              - 'interego-main/**'
+              - '.github/workflows/deploy-azure.yml'
 
   build-and-deploy:
     name: Build & deploy ${{ matrix.image }}
@@ -147,6 +213,24 @@ jobs:
             dockerfile: deploy/Dockerfile.css-gate
             filter: css-gate
             node_base: public.ecr.aws/docker/library/node:20-alpine
+          - image: interego-foxxi-bridge
+            dockerfile: deploy/Dockerfile.foxxi-bridge
+            filter: foxxi-bridge
+          - image: interego-foxxi-dashboard
+            dockerfile: deploy/Dockerfile.foxxi-dashboard
+            filter: foxxi-dashboard
+          - image: interego-foxxi-microsite
+            dockerfile: deploy/Dockerfile.foxxi-microsite
+            filter: foxxi-microsite
+          - image: interego-foxxi-scorm-player
+            dockerfile: deploy/Dockerfile.foxxi-scorm-player
+            filter: foxxi-scorm-player
+          - image: interego-acme-id
+            dockerfile: deploy/Dockerfile.acme-id
+            filter: acme-id
+          - image: interego-main
+            dockerfile: deploy/Dockerfile.interego-main
+            filter: interego-main
 
     steps:
       - name: Checkout
@@ -172,12 +256,18 @@ jobs:
             fi
           else
             case "$IMG" in
-              dashboard)    CHG='${{ needs.changes.outputs.dashboard }}' ;;
-              pgsl-browser) CHG='${{ needs.changes.outputs.pgsl-browser }}' ;;
-              relay)        CHG='${{ needs.changes.outputs.relay }}' ;;
-              identity)     CHG='${{ needs.changes.outputs.identity }}' ;;
-              css)          CHG='${{ needs.changes.outputs.css }}' ;;
-              css-gate)     CHG='${{ needs.changes.outputs.css-gate }}' ;;
+              dashboard)          CHG='${{ needs.changes.outputs.dashboard }}' ;;
+              pgsl-browser)       CHG='${{ needs.changes.outputs.pgsl-browser }}' ;;
+              relay)              CHG='${{ needs.changes.outputs.relay }}' ;;
+              identity)           CHG='${{ needs.changes.outputs.identity }}' ;;
+              css)                CHG='${{ needs.changes.outputs.css }}' ;;
+              css-gate)           CHG='${{ needs.changes.outputs.css-gate }}' ;;
+              foxxi-bridge)       CHG='${{ needs.changes.outputs.foxxi-bridge }}' ;;
+              foxxi-dashboard)    CHG='${{ needs.changes.outputs.foxxi-dashboard }}' ;;
+              foxxi-microsite)    CHG='${{ needs.changes.outputs.foxxi-microsite }}' ;;
+              foxxi-scorm-player) CHG='${{ needs.changes.outputs.foxxi-scorm-player }}' ;;
+              acme-id)            CHG='${{ needs.changes.outputs.acme-id }}' ;;
+              interego-main)      CHG='${{ needs.changes.outputs.interego-main }}' ;;
             esac
             echo "build=$CHG" >> "$GITHUB_OUTPUT"
           fi
