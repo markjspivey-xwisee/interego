@@ -3204,7 +3204,7 @@ app.get('/.well-known/webfinger', (req, res) => {
  *   Nonce: {nonce}
  *   Issued At: {issuedAt}
  */
-app.post('/siwe/verify', async (req, res) => {
+app.post('/siwe/verify', siweVerifyLimiter, async (req, res) => {
   const { message, signature } = req.body;
   if (!message || !signature) {
     res.status(400).json({ error: 'message and signature are required' });
@@ -3258,7 +3258,7 @@ app.post('/siwe/verify', async (req, res) => {
 /**
  * POST /siwe/nonce — Generate a nonce for SIWE
  */
-app.post('/siwe/nonce', (_req, res) => {
+app.post('/siwe/nonce', authEnrollLimiter, (_req, res) => {
   const nonce = crypto.randomBytes(16).toString('hex');
   res.json({ nonce });
 });
@@ -3318,7 +3318,7 @@ app.get('/users', async (req, res) => {
  * Body: { userId, walletAddress, siweMessage, signature }
  * The user signs a SIWE message proving they own the wallet.
  */
-app.post('/wallet/link', async (req, res) => {
+app.post('/wallet/link', authEnrollLimiter, async (req, res) => {
   // MUST be authenticated as the target user. Previously any caller could
   // name an arbitrary userId and attach a valid-but-foreign wallet to it,
   // which gave that wallet first-class auth into the victim's account on
@@ -3388,7 +3388,7 @@ app.post('/wallet/link', async (req, res) => {
  * admin dump. No userId path parameter, no lookup by arbitrary id;
  * the token's userId is authoritative.
  */
-app.get('/auth-methods/me', async (req, res) => {
+app.get('/auth-methods/me', authEnrollLimiter, async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Bearer token required' });
@@ -3434,7 +3434,7 @@ app.get('/auth-methods/me', async (req, res) => {
  * Bearer-authenticated; the token's userId is authoritative — no
  * lookup-by-arbitrary-id surface.
  */
-app.get('/me', async (req, res) => {
+app.get('/me', authEnrollLimiter, async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     res.status(401).json({
@@ -3523,10 +3523,10 @@ async function requireUserFromBearer(req: express.Request, res: express.Response
  * methods — preventing accidental lockout. (User can rotate to a new
  * method first, then delete the old one.)
  */
-app.delete('/auth-methods/me/webauthn/:credentialId', async (req, res) => {
+app.delete('/auth-methods/me/webauthn/:credentialId', authEnrollLimiter, async (req, res) => {
   const user = await requireUserFromBearer(req, res);
   if (!user) return;
-  const credentialId = decodeURIComponent(req.params['credentialId'] ?? '');
+  const credentialId = decodeURIComponent((req.params['credentialId'] as string | undefined) ?? '');
   if (!credentialId) { res.status(400).json({ error: 'credentialId required' }); return; }
   const methods = await readAuthMethods(user.id);
   const before = methods.webAuthnCredentials.length;
@@ -3550,10 +3550,10 @@ app.delete('/auth-methods/me/webauthn/:credentialId', async (req, res) => {
  *
  * Unlink an Ethereum wallet. Same lockout guard as above.
  */
-app.delete('/auth-methods/me/wallet/:address', async (req, res) => {
+app.delete('/auth-methods/me/wallet/:address', authEnrollLimiter, async (req, res) => {
   const user = await requireUserFromBearer(req, res);
   if (!user) return;
-  const address = (req.params['address'] ?? '').toLowerCase();
+  const address = ((req.params['address'] as string | undefined) ?? '').toLowerCase();
   if (!address) { res.status(400).json({ error: 'address required' }); return; }
   const methods = await readAuthMethods(user.id);
   const before = methods.walletAddresses.length;
@@ -3577,7 +3577,7 @@ app.delete('/auth-methods/me/wallet/:address', async (req, res) => {
  * Body: { did: string }. DID strings contain colons which are messy in
  * URL path params; accept via body instead.
  */
-app.delete('/auth-methods/me/did', async (req, res) => {
+app.delete('/auth-methods/me/did', authEnrollLimiter, async (req, res) => {
   const user = await requireUserFromBearer(req, res);
   if (!user) return;
   const did: string | undefined = req.body?.did;
