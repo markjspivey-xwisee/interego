@@ -727,11 +727,10 @@
 
   <dt><code>cg:hasFacetType</code></dt>
   <dd>
-    <strong>Domain:</strong> <code>cg:ContextFacet</code><br>
+    <strong>Domain:</strong> <code>cg:ManifestEntry</code><br>
     <strong>Range:</strong> <code>cg:ContextType</code><br>
-    <strong>Description:</strong> Declares the type classification of a facet. Redundant when the
-    facet is typed via <code>rdf:type</code> with a specific facet class, but useful for
-    extensibility when custom facet types are introduced.
+    <strong>Description:</strong> Declares which facet types are present in a manifest entry,
+    enabling lightweight discovery without dereferencing the descriptor.
   </dd>
 
   <dt><code>cg:compositionOp</code></dt>
