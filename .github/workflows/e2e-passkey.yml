@@ -91,13 +91,12 @@ jobs:
 
       - name: Wait for Azure deployment to settle
         # The concurrent deploy-azure workflow takes 2-5 min (ACR build +
-        # image push + container app update + revision activation). A flat
-        # 60s sleep almost always landed Playwright on the previous revision.
-        # Wait a realistic baseline, then poll /health until the relay is
-        # reachable (bounded), so we don't run before the new revision is up.
+        # image push + container app update + revision activation). Wait a
+        # short baseline so we don't race the previous revision's /health,
+        # then poll until the relay is reachable (bounded).
         if: github.event_name == 'push'
         run: |
-          sleep 240
+          sleep 60
           deadline=$((SECONDS + 180))
           until curl -fsS --max-time 5 "${{ vars.RELAY_PUBLIC_URL || format('https://interego-relay.{0}', vars.AZURE_APPS_DOMAIN_SUFFIX || 'livelysky-8b81abb0.eastus.azurecontainerapps.io') }}/health" > /dev/null; do
             if [ $SECONDS -ge $deadline ]; then
