@@ -73,8 +73,16 @@ export {
   resolveHandleToPodUrl,
   resolveRecipient,
   resolveRecipients,
+  computePublishRecipients,
 } from './sharing.js';
-export type { ShareHandle, ResolvedRecipientPod, ResolveRecipientsOptions } from './sharing.js';
+export type {
+  ShareHandle,
+  ResolvedRecipientPod,
+  ResolveRecipientsOptions,
+  PublishVisibility,
+  ComputePublishRecipientsInput,
+  ComputePublishRecipientsResult,
+} from './sharing.js';
 
 // ── IPFS Anchoring ──────────────────────────────────────────
 export { computeCid, computeLatticeCids, pinToIPFS, computeDescriptorAnchor } from './ipfs.js';

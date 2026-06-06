@@ -12,6 +12,7 @@ import {
   ownerProfileToTurtle,
 } from '@interego/core';
 import {
+  computePublishRecipients,
   resolveHandleToPodUrl,
   resolveRecipient,
   resolveRecipients,
@@ -143,31 +144,32 @@ describe('publish_context recipient-set computation (share-with-author fix)', ()
   const ALICE_POD = 'https://host/alice/';
   const BOB_POD = 'https://host/bob/';
   const AUTHOR_KEY = 'KEY_AUTHOR_ALICE';
+  const AUTHOR_AGENT = 'urn:agent:author-alice';
 
-  /** Reproduces the relay's recipient-set algorithm as a pure function. */
+  /**
+   * Drives the production `computePublishRecipients` helper end-to-end:
+   * resolves share_with against a mock fetch, then feeds the resolved
+   * targets in. This exercises the same code path the relay runs in
+   * production, so a regression in either resolveRecipients or the
+   * recipient-set merge logic is caught here.
+   */
   async function computeRecipients(
     authorKey: string,
     shareWith: string[],
     fetchFn: FetchFn,
   ): Promise<{ recipients: string[]; recipientAgents: string[]; selfIncluded: boolean }> {
-    const recipients: string[] = [];
-    const recipientAgents: string[] = ['urn:agent:author-alice'];
-    // 1. Author key first — unconditional.
-    if (!recipients.includes(authorKey)) recipients.push(authorKey);
-    // 2. share_with APPENDS to the base set.
-    if (shareWith.length > 0) {
-      const resolved = await resolveRecipients(shareWith, { fetch: fetchFn });
-      for (const r of resolved) {
-        if (r.handle && !recipientAgents.includes(r.handle)) recipientAgents.push(r.handle);
-        for (const key of r.agentEncryptionKeys) {
-          if (!recipients.includes(key)) recipients.push(key);
-        }
-      }
-    }
-    // 3. Defensive invariant: author key still present after merge.
-    const selfIncluded = recipients.includes(authorKey);
-    if (!selfIncluded) recipients.push(authorKey);
-    return { recipients, recipientAgents, selfIncluded };
+    const resolved = shareWith.length > 0
+      ? await resolveRecipients(shareWith, { fetch: fetchFn })
+      : [];
+    const out = computePublishRecipients({
+      rawVisibility: 'shared',
+      shareWith,
+      authorEncryptionKey: authorKey,
+      authorAgentId: AUTHOR_AGENT,
+      registryAgentKeys: [],
+      resolvedShareTargets: resolved,
+    });
+    return { recipients: out.recipients, recipientAgents: out.recipientAgents, selfIncluded: out.selfIncluded };
   }
 
   it('includes the author when share_with is omitted (default)', async () => {
@@ -193,7 +195,7 @@ describe('publish_context recipient-set computation (share-with-author fix)', ()
     expect(out.recipients).toContain('KEY_BOB'); // share target can decrypt
     expect(out.recipients).toHaveLength(2);
     expect(out.selfIncluded).toBe(true);
-    expect(out.recipientAgents).toContain('urn:agent:author-alice');
+    expect(out.recipientAgents).toContain(AUTHOR_AGENT);
     expect(out.recipientAgents).toContain(BOB_POD);
   });
 
@@ -241,7 +243,7 @@ describe('publish_context recipient-set computation (share-with-author fix)', ()
     );
     expect(out.recipients).toEqual([AUTHOR_KEY, 'KEY_BOB', 'KEY_CAROL']);
     expect(out.selfIncluded).toBe(true);
-    expect(out.recipientAgents).toEqual(['urn:agent:author-alice', BOB_POD, CAROL_POD]);
+    expect(out.recipientAgents).toEqual([AUTHOR_AGENT, BOB_POD, CAROL_POD]);
   });
 });
 
@@ -261,31 +263,29 @@ describe('publish_context recipient-set computation (share-with-author fix)', ()
  */
 describe('publish_context visibility branch (drops share_with + warns when not shared)', () => {
   const AUTHOR_KEY = 'KEY_AUTHOR_ALICE';
+  const AUTHOR_AGENT = 'urn:agent:author-alice';
   const BOB_POD = 'https://host/bob/';
 
-  /** Reproduces the relay's visibility-branch as a pure function. */
+  /**
+   * Adapter onto the production `computePublishRecipients` helper. For
+   * the visibility-drops-share_with branch the registry + share_with
+   * resolution is irrelevant (the helper short-circuits when visibility
+   * !== 'shared'), so we pass empty inputs.
+   */
   function computeVisibilityRecipients(
     rawVisibility: string | undefined,
     shareWith: string[],
     authorKey: string,
   ): { visibility: 'public' | 'shared' | 'private'; recipients: string[]; warnings: string[] } {
-    const warnings: string[] = [];
-    const visibility: 'public' | 'shared' | 'private' =
-      rawVisibility === 'public' || rawVisibility === 'private' || rawVisibility === 'shared'
-        ? rawVisibility
-        : 'shared';
-    if (visibility !== 'shared' && shareWith.length > 0) {
-      warnings.push(
-        `WARN: publish_context visibility="${visibility}" ignores share_with (${shareWith.length} handle(s) dropped) — only 'shared' supports per-recipient routing`,
-      );
-    }
-    let recipients: string[] = [];
-    if (visibility === 'private') {
-      recipients = [authorKey];
-    }
-    // visibility === 'public': recipients stays empty (plaintext payload).
-    // visibility === 'shared': handled by the share-with-author branch above.
-    return { visibility, recipients, warnings };
+    const out = computePublishRecipients({
+      rawVisibility,
+      shareWith,
+      authorEncryptionKey: authorKey,
+      authorAgentId: AUTHOR_AGENT,
+      registryAgentKeys: [],
+      resolvedShareTargets: [],
+    });
+    return { visibility: out.visibility, recipients: out.recipients, warnings: out.warnings };
   }
 
   it('visibility="private" + non-empty share_with: recipients == [authorKey] and warn emitted', () => {

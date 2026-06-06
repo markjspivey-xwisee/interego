@@ -260,3 +260,81 @@ export async function resolveRecipients(
   );
   return results;
 }
+
+export type PublishVisibility = 'public' | 'shared' | 'private';
+
+export interface ComputePublishRecipientsInput {
+  /** Raw visibility argument from the caller — invalid/undefined → 'shared'. */
+  readonly rawVisibility: string | undefined;
+  /** Cross-pod share handles. Ignored (with warn) when visibility !== 'shared'. */
+  readonly shareWith: readonly string[];
+  /** The author's session-agent encryption public key. Unconditional recipient. */
+  readonly authorEncryptionKey: string;
+  /** Author's agent IRI — seeds the recipient-agent list for descriptor metadata. */
+  readonly authorAgentId: string;
+  /** Registry-resolved keys of non-revoked author-pod agents (visibility === 'shared' only). */
+  readonly registryAgentKeys: readonly string[];
+  /** Already-resolved share_with recipients (visibility === 'shared' only). */
+  readonly resolvedShareTargets: readonly ResolvedRecipientPod[];
+}
+
+export interface ComputePublishRecipientsResult {
+  readonly visibility: PublishVisibility;
+  readonly recipients: string[];
+  readonly recipientAgents: string[];
+  readonly selfIncluded: boolean;
+  readonly warnings: string[];
+}
+
+/**
+ * Pure helper that decides the JOSE envelope recipient set + recipient-agent
+ * list for `publish_context`. Encapsulates two production invariants:
+ *
+ *   1. share-with-author: when visibility === 'shared', the author's session
+ *      key is ALWAYS in `recipients` — share_with APPENDS, never REPLACES,
+ *      and a defensive re-push guards against future reordering bugs.
+ *   2. visibility-drops-share_with: visibility 'public' or 'private' silently
+ *      dropping share_with would leak a private-scoped graph to extra keys,
+ *      so we surface a warning and clear share_with from the recipient set.
+ *
+ * Callers (the relay + the local mcp-server) thread their own warn-logger
+ * over `warnings` and pass `registryAgentKeys` + `resolvedShareTargets` from
+ * pre-fetched data so this helper stays pure + unit-testable.
+ */
+export function computePublishRecipients(
+  input: ComputePublishRecipientsInput,
+): ComputePublishRecipientsResult {
+  const {
+    rawVisibility, shareWith, authorEncryptionKey, authorAgentId,
+    registryAgentKeys, resolvedShareTargets,
+  } = input;
+  const visibility: PublishVisibility =
+    rawVisibility === 'public' || rawVisibility === 'private' || rawVisibility === 'shared'
+      ? rawVisibility
+      : 'shared';
+  const warnings: string[] = [];
+  if (visibility !== 'shared' && shareWith.length > 0) {
+    warnings.push(
+      `WARN: publish_context visibility="${visibility}" ignores share_with (${shareWith.length} handle(s) dropped) — only 'shared' supports per-recipient routing`,
+    );
+  }
+  let recipients: string[] = [];
+  const recipientAgents: string[] = [authorAgentId];
+  if (visibility === 'shared') {
+    for (const k of registryAgentKeys) {
+      if (!recipients.includes(k)) recipients.push(k);
+    }
+    if (!recipients.includes(authorEncryptionKey)) recipients.push(authorEncryptionKey);
+    for (const r of resolvedShareTargets) {
+      if (r.handle && !recipientAgents.includes(r.handle)) recipientAgents.push(r.handle);
+      for (const key of r.agentEncryptionKeys) {
+        if (!recipients.includes(key)) recipients.push(key);
+      }
+    }
+    if (!recipients.includes(authorEncryptionKey)) recipients.push(authorEncryptionKey);
+  } else if (visibility === 'private') {
+    recipients = [authorEncryptionKey];
+  }
+  const selfIncluded = visibility === 'public' ? true : recipients.includes(authorEncryptionKey);
+  return { visibility, recipients, recipientAgents, selfIncluded, warnings };
+}

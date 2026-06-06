@@ -142,6 +142,7 @@ import {
   resolveWebFinger,
   fetchGraphContent,
   resolveRecipients,
+  computePublishRecipients,
   parseDistributionFromDescriptorTurtle,
   predictDescriptorUrl,
 } from '@interego/solid';
@@ -955,64 +956,41 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   //
   // Default is 'shared' to keep callers that omit the param wire-compatible.
   const rawVisibility = args.visibility as string | undefined;
-  const visibility: 'public' | 'shared' | 'private' =
-    rawVisibility === 'public' || rawVisibility === 'private' || rawVisibility === 'shared'
-      ? rawVisibility
-      : 'shared';
   const shareWith = (args.share_with as string[] | undefined) ?? [];
-  if (visibility !== 'shared' && shareWith.length > 0) {
-    log(`WARN: publish_context visibility="${visibility}" ignores share_with (${shareWith.length} handle(s) dropped) — only 'shared' supports per-recipient routing`);
-  }
-
   const authorEncryptionKey = relayAgentKey.publicKey;
-  let recipients: string[] = [];
   const shareResolved: { handle: string; podUrl: string; agentCount: number }[] = [];
-  const recipientAgents: string[] = [agentId];
 
-  if (visibility === 'shared') {
-    const currentProfile = await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null);
-    recipients = (currentProfile?.authorizedAgents ?? [])
-      .filter(a => !a.revoked && a.encryptionPublicKey)
-      .map(a => a.encryptionPublicKey!) as string[];
-    // Author's session-agent key MUST be in the recipient set unconditionally.
-    // The relay minted this agent and holds its X25519 keypair (relayAgentKey),
-    // so adding it here guarantees the author can always deref-decrypt envelopes
-    // they just published — even if the registry read above failed, even if
-    // share_with is supplied. share_with APPENDS to this base set; it never
-    // replaces it. See fix `share-with-author` regression test.
-    if (!recipients.includes(authorEncryptionKey)) recipients.push(authorEncryptionKey);
-
-    // Cross-pod selective sharing: resolve each share_with handle to their
-    // pod's authorized agents, union their keys into recipients. Their
-    // agents can then decrypt THIS graph without any pod-level ACL change.
-    // CRITICAL: this loop APPENDS to `recipients` — the author's key
-    // (pushed above) is already in the set and stays in the set so the
-    // author can self-decrypt independently of share_with targets.
-    if (shareWith.length > 0) {
-      const resolved = await resolveRecipients(shareWith, { fetch: solidFetch });
-      for (const r of resolved) {
-        shareResolved.push({ handle: r.handle, podUrl: r.podUrl, agentCount: r.agentEncryptionKeys.length });
-        if (r.handle && !recipientAgents.includes(r.handle)) recipientAgents.push(r.handle);
-        for (const key of r.agentEncryptionKeys) {
-          if (!recipients.includes(key)) recipients.push(key);
-        }
-      }
-    }
-    // Defensive invariant: author key must still be present after share_with merge.
-    // If this ever fires it indicates a regression in the union logic above.
-    if (!recipients.includes(authorEncryptionKey)) {
-      recipients.push(authorEncryptionKey);
-    }
-  } else if (visibility === 'private') {
-    // Envelope to author only. The relay still holds the key, so the
-    // author can re-fetch + decrypt later. No one else (not even other
-    // authorized agents on the same pod) can decrypt this payload.
-    recipients = [authorEncryptionKey];
+  // Pre-fetch the inputs the pure helper needs. Only do the registry read +
+  // share_with resolution when visibility is (or defaults to) 'shared' —
+  // computePublishRecipients ignores them for 'public'/'private' but
+  // skipping the I/O saves a round-trip.
+  const willShare = (rawVisibility === undefined || rawVisibility === 'shared');
+  const currentProfile = willShare
+    ? await readAgentRegistry(podUrl, { fetch: solidFetch }).catch(() => null)
+    : null;
+  const registryAgentKeys = (currentProfile?.authorizedAgents ?? [])
+    .filter(a => !a.revoked && a.encryptionPublicKey)
+    .map(a => a.encryptionPublicKey!) as string[];
+  const resolvedShareTargets = (willShare && shareWith.length > 0)
+    ? await resolveRecipients(shareWith, { fetch: solidFetch })
+    : [];
+  for (const r of resolvedShareTargets) {
+    shareResolved.push({ handle: r.handle, podUrl: r.podUrl, agentCount: r.agentEncryptionKeys.length });
   }
-  // visibility === 'public': recipients stays empty → publish() emits
-  // plaintext TriG; ACL writer below grants foaf:Agent acl:Read.
 
-  const selfIncluded = visibility === 'public' ? true : recipients.includes(authorEncryptionKey);
+  const computed = computePublishRecipients({
+    rawVisibility,
+    shareWith,
+    authorEncryptionKey,
+    authorAgentId: agentId,
+    registryAgentKeys,
+    resolvedShareTargets,
+  });
+  for (const w of computed.warnings) log(w);
+  const visibility = computed.visibility;
+  const recipients = computed.recipients;
+  const recipientAgents = computed.recipientAgents;
+  const selfIncluded = computed.selfIncluded;
 
   // relayBaseUrl is threaded in so encrypted publishes emit a SECOND
   // affordance — cg:renderView — pointing at this relay's
