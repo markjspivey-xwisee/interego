@@ -17,13 +17,14 @@ ENV VITE_FOXXI_BRIDGE_URL=${VITE_FOXXI_BRIDGE_URL}
 # Foxxi vertical's shared src/ (microsite shares auth.ts with the bridge).
 COPY applications/foxxi-content-intelligence/src/ /app-root/applications/foxxi-content-intelligence/src/
 COPY applications/foxxi-content-intelligence/package.json /app-root/applications/foxxi-content-intelligence/package.json
-RUN cd /app-root/applications/foxxi-content-intelligence && npm install --no-audit --no-fund
+COPY applications/foxxi-content-intelligence/package-lock.json /app-root/applications/foxxi-content-intelligence/package-lock.json
+RUN cd /app-root/applications/foxxi-content-intelligence && npm ci --no-audit --no-fund
 
 # The microsite itself.
 COPY applications/foxxi-content-intelligence/microsite-app/ /app-root/applications/foxxi-content-intelligence/microsite-app/
 
 WORKDIR /app-root/applications/foxxi-content-intelligence/microsite-app
-RUN npm install --no-audit --no-fund && npm run build
+RUN npm ci --no-audit --no-fund && npm run build
 
 # ────────────────────────────────────────────────────────────
 #  Runtime stage: nginx static server.

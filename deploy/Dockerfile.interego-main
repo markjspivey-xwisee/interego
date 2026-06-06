@@ -11,7 +11,7 @@ WORKDIR /app
 
 # Source-only copy — no node_modules — keeps the build context small.
 COPY interego-main/microsite/package.json interego-main/microsite/package-lock.json ./
-RUN npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 
 COPY interego-main/microsite/ ./
 RUN npm run build
