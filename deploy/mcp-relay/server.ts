@@ -6620,7 +6620,7 @@ app.post('/tool/:name', async (req, res) => {
 });
 
 // SSE endpoint for MCP-over-SSE
-app.get('/sse', (req, res) => {
+app.get('/sse', (req, res, next) => mcpGate(req, res, next), (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -6662,14 +6662,38 @@ app.post('/messages', async (req, res) => {
   }
 
   if (method === 'tools/call') {
-    const tool = TOOLS[params?.name];
+    const toolName = params?.name;
+    const tool = TOOLS[toolName];
     if (!tool) {
-      res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${params?.name}` } });
+      res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${toolName}` } });
       return;
     }
 
+    const args = { ...(params?.arguments ?? {}) };
+    if (AUTH_REQUIRED_TOOLS.has(toolName)) {
+      const auth = await verifyBearerToken(req.headers.authorization);
+      if (!auth.authenticated) {
+        res.status(401).json({
+          jsonrpc: '2.0',
+          id,
+          error: {
+            code: -32000,
+            message: 'Authentication required for write operations',
+            data: {
+              detail: auth.error,
+              hint: `POST ${IDENTITY_URL}/try for an anonymous bootstrap token, or visit ${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/authorize for full passwordless enrollment`,
+            },
+          },
+        });
+        return;
+      }
+      if (!args.agent_id) args.agent_id = auth.agentId;
+      if (!args.owner_webid) args.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
+      if (!args.pod_name) args.pod_name = auth.userId;
+    }
+
     try {
-      const result = await tool.handler(params?.arguments ?? {});
+      const result = await tool.handler(args);
       res.json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: result }] } });
     } catch (err) {
       res.json({ jsonrpc: '2.0', id, error: { code: -32000, message: (err as Error).message } });
