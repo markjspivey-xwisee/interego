@@ -41,7 +41,9 @@ const SCORM_CLOUD_ENDPOINT = process.env['SCORM_CLOUD_ENDPOINT'];
 const SCORM_CLOUD_KEY = process.env['SCORM_CLOUD_KEY'];
 const SCORM_CLOUD_SECRET = process.env['SCORM_CLOUD_SECRET'];
 
-const AZURE_CSS_BASE = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+// CSS is no longer publicly reachable; route through the public css-gate FQDN.
+// Override with AZURE_CSS_BASE for local CSS or alternate gate deployments.
+const AZURE_CSS_BASE = process.env.AZURE_CSS_BASE ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const TEST_POD_BASE = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;
 
 const USER_DID = 'did:web:lrs-tier8.example' as IRI;

@@ -10,7 +10,7 @@
  *   5. Asserts the round-trip preserves descriptor IRI + facets
  *   6. Cleans up by DELETEing the test descriptor
  *
- * Pod: https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io
+ * Pod: https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io
  * Test container: u-pk-6e3bc2f9723c (publicly writable for demos)
  *
  * Skips automatically if:
@@ -33,7 +33,9 @@ import type {
 
 // ── Config ────────────────────────────────────────────────────────────
 
-const AZURE_CSS_BASE = 'https://interego-css.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+// CSS is no longer publicly reachable; route through the public css-gate FQDN.
+// Override with AZURE_CSS_BASE for local CSS or alternate gate deployments.
+const AZURE_CSS_BASE = process.env.AZURE_CSS_BASE ?? 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
 const TEST_POD = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;
 const REACHABILITY_TIMEOUT_MS = 8000;
 
