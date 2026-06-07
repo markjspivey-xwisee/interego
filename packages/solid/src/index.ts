@@ -9,8 +9,9 @@ export {
   predictDescriptorUrl,
   predictGraphUrl,
   predictManifestUrl,
+  checkSupersessionPrecondition,
 } from './client.js';
-export type { DistributionLink, VerifyAgentDelegationOptions, VerifyAgentEnvelope } from './client.js';
+export type { DistributionLink, VerifyAgentDelegationOptions, VerifyAgentEnvelope, SupersessionPreconditionPass } from './client.js';
 export type {
   FetchFn,
   FetchResponse,

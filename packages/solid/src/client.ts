@@ -698,6 +698,156 @@ async function fetchDescriptorTurtleForCas(
   return await resp.text();
 }
 
+/**
+ * Result of a successful CAS precondition check (returned, not thrown).
+ *
+ * Carries the resolved head identifiers so callers (e.g. the relay's
+ * `handlePublishContext`) can echo `previousHeadUrl` / `previousHeadCid`
+ * synchronously even when the rest of the publish chain is deferred to
+ * a background task. `preconditionWitness` records which side of the
+ * `(ifMatchSupersedes, ifMatchCid)` pair matched, so the descriptor
+ * Turtle written later (in Phase B) can append the same audit comment
+ * the original synchronous path emitted.
+ */
+export interface SupersessionPreconditionPass {
+  readonly ok: true;
+  readonly resolvedHeadUrl: string;
+  readonly resolvedHeadCid: string | null;
+  readonly preconditionWitness: { matched: string; via: 'supersedes' | 'cid' };
+  readonly currentHead: {
+    readonly descriptorUrl: string;
+    readonly cid: string | null;
+    readonly supersedesList: readonly string[];
+  };
+}
+
+/**
+ * Standalone CAS supersession precondition check.
+ *
+ * Lifted out of {@link publish} so the relay can run the precondition
+ * GET synchronously on the request thread (Phase A) and then defer the
+ * actual graph + descriptor + manifest writes (Phase B) to a background
+ * task — same 412 contract on the wire, but the typical happy-path
+ * latency drops from ~7-10 s of CSS round-trips to ~1 s.
+ *
+ * Inputs are the same fields `publish()` derives internally:
+ *   - `supersedesList` — `descriptor.supersedes` for the publish about
+ *     to happen. MUST be non-empty when either match option is set,
+ *     otherwise we throw immediately (the original publish() did too).
+ *   - `ifMatchSupersedes` / `ifMatchCid` — caller-supplied head
+ *     assertions. URL form gates on `descriptor.supersedes` equality;
+ *     CID form gates on `computeCid(headTurtle)` equality. If both are
+ *     set they must resolve to the same head.
+ *   - `fetchFn` — pod-side fetch, threaded down from the relay so the
+ *     bearer token / DPoP signing carry through unchanged.
+ *
+ * Throws {@link PublishPreconditionFailedError} on mismatch — same
+ * shape as the in-publish path so the relay's existing 412 envelope
+ * (`error:'precondition_failed', code:412, currentHead, retryHint`)
+ * keeps working unchanged. On success returns `SupersessionPreconditionPass`
+ * with the resolved head identifiers + the witness object.
+ *
+ * Non-412 failures (transient GET exhaustion, malformed turtle) bubble
+ * up as regular `Error`s — the caller should map those to 503 +
+ * retryable=true, NOT 412 (a 412 says "your assertion was wrong",
+ * not "we couldn't tell").
+ */
+export async function checkSupersessionPrecondition(input: {
+  readonly supersedesList: readonly string[];
+  readonly ifMatchSupersedes?: string;
+  readonly ifMatchCid?: string;
+  readonly fetchFn: FetchFn;
+}): Promise<SupersessionPreconditionPass> {
+  const { supersedesList, ifMatchSupersedes, ifMatchCid, fetchFn } = input;
+  if (ifMatchSupersedes === undefined && ifMatchCid === undefined) {
+    throw new Error(
+      'checkSupersessionPrecondition: at least one of ifMatchSupersedes / ifMatchCid must be set — callers should skip this function when no precondition was requested.',
+    );
+  }
+  if (supersedesList.length === 0) {
+    throw new PublishPreconditionFailedError(
+      'publish: ifMatchSupersedes/ifMatchCid was provided but descriptor.supersedes is empty — nothing to compare against. Add the prior head IRI to descriptor.supersedes (or drop the precondition).',
+      {
+        ...(ifMatchSupersedes !== undefined ? { supersedes: ifMatchSupersedes } : {}),
+        ...(ifMatchCid !== undefined ? { cid: ifMatchCid } : {}),
+      },
+      { descriptorUrl: null, cid: null, supersedesList: [] },
+    );
+  }
+  // Walk each supersedes target; collect descriptor URL + CID pairs so
+  // the error response (on mismatch) carries the full observed head set.
+  const observed: { descriptorUrl: string; cid: string }[] = [];
+  for (const target of supersedesList) {
+    const headTurtle = await fetchDescriptorTurtleForCas(target, fetchFn);
+    if (headTurtle === null) {
+      observed.push({ descriptorUrl: target, cid: '' });
+      continue;
+    }
+    const cid = computeCid(headTurtle);
+    observed.push({ descriptorUrl: target, cid });
+  }
+
+  let witness: { matched: string; via: 'supersedes' | 'cid' } | null = null;
+  let resolvedHeadUrl: string | null = null;
+  let resolvedHeadCid: string | null = null;
+
+  if (ifMatchSupersedes !== undefined) {
+    const hit = observed.find((o) => o.descriptorUrl === ifMatchSupersedes);
+    if (!hit) {
+      throw new PublishPreconditionFailedError(
+        `publish: ifMatchSupersedes precondition failed — ${ifMatchSupersedes} is not among the declared supersedes targets [${supersedesList.join(', ')}].`,
+        { supersedes: ifMatchSupersedes, ...(ifMatchCid !== undefined ? { cid: ifMatchCid } : {}) },
+        { descriptorUrl: observed[0]?.descriptorUrl ?? null, cid: observed[0]?.cid ?? null, supersedesList: observed.map((o) => o.descriptorUrl) },
+      );
+    }
+    witness = { matched: hit.descriptorUrl, via: 'supersedes' };
+    resolvedHeadUrl = hit.descriptorUrl;
+    resolvedHeadCid = hit.cid || null;
+  }
+
+  if (ifMatchCid !== undefined) {
+    const hit = observed.find((o) => o.cid === ifMatchCid);
+    if (!hit) {
+      throw new PublishPreconditionFailedError(
+        `publish: ifMatchCid precondition failed — CID ${ifMatchCid} does not match any current supersedes head (observed CIDs: [${observed.map((o) => o.cid).filter(Boolean).join(', ')}]).`,
+        { ...(ifMatchSupersedes !== undefined ? { supersedes: ifMatchSupersedes } : {}), cid: ifMatchCid },
+        { descriptorUrl: observed[0]?.descriptorUrl ?? null, cid: observed[0]?.cid ?? null, supersedesList: observed.map((o) => o.descriptorUrl) },
+      );
+    }
+    if (witness && witness.matched !== hit.descriptorUrl) {
+      throw new PublishPreconditionFailedError(
+        `publish: ifMatchSupersedes and ifMatchCid identified different heads (${witness.matched} vs ${hit.descriptorUrl}).`,
+        { supersedes: ifMatchSupersedes, cid: ifMatchCid },
+        { descriptorUrl: hit.descriptorUrl, cid: hit.cid, supersedesList: observed.map((o) => o.descriptorUrl) },
+      );
+    }
+    witness = { matched: hit.descriptorUrl, via: witness ? 'supersedes' : 'cid' };
+    resolvedHeadUrl = hit.descriptorUrl;
+    resolvedHeadCid = hit.cid;
+  }
+
+  // Unreachable on the contract above (either branch must have fired
+  // because at least one of the match options was set) — guard anyway
+  // so TS narrows resolvedHeadUrl/witness.
+  if (!witness || resolvedHeadUrl === null) {
+    throw new Error(
+      'checkSupersessionPrecondition: internal invariant violated — match option set but no witness produced.',
+    );
+  }
+
+  return {
+    ok: true,
+    resolvedHeadUrl,
+    resolvedHeadCid,
+    preconditionWitness: witness,
+    currentHead: {
+      descriptorUrl: resolvedHeadUrl,
+      cid: resolvedHeadCid,
+      supersedesList: observed.map((o) => o.descriptorUrl),
+    },
+  };
+}
+
 export async function publish(
   descriptor: ContextDescriptorData,
   graphContent: string,
@@ -787,71 +937,20 @@ export async function publish(
   let preconditionWitness: { matched: string; via: 'supersedes' | 'cid' } | null = null;
   const supersedesList: readonly string[] = descriptor.supersedes ?? [];
   if (options.ifMatchSupersedes !== undefined || options.ifMatchCid !== undefined) {
-    if (supersedesList.length === 0) {
-      throw new PublishPreconditionFailedError(
-        'publish: ifMatchSupersedes/ifMatchCid was provided but descriptor.supersedes is empty — nothing to compare against. Add the prior head IRI to descriptor.supersedes (or drop the precondition).',
-        {
-          ...(options.ifMatchSupersedes !== undefined ? { supersedes: options.ifMatchSupersedes } : {}),
-          ...(options.ifMatchCid !== undefined ? { cid: options.ifMatchCid } : {}),
-        },
-        { descriptorUrl: null, cid: null, supersedesList: [] },
-      );
-    }
-    // Walk each supersedes target; collect descriptor URL + CID pairs so
-    // the error response (on mismatch) carries the full observed head set.
-    const observed: { descriptorUrl: string; cid: string }[] = [];
-    for (const target of supersedesList) {
-      // Use a transient retry so a transient 5xx doesn't masquerade as a
-      // precondition failure. Skip-on-404 — the head was deleted, which
-      // is a precondition failure of its own kind.
-      const headTurtle = await fetchDescriptorTurtleForCas(target, fetchFn);
-      if (headTurtle === null) {
-        observed.push({ descriptorUrl: target, cid: '' });
-        continue;
-      }
-      const cid = computeCid(headTurtle);
-      observed.push({ descriptorUrl: target, cid });
-    }
-
-    // Try ifMatchSupersedes first — direct URL equality against the
-    // declared supersedes set.
-    if (options.ifMatchSupersedes !== undefined) {
-      const hit = observed.find((o) => o.descriptorUrl === options.ifMatchSupersedes);
-      if (!hit) {
-        throw new PublishPreconditionFailedError(
-          `publish: ifMatchSupersedes precondition failed — ${options.ifMatchSupersedes} is not among the declared supersedes targets [${supersedesList.join(', ')}].`,
-          { supersedes: options.ifMatchSupersedes, ...(options.ifMatchCid !== undefined ? { cid: options.ifMatchCid } : {}) },
-          { descriptorUrl: observed[0]?.descriptorUrl ?? null, cid: observed[0]?.cid ?? null, supersedesList: observed.map((o) => o.descriptorUrl) },
-        );
-      }
-      preconditionWitness = { matched: hit.descriptorUrl, via: 'supersedes' };
-      resolvedHeadUrl = hit.descriptorUrl;
-      resolvedHeadCid = hit.cid || null;
-    }
-
-    if (options.ifMatchCid !== undefined) {
-      const hit = observed.find((o) => o.cid === options.ifMatchCid);
-      if (!hit) {
-        throw new PublishPreconditionFailedError(
-          `publish: ifMatchCid precondition failed — CID ${options.ifMatchCid} does not match any current supersedes head (observed CIDs: [${observed.map((o) => o.cid).filter(Boolean).join(', ')}]).`,
-          { ...(options.ifMatchSupersedes !== undefined ? { supersedes: options.ifMatchSupersedes } : {}), cid: options.ifMatchCid },
-          { descriptorUrl: observed[0]?.descriptorUrl ?? null, cid: observed[0]?.cid ?? null, supersedesList: observed.map((o) => o.descriptorUrl) },
-        );
-      }
-      // If both supersedes + cid options are given, the URL match above
-      // must also point at this same head — otherwise the caller's view
-      // of the world is inconsistent.
-      if (preconditionWitness && preconditionWitness.matched !== hit.descriptorUrl) {
-        throw new PublishPreconditionFailedError(
-          `publish: ifMatchSupersedes and ifMatchCid identified different heads (${preconditionWitness.matched} vs ${hit.descriptorUrl}).`,
-          { supersedes: options.ifMatchSupersedes, cid: options.ifMatchCid },
-          { descriptorUrl: hit.descriptorUrl, cid: hit.cid, supersedesList: observed.map((o) => o.descriptorUrl) },
-        );
-      }
-      preconditionWitness = { matched: hit.descriptorUrl, via: preconditionWitness ? 'supersedes' : 'cid' };
-      resolvedHeadUrl = hit.descriptorUrl;
-      resolvedHeadCid = hit.cid;
-    }
+    // Delegate to the standalone helper so the in-publish gate and the
+    // relay's Phase-A pre-flight share one implementation (and one bug
+    // surface). The helper throws PublishPreconditionFailedError on
+    // mismatch with the same envelope this block used to construct
+    // inline — no observable change to existing callers.
+    const pass = await checkSupersessionPrecondition({
+      supersedesList,
+      ...(options.ifMatchSupersedes !== undefined ? { ifMatchSupersedes: options.ifMatchSupersedes } : {}),
+      ...(options.ifMatchCid !== undefined ? { ifMatchCid: options.ifMatchCid } : {}),
+      fetchFn,
+    });
+    resolvedHeadUrl = pass.resolvedHeadUrl;
+    resolvedHeadCid = pass.resolvedHeadCid;
+    preconditionWitness = pass.preconditionWitness;
   } else if (supersedesList.length > 0) {
     // No precondition was requested, but the descriptor IS superseding
     // something. Compute the head CID anyway so callers can pass it back

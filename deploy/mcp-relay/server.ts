@@ -157,6 +157,7 @@ import {
   predictGraphUrl,
   predictManifestUrl,
   PublishPreconditionFailedError,
+  checkSupersessionPrecondition,
 } from '@interego/solid';
 
 // PGSL — `@interego/pgsl`.
@@ -1758,14 +1759,70 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // also works once the descriptor PUT lands. Public-ACL writes +
   // emitNotification fire AFTER the deferred publish resolves since they
   // both need a confirmed result.descriptorUrl/graphUrl.
+  // CAS-split (Phase A / Phase B):
+  //
+  // The if_match branch used to be part of `syncRequired` so the relay
+  // held the request thread for the full ~7-10s of CSS round-trips
+  // (graph PUT + descriptor PUT + manifest CAS). The substrate gate
+  // itself is the only part of that chain that has to be observable
+  // synchronously — a deferred 412 would be a silent precondition
+  // violation. So we now run the precondition check (Phase A) on the
+  // request thread via the standalone checkSupersessionPrecondition
+  // helper, and — on pass — defer the rest of the chain (Phase B) to
+  // the background, just like the default async path. compliance:true
+  // and sync:true STILL take the fully synchronous chain.
   const syncRequired =
     args.compliance === true ||
-    ifMatch !== undefined ||
     args.sync === true;
   const willEncrypt = recipients.length > 0;
   const predictedDescriptorUrl = predictDescriptorUrl(podUrl, descriptor.id);
   const predictedGraphUrl = predictGraphUrl(podUrl, descriptor.id, { encrypted: willEncrypt });
   const predictedManifestUrl = predictManifestUrl(podUrl);
+
+  // Phase A precondition pre-flight — only when if_match was supplied.
+  // On pass we capture the resolved head identifiers so the deferred
+  // 202 can echo previousHeadCid / previousHeadUrl synchronously
+  // (unlike the default async path, which leaves them null because no
+  // CAS read happened on the request thread).
+  let phaseAPass: Awaited<ReturnType<typeof checkSupersessionPrecondition>> | null = null;
+  if (!syncRequired && ifMatch !== undefined) {
+    try {
+      phaseAPass = await checkSupersessionPrecondition({
+        supersedesList: descriptor.supersedes ?? [],
+        ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
+        ...(ifMatchCid ? { ifMatchCid } : {}),
+        fetchFn: solidFetch,
+      });
+    } catch (err) {
+      if (err instanceof PublishPreconditionFailedError) {
+        manifestCache.delete(podUrl);
+        return JSON.stringify({
+          error: 'precondition_failed',
+          code: 412,
+          message: err.message,
+          expected: err.expected,
+          currentHead: {
+            descriptorUrl: err.actual.descriptorUrl,
+            cid: err.actual.cid,
+            supersedesList: err.actual.supersedesList,
+          },
+          retryHint: 'Re-read the manifest (or call get_current_head with the urn:graph IRI) and resend publish_context with the fresh if_match value.',
+        });
+      }
+      // Non-412 (transient GET exhaustion, malformed turtle, etc.) —
+      // surface as a retryable 503 so the caller can distinguish "your
+      // assertion was wrong" from "we couldn't tell".
+      const message = (err as Error).message;
+      log(`[publish/phaseA] precondition check failed for ${descriptor.id}: ${message}`);
+      return JSON.stringify({
+        error: 'precondition_unavailable',
+        code: 503,
+        retryable: true,
+        message,
+      });
+    }
+  }
+
   let result: Awaited<ReturnType<typeof publish>>;
   let publishDeferred = false;
   if (syncRequired) {
@@ -1819,15 +1876,18 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // synchronous response carries the URLs the substrate is committed
     // to writing — the slug + container naming is deterministic from
     // (podUrl, descriptor.id, recipients>0). previousHead* are left null
-    // here; callers that need CAS metadata must pass sync: true.
+    // unless Phase A ran an if_match precondition above — in which case
+    // we carry the resolved head identifiers through synchronously, so
+    // the 202 response is observably stronger than the default async
+    // path (the precondition was definitively checked).
     publishDeferred = true;
     result = {
       descriptorUrl: predictedDescriptorUrl,
       graphUrl: predictedGraphUrl,
       manifestUrl: predictedManifestUrl,
       encrypted: willEncrypt,
-      previousHeadCid: null,
-      previousHeadUrl: null,
+      previousHeadCid: phaseAPass?.resolvedHeadCid ?? null,
+      previousHeadUrl: phaseAPass?.resolvedHeadUrl ?? null,
     } as Awaited<ReturnType<typeof publish>>;
     setDeferredPublishStatus(predictedDescriptorUrl, {
       kind: 'pending',
@@ -1976,6 +2036,23 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     // When pending, the descriptor URL doubles as a poll target —
     // HEAD it until 200 to confirm the publish landed.
     ...(publishDeferred ? { pollUrl: result.descriptorUrl } : {}),
+    // When the CAS-split Phase A ran an if_match precondition before
+    // deferring, echo the observed-vs-expected CIDs so the caller can
+    // confirm the gate fired synchronously (vs. silently skipped). The
+    // pollUrl is a hint; /publish/status is authoritative for the
+    // commit outcome, including the case where Phase B fails AFTER
+    // Phase A passed (descriptor / graph may have landed but manifest
+    // CAS gave up — the pollUrl can return 200 while status is failed).
+    ...(phaseAPass !== null
+      ? {
+          precondition: {
+            passed: true,
+            observedCid: phaseAPass.resolvedHeadCid,
+            expectedCid: ifMatchCid ?? phaseAPass.resolvedHeadCid,
+            ...(ifMatchSupersedes ? { observedUrl: phaseAPass.resolvedHeadUrl, expectedUrl: ifMatchSupersedes } : {}),
+          },
+        }
+      : {}),
     owner: ownerWebId,
     agent: agentId,
     pod: podUrl,
