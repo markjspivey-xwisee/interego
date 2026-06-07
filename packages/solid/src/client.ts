@@ -529,11 +529,38 @@ const DEFAULT_MAX_GRAPH_BYTES = 4 * 1024 * 1024;
 
 /**
  * Read a descriptor's Turtle representation directly from the pod for
- * the purposes of the CAS supersession precondition. The fetch is
- * cache-bypassing (Cache-Control: no-cache) so we always observe the
- * freshest server-side state. Returns null on 404 (head was deleted)
- * so the caller can mark the head as "missing" in the observed list
- * without throwing. Any other non-200 surfaces as an Error.
+ * the purposes of the CAS supersession precondition. Returns null on
+ * 404 (head was deleted) so the caller can mark the head as "missing"
+ * in the observed list without throwing. Any other non-200 surfaces
+ * as an Error.
+ *
+ * FIX (combined sign_authorship + if_match path) — two changes:
+ *
+ *   1. We DO NOT send `Cache-Control: no-cache`. The original
+ *      no-cache header forced CSS to skip its own response cache and
+ *      re-read Azure Files on every CAS check, which is exactly the
+ *      read path that flakes on a just-written descriptor URL. The
+ *      CAS gate does NOT need byte-identical freshness — it needs
+ *      current-or-newer — and CSS's normal cache already invalidates
+ *      on PUT. Dropping the bypass header removes the failure mode
+ *      where the post-write supersession check exhausts its retry
+ *      budget on a transient Azure-Files re-read storm.
+ *
+ *   2. The retry budget is raised to 6 attempts / 500 ms base
+ *      (~0.5s/1s/2s/4s/8s/16s, ~32 s ceiling) to match the symmetric
+ *      window used by the graph + descriptor PUTs below. The
+ *      combined signed-authorship + if_match path always traverses
+ *      this code path (cg:supersedes is populated by the relay's
+ *      auto-supersede block) and was the only configuration that
+ *      consistently surfaced as `fetch failed (4×)` — the default
+ *      maxAttempts=4 budget was symmetric on neither side, so a
+ *      transient Azure-Files / CSS 5xx on the just-written rev1
+ *      descriptor URL could exhaust read attempts mid-window.
+ *
+ *   3. On 4xx-other-than-404 we surface the descriptor URL + status
+ *      in the error message so the failure shows up as
+ *      `CAS prior-head fetch <url> failed: <code>` instead of bubbling
+ *      up as an opaque `fetch failed` from the undici layer.
  */
 async function fetchDescriptorTurtleForCas(
   descriptorUrl: string,
@@ -543,13 +570,12 @@ async function fetchDescriptorTurtleForCas(
     method: 'GET',
     headers: {
       'Accept': TURTLE_CONTENT_TYPE,
-      'Cache-Control': 'no-cache',
     },
-  }));
+  }), { maxAttempts: 6, baseMs: 500 });
   if (resp.status === 404) return null;
   if (!resp.ok) {
     throw new Error(
-      `publish: CAS precondition check could not read current head <${descriptorUrl}>: ${resp.status} ${resp.statusText}`,
+      `publish: CAS prior-head fetch <${descriptorUrl}> failed: ${resp.status} ${resp.statusText}`,
     );
   }
   return await resp.text();

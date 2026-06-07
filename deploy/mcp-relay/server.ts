@@ -1264,20 +1264,26 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // returning the canonical current version. Disable via
   // auto_supersede_prior: false.
   //
-  // CAS precondition (if_match): when the caller passes if_match, we
-  // bypass the manifest cache (so we read the freshest server state)
-  // before computing priorVersions. The same value is threaded into
-  // publish() as ifMatchSupersedes / ifMatchCid — the substrate-level
-  // gate at packages/solid/src/client.ts then rejects with 412 if the
-  // resolved head doesn't match what the caller asserted. Without this,
-  // two concurrent republishes of the same graph_iri see the same
-  // stale manifest snapshot, each emit a cg:supersedes back-link to the
-  // same prior head, and both succeed — producing a forked chain with
-  // two competing HEADs.
+  // CAS precondition (if_match): the value is threaded into publish()
+  // as ifMatchSupersedes / ifMatchCid — the substrate-level gate at
+  // packages/solid/src/client.ts is the authoritative precondition
+  // (it re-reads the actual descriptor turtle from the pod, not the
+  // cached manifest snapshot) and rejects with 412 if the resolved
+  // head doesn't match what the caller asserted.
+  //
+  // FIX (combined sign_authorship + if_match path) — we do NOT
+  // pre-emptively `manifestCache.delete(podUrl)` here. The previous
+  // behavior forced a fresh manifest GET ahead of the substrate CAS
+  // round-trip, doubling the failure surface for the if_match path:
+  // both the relay-side manifest read AND the substrate-side
+  // prior-head read could fail in series if the freshly-written rev1
+  // entry was still propagating. The substrate gate already does the
+  // single authoritative GET of the actual descriptor turtle; the
+  // cached manifest snapshot is only used to seed priorVersions
+  // (which the substrate gate then validates). The post-publish
+  // invalidation at the end of this handler keeps the cache honest
+  // for the NEXT call.
   const ifMatch = args.if_match as string | undefined;
-  if (ifMatch !== undefined) {
-    manifestCache.delete(podUrl);
-  }
   const priorVersions: IRI[] = [];
   if (args.auto_supersede_prior !== false && args.graph_iri) {
     try {
