@@ -242,6 +242,136 @@ describe('publish — signed authorship + if_match CAS (combined gate)', () => {
     expect(result.previousHeadCid).toBe(expectedHeadCid);
   }, 30_000);
 
+  // ── Size-bound regression (johnny's ~6 KB failing case) ──────
+  //
+  // The original failure mode only surfaced at "larger sizes" on the
+  // combined sign_authorship:true + if_match path. Investigation
+  // (scripts/diag-signed-cas-size.mjs sweeping 200 B → 2 MB) confirmed
+  // no threshold exists post-fix, but the SPECIFIC body size johnny hit
+  // (~6 KB) deserves a dedicated regression so future drift on the
+  // prior-head GET budget / cache-bypass header surfaces here first.
+  //
+  // The body is built from a substantial graph_content payload so the
+  // descriptor turtle + named-graph body together exceed 6 KB — the
+  // size at which the original failure was reproducible against the
+  // pre-fix relay.
+  it('combined signed-authorship + if_match succeeds at ~6 KB graph body (size-bound regression for the diag-signed-cas-size sweep)', async () => {
+    // Build a prior-head turtle that is ALSO ~6 KB so the prior-head
+    // GET-and-CID-recompute path traverses the same size envelope the
+    // diag script verified end-to-end against the live relay. Random
+    // bytes are not suitable (would re-canonicalize differently each
+    // run) — instead pack a stable list of dct:hasPart blocks that
+    // serialize deterministically.
+    const partBlocks: string[] = [];
+    for (let i = 0; i < 60; i++) {
+      partBlocks.push(
+        `<urn:cg:v1#part-${i}> <http://purl.org/dc/terms/title> ` +
+        `"Substantial prior-head payload block ${i} — exercises the ` +
+        `~6 KB tier of the diag-signed-cas-size sweep" .`,
+      );
+    }
+    const largePriorHeadTurtle =
+      `@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#>.\n` +
+      `<urn:cg:v1> a cg:ContextDescriptor ;\n` +
+      `    cg:describes <urn:graph:smoke> .\n` +
+      partBlocks.join('\n') + '\n';
+    // Sanity — the prior-head turtle is in the failure-size window.
+    expect(Buffer.byteLength(largePriorHeadTurtle, 'utf8')).toBeGreaterThan(6 * 1024);
+
+    const { fetch, writes } = makeRecordingFetch({ priorHeadTurtle: largePriorHeadTurtle });
+    const created = '2026-06-06T00:00:04Z';
+    const descriptor = descV2WithSupersedes();
+    const { proof } = await buildAuthorshipProof(descriptor.id, created);
+    // CID must be computed against the EXACT bytes the mock fetch returns —
+    // the substrate-side CAS gate computes it the same way.
+    const expectedHeadCid = computeCid(largePriorHeadTurtle);
+
+    // Construct a ~6 KB graph body so the v2 publish itself is also in
+    // the failure-size envelope. We use deterministic content so the
+    // assertion is stable across runs.
+    const graphBodyLines: string[] = [];
+    for (let i = 0; i < 60; i++) {
+      graphBodyLines.push(
+        `<urn:graph:smoke> <urn:cg:annotation-${i}> ` +
+        `"v2 substantial graph body block ${i} — exercises the ~6 KB ` +
+        `tier on the combined sign_authorship + if_match path" .`,
+      );
+    }
+    const graphContent = graphBodyLines.join('\n') + '\n';
+    expect(Buffer.byteLength(graphContent, 'utf8')).toBeGreaterThan(6 * 1024);
+
+    const result = await publish(
+      descriptor,
+      graphContent,
+      POD,
+      {
+        fetch,
+        authorshipProof: proof,
+        ifMatchCid: expectedHeadCid,
+      },
+    );
+
+    // CAS matched the ~6 KB prior head.
+    expect(result.previousHeadUrl).toBe(PRIOR_HEAD_URL);
+    expect(result.previousHeadCid).toBe(expectedHeadCid);
+    // End-to-end pod writes happened (graph PUT + descriptor PUT +
+    // manifest PUT) — no early bail from the CAS gate.
+    const puts = writes.filter(w => w.method === 'PUT');
+    expect(puts.length).toBeGreaterThanOrEqual(2);
+  });
+
+  // Boundary-of-envelope regression: a body just under the
+  // DEFAULT_MAX_GRAPH_BYTES (4 MB) ceiling must still complete on the
+  // combined signed + if_match path. Catches any future change that
+  // accidentally tightens the size guard or re-introduces a body-size
+  // sensitivity on the CAS branch.
+  it('combined signed-authorship + if_match succeeds at ~2 MB graph body (high-tier regression — 2 MB is the diag-script ceiling under the 4 MB substrate envelope)', async () => {
+    const { fetch, writes } = makeRecordingFetch();
+    const created = '2026-06-06T00:00:05Z';
+    const descriptor = descV2WithSupersedes();
+    const { proof } = await buildAuthorshipProof(descriptor.id, created);
+    const expectedHeadCid = computeCid(PRIOR_HEAD_TURTLE);
+
+    // 2 MB body — well above johnny's failing size, well under the
+    // 4 MB substrate cap. Built from a stable repeating pattern so
+    // canonicalization is deterministic.
+    const filler = '0123456789abcdef'.repeat(8); // 128 bytes
+    const lines: string[] = [];
+    const targetBytes = 2 * 1024 * 1024;
+    let runningBytes = 0;
+    let i = 0;
+    while (runningBytes < targetBytes) {
+      const line = `<urn:graph:smoke> <urn:cg:bulk-${i}> "${filler}" .`;
+      lines.push(line);
+      runningBytes += Buffer.byteLength(line, 'utf8') + 1;
+      i++;
+    }
+    const graphContent = lines.join('\n') + '\n';
+    const sizeBytes = Buffer.byteLength(graphContent, 'utf8');
+    expect(sizeBytes).toBeGreaterThan(2 * 1024 * 1024);
+    expect(sizeBytes).toBeLessThan(4 * 1024 * 1024); // under DEFAULT_MAX_GRAPH_BYTES
+
+    const result = await publish(
+      descriptor,
+      graphContent,
+      POD,
+      {
+        fetch,
+        authorshipProof: proof,
+        ifMatchCid: expectedHeadCid,
+      },
+    );
+
+    expect(result.previousHeadCid).toBe(expectedHeadCid);
+    // Authorship-proof block must still be embedded — the descriptor
+    // PUT body grows by only a constant-sized signed-authorship block
+    // regardless of graph payload size (canonicalAuthorshipPayload
+    // signs (agentId, ownerWebId, descriptorId, created, agentDid?),
+    // not the body).
+    const descriptorPut = writes.find(w => w.method === 'PUT' && (w.url.endsWith('urn-cg-v2.ttl') || w.url.endsWith('v2.ttl')));
+    expect(descriptorPut).toBeDefined();
+  }, 30_000);
+
   it('does NOT send `Cache-Control: no-cache` on the prior-head GET (regression on the failure-mode-amplifying header)', async () => {
     const { fetch } = makeRecordingFetch();
     const created = '2026-06-06T00:00:03Z';
