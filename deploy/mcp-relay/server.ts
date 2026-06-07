@@ -154,6 +154,8 @@ import {
   parseDistributionFromDescriptorTurtle,
   parseAuthorshipProofFromDescriptorTurtle,
   predictDescriptorUrl,
+  predictGraphUrl,
+  predictManifestUrl,
   PublishPreconditionFailedError,
 } from '@interego/solid';
 
@@ -876,6 +878,50 @@ async function getCachedManifest(podUrl: string): Promise<ManifestEntry[]> {
   }
   manifestCache.set(podUrl, { entries, expiresAt: Date.now() + MANIFEST_CACHE_TTL_MS });
   return entries;
+}
+
+// ── Deferred-publish tracker ────────────────────────────────
+//
+// publish_context returns a synchronous 202-shaped result with
+// content-addressable predicted URLs (descriptor + graph + manifest + CID)
+// and runs the substrate CSS chain (graph PUT + descriptor PUT + manifest
+// CAS) in the background. Callers that need hard confirmation poll the
+// descriptor URL (HEAD until 200). This map gives us a per-pending
+// publish status so future tooling (and tests) can read "is the publish
+// committed yet?" without HEAD-spinning.
+//
+// Pattern mirrors the in-process tracked-promise maps used in
+// federationStore, lazyPodInit's `bootstrappedPods`, and the
+// `manifestWriteQueues` mutex map inside the solid binding. Each entry
+// is short-lived — entries are removed once the deferred publish
+// resolves OR after DEFERRED_PUBLISH_MAX_AGE_MS to bound memory.
+type DeferredPublishStatus =
+  | { kind: 'pending'; startedAt: number }
+  | { kind: 'committed'; startedAt: number; resolvedAt: number; descriptorUrl: string; graphUrl: string }
+  | { kind: 'failed'; startedAt: number; resolvedAt: number; error: string };
+const DEFERRED_PUBLISH_MAX_ENTRIES = 4096;
+const DEFERRED_PUBLISH_MAX_AGE_MS = 5 * 60 * 1000;
+const deferredPublishStatus = new Map<string, DeferredPublishStatus>();
+function setDeferredPublishStatus(descriptorUrl: string, status: DeferredPublishStatus): void {
+  if (deferredPublishStatus.size >= DEFERRED_PUBLISH_MAX_ENTRIES) {
+    // Evict the oldest insertion (Map preserves insertion order).
+    const oldestKey = deferredPublishStatus.keys().next().value;
+    if (oldestKey !== undefined) deferredPublishStatus.delete(oldestKey);
+  }
+  deferredPublishStatus.set(descriptorUrl, status);
+  // Best-effort age-based eviction sweep — at most one extra delete
+  // per write so the sweep cost stays O(1) amortized.
+  const now = Date.now();
+  for (const [k, v] of deferredPublishStatus) {
+    const baseline = v.kind === 'pending' ? v.startedAt : v.resolvedAt;
+    if (now - baseline > DEFERRED_PUBLISH_MAX_AGE_MS) {
+      deferredPublishStatus.delete(k);
+    }
+    break; // sweep one entry per call — cheap, bounded
+  }
+}
+export function getDeferredPublishStatus(descriptorUrl: string): DeferredPublishStatus | undefined {
+  return deferredPublishStatus.get(descriptorUrl);
 }
 
 // ── Conformance gate (SHACL) ────────────────────────────────
@@ -1680,51 +1726,159 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // perspective. Cross-process / cross-replica writers still hit the
   // CSS-side ETag CAS plus the supersedes substrate gate, which is the
   // cross-host portion of the precondition.
+  //
+  // ── Accept-then-publish (deferred) ──────────────────────────
+  //
+  // The dominant fixed cost in this handler is the chain of awaited CSS
+  // round-trips inside publish(): graph PUT + descriptor PUT + manifest
+  // CAS GET/PUT/verify GET, each wrapped in withTransientRetry. Even
+  // with healthy hops that runs 5-9s — well above the MCP connector's
+  // ~5s response budget. The pin defer (already shipped) covers IPFS
+  // but the substrate-CSS chain is the rest of the dragon.
+  //
+  // We split on three signals:
+  //   - args.compliance === true    — caller needs the signed-then-anchored
+  //                                    chain to land synchronously; defer
+  //                                    would break the compliance grade.
+  //   - args.if_match !== undefined — caller is asserting a CAS precondition
+  //                                    and needs the 412 path observable
+  //                                    synchronously (deferred 412 is a
+  //                                    silent precondition violation).
+  //   - args.sync === true          — explicit opt-in to the old synchronous
+  //                                    contract for callers that prefer hard
+  //                                    confirmation over fast response.
+  //
+  // Otherwise we synthesize the predicted descriptorUrl / graphUrl /
+  // manifestUrl (the publish() naming convention is deterministic from
+  // pod + descriptorId + recipients), return a 202-shaped pending result
+  // with the content-addressable CID, and run the substrate-CSS chain in
+  // the background. Status is tracked in the in-process
+  // `deferredPublishStatus` Map so callers (and tests) can poll commit
+  // state without HEAD-spinning the descriptor URL — though HEAD-spinning
+  // also works once the descriptor PUT lands. Public-ACL writes +
+  // emitNotification fire AFTER the deferred publish resolves since they
+  // both need a confirmed result.descriptorUrl/graphUrl.
+  const syncRequired =
+    args.compliance === true ||
+    ifMatch !== undefined ||
+    args.sync === true;
+  const willEncrypt = recipients.length > 0;
+  const predictedDescriptorUrl = predictDescriptorUrl(podUrl, descriptor.id);
+  const predictedGraphUrl = predictGraphUrl(podUrl, descriptor.id, { encrypted: willEncrypt });
+  const predictedManifestUrl = predictManifestUrl(podUrl);
   let result: Awaited<ReturnType<typeof publish>>;
-  try {
-    result = await withPodMutex(podUrl, () =>
-      publish(descriptor, args.graph_content as string, podUrl, publishOptions),
-    );
-  } catch (err) {
-    if (err instanceof PublishPreconditionFailedError) {
-      // Surface the precondition-failed response as a tool result the
-      // caller can act on (re-read, rebuild, retry). HTTP semantic is 412.
-      manifestCache.delete(podUrl);
-      return JSON.stringify({
-        error: 'precondition_failed',
-        code: 412,
-        message: err.message,
-        expected: err.expected,
-        currentHead: {
-          descriptorUrl: err.actual.descriptorUrl,
-          cid: err.actual.cid,
-          supersedesList: err.actual.supersedesList,
-        },
-        retryHint: 'Re-read the manifest (or call get_current_head with the urn:graph IRI) and resend publish_context with the fresh if_match value.',
+  let publishDeferred = false;
+  if (syncRequired) {
+    try {
+      result = await withPodMutex(podUrl, () =>
+        publish(descriptor, args.graph_content as string, podUrl, publishOptions),
+      );
+    } catch (err) {
+      if (err instanceof PublishPreconditionFailedError) {
+        // Surface the precondition-failed response as a tool result the
+        // caller can act on (re-read, rebuild, retry). HTTP semantic is 412.
+        manifestCache.delete(podUrl);
+        return JSON.stringify({
+          error: 'precondition_failed',
+          code: 412,
+          message: err.message,
+          expected: err.expected,
+          currentHead: {
+            descriptorUrl: err.actual.descriptorUrl,
+            cid: err.actual.cid,
+            supersedesList: err.actual.supersedesList,
+          },
+          retryHint: 'Re-read the manifest (or call get_current_head with the urn:graph IRI) and resend publish_context with the fresh if_match value.',
+        });
+      }
+      throw err;
+    }
+    manifestCache.delete(podUrl);
+
+    // For 'public' visibility, write per-resource .acl entries that
+    // explicitly grant acl:Read to acl:agentClass foaf:Agent on the
+    // descriptor + payload. The /context-graphs/ container ACL already
+    // inherits anonymous Read, but pinning the policy on the leaf
+    // resources keeps the publish self-contained and survives any
+    // future tightening of the parent ACL. Best-effort: log + continue
+    // on failure (the parent ACL still applies).
+    if (visibility === 'public') {
+      const aclResults = await Promise.allSettled([
+        writePublicReadAcl(result.descriptorUrl, ownerWebId as IRI),
+        writePublicReadAcl(result.graphUrl, ownerWebId as IRI),
+      ]);
+      const aclLabels = ['descriptor', 'payload'] as const;
+      aclResults.forEach((settled, idx) => {
+        if (settled.status === 'rejected') {
+          log(`[publish/public] warn: ${aclLabels[idx]} .acl PUT failed: ${(settled.reason as Error).message}`);
+        }
       });
     }
-    throw err;
-  }
-  manifestCache.delete(podUrl);
-
-  // For 'public' visibility, write per-resource .acl entries that
-  // explicitly grant acl:Read to acl:agentClass foaf:Agent on the
-  // descriptor + payload. The /context-graphs/ container ACL already
-  // inherits anonymous Read, but pinning the policy on the leaf
-  // resources keeps the publish self-contained and survives any
-  // future tightening of the parent ACL. Best-effort: log + continue
-  // on failure (the parent ACL still applies).
-  if (visibility === 'public') {
-    const aclResults = await Promise.allSettled([
-      writePublicReadAcl(result.descriptorUrl, ownerWebId as IRI),
-      writePublicReadAcl(result.graphUrl, ownerWebId as IRI),
-    ]);
-    const aclLabels = ['descriptor', 'payload'] as const;
-    aclResults.forEach((settled, idx) => {
-      if (settled.status === 'rejected') {
-        log(`[publish/public] warn: ${aclLabels[idx]} .acl PUT failed: ${(settled.reason as Error).message}`);
-      }
+  } else {
+    // Deferred path. Construct a predicted-shape PublishResult so the
+    // synchronous response carries the URLs the substrate is committed
+    // to writing — the slug + container naming is deterministic from
+    // (podUrl, descriptor.id, recipients>0). previousHead* are left null
+    // here; callers that need CAS metadata must pass sync: true.
+    publishDeferred = true;
+    result = {
+      descriptorUrl: predictedDescriptorUrl,
+      graphUrl: predictedGraphUrl,
+      manifestUrl: predictedManifestUrl,
+      encrypted: willEncrypt,
+      previousHeadCid: null,
+      previousHeadUrl: null,
+    } as Awaited<ReturnType<typeof publish>>;
+    setDeferredPublishStatus(predictedDescriptorUrl, {
+      kind: 'pending',
+      startedAt: Date.now(),
     });
+    void (async () => {
+      const startedAt = Date.now();
+      try {
+        const real = await withPodMutex(podUrl, () =>
+          publish(descriptor, args.graph_content as string, podUrl, publishOptions),
+        );
+        manifestCache.delete(podUrl);
+        if (visibility === 'public') {
+          const aclResults = await Promise.allSettled([
+            writePublicReadAcl(real.descriptorUrl, ownerWebId as IRI),
+            writePublicReadAcl(real.graphUrl, ownerWebId as IRI),
+          ]);
+          const aclLabels = ['descriptor', 'payload'] as const;
+          aclResults.forEach((settled, idx) => {
+            if (settled.status === 'rejected') {
+              log(`[publish/public/deferred] warn: ${aclLabels[idx]} .acl PUT failed: ${(settled.reason as Error).message}`);
+            }
+          });
+        }
+        // SolidNotifications fan-out — must run AFTER the descriptor +
+        // graph land on the pod so subscribers reading the notification
+        // can dereference the URLs immediately.
+        emitNotification(podUrl, {
+          eventType: priorVersions.length > 0 ? 'superseded' : 'created',
+          descriptorUrl: real.descriptorUrl,
+          graphUrl: real.graphUrl,
+          author: agentId,
+        });
+        setDeferredPublishStatus(predictedDescriptorUrl, {
+          kind: 'committed',
+          startedAt,
+          resolvedAt: Date.now(),
+          descriptorUrl: real.descriptorUrl,
+          graphUrl: real.graphUrl,
+        });
+      } catch (err) {
+        const message = (err as Error).message;
+        log(`[publish/deferred] failed for ${descriptor.id}: ${message}`);
+        setDeferredPublishStatus(predictedDescriptorUrl, {
+          kind: 'failed',
+          startedAt,
+          resolvedAt: Date.now(),
+          error: message,
+        });
+      }
+    })();
   }
 
   // Pin to IPFS if configured (org-level or user override).
@@ -1798,15 +1952,30 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // polling transport. This is the producer side; the consumer side
   // is GET /notifications/:podSlug (text/event-stream). Done before
   // the JSON return so observable causality matches the response.
-  emitNotification(podUrl, {
-    eventType: priorVersions.length > 0 ? 'superseded' : 'created',
-    descriptorUrl: result.descriptorUrl,
-    graphUrl: result.graphUrl,
-    author: agentId,
-  });
+  //
+  // Skipped on the deferred path — the background task emits the
+  // notification once the descriptor + graph have actually landed on
+  // the pod, so subscribers don't receive a notification pointing at
+  // a URL that hasn't been written yet.
+  if (!publishDeferred) {
+    emitNotification(podUrl, {
+      eventType: priorVersions.length > 0 ? 'superseded' : 'created',
+      descriptorUrl: result.descriptorUrl,
+      graphUrl: result.graphUrl,
+      author: agentId,
+    });
+  }
 
   return JSON.stringify({
     published: true,
+    // 'pending' on the accept-then-publish path (the substrate-CSS chain
+    // is running in the background; HEAD the descriptorUrl until 200 OR
+    // call /publish/status with the descriptorUrl for a definitive read).
+    // 'committed' on the synchronous path (compliance / if_match / sync).
+    status: publishDeferred ? 'pending' : 'committed',
+    // When pending, the descriptor URL doubles as a poll target —
+    // HEAD it until 200 to confirm the publish landed.
+    ...(publishDeferred ? { pollUrl: result.descriptorUrl } : {}),
     owner: ownerWebId,
     agent: agentId,
     pod: podUrl,
@@ -6940,6 +7109,36 @@ app.get('/.well-known/shacl-shapes', (_req, res) => {
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', css: CSS_URL, tools: Object.keys(TOOLS).length, auth: 'bearer-token', x402: true });
+});
+
+// ── /publish/status — deferred-publish status lookup ─────────
+//
+// publish_context returns synchronously with `status: 'pending'` once
+// the gates pass and the substrate-CSS chain (graph PUT + descriptor PUT
+// + manifest CAS) has been handed off to the background. Callers that
+// need a definitive read of whether the publish committed (without
+// HEAD-spinning the descriptor URL) GET this endpoint with the predicted
+// descriptor URL as the `descriptorUrl` query param. Returns one of:
+//   - { kind: 'pending', ... }   — still running
+//   - { kind: 'committed', ... } — landed on the pod
+//   - { kind: 'failed', error }  — gave up after the retry budget
+//   - { kind: 'unknown' }        — never seen / evicted (after
+//                                   DEFERRED_PUBLISH_MAX_AGE_MS)
+// Read-only, no auth — the descriptor URL is a content-addressable
+// public key for the publish + we only return whether the publish
+// completed (no content leakage).
+app.get('/publish/status', (req, res) => {
+  const descriptorUrl = req.query['descriptorUrl'];
+  if (typeof descriptorUrl !== 'string' || descriptorUrl.length === 0) {
+    res.status(400).json({ error: 'missing_param', param: 'descriptorUrl' });
+    return;
+  }
+  const status = getDeferredPublishStatus(descriptorUrl);
+  if (status === undefined) {
+    res.json({ kind: 'unknown', descriptorUrl });
+    return;
+  }
+  res.json({ ...status, descriptorUrl });
 });
 
 // ── /relay/federation-status — operator probe (FIX 5) ──────────

@@ -148,6 +148,48 @@ export function predictDescriptorUrl(
   return `${container}${slug}.ttl`;
 }
 
+/**
+ * Predict the URL `publish()` will use for the graph payload.
+ *
+ * Mirrors the file-naming convention used inside publish() — the
+ * payload lives at `<container>/<descriptorSlug>-graph.trig` for
+ * plaintext publishes and `<container>/<descriptorSlug>-graph.envelope.jose.json`
+ * for encrypted ones. Surfaced as a separate helper so the MCP relay's
+ * accept-then-publish path can return a content-addressable graph URL
+ * synchronously, before the actual CSS write has completed.
+ *
+ * The same warning applies as predictDescriptorUrl — if the caller
+ * passes custom `containerPath`/`descriptorSlug`/`graphSlug` to publish(),
+ * pass them here too.
+ */
+export function predictGraphUrl(
+  podUrl: string,
+  descriptorId: string,
+  options?: {
+    containerPath?: string;
+    descriptorSlug?: string;
+    graphSlug?: string;
+    encrypted?: boolean;
+  },
+): string {
+  const pod = ensureTrailingSlash(podUrl);
+  const container = ensureTrailingSlash(`${pod}${options?.containerPath ?? DEFAULT_CONTAINER}`);
+  const slug = options?.descriptorSlug ?? slugFromIri(descriptorId);
+  const graphSlug = options?.graphSlug ?? `${slug}-graph`;
+  return options?.encrypted
+    ? `${container}${graphSlug}.envelope.jose.json`
+    : `${container}${graphSlug}.trig`;
+}
+
+/**
+ * Predict the URL `publish()` will use for the manifest. The manifest
+ * is per-pod (not per-descriptor), so this only depends on the pod URL.
+ */
+export function predictManifestUrl(podUrl: string): string {
+  const pod = ensureTrailingSlash(podUrl);
+  return `${pod}${MANIFEST_PATH}`;
+}
+
 // Substrate-level HTTP plumbing (`getDefaultFetch`, `getDefaultWebSocket`,
 // `withTransientRetry`) lives in `../http/`. `getDefaultFetch` used to be
 // defined and exported from this file — it is re-exported below so the

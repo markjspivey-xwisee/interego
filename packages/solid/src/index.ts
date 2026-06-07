@@ -7,6 +7,8 @@ export {
   writeDelegationCredential, readDelegationCredential, verifyAgentDelegation,
   buildVerifyAgentEnvelope,
   predictDescriptorUrl,
+  predictGraphUrl,
+  predictManifestUrl,
 } from './client.js';
 export type { DistributionLink, VerifyAgentDelegationOptions, VerifyAgentEnvelope } from './client.js';
 export type {
