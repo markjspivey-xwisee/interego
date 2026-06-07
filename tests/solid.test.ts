@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   ContextDescriptor,
   generateKeyPair,
+  parseTrig,
 } from '@interego/core';
 import {
   discover,
@@ -362,6 +363,127 @@ describe('publish', () => {
 
     const descPut = writes.find(w => w.url.endsWith('.ttl') && !w.url.includes('manifest'))!;
     expect(descPut.body).not.toContain('cg:visibility');
+  });
+
+  // ── TriG @prefix hoisting (visibility: 'public' path) ──────────
+  //
+  // Regression for the wrapAsTriG bug: when caller-supplied graphContent
+  // contained `@prefix` directives, the historical serializer indented
+  // them verbatim into the named-graph `{ ... }` block. Per W3C TriG §2.2
+  // a wrappedGraph admits only triples, not directives — strict parsers
+  // reject the document and lenient parsers silently scope the binding
+  // only inside the block. Prefixed terms in the content (typical SHACL
+  // shape `targetClass ex:Thing`) therefore failed to resolve at document
+  // level, leaving downstream gates with zero matches and vacuously
+  // passing shapes.
+  //
+  // The fixed serializer extracts every `@prefix` / `@base` (plus SPARQL
+  // `PREFIX` / `BASE`) directive from graphContent, merges them with the
+  // descriptor's own prefix block at document scope, and emits only the
+  // remaining triples inside the named-graph block.
+  it('hoists @prefix declarations from graphContent to document level (visibility=public)', async () => {
+    const writes: { url: string; body?: string }[] = [];
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = init?.method ?? 'GET';
+      if (method === 'PUT') writes.push({ url: urlStr, body: init?.body as string });
+      if (method === 'GET' && urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: 404, ok: false });
+      }
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+
+    // Caller-supplied graphContent declares its own `ex:` prefix and uses
+    // a prefixed term `ex:Thing a ex:Note`. Pre-fix this lands inside
+    // `<urn:graph:g1> { ... }` as `@prefix ex: ... .` plus `ex:Thing a ex:Note .`,
+    // which strict TriG rejects.
+    const graphContent = [
+      '@prefix ex: <http://example.org/> .',
+      'ex:Thing a ex:Note .',
+    ].join('\n');
+
+    await publish(testDescriptor(), graphContent, 'https://alice.pod/', {
+      fetch: mockFetch,
+      visibility: 'public',
+    });
+
+    const graphPut = writes.find(w => w.url.endsWith('-graph.trig'))!;
+    expect(graphPut).toBeDefined();
+    const body = graphPut.body!;
+
+    // The `@prefix ex:` directive must appear at document level, BEFORE
+    // the named-graph opening brace.
+    const prefixIdx = body.indexOf('@prefix ex: <http://example.org/>');
+    const braceIdx = body.indexOf('<urn:graph:g1> {');
+    expect(prefixIdx).toBeGreaterThanOrEqual(0);
+    expect(braceIdx).toBeGreaterThanOrEqual(0);
+    expect(prefixIdx).toBeLessThan(braceIdx);
+
+    // The named-graph block content (between `{` and the matching `}`)
+    // must NOT carry a `@prefix` directive — directives are document-scope
+    // only per TriG §2.2.
+    const blockStart = body.indexOf('{', braceIdx);
+    const blockEnd = body.indexOf('}', blockStart);
+    const blockContent = body.slice(blockStart + 1, blockEnd);
+    expect(blockContent).not.toContain('@prefix');
+    // The triples themselves still land inside the block, with the
+    // prefixed term intact.
+    expect(blockContent).toContain('ex:Thing');
+    expect(blockContent).toContain('ex:Note');
+
+    // Parse with parseTrig and confirm the `ex:` prefix is bound at
+    // document level (resolves to the full IRI) and that the prefixed
+    // subject resolves to its absolute IRI in the parsed document.
+    const parsed = parseTrig(body);
+    expect(parsed.prefixes.get('ex')).toBe('http://example.org/');
+    const exThing = parsed.subjects.find(s => s.subject === 'http://example.org/Thing');
+    expect(exThing).toBeDefined();
+  });
+
+  // De-duplication path: if caller-supplied graphContent re-declares a
+  // prefix the descriptor already declares (e.g. `cg:` or `xsd:`), the
+  // descriptor binding wins and we don't emit a duplicate directive.
+  it('de-duplicates caller-supplied prefixes against the descriptor prefix block', async () => {
+    const writes: { url: string; body?: string }[] = [];
+    const mockFetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const urlStr = typeof url === 'string' ? url : url.toString();
+      const method = init?.method ?? 'GET';
+      if (method === 'PUT') writes.push({ url: urlStr, body: init?.body as string });
+      if (method === 'GET' && urlStr.includes('.well-known/context-graphs')) {
+        return mockResponse('', { status: 404, ok: false });
+      }
+      return mockResponse('', { status: 201 });
+    }) as unknown as typeof globalThis.fetch;
+
+    const graphContent = [
+      // Conflicting declaration — descriptor already binds `cg:`. The
+      // caller's bogus IRI MUST NOT shadow the descriptor's canonical
+      // binding.
+      '@prefix cg: <http://bogus.example/cg#> .',
+      '@prefix ex: <http://example.org/> .',
+      'ex:Thing a ex:Note .',
+    ].join('\n');
+
+    await publish(testDescriptor(), graphContent, 'https://alice.pod/', {
+      fetch: mockFetch,
+      visibility: 'public',
+    });
+
+    const graphPut = writes.find(w => w.url.endsWith('-graph.trig'))!;
+    const body = graphPut.body!;
+
+    // Bogus cg: re-declaration is dropped.
+    expect(body).not.toContain('http://bogus.example/cg#');
+    // ex: still hoisted exactly once.
+    const exPrefixCount = (body.match(/@prefix ex: <http:\/\/example\.org\/>/g) || []).length;
+    expect(exPrefixCount).toBe(1);
+
+    // parseTrig confirms the cg: prefix still points at the descriptor's
+    // canonical namespace (containing "interego/ns/cg"), not the bogus
+    // override.
+    const parsed = parseTrig(body);
+    expect(parsed.prefixes.get('cg')).toContain('interego/ns/cg');
+    expect(parsed.prefixes.get('ex')).toBe('http://example.org/');
   });
 });
 

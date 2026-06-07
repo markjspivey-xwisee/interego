@@ -156,28 +156,103 @@ export { getDefaultFetch } from '@interego/core/http';
 
 /**
  * Wrap Turtle triples inside a TriG named graph block.
+ *
+ * Per W3C TriG (https://www.w3.org/TR/trig/) §2.2, `@prefix` / `@base`
+ * directives appear only at document scope, never inside a wrappedGraph
+ * `{ ... }` block. The historical implementation indented the caller's
+ * `graphContent` verbatim into the named-graph block, which meant any
+ * `@prefix` lines embedded in caller-supplied content landed inside
+ * the block — a syntax error in strict parsers, and (worse) silently
+ * mis-scoped in lenient parsers, so prefixed terms in the content
+ * never resolved at document level. This broke SHACL gates that target
+ * prefixed IRIs (`ex:Thing`): the shape's target IRI parsed against
+ * an unbound prefix, the gate found zero focus nodes, and the shape
+ * vacuously conformed.
+ *
+ * This implementation extracts every `@prefix` / `@base` (and SPARQL
+ * `PREFIX` / `BASE`) directive from `graphContent`, merges them with
+ * the descriptor's own prefix block at document scope (descriptor
+ * declarations win on conflict; new prefix names are appended), and
+ * emits ONLY the remaining triples inside the named-graph block — which
+ * inherits the document-level prefix bindings automatically.
  */
 function wrapAsTriG(
   descriptorTurtle: string,
   graphContent: string,
   graphIri: string,
 ): string {
-  const lines: string[] = [];
-
-  // Emit prefix block once (from the descriptor output).
+  // Extract the descriptor's prefix block — everything up to and
+  // including the newline that follows the last `@prefix` directive.
   const prefixEnd = descriptorTurtle.lastIndexOf('@prefix');
   const afterLastPrefix = descriptorTurtle.indexOf('\n', prefixEnd);
-  const prefixBlock = descriptorTurtle.slice(0, afterLastPrefix + 1);
+  const descriptorPrefixBlock = descriptorTurtle.slice(0, afterLastPrefix + 1);
   const descriptorBody = descriptorTurtle.slice(afterLastPrefix + 1).trim();
 
-  lines.push(prefixBlock);
+  // Identify per-line directives in the caller-supplied graph content.
+  // Recognise the four standard forms: `@prefix`, `@base`, SPARQL
+  // `PREFIX`, and SPARQL `BASE`. Matched lines are hoisted; everything
+  // else is treated as graph body.
+  const directiveRe = /^\s*(@prefix\s+\w*:\s*<[^>]+>\s*\.|@base\s+<[^>]+>\s*\.|PREFIX\s+\w*:\s*<[^>]+>|BASE\s+<[^>]+>)\s*$/i;
+  const graphLines = graphContent.split('\n');
+  const graphDirectives: string[] = [];
+  const graphBodyLines: string[] = [];
+  for (const line of graphLines) {
+    if (directiveRe.test(line)) {
+      graphDirectives.push(line.trim());
+    } else {
+      graphBodyLines.push(line);
+    }
+  }
+
+  // Collect the prefix names the descriptor already declares so caller
+  // prefixes that name the same alias don't shadow the descriptor's
+  // canonical binding. Normalise SPARQL-style `PREFIX` directives to
+  // Turtle `@prefix` form when re-emitting, so the document is
+  // syntactically uniform.
+  const prefixNameRe = /^\s*(?:@prefix|PREFIX)\s+(\w*):/i;
+  const declaredPrefixes = new Set<string>();
+  for (const l of descriptorPrefixBlock.split('\n')) {
+    const m = l.match(prefixNameRe);
+    if (m) declaredPrefixes.add(m[1]!);
+  }
+  const additionalPrefixLines: string[] = [];
+  for (const directive of graphDirectives) {
+    const m = directive.match(prefixNameRe);
+    // `@base` / `BASE` have no prefix name; if a caller declares a base
+    // we hoist it once and let the descriptor block keep its (typically
+    // absent) base. SPARQL `PREFIX a: <...>` → Turtle `@prefix a: <...> .`
+    if (!m) {
+      // @base / BASE — hoist verbatim, normalising SPARQL form to Turtle.
+      if (/^\s*BASE\s/i.test(directive)) {
+        additionalPrefixLines.push(directive.replace(/^\s*BASE\s+(<[^>]+>)\s*$/i, '@base $1 .'));
+      } else {
+        additionalPrefixLines.push(directive);
+      }
+      continue;
+    }
+    if (declaredPrefixes.has(m[1]!)) continue;
+    declaredPrefixes.add(m[1]!);
+    if (/^\s*PREFIX\s/i.test(directive)) {
+      additionalPrefixLines.push(
+        directive.replace(/^\s*PREFIX\s+(\w*):\s*(<[^>]+>)\s*$/i, '@prefix $1: $2 .'),
+      );
+    } else {
+      additionalPrefixLines.push(directive);
+    }
+  }
+
+  const lines: string[] = [];
+  lines.push(descriptorPrefixBlock.trimEnd());
+  if (additionalPrefixLines.length > 0) {
+    lines.push(additionalPrefixLines.join('\n'));
+  }
   lines.push('');
   lines.push('# ── Context Descriptor ────────────────────────────');
   lines.push(descriptorBody);
   lines.push('');
   lines.push('# ── Named Graph Content ───────────────────────────');
   lines.push(`<${graphIri}> {`);
-  for (const line of graphContent.split('\n')) {
+  for (const line of graphBodyLines) {
     lines.push(line ? `    ${line}` : '');
   }
   lines.push('}');
