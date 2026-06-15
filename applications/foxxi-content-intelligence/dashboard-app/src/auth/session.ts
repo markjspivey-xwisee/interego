@@ -69,14 +69,32 @@ export function loadSession(): FoxxiSession | null {
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
+    // A connect-wallet session is NEVER persisted with its private key
+    // (saveSession strips it — keys must not live at rest). So a reloaded
+    // connected session can't sign; drop it and require a fresh connect
+    // rather than render a session that fails every signed call.
+    if (isConnectedSession(s) && !s.connectedPrivateKey) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
     return s as FoxxiSession;
   } catch {
     return null;
   }
 }
 
+/** A "connect wallet" session is keyed by a did:ethr identity / connected-wallet tag. */
+function isConnectedSession(s: Partial<FoxxiSession>): boolean {
+  return !!s.webId?.startsWith('did:ethr:') || !!s.audienceTags?.includes('connected-wallet');
+}
+
 export function saveSession(s: FoxxiSession): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  // SECURITY: never persist a connected private key at rest (localStorage is
+  // XSS-readable). The key lives in memory (App state) for the tab's lifetime
+  // only; on reload the user re-connects.
+  const safe = { ...s };
+  delete safe.connectedPrivateKey;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
 }
 
 export function clearSession(): void {

@@ -87,7 +87,8 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
             </div>
             {connectErr && <div style={{ color: 'var(--bad)', fontSize: 12, marginTop: 6 }}>✗ {connectErr}</div>}
             <div style={{ color: 'var(--text-dim)', fontSize: 10, marginTop: 6 }}>
-              Your key is held in this browser only (to sign requests). Use a dev/demo key.
+              Your key is kept in memory for this tab only — never written to disk / localStorage;
+              you'll re-connect after a reload. Use a dev/demo key.
             </div>
           </div>
         )}
