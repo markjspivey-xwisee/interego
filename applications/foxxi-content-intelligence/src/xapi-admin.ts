@@ -17,10 +17,15 @@
  * role so a regular learner can't read other learners' statements.
  */
 
-import type { Express, Request, Response, NextFunction } from 'express';
+import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import { listStoredStatements, statementStoreTenants } from './xapi-lrs.js';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { FOXXI_PROFILE_ID } from './xapi-profile.js';
+import {
+  listForwardingTargets, addForwardingTarget, updateForwardingTarget,
+  deleteForwardingTarget, retryDeadLetter, deadLetterFor,
+  inboundCredentials, listInboundReceipts,
+} from './lrs-forwarding.js';
 
 interface AdminConfig {
   adminWebId: string;
@@ -331,13 +336,113 @@ async function handleTenants(req: Request, res: Response): Promise<void> {
   res.json({ tenants: withCounts, default: String(DEFAULT_TENANT) });
 }
 
+// ── Statement forwarding administration ─────────────────────────────
+// Outbound targets (downstream LRSes), per-target delivery metrics +
+// dead-letter retry, inbound forwarding credentials, and the inbound
+// receipt feed. ADMIN-only on mutations (learning-engineers are read-only
+// on forwarding, since it is an operator concern, not a per-cohort one).
+
+function requireAdmin(req: Request, res: Response): boolean {
+  if ((req as Request & { adminRole?: string }).adminRole !== 'admin') {
+    res.status(403).json({ error: 'forwarding administration requires the admin role' });
+    return false;
+  }
+  return true;
+}
+
+function handleListForwarding(req: Request, res: Response): void {
+  res.json({ tenant: String(resolveAdminTenant(req)), targets: listForwardingTargets(resolveAdminTenant(req)) });
+}
+
+function handleAddForwarding(req: Request, res: Response): void {
+  if (!requireAdmin(req, res)) return;
+  const b = (req.body ?? {}) as { label?: string; endpoint?: string; credentials?: string; version?: string; enabled?: boolean };
+  if (!b.endpoint || typeof b.endpoint !== 'string') { res.status(400).json({ error: 'endpoint is required' }); return; }
+  if (!b.credentials || !b.credentials.includes(':')) { res.status(400).json({ error: 'credentials "user:pass" are required' }); return; }
+  const view = addForwardingTarget(resolveAdminTenant(req), {
+    label: b.label, endpoint: b.endpoint, credentials: b.credentials, version: b.version, enabled: b.enabled,
+  });
+  res.status(201).json(view);
+}
+
+function handleUpdateForwarding(req: Request, res: Response): void {
+  if (!requireAdmin(req, res)) return;
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const view = updateForwardingTarget(resolveAdminTenant(req), req.params.id!, {
+    label: b.label as string | undefined,
+    endpoint: b.endpoint as string | undefined,
+    credentials: b.credentials as string | undefined,
+    version: b.version as string | undefined,
+    enabled: b.enabled as boolean | undefined,
+  });
+  if (!view) { res.status(404).json({ error: 'no such forwarding target' }); return; }
+  res.json(view);
+}
+
+function handleDeleteForwarding(req: Request, res: Response): void {
+  if (!requireAdmin(req, res)) return;
+  const ok = deleteForwardingTarget(resolveAdminTenant(req), req.params.id!);
+  if (!ok) { res.status(404).json({ error: 'no such forwarding target' }); return; }
+  res.status(204).end();
+}
+
+async function handleRetryForwarding(req: Request, res: Response): Promise<void> {
+  if (!requireAdmin(req, res)) return;
+  const id = (req.body as { id?: string } | undefined)?.id;
+  const summary = await retryDeadLetter(resolveAdminTenant(req), id);
+  res.json({ tenant: String(resolveAdminTenant(req)), retried: summary });
+}
+
+function handleDeadLetter(req: Request, res: Response): void {
+  const dl = deadLetterFor(resolveAdminTenant(req), req.params.id!);
+  res.json({ id: req.params.id, depth: dl.length, items: dl.slice(-50) });
+}
+
+function handleInboundReceipts(req: Request, res: Response): void {
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  res.json({ tenant: String(resolveAdminTenant(req)), ...listInboundReceipts(resolveAdminTenant(req), limit) });
+}
+
+function handleListCredentials(_req: Request, res: Response): void {
+  res.json({ credentials: inboundCredentials.list() });
+}
+
+function handleAddCredential(req: Request, res: Response): void {
+  if (!requireAdmin(req, res)) return;
+  const b = (req.body ?? {}) as { principal?: string; secret?: string; tenant?: string; label?: string };
+  if (!b.principal || !b.secret) { res.status(400).json({ error: 'principal and secret are required' }); return; }
+  res.status(201).json(inboundCredentials.add({ principal: b.principal, secret: b.secret, tenant: b.tenant, label: b.label }));
+}
+
+function handleDeleteCredential(req: Request, res: Response): void {
+  if (!requireAdmin(req, res)) return;
+  const ok = inboundCredentials.remove(req.params.id!);
+  if (!ok) { res.status(404).json({ error: 'no such credential' }); return; }
+  res.status(204).end();
+}
+
 // ── Route attachment ────────────────────────────────────────────────
 
 export function attachXapiAdminRoutes(app: Express, config: AdminConfig): void {
   const gate = makeAdminGate(config);
+  const json = express.json({ limit: '256kb' });
   app.get('/xapi/admin/statements', gate, (req, res) => { void handleStatementsAdmin(req, res); });
   app.get('/xapi/admin/aggregates', gate, (req, res) => { void handleAggregates(req, res); });
   app.get('/xapi/admin/conformance', gate, (req, res) => { void handleConformance(req, res, config); });
   app.get('/xapi/admin/config', gate, (req, res) => handleConfig(req, res, config));
   app.get('/xapi/admin/tenants', gate, (req, res) => { void handleTenants(req, res); });
+
+  // Outbound forwarding targets + metrics + dead-letter retry.
+  app.get('/xapi/admin/forwarding/targets', gate, (req, res) => handleListForwarding(req, res));
+  app.post('/xapi/admin/forwarding/targets', gate, json, (req, res) => handleAddForwarding(req, res));
+  app.put('/xapi/admin/forwarding/targets/:id', gate, json, (req, res) => handleUpdateForwarding(req, res));
+  app.delete('/xapi/admin/forwarding/targets/:id', gate, (req, res) => handleDeleteForwarding(req, res));
+  app.get('/xapi/admin/forwarding/targets/:id/dead-letter', gate, (req, res) => handleDeadLetter(req, res));
+  app.post('/xapi/admin/forwarding/retry', gate, json, (req, res) => { void handleRetryForwarding(req, res); });
+
+  // Inbound forwarding: receipts feed + credential management.
+  app.get('/xapi/admin/forwarding/inbound', gate, (req, res) => handleInboundReceipts(req, res));
+  app.get('/xapi/admin/credentials', gate, (req, res) => handleListCredentials(req, res));
+  app.post('/xapi/admin/credentials', gate, json, (req, res) => handleAddCredential(req, res));
+  app.delete('/xapi/admin/credentials/:id', gate, (req, res) => handleDeleteCredential(req, res));
 }

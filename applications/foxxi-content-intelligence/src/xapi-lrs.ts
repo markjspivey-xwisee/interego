@@ -52,7 +52,13 @@ import { randomUUID, createHash } from 'node:crypto';
 import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adapter/src/pod-publisher.js';
 import { createStatementStore, ConflictError, matchesFilter, type StatementStore, type StoredStatement } from './statement-store.js';
 import { validateStatement, validateAgentObject } from './xapi-validate.js';
-import { TenantPartition, DEFAULT_TENANT, parseTenantCredentials, type TenantId } from './tenant-context.js';
+import { TenantPartition, DEFAULT_TENANT, type TenantId } from './tenant-context.js';
+import {
+  forwardStatement as forwardToTargets,
+  recordInbound,
+  inboundCredentials,
+  seedForwardingTargets,
+} from './lrs-forwarding.js';
 import {
   withTransientRetry,
 } from '@interego/solid';
@@ -252,8 +258,11 @@ function tenantOf(req: Request): TenantId {
 function makeAuthGate(config: XapiLrsConfig) {
   // Each Basic-auth credential carries its tenant (`user:pass` → default,
   // `user:pass:tenantId` → a named tenant) — the standard multi-tenant
-  // LRS pattern: one credential per upstream LMS/LRS integration.
-  const credTenants = parseTenantCredentials(config.basicAuthPairs);
+  // LRS pattern: one credential per upstream LMS/LRS integration. The
+  // env value seeds a LIVE registry; operators can mint/revoke inbound
+  // forwarding credentials at runtime and the gate honours them at once.
+  inboundCredentials.seedFromEnv(config.basicAuthPairs);
+  const credTenants = inboundCredentials.liveMap;
   return (req: Request, res: Response, next: NextFunction): void => {
     const rawVersion = req.headers['x-experience-api-version'];
     const version = typeof rawVersion === 'string' ? rawVersion : '';
@@ -273,7 +282,8 @@ function makeAuthGate(config: XapiLrsConfig) {
     const r = req as Request & { xapiAuth?: unknown; xapiTenant?: TenantId };
     const basicTenant = basicAuthTenant(authHeader, credTenants);
     if (basicTenant !== null) {
-      r.xapiAuth = { kind: 'basic', principal: 'lrs-key' };
+      const decoded = Buffer.from((authHeader ?? '').replace(/^Basic\s+/i, ''), 'base64').toString('utf8');
+      r.xapiAuth = { kind: 'basic', principal: decoded.split(':')[0] || 'lrs-key' };
       r.xapiTenant = basicTenant;
       return next();
     }
@@ -561,7 +571,8 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
     ids.push(id);
     persistAttachmentData(enriched, multipartParts, attachStore);
     notifyStatementStored(enriched, tenantOf(req), config);
-    forwardStatement(enriched, config).catch(err => {
+    recordInboundIfForwarded(req, enriched);
+    forwardToTargets(tenantOf(req), enriched).catch(err => {
       // eslint-disable-next-line no-console
       console.warn('[foxxi-lrs] forwarding failed:', (err as Error).message);
     });
@@ -746,8 +757,21 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   }
   persistAttachmentData(enriched, multipartParts, attachmentStores.for(tenantOf(req)));
   notifyStatementStored(enriched, tenantOf(req), config);
-  forwardStatement(enriched, config).catch(() => undefined);
+  recordInboundIfForwarded(req, enriched);
+  forwardToTargets(tenantOf(req), enriched).catch(() => undefined);
   res.status(204).end();
+}
+
+/**
+ * Record an inbound forwarding receipt when the write authenticated via a
+ * Basic credential (an upstream system forwarding INTO this LRS), not a
+ * launched-learner Bearer session. Pure side-channel: the Statement is
+ * never mutated (xAPI immutability + conformance).
+ */
+function recordInboundIfForwarded(req: Request, stmt: Record<string, unknown>): void {
+  const auth = (req as Request & { xapiAuth?: { kind?: string; principal?: string } }).xapiAuth;
+  if (auth?.kind !== 'basic') return;
+  recordInbound(tenantOf(req), auth.principal ?? 'lrs-key', stmt);
 }
 
 /** Fire the post-store hook (the cmi5 LMS watches moveOn through it). */
@@ -1235,43 +1259,11 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 // ── Statement forwarding ────────────────────────────────────────────
-
-async function forwardStatement(stmt: Record<string, unknown>, config: XapiLrsConfig): Promise<void> {
-  if (!config.forwardingTargets.trim()) return;
-  const targets = config.forwardingTargets.split(',').map(s => s.trim()).filter(Boolean);
-  for (const tgt of targets) {
-    const [endpoint, creds, version] = tgt.split('||');
-    if (!endpoint || !creds) continue;
-    try {
-      // Transient-network retry: outbound Statement-Forwarding POSTs cross
-      // the public internet to peer LRSes; a single connection blip should
-      // not silently drop the statement. Treat 5xx + connect errors as
-      // transient via withTransientRetry; 4xx surfaces immediately.
-      const r = await withTransientRetry(async () => {
-        const resp = await fetch(`${endpoint.replace(/\/$/, '')}/statements`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Basic ${Buffer.from(creds).toString('base64')}`,
-            'X-Experience-API-Version': version || '2.0.0',
-          },
-          body: JSON.stringify(stmt),
-        });
-        if (resp.status >= 500) {
-          throw new Error(`forward POST failed: ${resp.status} ${resp.statusText}`);
-        }
-        return resp;
-      });
-      if (!r.ok) {
-        // eslint-disable-next-line no-console
-        console.warn(`[foxxi-lrs] forward to ${endpoint} failed ${r.status}`);
-      }
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn(`[foxxi-lrs] forward to ${endpoint} threw:`, (err as Error).message);
-    }
-  }
-}
+// Outbound forwarding moved to the runtime-managed registry in
+// ./lrs-forwarding.ts (per-target delivery metrics + dead-letter + retry,
+// surfaced through the LRS-admin API). The POST/PUT handlers call
+// forwardToTargets(tenant, stmt); the env value FOXXI_LRS_FORWARDING_TARGETS
+// seeds the default tenant's registry in attachXapiLrsRoutes().
 
 // ── xAPI Profile Server ─────────────────────────────────────────────
 
@@ -1314,6 +1306,10 @@ async function buildFoxxiXapiProfile(_config: XapiLrsConfig): Promise<Record<str
 // ── Route attachment ────────────────────────────────────────────────
 
 export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
+  // Seed the default tenant's outbound forwarding registry from env so
+  // existing FOXXI_LRS_FORWARDING_TARGETS deployments keep their targets;
+  // operators then manage them at runtime through /xapi/admin/forwarding/*.
+  seedForwardingTargets(DEFAULT_TENANT, config.forwardingTargets);
   const gate = makeAuthGate(config);
 
   // Raw-body parser for multipart/mixed Statement requests — the global
