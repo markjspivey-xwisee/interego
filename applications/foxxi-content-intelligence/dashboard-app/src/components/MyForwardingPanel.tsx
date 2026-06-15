@@ -39,6 +39,9 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
   const { entry } = useHypermedia();
   const origin = bridgeOrigin(entry);
   const uid = session.userId;
+  // When this is a "connect wallet" session, sign with the REAL connected key
+  // (so forwarding keys to the real identity's lens); else the demo derivation.
+  const signOpts = session.connectedPrivateKey ? { privateKey: session.connectedPrivateKey } : undefined;
   const [targets, setTargets] = useState<TargetView[] | null>(null);
   const [creds, setCreds] = useState<CredView[] | null>(null);
   const [ownerTenant, setOwnerTenant] = useState<string>('');
@@ -51,8 +54,8 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
     if (!origin) return;
     try {
       const [t, c] = await Promise.all([
-        callSignedAffordance<{ targets: TargetView[]; ownerTenant: string }>(origin, 'forwarding/targets', uid, {}),
-        callSignedAffordance<{ credentials: CredView[] }>(origin, 'credentials', uid, {}),
+        callSignedAffordance<{ targets: TargetView[]; ownerTenant: string }>(origin, 'forwarding/targets', uid, {}, signOpts),
+        callSignedAffordance<{ credentials: CredView[] }>(origin, 'credentials', uid, {}, signOpts),
       ]);
       setTargets(t.targets ?? []); setOwnerTenant(t.ownerTenant ?? ''); setCreds(c.credentials ?? []); setErr(null);
     } catch (e) { setErr((e as Error).message); }
@@ -90,7 +93,7 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
           <span style={{ color: 'var(--text-dim)' }}>· {t.principal} {t.secretHint} · xAPI {t.version}</span>
           <span style={{ color: 'var(--text-dim)' }}>· ✓{t.metrics.delivered} ✗{t.metrics.failed}{t.metrics.deadLetterDepth ? ` · dead-letter ${t.metrics.deadLetterDepth}` : ''}</span>
           <span style={{ flex: 1 }} />
-          <Button small danger disabled={busy} onClick={() => act(() => callSignedAffordance(origin, 'forwarding/targets', uid, { delete: [t.id] }))}>Remove</Button>
+          <Button small danger disabled={busy} onClick={() => act(() => callSignedAffordance(origin, 'forwarding/targets', uid, { delete: [t.id] }, signOpts))}>Remove</Button>
         </div>
       ))}
       <div style={{ display: 'flex', gap: 8, marginTop: 8, marginBottom: 18, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -99,7 +102,7 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
         <input style={inputStyle} placeholder="label (optional)" value={tForm.label} onChange={e => setTForm({ ...tForm, label: e.target.value })} />
         <input style={{ ...inputStyle, minWidth: 80 }} placeholder="xAPI ver" value={tForm.version} onChange={e => setTForm({ ...tForm, version: e.target.value })} />
         <Button small primary disabled={busy || !tForm.endpoint || !tForm.credentials.includes(':')}
-          onClick={() => act(async () => { await callSignedAffordance(origin, 'forwarding/targets', uid, { targets: [tForm] }); setTForm({ endpoint: '', credentials: '', label: '', version: '2.0.0' }); })}>
+          onClick={() => act(async () => { await callSignedAffordance(origin, 'forwarding/targets', uid, { targets: [tForm] }, signOpts); setTForm({ endpoint: '', credentials: '', label: '', version: '2.0.0' }); })}>
           Add target
         </Button>
       </div>
@@ -112,7 +115,7 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
           <code>{c.principal}</code><span style={{ color: 'var(--text-dim)' }}>{c.secretHint}</span>
           <span style={{ color: 'var(--text-dim)' }}>{c.label}</span>
           <span style={{ flex: 1 }} />
-          <Button small danger disabled={busy} onClick={() => act(() => callSignedAffordance(origin, 'credentials', uid, { revoke: [c.id] }))}>Revoke</Button>
+          <Button small danger disabled={busy} onClick={() => act(() => callSignedAffordance(origin, 'credentials', uid, { revoke: [c.id] }, signOpts))}>Revoke</Button>
         </div>
       ))}
       <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -120,7 +123,7 @@ export function MyForwardingPanel({ session }: { session: FoxxiSession }) {
         <input style={inputStyle} placeholder="secret (pass)" value={cForm.secret} onChange={e => setCForm({ ...cForm, secret: e.target.value })} />
         <input style={inputStyle} placeholder="label (optional)" value={cForm.label} onChange={e => setCForm({ ...cForm, label: e.target.value })} />
         <Button small primary disabled={busy || !cForm.principal || !cForm.secret}
-          onClick={() => act(async () => { await callSignedAffordance(origin, 'credentials', uid, { credentials: [cForm] }); setCForm({ principal: '', secret: '', label: '' }); })}>
+          onClick={() => act(async () => { await callSignedAffordance(origin, 'credentials', uid, { credentials: [cForm] }, signOpts); setCForm({ principal: '', secret: '', label: '' }); })}>
           Add credential
         </Button>
       </div>

@@ -207,58 +207,6 @@
   ],
   "users": [
     {
-      "user_id": "u-maintainer",
-      "web_id": "https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/maintainer/profile/card#me",
-      "name": "Maintainer (dev agent)",
-      "email": "maintainer@interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io",
-      "department": "Agents",
-      "job_title": "Substrate maintainer",
-      "manager_user_id": null,
-      "location": "Remote",
-      "audience_tags": [
-        "all-employees",
-        "agents",
-        "engineering"
-      ],
-      "status": "active",
-      "employee_id": "AGENT-MAINT",
-      "hire_date": "2026-06-15"
-    },
-    {
-      "user_id": "u-johnny",
-      "web_id": "https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/johnny/profile/card#me",
-      "name": "Johnny (Claude)",
-      "email": "johnny@interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io",
-      "department": "Agents",
-      "job_title": "Agent · claude.ai",
-      "manager_user_id": null,
-      "location": "Remote",
-      "audience_tags": [
-        "all-employees",
-        "agents"
-      ],
-      "status": "active",
-      "employee_id": "AGENT-JOHNNY",
-      "hire_date": "2026-06-15"
-    },
-    {
-      "user_id": "u-boozer",
-      "web_id": "https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/boozer/profile/card#me",
-      "name": "Boozer (ChatGPT)",
-      "email": "boozer@interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io",
-      "department": "Agents",
-      "job_title": "Agent · ChatGPT",
-      "manager_user_id": null,
-      "location": "Remote",
-      "audience_tags": [
-        "all-employees",
-        "agents"
-      ],
-      "status": "active",
-      "employee_id": "AGENT-BOOZER",
-      "hire_date": "2026-06-15"
-    },
-    {
       "user_id": "u-admin",
       "web_id": "https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/admin/profile/card#me",
       "name": "Jordan Doe",

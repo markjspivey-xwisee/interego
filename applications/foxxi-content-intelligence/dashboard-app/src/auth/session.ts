@@ -15,7 +15,8 @@
  */
 
 import { SAMPLE_ADMIN_PAYLOAD } from '../sample/data.js';
-import { mintSessionToken } from './session-token.js';
+import { ethers } from 'ethers';
+import { mintSessionToken, mintSessionTokenWithWallet } from './session-token.js';
 
 export type SessionRole = 'learner' | 'admin';
 
@@ -31,6 +32,13 @@ export interface FoxxiSession {
   bearerToken: string;
   /** ISO timestamp the bearer token expires — UI refresh trigger. */
   bearerExpiresAt: string;
+  /**
+   * For a "connect wallet" session: the connected REAL private key. When set,
+   * /agent/* signed-affordance calls are signed with THIS key (the real
+   * self-sovereign identity / lens), not the demo-seed derivation. Held in this
+   * browser only.
+   */
+  connectedPrivateKey?: string;
 }
 
 export interface SessionOption {
@@ -137,19 +145,38 @@ export function learnerSessionOptions(): SessionOption[] {
 }
 
 /**
- * Self-sovereign agents added to the Acme tenant directory as resident demo
- * logins (maintainer / johnny / boozer). These are demo-seed-derived tenant
- * identities — distinct from the agents' real mesh wallets — published into
- * the directory so their dashboard session tokens verify. userId + webId must
- * match imported/admin_payload.json (the published directory the bridge checks).
+ * "Connect wallet" login: sign in as a REAL self-sovereign identity by
+ * providing its private key (or mnemonic). The dashboard derives the wallet
+ * and signs /agent/* affordance calls with it (the bridge's DIRECT branch),
+ * so e.g. "My forwarding" keys to that identity's REAL lens. This is how the
+ * maintainer (did:ethr:0x8f3b…, self-held key) signs in as itself — not a
+ * demo stand-in. (johnny/boozer are relay+OAuth-mediated and have no
+ * exportable signing key, so they act only from their own session.)
  */
-export function agentSessionOptions(): SessionOption[] {
-  const host = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-  return [
-    { userId: 'u-maintainer', webId: `${host}/users/maintainer/profile/card#me`, name: 'Maintainer (dev agent)', jobTitle: 'Substrate maintainer', department: 'Agents', audienceTags: ['all-employees', 'agents', 'engineering'] },
-    { userId: 'u-johnny', webId: `${host}/users/johnny/profile/card#me`, name: 'Johnny (Claude)', jobTitle: 'Agent · claude.ai', department: 'Agents', audienceTags: ['all-employees', 'agents'] },
-    { userId: 'u-boozer', webId: `${host}/users/boozer/profile/card#me`, name: 'Boozer (ChatGPT)', jobTitle: 'Agent · ChatGPT', department: 'Agents', audienceTags: ['all-employees', 'agents'] },
-  ];
+export async function connectFromPrivateKey(input: string, tenantPodUrl: string): Promise<FoxxiSession> {
+  const raw = input.trim();
+  let wallet: ethers.Wallet | ethers.HDNodeWallet;
+  if (/^(0x)?[0-9a-fA-F]{64}$/.test(raw)) {
+    wallet = new ethers.Wallet(raw.startsWith('0x') ? raw : `0x${raw}`);
+  } else if (raw.split(/\s+/).length >= 12) {
+    wallet = ethers.Wallet.fromPhrase(raw);
+  } else {
+    throw new Error('Paste a private key (0x + 64 hex) or a 12/24-word recovery phrase.');
+  }
+  const did = `did:ethr:${wallet.address}`;
+  const ttlMs = 8 * 60 * 60 * 1000;
+  const bearerToken = await mintSessionTokenWithWallet(wallet, did, ttlMs);
+  return {
+    role: 'learner',
+    webId: did,
+    userId: wallet.address,
+    name: `Connected ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`,
+    audienceTags: ['connected-wallet'],
+    tenantPodUrl,
+    bearerToken,
+    bearerExpiresAt: new Date(Date.now() + ttlMs).toISOString(),
+    connectedPrivateKey: wallet.privateKey,
+  };
 }
 
 export async function sessionFromOption(opt: SessionOption, role: SessionRole, tenantPodUrl: string): Promise<FoxxiSession> {

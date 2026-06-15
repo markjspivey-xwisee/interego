@@ -23,9 +23,15 @@ const sha256Hex = (s: string): string => ethers.sha256(enc.encode(s)).slice(2);
 
 export interface SignedEnvelope { _signed_payload: string; _signature: string; }
 
-/** Sign `args` as the given user — DIRECT-branch envelope (agent_id = did:ethr:<addr>). */
-export async function signAgentRequest(userId: string, args: Record<string, unknown>, seed?: string): Promise<SignedEnvelope> {
-  const wallet = deriveUserWallet(userId, seed);
+/**
+ * Sign `args` as the given user — DIRECT-branch envelope (agent_id = did:ethr:<addr>).
+ * If opts.privateKey is set (a "connect wallet" session), signs with that REAL
+ * key; otherwise derives the per-user demo wallet from userId + seed.
+ */
+export async function signAgentRequest(
+  userId: string, args: Record<string, unknown>, opts?: { seed?: string; privateKey?: string },
+): Promise<SignedEnvelope> {
+  const wallet = opts?.privateKey ? new ethers.Wallet(opts.privateKey) : deriveUserWallet(userId, opts?.seed);
   const _signed_payload = JSON.stringify({ agent_id: `did:ethr:${wallet.address}`, timestamp: new Date().toISOString(), ...args });
   const _signature = await wallet.signMessage(`sha256:${sha256Hex(_signed_payload)}`);
   return { _signed_payload, _signature };
@@ -33,9 +39,9 @@ export async function signAgentRequest(userId: string, args: Record<string, unkn
 
 /** Sign + POST a self-sovereign affordance call to `${origin}/agent/<path>`. Returns parsed JSON. */
 export async function callSignedAffordance<T = unknown>(
-  origin: string, path: string, userId: string, args: Record<string, unknown>, seed?: string,
+  origin: string, path: string, userId: string, args: Record<string, unknown>, opts?: { seed?: string; privateKey?: string },
 ): Promise<T> {
-  const body = await signAgentRequest(userId, args, seed);
+  const body = await signAgentRequest(userId, args, opts);
   const r = await fetch(`${origin}/agent/${path.replace(/^\/+/, '')}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

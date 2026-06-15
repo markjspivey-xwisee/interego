@@ -82,3 +82,24 @@ export async function mintSessionToken(args: {
   const sig = await wallet.signMessage(canonicalMessage(body));
   return encodeToken({ ...body, sig });
 }
+
+/**
+ * Mint a token signed by a SPECIFIC wallet (a connected real key), rather than
+ * the demo-seed derivation — for the self-sovereign "connect wallet" login. The
+ * token won't verify against the tenant directory (the wallet isn't a member),
+ * but the /agent/* signed-affordance path signs with this same wallet directly.
+ */
+export async function mintSessionTokenWithWallet(
+  wallet: ethers.Wallet | ethers.HDNodeWallet,
+  webId: string,
+  ttlMs: number = TOKEN_TTL_MS,
+): Promise<string> {
+  const now = new Date();
+  const exp = new Date(now.getTime() + ttlMs);
+  const nonce = sha256Hex(`${wallet.address}:${now.getTime()}:${Math.random()}`).slice(0, 16);
+  const body: Omit<SessionToken, 'sig'> = {
+    sub: webId, iat: now.toISOString(), exp: exp.toISOString(), nonce, address: wallet.address,
+  };
+  const sig = await wallet.signMessage(canonicalMessage(body));
+  return encodeToken({ ...body, sig });
+}
