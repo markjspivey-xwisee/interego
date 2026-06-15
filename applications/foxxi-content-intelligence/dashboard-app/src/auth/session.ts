@@ -136,6 +136,22 @@ export function learnerSessionOptions(): SessionOption[] {
   return picks;
 }
 
+/**
+ * Self-sovereign agents added to the Acme tenant directory as resident demo
+ * logins (maintainer / johnny / boozer). These are demo-seed-derived tenant
+ * identities — distinct from the agents' real mesh wallets — published into
+ * the directory so their dashboard session tokens verify. userId + webId must
+ * match imported/admin_payload.json (the published directory the bridge checks).
+ */
+export function agentSessionOptions(): SessionOption[] {
+  const host = 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+  return [
+    { userId: 'u-maintainer', webId: `${host}/users/maintainer/profile/card#me`, name: 'Maintainer (dev agent)', jobTitle: 'Substrate maintainer', department: 'Agents', audienceTags: ['all-employees', 'agents', 'engineering'] },
+    { userId: 'u-johnny', webId: `${host}/users/johnny/profile/card#me`, name: 'Johnny (Claude)', jobTitle: 'Agent · claude.ai', department: 'Agents', audienceTags: ['all-employees', 'agents'] },
+    { userId: 'u-boozer', webId: `${host}/users/boozer/profile/card#me`, name: 'Boozer (ChatGPT)', jobTitle: 'Agent · ChatGPT', department: 'Agents', audienceTags: ['all-employees', 'agents'] },
+  ];
+}
+
 export async function sessionFromOption(opt: SessionOption, role: SessionRole, tenantPodUrl: string): Promise<FoxxiSession> {
   // Mint a real ECDSA-signed bearer token for the picked identity. The
   // bridge verifies the signature recovers an address present in the

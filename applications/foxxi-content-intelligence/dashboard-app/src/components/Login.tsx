@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Card, Button, Pill } from './common.js';
 import {
-  adminSessionOption, learnerSessionOptions, sessionFromOption,
+  adminSessionOption, learnerSessionOptions, agentSessionOptions, sessionFromOption,
   type SessionRole, type FoxxiSession,
 } from '../auth/session.js';
 import { SAMPLE_TENANT_POD_URL } from '../sample/data.js';
@@ -9,6 +9,7 @@ import { SAMPLE_TENANT_POD_URL } from '../sample/data.js';
 export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
   const [role, setRole] = useState<SessionRole>('learner');
   const learners = learnerSessionOptions();
+  const agents = agentSessionOptions();
   const admin = adminSessionOption();
 
   return (
@@ -58,6 +59,31 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
                     </div>
                   </div>
                   <Button onClick={() => { void (async () => onSignIn(await sessionFromOption(l, 'learner', SAMPLE_TENANT_POD_URL)))(); }}>
+                    Sign in
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ color: 'var(--text-dim)', fontSize: 12, margin: '18px 0 10px' }}>
+              Self-sovereign agents (tenant-resident demo logins) — maintainer, johnny, boozer.
+              They also act over the A2A mesh via signed affordances.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {agents.map(a => (
+                <div key={a.webId} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: 10, background: 'var(--panel-2)', borderRadius: 6,
+                  border: '1px solid var(--border)',
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 500 }}>{a.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{a.jobTitle} · {a.department}</div>
+                    <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {a.audienceTags.map(t => <Pill key={t}>{t}</Pill>)}
+                    </div>
+                  </div>
+                  <Button onClick={() => { void (async () => onSignIn(await sessionFromOption(a, 'learner', SAMPLE_TENANT_POD_URL)))(); }}>
                     Sign in
                   </Button>
                 </div>
