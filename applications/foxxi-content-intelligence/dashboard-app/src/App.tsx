@@ -44,6 +44,8 @@ import { Login } from './components/Login.js';
 import { LearnerShell } from './components/LearnerShell.js';
 import { CatalogTab, PoliciesTab, CoverageTab, AccessTab, IntegrationsTab, AuditTab } from './components/AdminShell.js';
 import { LrsAdminPanel } from './components/LrsAdminPanel.js';
+import { LmsContentPanel } from './components/LmsContentPanel.js';
+import { MyActivityPanel } from './components/MyActivityPanel.js';
 import { AgentPerformancePanel } from './components/AgentPerformancePanel.js';
 import { PerformanceDemoSuitePanel } from './components/PerformanceDemoSuitePanel.js';
 import { Header, Card } from './components/common.js';
@@ -130,6 +132,8 @@ function AppRoutes() {
           {isPriv && <Route path="/statements/:statementSub" element={<StatementsPage session={session} />} />}
           {isPriv && <Route path="/lrs-config" element={<StatementsPage session={session} />} />}
           {isPriv && <Route path="/agent-performance" element={<AgentPerformancePage session={session} />} />}
+          {isPriv && <Route path="/content" element={<ContentPage session={session} />} />}
+          <Route path="/my-activity" element={<MyActivityPage session={session} />} />
           <Route path="/demo-suite" element={<DemoSuitePage />} />
 
           {/* Convenience redirects — `/me` and `/profile` resolve to the
@@ -202,6 +206,7 @@ function TopNav({ session }: { session: FoxxiSession }) {
     }}>
       <NavLink to={ownProfileUrl} label="My profile" />
       <NavLink to="/courses" label="Courses" />
+      <NavLink to="/my-activity" label="My activity" />
       <NavLink to="/demo-suite" label="Demo suite" />
       {isPriv && <span style={{ width: 12 }} />}
       {isPriv && <NavLink to="/profiles" label="Profiles" />}
@@ -209,6 +214,7 @@ function TopNav({ session }: { session: FoxxiSession }) {
       {isPriv && <NavLink to="/groups" label="Groups" />}
       {isPriv && <NavLink to="/audit-records" label="Audit records" />}
       {isPriv && <NavLink to="/coverage" label="Coverage" />}
+      {isPriv && <NavLink to="/content" label="Content" />}
       {isPriv && <NavLink to="/integrations" label="Integrations" />}
       {isPriv && <NavLink to="/statements" label="xAPI / LRS" />}
       {isPriv && <NavLink to="/agent-performance" label="Agent performance" />}
@@ -287,6 +293,12 @@ function IntegrationsPage() {
 }
 function StatementsPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><LrsAdminPanel bearer={session.bearerToken} isAdmin={session.role === 'admin'} /></div>;
+}
+function ContentPage({ session }: { session: FoxxiSession }) {
+  return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><LmsContentPanel session={session} /></div>;
+}
+function MyActivityPage({ session }: { session: FoxxiSession }) {
+  return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><MyActivityPanel session={session} /></div>;
 }
 function AgentPerformancePage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><AgentPerformancePanel session={session} /></div>;
