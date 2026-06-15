@@ -46,6 +46,7 @@ import { CatalogTab, PoliciesTab, CoverageTab, AccessTab, IntegrationsTab, Audit
 import { LrsAdminPanel } from './components/LrsAdminPanel.js';
 import { LmsContentPanel } from './components/LmsContentPanel.js';
 import { MyActivityPanel } from './components/MyActivityPanel.js';
+import { MyForwardingPanel } from './components/MyForwardingPanel.js';
 import { AgentPerformancePanel } from './components/AgentPerformancePanel.js';
 import { PerformanceDemoSuitePanel } from './components/PerformanceDemoSuitePanel.js';
 import { Header, Card } from './components/common.js';
@@ -134,6 +135,7 @@ function AppRoutes() {
           {isPriv && <Route path="/agent-performance" element={<AgentPerformancePage session={session} />} />}
           {isPriv && <Route path="/content" element={<ContentPage session={session} />} />}
           <Route path="/my-activity" element={<MyActivityPage session={session} />} />
+          <Route path="/my-forwarding" element={<MyForwardingPage session={session} />} />
           <Route path="/demo-suite" element={<DemoSuitePage />} />
 
           {/* Convenience redirects — `/me` and `/profile` resolve to the
@@ -207,6 +209,7 @@ function TopNav({ session }: { session: FoxxiSession }) {
       <NavLink to={ownProfileUrl} label="My profile" />
       <NavLink to="/courses" label="Courses" />
       <NavLink to="/my-activity" label="My activity" />
+      <NavLink to="/my-forwarding" label="My forwarding" />
       <NavLink to="/demo-suite" label="Demo suite" />
       {isPriv && <span style={{ width: 12 }} />}
       {isPriv && <NavLink to="/profiles" label="Profiles" />}
@@ -299,6 +302,9 @@ function ContentPage({ session }: { session: FoxxiSession }) {
 }
 function MyActivityPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><MyActivityPanel session={session} /></div>;
+}
+function MyForwardingPage({ session }: { session: FoxxiSession }) {
+  return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><MyForwardingPanel session={session} /></div>;
 }
 function AgentPerformancePage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><AgentPerformancePanel session={session} /></div>;
