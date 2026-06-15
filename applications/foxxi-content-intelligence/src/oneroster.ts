@@ -39,8 +39,9 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
+import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 
-interface OrConfig {
+interface OrConfig extends OperatorAuthConfig {
   tenantDid: string;
 }
 
@@ -561,8 +562,12 @@ function mergeById<T>(base: readonly T[], overlay: ReadonlyMap<string, T>, idOf:
 
 // ── Route attachment ────────────────────────────────────────────────
 
-export function attachOneRosterRoutes(app: Express, _config: OrConfig): void {
-  const tenantOf = (req: Request): TenantId => tenantIdOf(req.query.tenant_pod_url as string | undefined);
+export function attachOneRosterRoutes(app: Express, config: OrConfig): void {
+  // Honor ?tenant_pod_url ONLY for a verified operator; pin everyone else
+  // to DEFAULT_TENANT so an anonymous caller can never read or write a
+  // victim tenant's roster (the old `tenantIdOf(?tenant_pod_url)` was the
+  // cross-tenant hole). Default-tenant reads still work (1EdTech conformance).
+  const tenantOf = (req: Request): TenantId => trustedTenantOf(req, config);
 
   app.get('/ims/oneroster/v1p2', (_req, res) => {
     res.json({
@@ -651,6 +656,13 @@ export function attachOneRosterRoutes(app: Express, _config: OrConfig): void {
   // overlay, which every GET above then reflects. The upstream caller
   // (a Foxxi affordance) unzips the OneRoster bundle for the user.
   app.post('/ims/oneroster/v1p2/import', (req: Request, res: Response) => {
+    // WRITE endpoint — require a verified operator. Previously anonymous:
+    // any caller could overwrite any tenant's roster (and imported records
+    // win on sourcedId, leaking into LTI 1.3 NRPS member lists).
+    if (!callerIsOperator(req, config)) {
+      res.status(401).json({ error: 'OneRoster import requires an authenticated operator (admin or learning-engineer) session token' });
+      return;
+    }
     const body = req.body as Record<string, string> | undefined;
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       res.status(400).json({ error: 'expected JSON: { "users.csv": "...", "classes.csv": "...", ... }' });

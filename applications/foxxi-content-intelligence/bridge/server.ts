@@ -323,6 +323,14 @@ const learningEngineerWebIds = new Set(
     .split(',').map(s => s.trim()).filter(Boolean),
 );
 
+// Cached snapshot of the PUBLISHED tenant directory users (which carry
+// wallet_address — the bundled admin_payload.json does not). The L3 REST
+// surfaces (OneRoster / cmi5 / LTI NRPS) use this via operator-auth to
+// verify a session token's signer synchronously, so they can honor
+// `?tenant_pod_url` for verified operators only and refuse cross-tenant
+// access from everyone else. Refreshed on a timer; empty until first load.
+let directoryUsersCache: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }> = [];
+
 if (!adminKeySeed) {
   console.warn('[foxxi-bridge] WARNING: FOXXI_ADMIN_KEY_SEED is unset — admin sections cannot be decrypted; learner queries will fail. Set FOXXI_ADMIN_KEY_SEED to the same seed used at publish time.');
 }
@@ -389,6 +397,14 @@ async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdmin
     console.error('[foxxi-bridge] autoFetchAdmin failed:', (err as Error).message);
     return null;
   }
+}
+
+/** Refresh the cached published-directory users (for operator-auth on the L3 REST surfaces). */
+async function refreshDirectoryCache(): Promise<void> {
+  try {
+    const a = await autoFetchAdmin({});
+    if (a?.users) directoryUsersCache = a.users as typeof directoryUsersCache;
+  } catch { /* keep last good snapshot */ }
 }
 
 async function autoFetchCourse(args: Record<string, unknown>, courseId: string): Promise<FoxxiAgenticPayload | null> {
@@ -2175,9 +2191,24 @@ const app = createVerticalBridge({
     // LAUNCH content: it hands an Assignable Unit a conformant launch URL
     // + stages LaunchData, and mints the one-time fetch token the AU
     // exchanges for LRS auth (GET /cmi5/launch, POST /cmi5/fetch/:token).
+    // Operator-auth for the L3 REST surfaces — honor ?tenant_pod_url only
+    // for a verified admin/learning-engineer; pin everyone else to the
+    // default tenant. loadUsers uses the cached PUBLISHED directory (which
+    // carries wallet_address) so verifySessionToken can recover the signer.
+    const operatorAuth = {
+      adminWebId,
+      learningEngineerWebIds,
+      loadUsers: () => directoryUsersCache,
+    };
+    // Warm the directory cache now (everything is initialized at this point)
+    // and refresh periodically so operator-auth can verify session-token signers.
+    void refreshDirectoryCache();
+    { const t = setInterval(() => void refreshDirectoryCache(), 5 * 60_000); (t as { unref?: () => void }).unref?.(); }
+
     attachCmi5LmsRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       authoritativeSource,
+      ...operatorAuth,
     });
 
     // LTI 1.3 Advantage Tool Provider — JWKS / OIDC login / launch /
@@ -2191,12 +2222,13 @@ const app = createVerticalBridge({
       keySeed: process.env.FOXXI_LTI_KEY_SEED ?? `${authoritativeSource}-lti-2026-05`,
       dashboardUrl: process.env.FOXXI_DASHBOARD_URL ?? (process.env.FOXXI_DASHBOARD_ORIGIN?.split(',')[0] ?? 'http://localhost:5173'),
       platformsConfig: process.env.FOXXI_LTI_PLATFORMS ?? '',
+      ...operatorAuth,
     });
 
     // OneRoster 1.2 — SIS / HR roster sync. Both a producer (Foxxi
     // exposes its roster) and a consumer (`POST /oneroster/v1p2/import`
     // applies a CSV bundle into the tenant's imported roster overlay).
-    attachOneRosterRoutes(a, { tenantDid: authoritativeSource });
+    attachOneRosterRoutes(a, { tenantDid: authoritativeSource, ...operatorAuth });
 
     // SCORM 2004 4th Ed. Sequencing & Navigation runtime — Foxxi-as-LMS
     // can ENFORCE sequencing (control modes, sequencing rules, limit

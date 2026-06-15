@@ -43,6 +43,7 @@ import express, { type Express, type Request, type Response } from 'express';
 import { createHash, createHmac, randomUUID, createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign, verify as cryptoVerify } from 'node:crypto';
 import { DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
 import { tenantOrUsers, type OrUser } from './oneroster.js';
+import { trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { listCmi5Courses } from './cmi5-lms.js';
 import {
   withTransientRetry,
@@ -50,7 +51,7 @@ import {
 
 // ── Config ──────────────────────────────────────────────────────────
 
-export interface Lti13Config {
+export interface Lti13Config extends OperatorAuthConfig {
   /** Bridge URL — used as the Tool's audience and key-id base. */
   selfBaseUrl: string;
   /** Tenant DID — bound to every issued credential / score posted back. */
@@ -850,7 +851,11 @@ ${courseItems || '<p><em>No cmi5 courses registered yet — the generic Foxxi li
       res.status(r.status).type('application/vnd.ims.lti-nrps.v2.membershipcontainer+json').send(text);
       return;
     }
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    // Producer-mode NRPS returns this tenant's full member roster (PII).
+    // Honor ?tenant_pod_url only for a verified operator; pin everyone else
+    // to DEFAULT_TENANT so an anonymous caller can't read a victim tenant's
+    // membership by naming it.
+    const tenant = trustedTenantOf(req, config);
     const members = tenantOrUsers(tenant).map(orUserToNrpsMember);
     res.type('application/vnd.ims.lti-nrps.v2.membershipcontainer+json').send(JSON.stringify({
       id: `${config.selfBaseUrl.replace(/\/+$/, '')}/lti/nrps/members`,

@@ -33,6 +33,7 @@
 import { randomUUID } from 'node:crypto';
 import express, { type Express, type Request, type Response } from 'express';
 import { DEFAULT_TENANT, TenantPartition, tenantIdOf, type TenantId } from './tenant-context.js';
+import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { buildCmi5Statement, evaluateMoveOn } from './cmi5.js';
 import {
   parseCmi5Course, auById, precedingAu, flatAus, flatBlocks, blockAuIds,
@@ -496,7 +497,7 @@ export function attachCmi5LmsRoutes(app: Express, config: {
   selfBaseUrl: string;
   authoritativeSource: string;
   defaultLrsEndpoint?: string;
-}): void {
+} & OperatorAuthConfig): void {
   // ── The fetch endpoint (cmi5 §8) — the AU exchanges its one-time
   //    fetch token for an LRS auth-token. ─────────────────────────────
   app.post('/cmi5/fetch/:token', (req: Request, res: Response) => {
@@ -515,7 +516,11 @@ export function attachCmi5LmsRoutes(app: Express, config: {
   });
   app.post('/cmi5/course', xmlBody, (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    if (!callerIsOperator(req, config)) {
+      res.status(401).json({ error: 'cmi5 course registration requires an authenticated operator session token' });
+      return;
+    }
+    const tenant = trustedTenantOf(req, config);
     const xml = typeof req.body === 'string' ? req.body
       : Buffer.isBuffer(req.body) ? req.body.toString('utf8')
       : (req.body && typeof req.body === 'object' && typeof (req.body as { cmi5_xml?: string }).cmi5_xml === 'string')
@@ -538,7 +543,7 @@ export function attachCmi5LmsRoutes(app: Express, config: {
   // ── Inspect a registered course structure. ───────────────────────
   app.get('/cmi5/course/:id', (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const tenant = trustedTenantOf(req, config);
     const course = getCmi5Course(tenant, String(req.params.id ?? ''));
     if (!course) { res.status(404).json({ error: 'no registered course with that id' }); return; }
     res.status(200).json(course);
@@ -548,9 +553,17 @@ export function attachCmi5LmsRoutes(app: Express, config: {
   //    conformant cmi5 launch (URL + LaunchData + actor). ─────────────
   app.get('/cmi5/launch', (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    // This mints an LRS-honored Bearer for the named learner — require a
+    // verified operator. Previously anonymous: any caller could mint a
+    // token for an arbitrary ?learner into an arbitrary ?tenant_pod_url and
+    // write statements as that learner into that tenant.
+    if (!callerIsOperator(req, config)) {
+      res.status(401).json({ error: 'cmi5 launch requires an authenticated operator (admin or learning-engineer) session token' });
+      return;
+    }
     const auId = req.query.au_id as string | undefined;
     const learnerId = req.query.learner as string | undefined;
-    const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
+    const tenant = trustedTenantOf(req, config);
     const courseId = req.query.course_id as string | undefined;
     if (!auId || !learnerId) {
       res.status(400).json({ error: 'au_id and learner are required query parameters' });
