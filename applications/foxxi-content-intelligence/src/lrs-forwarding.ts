@@ -31,6 +31,7 @@
 
 import { withTransientRetry } from '@interego/solid';
 import { TenantPartition, DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
+import type { ForwardingConfigBlob, RawForwardingTarget, RawInboundCredential } from './forwarding-persist.js';
 
 // ── Outbound forwarding targets ─────────────────────────────────────
 
@@ -89,6 +90,24 @@ const MAX_DEAD_LETTER = 200;
 
 const targetsByTenant = new TenantPartition<Map<string, TargetState>>(() => new Map());
 const seededTenants = new Set<TenantId>();
+
+// ── Durable hydration (lazy, once per tenant) ───────────────────────
+// The registry is in-memory; the bridge registers a hydrator that loads +
+// imports an owner's encrypted config from their pod, so per-user forwarding
+// survives a restart. ensureForwardingHydrated runs the hydrator at most once
+// per tenant, and (importantly) BEFORE the first forward to that tenant, so a
+// statement arriving right after a restart isn't silently dropped.
+type ForwardingHydrator = (tenant: TenantId) => Promise<void>;
+let _hydrator: ForwardingHydrator | null = null;
+const _hydrated = new Set<TenantId>();
+export function registerForwardingHydrator(fn: ForwardingHydrator): void { _hydrator = fn; }
+/** Mark a tenant already hydrated (e.g. the affordance handler loaded it with a known pod). */
+export function markForwardingHydrated(tenant: TenantId): void { _hydrated.add(tenant); }
+export async function ensureForwardingHydrated(tenant: TenantId): Promise<void> {
+  if (_hydrated.has(tenant)) return;
+  _hydrated.add(tenant); // mark first so a failed/slow load doesn't re-loop
+  if (_hydrator) { try { await _hydrator(tenant); } catch { /* best-effort */ } }
+}
 
 function freshMetrics(): ForwardingMetrics {
   return {
@@ -241,6 +260,7 @@ function recordFailure(st: TargetState, stmt: Record<string, unknown>, error: st
  * the inbound POST (which already succeeded).
  */
 export async function forwardStatement(tenant: TenantId, stmt: Record<string, unknown>): Promise<void> {
+  await ensureForwardingHydrated(tenant);
   const map = targetsByTenant.for(tenant);
   if (map.size === 0) return;
   for (const st of map.values()) {
@@ -273,6 +293,31 @@ export async function retryDeadLetter(tenant: TenantId, id?: string): Promise<Ar
 
 export function deadLetterFor(tenant: TenantId, id: string): DeadLetter[] {
   return targetsByTenant.for(tenant).get(id)?.deadLetter ?? [];
+}
+
+// ── Durable export / import (raw, includes secrets — for own-pod persistence) ──
+
+/** A tenant's full config (targets + inbound credentials, WITH secrets) for encrypted persistence. */
+export function exportForwardingConfig(tenant: TenantId): ForwardingConfigBlob {
+  const targets: RawForwardingTarget[] = [...targetsByTenant.for(tenant).values()].map(st => ({
+    id: st.target.id, label: st.target.label, endpoint: st.target.endpoint,
+    credentials: st.target.credentials, version: st.target.version,
+    enabled: st.target.enabled, createdAt: st.target.createdAt,
+  }));
+  return { targets, credentials: inboundCredentials.exportForTenant(tenant), updatedAt: new Date().toISOString() };
+}
+
+/** Replace a tenant's in-memory targets + inbound credentials from a decrypted blob (ids/createdAt preserved). */
+export function importForwardingConfig(tenant: TenantId, blob: ForwardingConfigBlob): void {
+  const map = targetsByTenant.for(tenant);
+  map.clear();
+  for (const t of blob.targets ?? []) {
+    map.set(t.id, {
+      target: { id: t.id, label: t.label, endpoint: t.endpoint, credentials: t.credentials, version: t.version, enabled: t.enabled, createdAt: t.createdAt },
+      metrics: freshMetrics(), deadLetter: [],
+    });
+  }
+  for (const c of blob.credentials ?? []) inboundCredentials.importRaw(c);
 }
 
 // ── Inbound credentials ─────────────────────────────────────────────
@@ -340,6 +385,20 @@ class InboundCredentialRegistry {
     this.meta.delete(id);
     this.liveMap.delete(`${cred.principal}:${cred.secret}`);
     return true;
+  }
+
+  /** Raw export (WITH secrets) for a tenant — for encrypted own-pod persistence. */
+  exportForTenant(tenant: TenantId): RawInboundCredential[] {
+    return [...this.meta.values()]
+      .filter(c => c.tenant === tenant)
+      .map(c => ({ id: c.id, principal: c.principal, secret: c.secret, tenant: String(c.tenant), label: c.label, createdAt: c.createdAt }));
+  }
+
+  /** Restore a credential from a decrypted blob, preserving id + createdAt. */
+  importRaw(c: RawInboundCredential): void {
+    const tenant = tenantIdOf(c.tenant);
+    this.meta.set(c.id, { id: c.id, principal: c.principal, secret: c.secret, tenant, label: c.label, createdAt: c.createdAt });
+    this.liveMap.set(`${c.principal}:${c.secret}`, tenant);
   }
 
   /** Resolve a decoded `user:pass` to its credential + tenant (gate uses this for the principal label). */

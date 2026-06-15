@@ -117,7 +117,11 @@ import {
   forwardStatement as forwardToTargets,
   addForwardingTarget, listForwardingTargets,
   deleteForwardingTarget, inboundCredentials,
+  exportForwardingConfig, importForwardingConfig,
+  registerForwardingHydrator, markForwardingHydrated,
 } from '../src/lrs-forwarding.js';
+import { persistForwardingConfig, loadForwardingConfig } from '../src/forwarding-persist.js';
+import { bridgeEncryptionKeypair } from '../src/foundation-holon-altitude.js';
 import { EvaluationRegistry, type CandidateRun } from '../src/agent-evaluation.js';
 import { comparePortfolio, type CandidateEvidence } from '../src/agent-portfolio.js';
 import { TenantPartition, tenantIdOf, type TenantId } from '../src/tenant-context.js';
@@ -3121,6 +3125,38 @@ app.post('/agent/record-course-completion', async (req, res) => {
 // statement of yours only forwards to YOUR targets, and a credential of yours
 // only lands forwarded-in statements in YOUR record.
 
+// ── Durable per-user forwarding config (encrypted, own-pod) ─────────────────
+// Persist each owner's targets + inbound credentials (which contain secrets) as
+// an encrypted envelope on their OWN pod, and hydrate on demand so per-user
+// forwarding survives a bridge restart. The envelope is wrapped to the bridge
+// (so it can hydrate) + the owner (so it's theirs); secrets never hit the pod
+// in clear.
+async function hydrateOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<void> {
+  const kp = bridgeEncryptionKeypair();
+  if (kp) {
+    try { const blob = await loadForwardingConfig({ ownerPod, bridgeKp: kp }); if (blob) importForwardingConfig(tenant, blob); }
+    catch (e) { console.warn('[foxxi-forward][hydrate]', (e as Error).message); }
+  }
+  markForwardingHydrated(tenant); // don't let the cold-start hydrator re-load + clobber
+}
+async function persistOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<void> {
+  const kp = bridgeEncryptionKeypair();
+  if (!kp) return;
+  try { await persistForwardingConfig({ ownerPod, blob: exportForwardingConfig(tenant), bridgeKp: kp }); }
+  catch (e) { console.warn('[foxxi-forward][persist]', (e as Error).message); }
+}
+// Cold-start hydrator for the forward path (no affordance call yet this boot):
+// reverse-derive the owner pod from the lens tenant and load their persisted
+// config BEFORE the first forward, so a post-restart statement isn't dropped.
+registerForwardingHydrator(async (tenant) => {
+  if (!tenant.startsWith('lens:')) return;
+  const kp = bridgeEncryptionKeypair(); if (!kp) return;
+  let origin = ''; try { origin = new URL(tenantPodUrl).origin; } catch { return; }
+  const ownerPod = `${origin}/${tenant.slice('lens:'.length)}/`;
+  const blob = await loadForwardingConfig({ ownerPod, bridgeKp: kp });
+  if (blob) importForwardingConfig(tenant, blob);
+});
+
 const FORWARDING_TARGETS_AFFORDANCE: Affordance = {
   action: 'urn:cg:action:foxxi:set-forwarding-targets-signed' as Affordance['action'],
   toolName: 'set_foxxi_forwarding_targets',
@@ -3153,7 +3189,11 @@ app.post('/agent/forwarding/targets', async (req, res) => {
     const p = auth.payload as { targets?: unknown; delete?: unknown };
     // Owner = verified caller (DID -> own pod -> own lens). No subject_pod_url:
     // you can only manage your OWN forwarding.
-    const ownerTenant = lensTenantFor(actorForPod(resolveSubjectPodUrl(callerDid), MESH_ACTOR_LABELS));
+    const ownerPod = resolveSubjectPodUrl(callerDid);
+    const ownerTenant = lensTenantFor(actorForPod(ownerPod, MESH_ACTOR_LABELS));
+    // Load any persisted config FIRST so an add/delete doesn't clobber the rest.
+    await hydrateOwnerForwarding(ownerTenant, ownerPod);
+    let mutated = false;
     if (Array.isArray(p.targets)) {
       for (const t of p.targets as Array<Record<string, unknown>>) {
         if (!t || typeof t.endpoint !== 'string' || typeof t.credentials !== 'string' || !t.credentials.includes(':')) continue;
@@ -3163,11 +3203,13 @@ app.post('/agent/forwarding/targets', async (req, res) => {
           version: typeof t.version === 'string' ? t.version : undefined,
           enabled: typeof t.enabled === 'boolean' ? t.enabled : undefined,
         });
+        mutated = true;
       }
     }
     if (Array.isArray(p.delete)) {
-      for (const id of p.delete as unknown[]) if (typeof id === 'string') deleteForwardingTarget(ownerTenant, id);
+      for (const id of p.delete as unknown[]) if (typeof id === 'string') { deleteForwardingTarget(ownerTenant, id); mutated = true; }
     }
+    if (mutated) await persistOwnerForwarding(ownerTenant, ownerPod);
     res.json({ ok: true, owner: callerDid, ownerTenant, targets: listForwardingTargets(ownerTenant) });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
@@ -3202,18 +3244,23 @@ app.post('/agent/credentials', async (req, res) => {
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:cg:action:foxxi:set-inbound-credentials-signed.' }); return; }
     const callerDid = auth.callerDid;
     const p = auth.payload as { credentials?: unknown; revoke?: unknown };
-    const ownerTenant = lensTenantFor(actorForPod(resolveSubjectPodUrl(callerDid), MESH_ACTOR_LABELS));
+    const ownerPod = resolveSubjectPodUrl(callerDid);
+    const ownerTenant = lensTenantFor(actorForPod(ownerPod, MESH_ACTOR_LABELS));
+    await hydrateOwnerForwarding(ownerTenant, ownerPod);
+    let mutated = false;
     if (Array.isArray(p.credentials)) {
       for (const c of p.credentials as Array<Record<string, unknown>>) {
         if (!c || typeof c.principal !== 'string' || typeof c.secret !== 'string') continue;
         inboundCredentials.add({ principal: c.principal, secret: c.secret, tenant: String(ownerTenant), label: typeof c.label === 'string' ? c.label : undefined });
+        mutated = true;
       }
     }
     // Scope every read/revoke to THIS owner's tenant — never touch another user's credentials.
     const mineIds = new Set(inboundCredentials.list().filter(c => c.tenant === String(ownerTenant)).map(c => c.id));
     if (Array.isArray(p.revoke)) {
-      for (const id of p.revoke as unknown[]) if (typeof id === 'string' && mineIds.has(id)) inboundCredentials.remove(id);
+      for (const id of p.revoke as unknown[]) if (typeof id === 'string' && mineIds.has(id)) { inboundCredentials.remove(id); mutated = true; }
     }
+    if (mutated) await persistOwnerForwarding(ownerTenant, ownerPod);
     const mine = inboundCredentials.list().filter(c => c.tenant === String(ownerTenant));
     res.json({ ok: true, owner: callerDid, ownerTenant, credentials: mine });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
