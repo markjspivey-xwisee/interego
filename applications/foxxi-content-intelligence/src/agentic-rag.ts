@@ -537,7 +537,7 @@ export interface AskAgenticRagArgs {
   readonly primary: FoxxiAgenticCourse;
   readonly federation?: readonly FoxxiAgenticCourse[];
   readonly history?: readonly { role: 'user' | 'assistant'; content: string }[];
-  /** Override LLM model (default: claude-opus-4-7). */
+  /** Override LLM model (default: claude-opus-4-8). */
   readonly llmModel?: string;
   /** If supplied, used to call the Anthropic API. Without it, retrieval-only result. */
   readonly llmApiKey?: string;
@@ -548,7 +548,7 @@ export interface AskAgenticRagArgs {
 export async function askAgenticRag(args: AskAgenticRagArgs): Promise<AgenticRagResult> {
   const federation = args.federation ?? [];
   const ctx = buildGraphContext({ question: args.question, primary: args.primary, federation });
-  const llmModel = args.llmModel ?? 'claude-opus-4-7';
+  const llmModel = args.llmModel ?? 'claude-opus-4-8';
   let synthesizedAnswer: string | null = null;
   const llmKeySource: LlmKeySource = args.llmApiKey ? (args.llmKeySource ?? 'bridge-env') : 'none';
   if (args.llmApiKey) {

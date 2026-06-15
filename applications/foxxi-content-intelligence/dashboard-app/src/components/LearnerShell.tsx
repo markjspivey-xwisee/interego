@@ -124,7 +124,7 @@ export function LearnerShell({ session }: { session: FoxxiSession }) {
           analytics + xAPI conformance + statement browsing is the LE's core
           surface (the ICICLE "data-informed decision making" leg). */}
       {session.audienceTags?.includes('learning-engineering') && (
-        <LrsAdminPanel bearer={session.bearerToken} />
+        <LrsAdminPanel bearer={session.bearerToken} isAdmin={session.role === 'admin'} />
       )}
 
       {openCourseId && (

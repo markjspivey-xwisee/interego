@@ -197,11 +197,35 @@ export interface InterventionOption {
 
 // ── Contextualization — read the regime, then apply its method ──────
 
-export type PerformanceMethod = 'apply-practice' | 'gap-analysis' | 'dispositional-read' | 'stabilise-first';
+export type PerformanceMethod = 'apply-practice' | 'gap-analysis' | 'dispositional-read' | 'stabilise-first' | 'classify-first';
+
+/**
+ * How the work regime was established — provenance that governs how much the
+ * classification is trusted downstream. The work itself is always one of the
+ * four WorkRegime values; this records HOW we came to that (or that we did
+ * not, for 'unclassified'). It is NOT a fifth regime.
+ *  - 'derived'  — read from agent-trajectory signal (placeRegime / disposition).
+ *      The honest, calibratable path.
+ *  - 'asserted' — supplied by the caller as situation.domain. Honoured for
+ *      routing, but carries NO calibration authority and cannot be a gap-first
+ *      backdoor: only an asserted *Knowable* is allowed to gap-analyse.
+ *  - 'default-gap-intent' — no asserted regime and no trajectory, but the
+ *      caller supplied gap-intent evidence (an exemplary state, factor
+ *      evidence, or the discriminating-question answer), so contextualizing
+ *      into the Knowable gap frame is defensible.
+ *  - 'unclassified' — no signal of any kind. The system REFUSES to assume a
+ *      regime; method is 'classify-first' and no intervention is planned. */
+export type RegimeSource = 'derived' | 'asserted' | 'default-gap-intent' | 'unclassified';
 
 export interface Diagnosis {
   situationId: string;
-  domain: WorkRegime;
+  /** The work regime. Present for every classified situation; OMITTED only
+   *  for an 'unclassified' diagnosis (method 'classify-first'), where the
+   *  system deliberately refuses to claim a regime it has no signal for. */
+  domain?: WorkRegime;
+  /** Provenance of the regime — derived (trajectory), asserted (caller),
+   *  default-gap-intent (gap evidence only), or unclassified (no signal). */
+  regimeSource: RegimeSource;
   method: PerformanceMethod;
   /** For the gap-analysis method (Knowable) — the six-factor reading. */
   factors?: PerformanceFactors;
@@ -255,6 +279,18 @@ function methodForRegime(domain: WorkRegime): PerformanceMethod {
   return 'gap-analysis'; // Knowable — the one regime the gap frame fits
 }
 
+/** Does the caller supply gap-intent evidence — an exemplary state, factor
+ *  evidence, or an answer to the discriminating question? Only then is a
+ *  default into the Knowable gap frame defensible. Without it (and without an
+ *  asserted regime or a trajectory) the situation is unclassified and must be
+ *  classified before any plan is built. */
+function hasGapIntent(input: DiagnoseInput): boolean {
+  return input.exemplary !== undefined
+    || (input.factorEvidence !== undefined && Object.keys(input.factorEvidence).length > 0)
+    || input.couldPerformUnderIdealConditions !== undefined
+    || input.performedWellBefore === true;
+}
+
 /** Build the six-factor reading from supplied evidence (unsupplied = adequate). */
 function buildFactors(evidence: DiagnoseInput['factorEvidence']): PerformanceFactors {
   const readFactor = (key: FactorKey): FactorReading => {
@@ -289,16 +325,47 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
   // Determine the regime. Honour an explicit one; else, for an agent
   // with trajectories, read it off the disposition; else default to
   // Knowable (most structured workplace tasks live there).
-  let domain: WorkRegime;
+  let domain: WorkRegime | undefined;
+  let regimeSource: RegimeSource;
   if (situation.domain) {
+    // Caller asserted the regime. Honoured for routing, but tagged 'asserted'
+    // so it earns no calibration authority and cannot become a gap-first
+    // backdoor — only an asserted Knowable is allowed to gap-analyse.
     domain = situation.domain;
+    regimeSource = 'asserted';
   } else if (situation.performer.kind === 'agent' && input.trajectories && input.trajectories.length > 0) {
+    // Regime read from trajectory signal — the honest, calibratable path.
     domain = assessDisposition(input.trajectories).regime.name;
-  } else {
+    regimeSource = 'derived';
+  } else if (hasGapIntent(input)) {
+    // No asserted regime and no trajectory, but the caller supplied gap-intent
+    // evidence (exemplary / factor evidence / the discriminating question), so
+    // contextualizing into the Knowable gap frame is defensible.
     domain = 'Knowable';
+    regimeSource = 'default-gap-intent';
+  } else {
+    // No signal of any kind. REFUSE to silently collapse into Knowable and
+    // gap-plan — that is the gap-first-via-default defect this guard closes.
+    domain = undefined;
+    regimeSource = 'unclassified';
   }
-  const method = methodForRegime(domain);
+  const method: PerformanceMethod = domain === undefined ? 'classify-first' : methodForRegime(domain);
   const reasoning: string[] = [];
+
+  // ── Unclassified — no regime signal; refuse to assume one. ──
+  if (method === 'classify-first') {
+    reasoning.push('No work-regime signal was supplied: no asserted situation.domain, no agent trajectory to read a disposition from, and no gap-intent evidence (no exemplary state, no factor evidence, no answer to the discriminating question). The system refuses to default a situation into the Knowable regime and silently gap-plan it.');
+    reasoning.push('Classify the situation first — choose one: (a) assert situation.domain when the regime is genuinely known; (b) supply agent trajectories so the disposition is read from signal (the honest path); or (c) supply gap-intent evidence (exemplary + factorEvidence) to contextualize it into the Knowable gap frame.');
+    return {
+      situationId: situation.id,
+      regimeSource,
+      method,
+      rootCauses: ['unclassified — no regime signal was supplied; refusing to assume one'],
+      skillDeficiency: false,
+      reasoning,
+      caveat: 'This situation has NOT been classified into a work regime, so no intervention is recommended. Supplying neither an asserted regime, nor a trajectory, nor gap-intent evidence does not make a situation Knowable — it makes it unclassified. Classify it (assert / trajectory / gap-evidence), then re-plan.',
+    };
+  }
 
   // ── Emergent regime — refuse the gap frame, read disposition. ──
   if (method === 'dispositional-read') {
@@ -309,6 +376,7 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
     return {
       situationId: situation.id,
       domain,
+      regimeSource,
       method,
       rootCauses: ['not applicable — the Emergent regime has no single fixable root cause'],
       skillDeficiency: false,
@@ -331,6 +399,7 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
     return {
       situationId: situation.id,
       domain,
+      regimeSource,
       method,
       rootCauses: ['instability — there is no patterned behaviour to read'],
       skillDeficiency: false,
@@ -345,6 +414,7 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
     return {
       situationId: situation.id,
       domain,
+      regimeSource,
       method,
       rootCauses: ['not applicable — the Evident regime applies a known, established response'],
       skillDeficiency: false,
@@ -398,6 +468,7 @@ export function diagnose(input: DiagnoseInput): Diagnosis {
   return {
     situationId: situation.id,
     domain,
+    regimeSource,
     method,
     factors,
     ...(input.exemplary !== undefined ? { exemplary: input.exemplary } : {}),
@@ -467,8 +538,14 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
   const rationale = new Map<InterventionType, string>();
   const ruledOut = new Map<InterventionType, string>();
 
-  // ── Emergent regime — probes + coaching, never instruction. ──
-  if (diagnosis.method === 'dispositional-read') {
+  // ── Unclassified — no regime established; classify before designing. ──
+  if (diagnosis.method === 'classify-first') {
+    for (const t of ALL_INTERVENTIONS) {
+      if (t === 'no-intervention') continue;
+      ruledOut.set(t, 'The situation is unclassified — no work regime has been established. No intervention can be designed until it is classified: assert a regime, supply an agent trajectory, or supply gap-intent evidence.');
+    }
+  } else if (diagnosis.method === 'dispositional-read') {
+    // ── Emergent regime — probes + coaching, never instruction. ──
     select.add('probe');
     rationale.set('probe', 'The Emergent regime calls for safe-to-fail constraint probes — change a constraint, observe, steer. Compose agent-disposition.buildProbe; amplify what coheres.');
     select.add('coaching');
@@ -583,7 +660,9 @@ export function recommendInterventions(input: RecommendInput): InterventionPlan 
   const dirNote = describeDirection(direction);
   const summary = contentWarranted
     ? `Content IS warranted for this situation — ${headline}. ${dirNote.charAt(0).toUpperCase()}${dirNote.slice(1)}`
-    : `Content is NOT the answer for this situation — ${headline}. ${diagnosis.method === 'dispositional-read'
+    : `Content is NOT the answer for this situation — ${headline}. ${diagnosis.method === 'classify-first'
+        ? 'The situation is unclassified — no work regime was established, so nothing can be designed yet. Classify it first: assert a regime, supply an agent trajectory, or supply gap-intent evidence.'
+        : diagnosis.method === 'dispositional-read'
         ? 'The Emergent regime calls for probes, not courses.'
         : diagnosis.method === 'stabilise-first'
           ? 'Turbulent work must be stabilised before anything can be designed.'

@@ -88,7 +88,14 @@ export interface ElrPerformanceRecord {
   id: string;
   taskId: string;
   taskName: string;
-  success: boolean;
+  /** Semantic activity type (the descriptor's conformsTo IRI, carried by the
+   *  mesh projector as object.definition.type) — the basis for competency
+   *  aggregation, NOT the instance leaf token. */
+  taskType?: string;
+  /** Asserted task outcome. `undefined` = the source asserted NO result (the
+   *  common case for a context descriptor) — which is NOT a failure. Only an
+   *  explicit `false` means an asserted failure. */
+  success?: boolean;
   /** Outcome quality 0..1, when scored. */
   quality?: number;
   durationIso?: string;
@@ -207,6 +214,12 @@ export async function assembleEnterpriseLearnerRecord(
   for (const rec of config.statements) {
     if (rec.voided) continue;
     const s = rec.statement;
+    // A credential-wallet descriptor is an accomplishment artifact already surfaced
+    // via the CLR (step 4) — it is NOT a performance event or a learning experience.
+    // Skip it on BOTH legs so it is represented exactly once (as a credential), with
+    // no double-count and no envelope-class competency inferred from it.
+    const objType = (s.object as { definition?: { type?: string } } | undefined)?.definition?.type;
+    if (isCredentialEnvelope(objType)) continue;
     const verb = s.verb as { id?: string; display?: Record<string, string> } | undefined;
     if (verb?.id === PERFORMED_VERB) {
       performanceRecords.push(projectPerformance(rec, config.lrsEndpoint));
@@ -251,7 +264,10 @@ export async function assembleEnterpriseLearnerRecord(
     rawDataLocations.push({ kind: 'credential-descriptor', location: c.rawDataLocation, description: `Pod descriptor for credential ${c.achievementName ?? c.id}.` });
   }
 
-  const perfSuccess = performanceRecords.filter(p => p.success).length;
+  const perfSuccess = performanceRecords.filter(p => p.success === true).length;
+  // Only records that asserted an outcome count toward the rate — result-less
+  // context descriptors are "no outcome asserted", not failures.
+  const perfAssessed = performanceRecords.filter(p => p.success !== undefined).length;
 
   return {
     '@context': ELR_CONTEXT,
@@ -270,8 +286,8 @@ export async function assembleEnterpriseLearnerRecord(
     summary: {
       experienceCount: experiences.length,
       performanceCount: performanceRecords.length,
-      performanceSuccessRate: performanceRecords.length > 0
-        ? round2(perfSuccess / performanceRecords.length) : undefined,
+      performanceSuccessRate: perfAssessed > 0
+        ? round2(perfSuccess / perfAssessed) : undefined,
       credentialCount: credentials.length,
       verifiedCredentialCount: credentials.filter(c => c.verified).length,
       competencyCount: competencies.length,
@@ -283,6 +299,20 @@ export async function assembleEnterpriseLearnerRecord(
 }
 
 // ── Projection helpers ──────────────────────────────────────────────
+
+/** P2997 §5.3 raw-data-location IRI for a statement. Prefer the AUTHORITATIVE,
+ *  durable source — the subject's own pod descriptor (cited by the projector as
+ *  the `substrateDescriptorIri` extension) — over the derived LRS view, which for
+ *  a virtualized lens tenant is an ephemeral re-projectable cache. This makes the
+ *  pointer holder-owned + restart-durable (it resolves to the agent's pod, the
+ *  system of record), and only falls back to the LRS statement URL when no
+ *  substrate descriptor is present (e.g. a natively-recorded course statement). */
+const SUBSTRATE_DESCRIPTOR_EXT = `${FOXXI_VOCAB}substrateDescriptorIri`;
+function rawDataLocationFor(rec: StoredStatement, lrsEndpoint: string): string {
+  const ext = (rec.statement.context as { extensions?: Record<string, unknown> } | undefined)?.extensions ?? {};
+  const src = ext[SUBSTRATE_DESCRIPTOR_EXT];
+  return (typeof src === 'string' && src) ? src : `${lrsEndpoint}/xapi/statements?statementId=${rec.id}`;
+}
 
 function projectExperience(rec: StoredStatement, lrsEndpoint: string): ElrExperience {
   const s = rec.statement;
@@ -296,13 +326,13 @@ function projectExperience(rec: StoredStatement, lrsEndpoint: string): ElrExperi
     activityName: pickLang(obj?.definition?.name),
     timestamp: (s.timestamp as string | undefined) ?? rec.stored,
     modalStatus: 'Asserted',
-    rawDataLocation: `${lrsEndpoint}/xapi/statements?statementId=${rec.id}`,
+    rawDataLocation: rawDataLocationFor(rec, lrsEndpoint),
   };
 }
 
 function projectPerformance(rec: StoredStatement, lrsEndpoint: string): ElrPerformanceRecord {
   const s = rec.statement;
-  const obj = s.object as { id?: string; definition?: { name?: Record<string, string> } } | undefined;
+  const obj = s.object as { id?: string; definition?: { name?: Record<string, string>; type?: string } } | undefined;
   const result = s.result as { success?: boolean; score?: { scaled?: number }; duration?: string } | undefined;
   const ext = (s.context as { extensions?: Record<string, unknown> } | undefined)?.extensions ?? {};
   const cost = ext[PERF_EXT.costUsd];
@@ -310,14 +340,18 @@ function projectPerformance(rec: StoredStatement, lrsEndpoint: string): ElrPerfo
     id: rec.id,
     taskId: obj?.id ?? '',
     taskName: pickLang(obj?.definition?.name) ?? obj?.id?.split(/[#/]/).pop() ?? obj?.id ?? 'task',
-    success: result?.success ?? false,
+    taskType: obj?.definition?.type,
+    // No result asserted ⇒ success undefined (NOT false). Fabricating `false`
+    // marked every result-less context descriptor as a failed performance,
+    // dragging the success rate to 0 and pinning every competency Hypothetical.
+    success: result?.success,
     quality: typeof result?.score?.scaled === 'number' ? result.score.scaled : undefined,
     durationIso: result?.duration,
     costUsd: typeof cost === 'number' ? cost : undefined,
     timestamp: (s.timestamp as string | undefined) ?? rec.stored,
     modalStatus: 'Asserted',
     observedBy: typeof ext[PERF_EXT.observedBy] === 'string' ? ext[PERF_EXT.observedBy] as string : undefined,
-    rawDataLocation: `${lrsEndpoint}/xapi/statements?statementId=${rec.id}`,
+    rawDataLocation: rawDataLocationFor(rec, lrsEndpoint),
   };
 }
 
@@ -330,8 +364,65 @@ interface CompetencyDraft {
   trainingEvidence: string[];
   performanceEvidence: string[];
   performanceSuccess: number;
+  /** Executions that carried an ASSERTED outcome (success true or false) — the
+   *  denominator for the success rate, so result-less executions don't read 0%. */
+  performanceAssessed: number;
   performanceQualitySum: number;
   performanceQualityCount: number;
+}
+
+/** A semantic type IRI's local name is a meaningful label (e.g. cg#Finding →
+ *  "Finding", urn:cg:type:ttt:Move → "Move") — UNLIKE an instance graph_iri's
+ *  leaf token (…:g4:move:1 → "1"), which is what the competency builder used to
+ *  key off, producing junk labels and cross-instance collapse. */
+function typeLocalName(typeIri: string): string {
+  const afterSlashHash = typeIri.split(/[#/]/).pop() ?? typeIri;
+  const local = afterSlashHash.includes(':') ? afterSlashHash.split(':').pop()! : afterSlashHash;
+  return local || typeIri;
+}
+
+/** PROTOCOL-ENVELOPE types are NOT skills. A competency keyed off a cg facet
+ *  (Temporal, Provenance, …) , an authorship/proof shape (SignedAuthorship), or
+ *  the AssertedContext fallback presents proof-block metadata as skill inference
+ *  — johnny's category-error finding (the same activity splits across buckets by
+ *  which facet its descriptor carried). The mesh projector reads ONLY the protocol
+ *  envelope, so when the activity type is one of these it has no domain signal and
+ *  must emit NOTHING rather than manufacture a facet-competency. A genuine domain
+ *  activity type (cg:Finding, ttt:Move, a substrate-verification activity, …) keyed
+ *  via richer conformsTo/object.definition.type at the PUBLISHING layer passes. */
+// Protocol-envelope FACETS/proofs + GENERIC fallback task types — none of these
+// names a domain skill, so none may key a competency. AssertedContext is the mesh
+// fallback; ProductionTask is the generic type record_performance stamps (the real
+// skill there is the caller's task_name, not this wrapper).
+const PROTOCOL_ENVELOPE_TYPE_LOCALNAMES: ReadonlySet<string> = new Set([
+  'AssertedContext', 'ProductionTask', 'SignedAuthorship', 'Affordance',
+  'Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation', 'Structural',
+  'TemporalFacet', 'ProvenanceFacet', 'AgentFacet', 'SemioticFacet', 'TrustFacet', 'FederationFacet', 'StructuralFacet',
+]);
+function isDomainActivityType(typeIri?: string): boolean {
+  if (!typeIri) return false;
+  const local = typeLocalName(typeIri);
+  if (PROTOCOL_ENVELOPE_TYPE_LOCALNAMES.has(local)) return false;
+  if (isCredentialEnvelope(typeIri)) return false;
+  if (/Facet$/.test(local)) return false;
+  return true;
+}
+
+/** A held credential is an ACCOMPLISHMENT-grained artifact (surfaced via the CLR
+ *  and rolling up to a basis=credential competency), NOT a performance EVENT. Its
+ *  wallet-envelope descriptor (foxxi#CourseCompletionCredential / OpenBadgeCredential
+ *  / WalletEnvelope / *Credential) must never be re-projected as a performanceRecord
+ *  — that double-counts across the P2997 event-vs-accomplishment layers and infers a
+ *  spurious competency from the envelope class (johnny's
+ *  f-foxxi-competency-credential-envelope-type). */
+const CREDENTIAL_ENVELOPE_LOCALNAMES: ReadonlySet<string> = new Set([
+  'CourseCompletionCredential', 'OpenBadgeCredential', 'AchievementCredential',
+  'VerifiableCredential', 'WalletEnvelope', 'CompetencyAssertion',
+]);
+function isCredentialEnvelope(typeIri?: string): boolean {
+  if (!typeIri) return false;
+  const local = typeLocalName(typeIri);
+  return CREDENTIAL_ENVELOPE_LOCALNAMES.has(local) || /Credential$/.test(local);
 }
 
 function buildCompetencies(
@@ -344,7 +435,7 @@ function buildCompetencies(
     const key = label.toLowerCase().trim();
     let d = drafts.get(key);
     if (!d) {
-      d = { label, credentialEvidence: [], trainingEvidence: [], performanceEvidence: [], performanceSuccess: 0, performanceQualitySum: 0, performanceQualityCount: 0 };
+      d = { label, credentialEvidence: [], trainingEvidence: [], performanceEvidence: [], performanceSuccess: 0, performanceAssessed: 0, performanceQualitySum: 0, performanceQualityCount: 0 };
       drafts.set(key, d);
     }
     return d;
@@ -373,11 +464,21 @@ function buildCompetencies(
     draft(label).trainingEvidence.push(exp.id);
   }
 
-  // Performance-verified competencies — production `performed` records.
+  // Performance-verified competencies — production `performed` records. The skill
+  // identity is, in priority order: a genuine DOMAIN activity type (aggregates
+  // same-type executions across instances) → else, for a DELIBERATELY-asserted
+  // performance (record_performance: an explicit task_name + asserted success),
+  // the task_name (the skill the caller named). A result-less record whose only
+  // type is a protocol-envelope facet/generic fallback (an auto-projected context
+  // descriptor) declares no skill → NO competency (johnny's category-error
+  // finding: don't manufacture facet-as-skill). The instance leaf is evidence-only.
   for (const p of performance) {
-    const d = draft(p.taskName);
+    const domainTyped = isDomainActivityType(p.taskType);
+    if (!domainTyped && p.success === undefined) continue;
+    const d = draft(domainTyped ? typeLocalName(p.taskType!) : p.taskName);
     d.performanceEvidence.push(p.id);
-    if (p.success) d.performanceSuccess += 1;
+    if (p.success === true) d.performanceSuccess += 1;
+    if (p.success !== undefined) d.performanceAssessed += 1;
     if (typeof p.quality === 'number') { d.performanceQualitySum += p.quality; d.performanceQualityCount += 1; }
   }
 
@@ -391,14 +492,16 @@ function buildCompetencies(
 
     const basis: CompetencyBasis = hasPerf ? 'performance' : hasCred ? 'credential' : 'inferred';
     const modalStatus: ElrModalStatus = (hasPerf || hasCred) ? 'Asserted' : 'Hypothetical';
-    const successRate = perfExec > 0 ? round2(d.performanceSuccess / perfExec) : undefined;
+    // Success rate is over ASSESSED executions (those with an asserted outcome),
+    // not all executions — so result-less production records don't read as 0%.
+    const successRate = d.performanceAssessed > 0 ? round2(d.performanceSuccess / d.performanceAssessed) : undefined;
     const avgQuality = d.performanceQualityCount > 0
       ? round2(d.performanceQualitySum / d.performanceQualityCount) : undefined;
 
     // Performance evidence supersedes a training-only inference.
     let supersedes: string | undefined;
     if (hasPerf && hasTraining && !hasCred) {
-      supersedes = `training-inferred competency — superseded by ${d.performanceSuccess}/${perfExec} successful production executions`;
+      supersedes = `training-inferred competency — superseded by ${d.performanceSuccess}/${d.performanceAssessed} successful production executions`;
     }
 
     out.push({

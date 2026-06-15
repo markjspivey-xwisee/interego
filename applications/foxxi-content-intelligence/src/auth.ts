@@ -217,3 +217,87 @@ export function attachDeterministicAddresses<U extends { user_id: string }>(
     wallet_address: deriveUserWallet(u.user_id, seed).address,
   }));
 }
+
+// ── Substrate-native agent auth (rev-196 signed request) ──────────────────
+//
+// Foxxi is a composed vertical over Interego, not a tenant of the relay. A
+// capability endpoint authenticates the calling AGENT directly by verifying
+// the SAME ECDSA signed-request envelope the relay uses — no relay vouching
+// secret, so the vertical composes over the substrate without coupling to it.
+// The agent reaches the endpoint emergently (discover → dereference → act on a
+// published cg:Affordance); the `act` body carries this envelope.
+//
+//   { _signature: '0x…', _signed_payload: JSON.stringify({ ...args,
+//       agent_id: 'did:ethr:<addr>', timestamp: <ISO 8601> }) }
+//
+// The signer signs the canonical message `sha256:<hex(sha256(signedPayload))>`.
+// Identity binds to the RECOVERED did:ethr, never to a caller-claimed agent_id,
+// so a caller cannot sign with one wallet and claim another's identity.
+
+const AGENT_SIG_REPLAY_WINDOW_MS = 60_000;
+
+export type RecoveredSignedRequest =
+  | { ok: true; signer: string; agentId: string; payload: Record<string, unknown> }
+  | { ok: false; reason: string };
+
+/**
+ * Pure: parse the rev-196 envelope, enforce the replay window, and recover the
+ * signer. Makes NO trust decision — the caller decides DIRECT (the signer IS the
+ * agent: agent_id embeds the recovered address) vs DELEGATED (the relay signed on
+ * the agent's behalf: verify the agent's on-pod delegation VC and that the request
+ * signer is its anchor key). I/O-free so it stays in this pure module.
+ */
+export function recoverSignedRequest(body: unknown): RecoveredSignedRequest {
+  if (!body || typeof body !== 'object') return { ok: false, reason: 'body is not an object' };
+  const b = body as Record<string, unknown>;
+  const signature = typeof b._signature === 'string' ? b._signature : undefined;
+  const signedPayload = typeof b._signed_payload === 'string' ? b._signed_payload : undefined;
+  if (!signature || !signedPayload) {
+    return { ok: false, reason: 'missing _signature or _signed_payload (rev-196 signed-request envelope expected)' };
+  }
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(signedPayload) as Record<string, unknown>;
+  } catch (err) {
+    return { ok: false, reason: `_signed_payload is not valid JSON: ${(err as Error).message}` };
+  }
+  const agentId = typeof payload.agent_id === 'string' ? payload.agent_id : undefined;
+  const timestamp = typeof payload.timestamp === 'string' ? payload.timestamp : undefined;
+  if (!agentId) return { ok: false, reason: 'signed payload missing agent_id' };
+  if (!timestamp) return { ok: false, reason: 'signed payload missing timestamp (ISO 8601 — replay protection)' };
+  const t = Date.parse(timestamp);
+  if (!Number.isFinite(t)) return { ok: false, reason: `timestamp is not a parseable instant: ${timestamp}` };
+  if (Math.abs(Date.now() - t) > AGENT_SIG_REPLAY_WINDOW_MS) {
+    return { ok: false, reason: `timestamp drift exceeds ±${AGENT_SIG_REPLAY_WINDOW_MS / 1000}s — replay protection` };
+  }
+  // Canonical message identical to the relay's: sha256:<hex(sha256(payload))>.
+  const message = `sha256:${sha256Hex(signedPayload)}`;
+  let recovered: string;
+  try {
+    recovered = ethers.verifyMessage(message, signature);
+  } catch (err) {
+    return { ok: false, reason: `signature recovery threw: ${(err as Error).message}` };
+  }
+  return { ok: true, signer: recovered, agentId, payload };
+}
+
+export type AgentSignedResult =
+  | { ok: true; callerDid: string; payload: Record<string, unknown> }
+  | { ok: false; reason: string };
+
+/**
+ * DIRECT mode only: the signer IS the agent — agent_id embeds the recovered
+ * address (a wallet-holding identity: the maintainer, an external eth wallet).
+ * For relay-mediated agents that delegate signing, use recoverSignedRequest +
+ * an on-pod delegation check (the bridge does this).
+ */
+export function verifyAgentSignedRequest(body: unknown): AgentSignedResult {
+  const r = recoverSignedRequest(body);
+  if (!r.ok) return { ok: false, reason: r.reason };
+  const addrMatch = r.agentId.toLowerCase().match(/0x[0-9a-f]{40}/);
+  if (!addrMatch) return { ok: false, reason: `agent_id ${r.agentId} embeds no Ethereum address — delegated signing required (no direct key)` };
+  if (r.signer.toLowerCase() !== addrMatch[0]) {
+    return { ok: false, reason: `signature recovered ${r.signer} but agent_id claimed ${addrMatch[0]}` };
+  }
+  return { ok: true, callerDid: `did:ethr:${r.signer}`, payload: r.payload };
+}

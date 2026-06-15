@@ -383,8 +383,9 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     annotations: { title: 'Record a performance event', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
       { name: 'actor_did', type: 'string', required: true, description: 'Performer\'s DID — a human learner/performer or an AI agent. Defaults to the caller.' },
-      { name: 'task_name', type: 'string', required: true, description: 'Human-readable task or tool name (e.g. "Resolve a tier-2 support ticket", "Use the web-search tool"). Becomes the xAPI Activity name + the competency label.' },
+      { name: 'task_name', type: 'string', required: true, description: 'Human-readable task or tool name (e.g. "Resolve a tier-2 support ticket", "Use the web-search tool"). Becomes the xAPI Activity name + (absent activity_type) the competency label.' },
       { name: 'task_id', type: 'string', required: false, description: 'Stable task/tool identifier; derived from task_name if omitted.' },
+      { name: 'activity_type', type: 'string', required: false, description: 'Optional DOMAIN activity-type IRI you define for your vertical (e.g. urn:ttt:Move). Becomes object.definition.type; the ELR competency engine AGGREGATES same-type executions across instances under one competency. This is how a vertical-creator declares the publishing-layer vocabulary that makes competencies meaningful. Omit to use the generic ProductionTask wrapper (competency then keys off task_name).' },
       { name: 'success', type: 'boolean', required: true, description: 'Did the performer complete the task successfully?' },
       { name: 'quality', type: 'number', required: false, minimum: 0, maximum: 1, description: 'Outcome quality, 0..1 (becomes xAPI result.score.scaled).' },
       { name: 'duration_iso', type: 'string', required: false, description: 'ISO 8601 duration the task took (e.g. PT4M30S).' },

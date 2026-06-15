@@ -101,7 +101,12 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
       // learner DID we're composing for. Defends against an attacker who
       // could write someone else's credential into this pod.
       const subjectId = (credential.credentialSubject as { id?: string }).id;
-      if (subjectId !== config.learnerDid) {
+      // Compare on the canonical agent slug so equivalent DID forms of the same
+      // agent match (did:web ↔ pod/WebID path ↔ bare key-derived id) — a
+      // third-party reviewer keys on did:web while older creds carry the bare id
+      // (f-capability-review-did-normalization). Distinct agents have distinct
+      // key-derived slugs, so subject-binding stays sound.
+      if (canonicalAgentId(subjectId) !== canonicalAgentId(config.learnerDid)) {
         composedEntries.push({
           credential,
           verified: false,
@@ -193,4 +198,26 @@ function extractCredentialJson(trig: string): VerifiableCredentialJson {
 
 function slugDid(did: string): string {
   return did.replace(/^https?:\/\//, '').replace(/[^a-zA-Z0-9]+/g, '-').slice(0, 80);
+}
+
+/**
+ * Canonical agent identifier for subject-binding comparison
+ * (f-capability-review-did-normalization). The SAME agent can be named by
+ * equivalent DID forms — a did:web `did:web:<host>:agents:<slug>`, a pod/WebID
+ * path `…/agents/<slug>`, or the bare key-derived `<slug>` (e.g.
+ * `claude-u-pk-…`) that older credentials carry in credentialSubject.id. A
+ * third-party reviewer keys on the did:web form, so an exact-string compare
+ * wrongly excludes bare-id credentials (the self-review path passes the same
+ * form and is unaffected). Reduce both sides to the agent slug before comparing.
+ * The slug is the key-derived id (globally unique to that keypair), so distinct
+ * agents never collide — the subject-binding guarantee is preserved.
+ */
+function canonicalAgentId(id: string | undefined): string {
+  const s = String(id ?? '').trim().toLowerCase();
+  if (!s) return '';
+  const didWeb = s.match(/:agents:([a-z0-9._-]+)$/);
+  if (didWeb) return didWeb[1];
+  const urlPath = s.match(/\/agents\/([a-z0-9._-]+)(?:[/#?]|$)/);
+  if (urlPath) return urlPath[1];
+  return s;
 }

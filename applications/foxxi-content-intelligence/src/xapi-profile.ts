@@ -65,6 +65,15 @@ const verbs = [
   { id: `${FOXXI_NS}verbs/framework-aligned`,  prefLabel: { en: 'framework-aligned' },  definition: { en: 'Foxxi extension — admin declared a CASE 1.0 cross-tenant alignment association' } },
   { id: `${FOXXI_NS}verbs/policy-decided`,     prefLabel: { en: 'policy-decided' },     definition: { en: 'Foxxi extension — ABAC policy returned an access decision (allow / deny) for a substrate call' } },
   { id: `${FOXXI_NS}verbs/affordance-invoked`, prefLabel: { en: 'affordance-invoked' }, definition: { en: 'Foxxi extension — a bridge affordance was called (instrumented every handler)' } },
+  // Performance verb (IEEE P2997) — every agent substrate act projects as this.
+  { id: `${FOXXI_NS}performed`, prefLabel: { en: 'performed' }, definition: { en: 'A unit of on-the-job production work was performed by a human or an AI agent. The single principled performance verb every substrate activity projects to — what was done is carried by the object type (the descriptor\'s own conformsTo), never by a domain verb.' } },
+  // Structural (modal) verbs — name the MODAL MODE of any agent's context-descriptor
+  // act (cg:ModalStatusEnum), domain-agnostic. These label the agentic-native
+  // trajectory step; the xAPI statement verb itself is always `performed` (or the
+  // ADL `voided` verb for a Retracted descriptor).
+  { id: `${FOXXI_NS}verbs/asserted`,   prefLabel: { en: 'asserted' },   definition: { en: 'An agent asserted a settled context descriptor (modal status Asserted).' } },
+  { id: `${FOXXI_NS}verbs/intended`,   prefLabel: { en: 'intended' },   definition: { en: 'An agent recorded a Hypothetical context descriptor — an intention/plan.' } },
+  { id: `${FOXXI_NS}verbs/considered`, prefLabel: { en: 'considered' }, definition: { en: 'An agent recorded a Counterfactual/Retracted context descriptor — a road not taken / withdrawn claim.' } },
 ] as const;
 
 const activityTypes = [
@@ -76,6 +85,12 @@ const activityTypes = [
   { id: `${FOXXI_NS}activities/credential`,       prefLabel: { en: 'credential' },       definition: { en: 'Foxxi extension — a Verifiable Credential / Open Badge 3.0' } },
   { id: `${FOXXI_NS}activities/framework`,        prefLabel: { en: 'framework' },        definition: { en: 'Foxxi extension — a CASE 1.0 / CaSS competency framework' } },
   { id: `${FOXXI_NS}activities/affordance`,       prefLabel: { en: 'affordance' },       definition: { en: 'Foxxi extension — a bridge affordance / MCP tool, identified by toolName' } },
+  // Generic fallback object type — the object of a projected performance
+  // statement is normally the descriptor's OWN conformsTo IRI (e.g. ttt:Move,
+  // code:PullRequest, med:Diagnosis) passed through verbatim; this names the
+  // ENVELOPE act when the publisher declared no type. Foxxi never enumerates an
+  // application's activity types.
+  { id: `${FOXXI_NS}AssertedContext`, prefLabel: { en: 'Asserted Context' }, definition: { en: 'A context-descriptor assertion whose payload type the publisher did not declare — the domain-agnostic fallback object type.' } },
 ] as const;
 
 const extensions = [
@@ -89,6 +104,13 @@ const extensions = [
   { id: `${FOXXI_NS}decision`,          prefLabel: { en: 'decision' },          definition: { en: 'ABAC decision — allow / deny' } },
   { id: `${FOXXI_NS}callerRole`,        prefLabel: { en: 'callerRole' },        definition: { en: 'Resolved caller role at the time of the affordance call (learner / admin / learning-engineer / manager)' } },
   { id: `${FOXXI_NS}substrateDescriptorIri`, prefLabel: { en: 'substrateDescriptorIri' }, definition: { en: 'IRI of the context descriptor on the substrate pod produced by this affordance call (cross-link xAPI ↔ substrate)' } },
+  { id: `${FOXXI_NS}supersededDescriptor`, prefLabel: { en: 'supersededDescriptor' }, definition: { en: 'IRI of a prior descriptor this one revises/closes — the cg:supersedes structural revision link carried into xAPI (not a domain closure verb).' } },
+  { id: `${FOXXI_NS}actorKind`,   prefLabel: { en: 'actorKind' },   definition: { en: 'Whether the actor is a human or an agent.' } },
+  { id: `${FOXXI_NS}contextKind`, prefLabel: { en: 'contextKind' }, definition: { en: 'Whether a statement records production work, training, or performance-support.' } },
+  { id: `${FOXXI_NS}trustLevel`, prefLabel: { en: 'trustLevel' }, definition: { en: 'The descriptor TrustFacet level (SelfAsserted / ThirdPartyAttested / CryptographicallyVerified), passed through verbatim.' } },
+  { id: `${FOXXI_NS}epistemicConfidence`, prefLabel: { en: 'epistemicConfidence' }, definition: { en: 'Confidence [0.0-1.0] that the DESCRIPTOR itself is accurate (infrastructure-level), NOT a performance score — carried as its own extension, never as result.score.scaled.' } },
+  { id: `${FOXXI_NS}groundTruth`, prefLabel: { en: 'groundTruth' }, definition: { en: 'Tri-state groundTruth (true Asserted / false Counterfactual / undefined Hypothetical), passed through verbatim.' } },
+  { id: `${FOXXI_NS}endorsed`, prefLabel: { en: 'endorsed' }, definition: { en: 'False when the descriptor is Quoted (recorded with no endorsement).' } },
 ];
 
 // ── Statement templates ─────────────────────────────────────────────
@@ -193,6 +215,44 @@ const templates = [
       { location: 'context.extensions["' + FOXXI_NS + 'callerRole"]', presence: 'recommended' },
     ],
   },
+
+  // ── Agent performance statement templates (domain-agnostic) ─────────
+  // Every agent substrate act projects as ONE of these, regardless of which
+  // application authored the descriptor. The verb is always `performed` (or the
+  // ADL `voided` verb for a Retracted descriptor); WHAT was done is carried by
+  // the object's activity type = the descriptor's OWN conformsTo IRI, never a
+  // Foxxi-enumerated domain type. The transplant test holds: a tic-tac-toe move,
+  // a code review, and a medical note all match these same templates.
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/performed-descriptor`,
+    prefLabel: { en: 'performed-descriptor' },
+    definition: { en: 'An agent performed a unit of work by asserting a context descriptor. objectActivityType is unconstrained — it is the descriptor\'s own conformsTo IRI, passed through. Carries the substrate cross-link + actorKind=agent. No outcome is fabricated.' },
+    verb: `${FOXXI_NS}performed`,
+    rules: [
+      { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
+      { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', any: ['agent'] },
+    ],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/superseding-descriptor`,
+    prefLabel: { en: 'superseding-descriptor' },
+    definition: { en: 'A performed-descriptor that revises/closes a prior one — carries the cg:supersedes link as supersededDescriptor + contextActivities.other. Domain-agnostic: a code-review revision, a contract amendment, a resolution closing a finding, a game state superseding the prior — all the same structural arc.' },
+    verb: `${FOXXI_NS}performed`,
+    rules: [
+      { location: 'context.extensions["' + FOXXI_NS + 'supersededDescriptor"]', presence: 'included' },
+      { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
+    ],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/voided-descriptor`,
+    prefLabel: { en: 'voided-descriptor' },
+    definition: { en: 'A Retracted context descriptor projects as an xAPI voiding statement targeting the statement for the descriptor it retracts (the protocol-native Retracted mapping).' },
+    verb: `${ADL}/verbs/voided`,
+    rules: [
+      { location: 'object.objectType', any: ['StatementRef'] },
+      { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
+    ],
+  },
 ];
 
 // ── Patterns ────────────────────────────────────────────────────────
@@ -261,6 +321,42 @@ const patterns = [
       `${FOXXI_PROFILE_ID}/templates/passed`,
       `${FOXXI_PROFILE_ID}/templates/credentialed`,
     ],
+  },
+
+  // ── Agent performance patterns (STRUCTURAL, domain-agnostic) ────────
+  // These describe the SHAPE of substrate activity, not any application's
+  // domain. They hold for a game, a code review, a trading session — anything.
+  {
+    id: `${FOXXI_PROFILE_ID}/patterns/agent-performance-stream`,
+    prefLabel: { en: 'agent-performance-stream' },
+    definition: { en: 'The domain-agnostic baseline: an agent\'s stream of performed (and occasionally voided) context-descriptor acts — whatever vertical authored them.' },
+    primary: true,
+    oneOrMore: `${FOXXI_PROFILE_ID}/patterns/agent-act`,
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/patterns/agent-act`,
+    prefLabel: { en: 'agent-act' },
+    primary: false,
+    alternates: [
+      `${FOXXI_PROFILE_ID}/templates/performed-descriptor`,
+      `${FOXXI_PROFILE_ID}/templates/voided-descriptor`,
+    ],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/patterns/revision-arc`,
+    prefLabel: { en: 'revision-arc' },
+    definition: { en: 'An assert-then-supersede arc: an initial performed-descriptor followed by one or more superseding-descriptors revising/closing it (cg:supersedes). The structural shape behind a resolution closing a finding, a contract amendment, an iterated code review, or a game state advancing — Foxxi reads it identically without knowing the domain.' },
+    primary: true,
+    sequence: [
+      `${FOXXI_PROFILE_ID}/templates/performed-descriptor`,
+      `${FOXXI_PROFILE_ID}/patterns/revisions`,
+    ],
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/patterns/revisions`,
+    prefLabel: { en: 'revisions' },
+    primary: false,
+    oneOrMore: `${FOXXI_PROFILE_ID}/templates/superseding-descriptor`,
   },
 ];
 

@@ -46,12 +46,28 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'verbs/affordance-invoked', kind: 'Verb', label: 'affordance-invoked', definition: 'A bridge affordance was called — the bridge instruments every handler with this verb.' },
   { name: 'performed', kind: 'Verb', label: 'performed', definition: 'A unit of on-the-job production work was performed by a human or an AI agent (IEEE P2997 employment-history leg).' },
 
+  // ── Structural (modal) verbs ───────────────────────────────────────
+  // Domain-AGNOSTIC verbs naming the MODAL MODE of any agent's context-descriptor
+  // act (cg:ModalStatusEnum), valid for ANY vertical — never a domain term. The
+  // xAPI performance verb stays `performed` (above); these label the trajectory
+  // step's mode so disposition reads the modal balance. (A Retracted descriptor
+  // projects as the ADL core `voided` verb, not a foxxi term.)
+  { name: 'verbs/asserted', kind: 'Verb', label: 'asserted', definition: 'An agent asserted a settled context descriptor (modal status Asserted; groundTruth true). The work was committed.' },
+  { name: 'verbs/intended', kind: 'Verb', label: 'intended', definition: 'An agent recorded a Hypothetical context descriptor — an intention / plan (groundTruth undefined). No completion is claimed.' },
+  { name: 'verbs/considered', kind: 'Verb', label: 'considered', definition: 'An agent recorded a Counterfactual (or Retracted) context descriptor — a road not taken / a withdrawn claim.' },
+
   // ── Activity / descriptor types ────────────────────────────────────
   { name: 'activities/scene', kind: 'ActivityType', label: 'scene', definition: 'A course scene grouping multiple slides under a sub-theme.' },
   { name: 'activities/concept-graph-node', kind: 'ActivityType', label: 'concept-graph-node', definition: 'A single concept in a course knowledge graph; carries prereq edges + slide membership.' },
   { name: 'activities/credential', kind: 'ActivityType', label: 'credential', definition: 'A Verifiable Credential / Open Badge 3.0.' },
   { name: 'activities/framework', kind: 'ActivityType', label: 'framework', definition: 'A CASE 1.0 / CaSS competency framework.' },
   { name: 'activities/affordance', kind: 'ActivityType', label: 'affordance', definition: 'A bridge affordance / MCP tool, identified by toolName.' },
+  // Generic fallback activity type — names the ENVELOPE act (a context-descriptor
+  // assertion) when the descriptor declares no conformsTo/facet type. The object
+  // type of a projected statement is normally the descriptor's OWN conformsTo IRI
+  // (e.g. ttt:Move, code:PullRequest, med:Diagnosis) passed through verbatim;
+  // Foxxi never enumerates an application's types.
+  { name: 'AssertedContext', kind: 'ActivityType', label: 'Asserted Context', definition: 'A context-descriptor assertion whose payload type the publisher did not declare — the domain-agnostic fallback object type for a projected performance statement.' },
   { name: 'conceptGraphNode', kind: 'ActivityType', label: 'concept graph node', definition: 'Activity type for a concept-graph node referenced from an xAPI statement.' },
   { name: 'ProductionTask', kind: 'ActivityType', label: 'Production Task', definition: 'A unit of on-the-job production work — the object of a `performed` statement.' },
   { name: 'TrajectoryStep', kind: 'Type', label: 'Trajectory Step', definition: 'One step of an agentic-native trajectory — a modal, poly-granular Context Descriptor.' },
@@ -96,6 +112,12 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'decision', kind: 'Extension', label: 'decision', definition: 'ABAC decision — allow / deny.' },
   { name: 'callerRole', kind: 'Extension', label: 'callerRole', definition: 'Resolved caller role at the time of an affordance call.' },
   { name: 'substrateDescriptorIri', kind: 'Extension', label: 'substrateDescriptorIri', definition: 'IRI of the substrate context descriptor produced by an affordance call (xAPI ↔ substrate cross-link).' },
+  // Envelope-derived signals carried verbatim from the context-descriptor (never reinterpreted).
+  { name: 'supersededDescriptor', kind: 'Extension', label: 'supersededDescriptor', definition: 'IRI of a prior descriptor this one revises/closes — the cg:supersedes link carried into xAPI as a structural revision signal (not a domain closure verb).' },
+  { name: 'trustLevel', kind: 'Extension', label: 'trustLevel', definition: 'The descriptor\'s TrustFacet level (SelfAsserted / ThirdPartyAttested / CryptographicallyVerified), passed through verbatim.' },
+  { name: 'epistemicConfidence', kind: 'Extension', label: 'epistemicConfidence', definition: 'The descriptor\'s SemioticFacet epistemic confidence [0.0–1.0] — confidence that the DESCRIPTOR itself is accurate (infrastructure-level), NOT a performance score. Carried as its own extension, never as result.score.scaled.' },
+  { name: 'groundTruth', kind: 'Extension', label: 'groundTruth', definition: 'The descriptor\'s tri-state groundTruth (true for Asserted, false for Counterfactual, undefined for Hypothetical), passed through verbatim.' },
+  { name: 'endorsed', kind: 'Extension', label: 'endorsed', definition: 'False when the descriptor is Quoted (recorded with no endorsement / source-attributed).' },
   { name: 'observedBy', kind: 'Extension', label: 'observedBy', definition: 'DID of the observer/evaluator who attested a performance record (provenance).' },
   { name: 'costUsd', kind: 'Extension', label: 'costUsd', definition: 'Cost of a performance execution in USD — agent performance economics.' },
   { name: 'contextKind', kind: 'Extension', label: 'contextKind', definition: 'Whether a statement records `production` work, `training`, or `performance-support`.' },

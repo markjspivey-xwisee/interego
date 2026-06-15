@@ -286,7 +286,7 @@ function IntegrationsPage() {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><IntegrationsTab /></div>;
 }
 function StatementsPage({ session }: { session: FoxxiSession }) {
-  return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><LrsAdminPanel bearer={session.bearerToken} /></div>;
+  return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><LrsAdminPanel bearer={session.bearerToken} isAdmin={session.role === 'admin'} /></div>;
 }
 function AgentPerformancePage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><AgentPerformancePanel session={session} /></div>;

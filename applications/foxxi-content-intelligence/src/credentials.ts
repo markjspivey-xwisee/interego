@@ -39,7 +39,13 @@ import {
 } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 import {
   publish,
+  resolveStorageForShape,
 } from '@interego/solid';
+import { ingestWithProfile } from '@interego/pgsl';
+// Foundation-first (additive): also persist the credential as an encrypted
+// canonical PGSL holon + projected descriptor, built via the Foxxi-vertical LERS
+// profile (issuer/subject/achievement/evidence — a credential's natural shape).
+import { alsoPersistEncryptedHolon } from './foundation-holon-altitude.js';
 import type {
   ContextDescriptorData,
   IRI,
@@ -231,11 +237,53 @@ export async function issueCourseCompletionCredential(
   });
   const graphContent = wrapCredentialAsGraph(graphIri, signed);
 
-  const publishResult = await publish(descriptor, graphContent, args.learnerPodUrl, {
+  // Shape-driven, per-agent placement: resolve where THIS learner stores
+  // credentials (the CourseCompletionCredential shape) from their OWN Solid Type
+  // Index via hypermedia. Default to foxxi-wallet/ (prior behavior) when the
+  // learner hasn't self-described — non-breaking. johnny may store credentials
+  // somewhere different than boozer; the issuer references only the shape.
+  const placement = await resolveStorageForShape(
+    args.learnerPodUrl,
+    CREDENTIAL_TYPES.CourseCompletionCredential,
+    { fetch: args.fetch, defaultContainer: 'foxxi-wallet/' },
+  );
+  const containerPath = placement.target.startsWith(placement.podRoot)
+    ? placement.target.slice(placement.podRoot.length)
+    : 'foxxi-wallet/';
+
+  const publishResult = await publish(descriptor, graphContent, placement.podRoot, {
     fetch: args.fetch,
-    containerPath: 'foxxi-wallet/',
+    containerPath,
     descriptorSlug: slug,
     graphSlug: `${slug}-graph`,
+  });
+
+  // Additive: encrypted canonical PGSL holon (built via the Foxxi LERS profile) +
+  // projected descriptor on the learner's pod, alongside the VC above. Best-effort
+  // — the issued VC is the authoritative artifact; a holon hiccup never fails it.
+  void alsoPersistEncryptedHolon({
+    podUrl: args.learnerPodUrl,
+    agentDid: issuer.did,
+    shapeClass: CREDENTIAL_TYPES.CourseCompletionCredential,
+    defaultContainer: 'foxxi-wallet/',
+    fetch: args.fetch,
+    build: (pgsl, prov) => {
+      const lersCred = {
+        issuer: issuer.did,
+        subject: { name: args.subject.learnerName ?? args.subject.learnerDid },
+        achievement: {
+          name: args.subject.courseTitle,
+          ...(args.subject.alignedSkills?.[0]?.proficiencyLevel ? { level: args.subject.alignedSkills[0]!.proficiencyLevel } : {}),
+          ...(args.subject.alignedSkills?.[0]?.targetFramework ? { framework: args.subject.alignedSkills[0]!.targetFramework } : {}),
+        },
+        evidence: {
+          sources: [...(args.subject.derivedFromExperiences ?? [])],
+          statementCount: (args.subject.derivedFromExperiences ?? []).length,
+        },
+      };
+      try { return ingestWithProfile(pgsl, 'lers', lersCred, prov); }
+      catch { return ingestWithProfile(pgsl, 'raw', JSON.stringify(lersCred), prov); }
+    },
   });
 
   return { vc: signed, publishResult };

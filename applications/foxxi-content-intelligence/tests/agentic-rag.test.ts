@@ -155,7 +155,7 @@ describe('agentic-rag: askAgenticRag with mocked LLM (proves full trace shape)',
       llmApiKey: 'sk-mock-key',
     });
     expect(r.synthesizedAnswer).toContain('Handicap');
-    expect(r.llmModel).toBe('claude-sonnet-4-5');
+    expect(r.llmModel).toBe('claude-opus-4-8');
     // Full trace: question + retrieval + llm + cited-answer.
     expect(r.trace.length).toBe(4);
     expect(r.trace.map(t => t.type)).toEqual([

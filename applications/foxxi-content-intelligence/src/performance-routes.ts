@@ -36,7 +36,7 @@ import {
   transferAttestation, teachingToOutcome,
   type TeachingPackageRef, type BehaviourSignature, type OlkeStage,
 } from './agent-teaching.js';
-import type { AgentTrajectory } from './agent-trajectory.js';
+import { buildTrajectory, type AgentTrajectory, type TrajectoryStepInput } from './agent-trajectory.js';
 import {
   authorFragment, authorLesson, authorModule, composeCourse,
   personalize, forAudience, courseToCmi5Outline, scaffoldFromPlan,
@@ -54,6 +54,7 @@ import {
 } from './outcome-descriptor-publisher.js';
 import { FederationOutcomeLoader, parseFederationPods } from './federation-outcome-loader.js';
 import { bridgeAuthor, signAsBridge, withPublishLock } from './bridge-signer.js';
+import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -200,21 +201,102 @@ function coerceSituation(v: unknown): PerformanceSituation | string {
  * the regime-method evidence. `exemplary` (what good looks like) is only
  * used by the Knowable regime's gap analysis.
  */
+/** wi-001 fix A: coerce caller-supplied trajectory JSON into fully-built
+ *  AgentTrajectory objects via buildTrajectory, so the dispositional read
+ *  (assessDisposition -> readVector) sees CANONICAL steps (recordedAt, ids,
+ *  descriptors). Passing raw step JSON crashed readVector on a missing
+ *  recordedAt. Best-effort: invalid steps/trajectories are skipped; returns
+ *  undefined if nothing valid (the caller then falls through to no-signal). */
+function coerceTrajectories(v: unknown): AgentTrajectory[] | undefined {
+  if (!Array.isArray(v) || v.length === 0) return undefined;
+  const out: AgentTrajectory[] = [];
+  for (const tr of v) {
+    if (!tr || typeof tr !== 'object') continue;
+    const t = tr as Record<string, unknown>;
+    const rawSteps = Array.isArray(t.steps) ? t.steps : [];
+    const stepInputs: TrajectoryStepInput[] = [];
+    for (const s of rawSteps) {
+      if (!s || typeof s !== 'object') continue;
+      const st = s as Record<string, unknown>;
+      if (!['Hypothetical', 'Asserted', 'Counterfactual'].includes(st.modalStatus as string)) continue;
+      if (!['task', 'subtask', 'tool-call'].includes(st.granularity as string)) continue;
+      stepInputs.push({
+        modalStatus: st.modalStatus as TrajectoryStepInput['modalStatus'],
+        granularity: st.granularity as TrajectoryStepInput['granularity'],
+        verb: typeof st.verb === 'string' && st.verb ? st.verb : 'step',
+        objectId: typeof st.objectId === 'string' && st.objectId ? st.objectId : 'urn:foxxi:step-object',
+        objectName: typeof st.objectName === 'string' && st.objectName ? st.objectName : 'step',
+        ...(typeof st.parentId === 'string' ? { parentId: st.parentId } : {}),
+        ...(typeof st.supersedesId === 'string' ? { supersedesId: st.supersedesId } : {}),
+        ...(Array.isArray(st.wasDerivedFrom) ? { wasDerivedFrom: st.wasDerivedFrom as string[] } : {}),
+        ...(st.result && typeof st.result === 'object' ? { result: st.result as TrajectoryStepInput['result'] } : {}),
+        ...(typeof st.recordedAt === 'string' ? { recordedAt: st.recordedAt } : {}),
+      });
+    }
+    if (stepInputs.length === 0) continue;
+    out.push(buildTrajectory(
+      typeof t.agentDid === 'string' && t.agentDid ? t.agentDid : 'urn:foxxi:agent:unknown',
+      typeof t.agentName === 'string' ? t.agentName : undefined,
+      stepInputs,
+    ));
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function coerceDiagnoseInput(situation: PerformanceSituation, src: Record<string, unknown>): DiagnoseInput {
+  // wi-001 fix A (team-converged): classify the regime from SIGNAL when the
+  // caller supplies trajectory data, rather than asserting it or silently
+  // defaulting to Knowable. Additive — no trajectory => unchanged behavior.
+  const trajectories = coerceTrajectories(src.trajectories);
   return {
     situation,
     ...(typeof src.exemplary === 'string' && src.exemplary ? { exemplary: src.exemplary } : {}),
     ...(typeof src.couldPerformUnderIdealConditions === 'boolean' ? { couldPerformUnderIdealConditions: src.couldPerformUnderIdealConditions } : {}),
     ...(typeof src.performedWellBefore === 'boolean' ? { performedWellBefore: src.performedWellBefore } : {}),
     ...(src.factorEvidence && typeof src.factorEvidence === 'object' ? { factorEvidence: src.factorEvidence as DiagnoseInput['factorEvidence'] } : {}),
+    ...(trajectories ? { trajectories } : {}),
   };
 }
 
 /** Attach the performance-architecture + emergent-content routes. */
+/**
+ * Signed, followable counterpart of POST /performance/plan. A mesh-mediated
+ * agent (one that can only act on discovered affordances, not raw-POST) reaches
+ * the regime contextualization AS ITSELF: sign_request the args, then
+ * invoke_affordance this. The classification is attributed to the verified
+ * caller DID. The honest, calibratable path is to supply `trajectories` so the
+ * regime is DERIVED from signal; asserting situation.domain or supplying
+ * gap-intent evidence is honoured but carries no calibration authority (see
+ * diagnosis.regimeSource). No regime signal at all → method 'classify-first'
+ * (it refuses to gap-plan). This is the emergent-capability the agent composes
+ * its own pod descriptors against — the bridge classifies, it does not author
+ * for the agent.
+ */
+const CONTEXTUALIZE_AND_PLAN_AFFORDANCE: Affordance = {
+  action: 'urn:cg:action:foxxi:contextualize-and-plan-signed' as Affordance['action'],
+  toolName: 'contextualize_and_plan',
+  title: 'Contextualize a performance situation (classify regime → plan) as yourself',
+  description: "Read a performance situation's work regime (Evident/Knowable/Emergent/Turbulent) and get the regime-appropriate intervention plan — the gap frame (idealize → close) is used ONLY for Knowable; Emergent gets probes+coaching; Evident an established practice; Turbulent stabilise-first — authenticated by your delegation so the classification is attributed to YOU. Supply your `trajectories` to DERIVE the regime from signal (the honest, calibratable path); an asserted situation.domain or gap-intent evidence (exemplary/factorEvidence) is honoured but carries NO calibration authority and never overrides a derived/asserted non-Knowable regime (see diagnosis.regimeSource in the response). No regime signal at all → diagnosis.method='classify-first' and it refuses to gap-plan. Reach it: sign_request the args, then act this affordance.",
+  method: 'POST',
+  targetTemplate: '{base}/agent/contextualize-and-plan',
+  mediaType: 'application/json',
+  inputs: [
+    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id, timestamp, situation:{ id, competency, workContext, observed, performer:{ id, kind }, frequency?, modalStatus?, domain? }, trajectories?:[{ agentDid, agentName?, steps:[{ modalStatus, granularity, verb, objectId, objectName, result? }] }], exemplary?, factorEvidence?, couldPerformUnderIdealConditions?, performedWellBefore? })" },
+    { name: '_signature', type: 'string', required: true, description: 'secp256k1 over sha256:<hex(sha256(_signed_payload))> by the wallet matching agent_id (use the relay sign_request tool).' },
+  ],
+};
+
 export function attachPerformanceRoutes(app: Express, config: {
   selfBaseUrl: string;
   /** Where to mint cg:ContextDescriptor records for outcomes / situations / teaching packages. */
   publishConfig?: DescriptorPublishConfig;
+  /** Bridge-provided delegated-auth verifier. When set, a SIGNED followable
+   *  affordance (urn:cg:action:foxxi:contextualize-and-plan-signed) is exposed
+   *  so a mesh agent can classify a situation AS ITSELF (sign_request → act),
+   *  the classification attributed to its cryptographically-verified DID. */
+  verifyDelegatedCaller?: (body: unknown) => Promise<
+    { ok: true; callerDid: string; payload: Record<string, unknown> }
+    | { ok: false; status: number; error: string }>;
 }): void {
   const base = config.selfBaseUrl.replace(/\/+$/, '');
   const podConfigured = !!config.publishConfig?.podUrl;
@@ -360,7 +442,54 @@ export function attachPerformanceRoutes(app: Express, config: {
         'assessment', 'coaching', 'probe', 'environmental-fix', 'no-intervention',
       ],
       _affordances: {
-        contextualizeAndPlan: { method: 'POST', href: `${base}/performance/plan`, note: 'Contextualize a performance situation — read its regime, apply that regime\'s method — and return the full intervention paradigm, selected and ruled-out with reasoning.' },
+        contextualizeAndPlan: {
+          method: 'POST', href: `${base}/performance/plan`,
+          note: 'Contextualize a performance situation — read its regime, apply that regime\'s method — and return the full intervention paradigm, selected and ruled-out with reasoning.',
+          // The input schema, made discoverable (HATEOAS). Field names are
+          // exact and case-sensitive — top-level `trajectories` is a PLURAL
+          // array of camelCase objects; singular / snake_case / situation-
+          // nested variants are silently ignored and collapse to the default.
+          expects: {
+            situation: {
+              id: 'string (required)',
+              competency: 'string (required) — the competency in play',
+              workContext: 'string (required) — where the work happens',
+              observed: 'string — the observed performance',
+              performer: { id: 'string (required)', kind: "'agent' | 'human' (required)", role: 'string (optional)' },
+              frequency: "'rare' | 'occasional' | 'frequent' (optional)",
+              modalStatus: "'Hypothetical' | 'Asserted' (optional) — Hypothetical is verified by assessment before any build",
+              domain: "'Evident' | 'Knowable' | 'Emergent' | 'Turbulent' (optional) — ASSERTING the regime. Honoured for routing but tagged regimeSource:'asserted': no calibration authority, and only an asserted Knowable may gap-analyse.",
+            },
+            trajectories: [{
+              agentDid: 'string (required) — the agent the trajectory belongs to',
+              agentName: 'string (optional)',
+              steps: [{
+                modalStatus: "'Hypothetical' | 'Asserted' | 'Counterfactual' (required) — Counterfactual-heavy trajectories read as Emergent",
+                granularity: "'task' | 'subtask' | 'tool-call' (required)",
+                verb: 'string (required) — what the step did',
+                objectId: 'string (required)',
+                objectName: 'string (required)',
+                parentId: 'string (optional)',
+                supersedesId: "string (optional) — high supersede ratio reads as plan revision",
+                wasDerivedFrom: 'string (optional)',
+                result: { success: 'boolean', quality: 'number 0..1 (optional)', note: 'string (optional)' },
+              }],
+            }],
+            exemplary: 'string (optional) — what good looks like; gap-intent evidence for the Knowable regime',
+            factorEvidence: "object (optional) — Partial<Record<'knowledgeSkill'|'information'|'instrumentation'|'incentives'|'motives'|'capacity', {adequate:boolean, evidence:string}>>; gap-intent evidence",
+            couldPerformUnderIdealConditions: 'boolean (optional) — the discriminating question; gap-intent evidence',
+            performedWellBefore: 'boolean (optional) — fluency decay vs. absent skill',
+            author: { id: 'string', kind: "'agent'|'human'", role: 'string' },
+          },
+          classification: 'The regime is established by PROVENANCE (see diagnosis.regimeSource in the response): (1) derived — read from `trajectories` signal (the honest, calibratable path); (2) asserted — from situation.domain (no calibration authority; gap-analysis only if asserted Knowable); (3) default-gap-intent — no regime + no trajectory but gap-intent evidence (exemplary / factorEvidence / couldPerformUnderIdealConditions) was supplied, so Knowable is defensible; (4) unclassified — none of the above: the endpoint REFUSES to gap-plan and returns method:\'classify-first\' with no intervention. Supplying nothing does NOT make a situation Knowable.',
+          returns: 'foxxi:PerformancePlanResponse — body.diagnosis carries { domain?, regimeSource, method, ... }; domain is omitted when unclassified.',
+        },
+        contextualizeAndPlanSigned: {
+          method: 'POST',
+          affordance: `${base}/agent/contextualize-and-plan/affordance`,
+          action: 'urn:cg:action:foxxi:contextualize-and-plan-signed',
+          note: 'Signed/attributable variant for a mesh agent that cannot raw-POST: dereference this cg:Affordance descriptor, then (via the relay) sign_request → invoke_affordance. The classification is attributed to your cryptographically-verified delegation DID and returned as classifiedBy. Same regime semantics as contextualizeAndPlan; supply trajectories to DERIVE the regime from your own signal.',
+        },
         portfolio: { method: 'POST', href: `${base}/performance/portfolio`, note: 'Contextualize a set of performance situations and roll them up — the performance-management read. The headline: how few situations route to a course.' },
         calibration: { method: 'POST', href: `${base}/performance/calibration`, note: 'The reflexive loop — the system\'s recorded track record of its own recommendations, recomposed live from seeded + recorded outcomes, federated across organizations.' },
         recordOutcome: { method: 'POST', href: `${base}/performance/outcome`, note: 'The reflexive loop\'s upward arm — a completed performance loop records its outcome; the calibration profile recomposes to include it, and so shapes the next recommendation.' },
@@ -373,6 +502,44 @@ export function attachPerformanceRoutes(app: Express, config: {
       demo: 'tools/performance-architecture-example.mjs',
     });
   });
+
+  // ── Signed, followable contextualize-and-plan (delegated auth) ──────
+  // The agent-drivable counterpart of POST /performance/plan: a mesh agent
+  // that cannot raw-POST classifies a situation AS ITSELF via its delegation
+  // (sign_request → invoke_affordance). The regime classification is attributed
+  // to the verified caller; the agent then composes its OWN pod descriptors
+  // from the result — the bridge classifies, it does not author for the agent.
+  if (config.verifyDelegatedCaller) {
+    const verifyCaller = config.verifyDelegatedCaller;
+    app.get('/agent/contextualize-and-plan/affordance', (_req: Request, res: Response) => {
+      res.type('text/turtle').send(affordancesManifestTurtle(
+        `${base}/agent/contextualize-and-plan/affordance`, [CONTEXTUALIZE_AND_PLAN_AFFORDANCE], base, {
+          verticalLabel: 'Foxxi performance contextualization',
+          rdfsComment: 'Classify a performance situation by work regime + get the regime-appropriate intervention plan, as yourself (delegated). Supply trajectories to derive the regime from signal.',
+        }));
+    });
+    app.post('/agent/contextualize-and-plan', async (req: Request, res: Response) => {
+      try {
+        const auth = await verifyCaller(req.body);
+        if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:cg:action:foxxi:contextualize-and-plan-signed.' }); return; }
+        const p = auth.payload;
+        const situation = coerceSituation(p.situation);
+        if (typeof situation === 'string') { res.status(400).json({ error: situation }); return; }
+        const diagnosis = diagnose(coerceDiagnoseInput(situation, p));
+        // The classification is attributed to the verified caller — its own
+        // disposition, read as itself.
+        const author: Performer = { id: auth.callerDid, kind: 'agent', role: 'performance consultant (self, delegated)' };
+        const plan = recommendInterventions({ diagnosis, situation, author });
+        const scaffold = scaffoldFromPlan(plan, situation.competency);
+        const calibration = calibrate(diagnosis, plan, calibrationProfiles().federated);
+        res.json({
+          classifiedBy: auth.callerDid,
+          diagnosis, plan, scaffold, calibration,
+          note: "Classification attributed to your verified delegation. diagnosis.regimeSource is the provenance — supply trajectories to DERIVE the regime from signal (the honest, calibratable path); asserted/gap-intent carry no calibration authority. Compose your situation descriptor + the regime-appropriate intervention on your OWN pod from this.",
+        });
+      } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+    });
+  }
 
   // ── POST /performance/plan — contextualize → intervention spine. ──
   // Real linked-data shape: the situation becomes a published
@@ -600,7 +767,8 @@ export function attachPerformanceRoutes(app: Express, config: {
       entries: entries.map(e => ({
         situationId: e.situation.id,
         workContext: e.situation.workContext,
-        regime: e.plan.diagnosis.domain,
+        regime: e.plan.diagnosis.domain ?? null,
+        regimeSource: e.plan.diagnosis.regimeSource,
         method: e.plan.diagnosis.method,
         rootCause: e.plan.diagnosis.rootCauses[0] ?? null,
         interventions: e.plan.selected.map(o => o.type),

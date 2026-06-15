@@ -67,8 +67,28 @@ void _unusedTypeAnchor;
 // partitioned by tenant through TenantPartition; a single-tenant
 // deployment resolves every request to DEFAULT_TENANT and behaves
 // byte-identically to a single-tenant build.
+// Tenants forced to an in-memory statement store regardless of the global
+// FOXXI_LRS_BACKEND. These are DERIVED, re-projectable VIEWS — never the system
+// of record. The agent pod is the source of truth; Foxxi virtualizes the LRS
+// over it (on-read projection), and the per-source-pod LENS tenants (`lens:<agent>`)
+// hold the rebuildable index of that virtualization. Pod durability is wrong for
+// them: a write would contend on a pod manifest CAS, and the data is re-derived
+// from the agent's own pod every cycle. Memory is correct (lost on restart,
+// re-projected next cycle). Configured by an explicit allowlist
+// (FOXXI_LRS_MEMORY_TENANTS, csv) OR a prefix (FOXXI_LRS_MEMORY_TENANT_PREFIXES,
+// csv — defaults to `lens:` so every per-agent virtualization view is in-memory).
+const memoryBackedTenants = new Set(
+  (process.env.FOXXI_LRS_MEMORY_TENANTS ?? '').split(',').map(s => s.trim()).filter(Boolean),
+);
+const memoryTenantPrefixes = (process.env.FOXXI_LRS_MEMORY_TENANT_PREFIXES ?? 'lens:')
+  .split(',').map(s => s.trim()).filter(Boolean);
+function isDerivedViewTenant(tenant: string): boolean {
+  return memoryBackedTenants.has(tenant) || memoryTenantPrefixes.some(p => tenant.startsWith(p));
+}
 const statementStores = new TenantPartition<StatementStore>(
-  () => createStatementStore(process.env.FOXXI_LRS_BACKEND),
+  (tenant) => createStatementStore(
+    isDerivedViewTenant(String(tenant)) ? 'memory' : process.env.FOXXI_LRS_BACKEND,
+  ),
 );
 
 // ── Config ──────────────────────────────────────────────────────────
@@ -876,8 +896,9 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
 
   const langs = acceptLanguages(req);
   const wantAttachments = (req.query.attachments as string | undefined) === 'true';
-  const store = statementStores.for(tenantOf(req));
-  const attachStore = attachmentStores.for(tenantOf(req));
+  const tenant = tenantOf(req);
+  const store = statementStores.for(tenant);
+  const attachStore = attachmentStores.for(tenant);
 
   if (statementId !== undefined) {
     if (!isUuid(statementId)) { res.status(400).json({ error: 'statementId must be a UUID' }); return; }
@@ -925,11 +946,23 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
   // the Voiding Statement that voided it, so the requester sees the void.
   let recs = [...result.statements];
   const includedIds = new Set(recs.map(r => r.id));
-  for (const r of await store.listAll()) {
+  const all = await store.listAll();
+  for (const r of all) {
     if (!r.voided || !r.voidingStatementId || !matchesFilter(r, filter)) continue;
     if (includedIds.has(r.voidingStatementId)) continue;
     const voiding = await store.get(r.voidingStatementId);
     if (voiding) { recs.push(voiding); includedIds.add(voiding.id); }
+  }
+
+  // Consistent-Through honesty for DERIVED-VIEW (lens) tenants: these are
+  // in-memory, re-projectable caches of the agent's own pod — not a durable
+  // system of record. Advertise the horizon actually materialized (the newest
+  // stored statement), never the gate's "now", so a consumer can't mistake a
+  // freshly-restarted / partly-rebuilt view for a durable LRS. Durable backends
+  // (the certified DEFAULT/customer LRS) keep now().
+  if (isDerivedViewTenant(String(tenant))) {
+    const horizon = all.reduce((m, r) => (r.stored > m ? r.stored : m), '1970-01-01T00:00:00.000Z');
+    res.setHeader('X-Experience-API-Consistent-Through', horizon);
   }
   // The `limit` parameter caps the *whole* result, including any Voiding
   // Statements surfaced above.

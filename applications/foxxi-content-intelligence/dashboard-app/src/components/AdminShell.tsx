@@ -94,7 +94,7 @@ export function AdminShell({ session }: { session: FoxxiSession }) {
       {tab === 'access' && <AccessTab />}
       {tab === 'integrations' && <IntegrationsTab />}
       {tab === 'audit' && <AuditTab />}
-      {tab === 'lrs' && <LrsAdminPanel bearer={session.bearerToken} />}
+      {tab === 'lrs' && <LrsAdminPanel bearer={session.bearerToken} isAdmin={session.role === 'admin'} />}
     </div>
   );
 }

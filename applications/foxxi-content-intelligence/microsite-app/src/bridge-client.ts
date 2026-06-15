@@ -9,9 +9,7 @@
  * here verify against the same address-map.
  */
 
-import {
-  mintSessionToken,
-} from '@interego/core';
+import { mintSessionToken } from './session-token.js';
 
 export const BRIDGE_URL = (import.meta.env.VITE_FOXXI_BRIDGE_URL as string | undefined)
   ?? 'http://localhost:6080';

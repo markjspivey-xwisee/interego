@@ -18,7 +18,8 @@
  */
 
 import type { Express, Request, Response, NextFunction } from 'express';
-import { listStoredStatements } from './xapi-lrs.js';
+import { listStoredStatements, statementStoreTenants } from './xapi-lrs.js';
+import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { FOXXI_PROFILE_ID } from './xapi-profile.js';
 
 interface AdminConfig {
@@ -62,8 +63,23 @@ function makeAdminGate(config: AdminConfig) {
 
 // ── Handlers ────────────────────────────────────────────────────────
 
+/**
+ * Which tenant's statement store an admin request reads. ADMINS may browse
+ * any tenant via `?tenant=` (e.g. `agent-mesh`, the isolated tenant the
+ * agent-activity projector lands in); learning-engineers stay scoped to
+ * DEFAULT_TENANT so they cannot read across tenants. Absent the param, the
+ * default tenant — byte-identical to the prior single-tenant behavior.
+ */
+function resolveAdminTenant(req: Request): TenantId {
+  const role = (req as Request & { adminRole?: string }).adminRole;
+  const requested = (req.query.tenant as string | undefined)?.trim();
+  if (role === 'admin' && requested) return requested as TenantId;
+  return DEFAULT_TENANT;
+}
+
 async function handleStatementsAdmin(req: Request, res: Response): Promise<void> {
-  const all = await listStoredStatements();
+  const tenant = resolveAdminTenant(req);
+  const all = await listStoredStatements(tenant);
   const verbFilter = req.query.verb as string | undefined;
   const actorFilter = req.query.actor as string | undefined;
   const sinceParam = req.query.since as string | undefined;
@@ -87,6 +103,7 @@ async function handleStatementsAdmin(req: Request, res: Response): Promise<void>
   filtered.sort((a, b) => b.stored.localeCompare(a.stored));
   const page = filtered.slice(offset, offset + limit);
   res.json({
+    tenant: String(tenant),
     total: filtered.length,
     page: page.map(r => ({
       id: r.id,
@@ -102,8 +119,9 @@ async function handleStatementsAdmin(req: Request, res: Response): Promise<void>
   });
 }
 
-async function handleAggregates(_req: Request, res: Response): Promise<void> {
-  const all = await listStoredStatements();
+async function handleAggregates(req: Request, res: Response): Promise<void> {
+  const tenant = resolveAdminTenant(req);
+  const all = await listStoredStatements(tenant);
 
   const verbCounts = new Map<string, { display: string; count: number }>();
   const activityCounts = new Map<string, { name?: string; count: number }>();
@@ -147,6 +165,7 @@ async function handleAggregates(_req: Request, res: Response): Promise<void> {
   };
 
   res.json({
+    tenant: String(tenant),
     total: all.length,
     errors: errorCount.total,
     successRate: all.length > 0 ? 1 - (errorCount.total / all.length) : 1,
@@ -235,8 +254,9 @@ async function dereferenceSemLayer(selfBaseUrl: string): Promise<SemLayerStatus>
   }
 }
 
-async function handleConformance(_req: Request, res: Response, config: AdminConfig): Promise<void> {
-  const all = await listStoredStatements();
+async function handleConformance(req: Request, res: Response, config: AdminConfig): Promise<void> {
+  const tenant = resolveAdminTenant(req);
+  const all = await listStoredStatements(tenant);
   const vocabularyUrl = `${config.selfBaseUrl}/ns/foxxi`;
   const { verbs: foxxiVerbs, dereferenced } = await dereferenceFoxxiVerbs(vocabularyUrl);
   const semanticLayer = await dereferenceSemLayer(config.selfBaseUrl);
@@ -261,6 +281,7 @@ async function handleConformance(_req: Request, res: Response, config: AdminConf
     inProfile,
     outOfProfile,
     outOfProfileVerbs: [...outOfProfileSet],
+    tenant: String(tenant),
     profileConformanceRate: all.length > 0 ? inProfile / all.length : 1,
     declaredVerbs: knownVerbs.size,
     // The IEEE-LER + ADL-TLA semantic layer, dereferenced live — proof
@@ -292,6 +313,24 @@ function handleConfig(_req: Request, res: Response, config: AdminConfig): void {
   });
 }
 
+/**
+ * Tenant directory for the dashboard's tenant picker. ADMINS see every tenant
+ * that currently holds statements (incl. the isolated `agent-mesh` tenant);
+ * learning-engineers see only their default scope. Each entry carries a count
+ * so the picker can show e.g. "agent-mesh (88)".
+ */
+async function handleTenants(req: Request, res: Response): Promise<void> {
+  const role = (req as Request & { adminRole?: string }).adminRole;
+  const tenants = role === 'admin' ? statementStoreTenants() : [DEFAULT_TENANT];
+  // Ensure the default tenant is always offered even if it holds nothing yet.
+  if (!tenants.map(String).includes(String(DEFAULT_TENANT))) tenants.unshift(DEFAULT_TENANT);
+  const withCounts = await Promise.all(
+    tenants.map(async t => ({ tenant: String(t), count: (await listStoredStatements(t)).length })),
+  );
+  withCounts.sort((a, b) => b.count - a.count);
+  res.json({ tenants: withCounts, default: String(DEFAULT_TENANT) });
+}
+
 // ── Route attachment ────────────────────────────────────────────────
 
 export function attachXapiAdminRoutes(app: Express, config: AdminConfig): void {
@@ -300,4 +339,5 @@ export function attachXapiAdminRoutes(app: Express, config: AdminConfig): void {
   app.get('/xapi/admin/aggregates', gate, (req, res) => { void handleAggregates(req, res); });
   app.get('/xapi/admin/conformance', gate, (req, res) => { void handleConformance(req, res, config); });
   app.get('/xapi/admin/config', gate, (req, res) => handleConfig(req, res, config));
+  app.get('/xapi/admin/tenants', gate, (req, res) => { void handleTenants(req, res); });
 }

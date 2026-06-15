@@ -41,7 +41,7 @@
 
 import type { WorkRegime } from './agent-disposition.js';
 import type {
-  Diagnosis, InterventionPlan, InterventionEvaluation,
+  Diagnosis, InterventionPlan, InterventionOption, InterventionEvaluation,
   InterventionType, PerformanceMethod,
 } from './performance-architecture.js';
 
@@ -115,6 +115,14 @@ export function recordOutcome(
   opts: { reDiagnosedCause?: CauseKey; source?: string } = {},
 ): OutcomeRecord | null {
   if (evaluation.verdict === 'too-early') return null;
+  // An unclassified situation produced no regime and no analysed cause —
+  // there is nothing to record against a calibration track.
+  if (diagnosis.domain === undefined) return null;
+  // Only a DERIVED regime accrues to the calibration profile. Caller-framed
+  // regimes (asserted / default-gap-intent) are excluded from the reflexive
+  // loop — symmetric with calibrate(), so a gap-framed outcome can neither
+  // consume nor pollute the calibrated track record.
+  if (diagnosis.regimeSource === 'asserted' || diagnosis.regimeSource === 'default-gap-intent') return null;
   return {
     regime: diagnosis.domain,
     method: diagnosis.method,
@@ -321,6 +329,22 @@ const pct = (x: number): string => `${Math.round(x * 100)}%`;
 export function calibrate(
   diagnosis: Diagnosis, plan: InterventionPlan, profile: CalibrationProfile,
 ): CalibrationNote {
+  // Calibration authority belongs ONLY to a DERIVED regime — one the system
+  // read from trajectory signal. Caller-FRAMED regimes carry none: an
+  // 'asserted' situation.domain, and a 'default-gap-intent' Knowable reached
+  // purely from caller-supplied gap evidence (exemplary / factor evidence),
+  // are both excluded from the reflexive loop — symmetric with recordOutcome().
+  // Otherwise a caller could gap-frame a situation and have it ride a borrowed
+  // calibrated reputation: the gap-first backdoor. (methodology owner: johnny)
+  if (diagnosis.regimeSource === 'asserted' || diagnosis.regimeSource === 'default-gap-intent') {
+    const how = diagnosis.regimeSource === 'asserted'
+      ? 'ASSERTED by the caller'
+      : 'reached from caller-supplied gap-intent evidence (exemplary / factor evidence), not read from trajectory signal';
+    return {
+      verdict: 'untested',
+      message: `The ${diagnosis.domain} regime here was ${how}. Only a DERIVED regime (read from trajectory signal) carries calibration authority — caller-framed classifications are excluded from the reflexive loop. Supply trajectories so the regime is read from evidence to earn a calibrated read.`,
+    };
+  }
   // Calibration tracks cause→intervention recommendations — and only the
   // Knowable regime names a cause. Evident applies a known practice;
   // Emergent and Turbulent never name a cause to be right or wrong about.
@@ -392,6 +416,144 @@ export function calibrate(
   return {
     cell, ...alt, verdict: 'mixed',
     message: `${base} — a mixed track record.${reDiag}${altNote} Verify the cause analysis before committing.`,
+  };
+}
+
+// ── Tier-3: close the calibration loop autonomously ───────────────
+//
+// `calibrate()` reports an `alternative` when a sibling intervention
+// for the SAME cause out-performs the plan's selected intervention by
+// ≥15pts (closureRate). Until this helper existed, that signal was
+// purely advisory — a CalibrationNote with `alternative` would surface
+// the better option but no code automatically applied it. That is the
+// single gap between "evidence-driven, human-or-agent-mediated" and
+// "full autonomous closure" — and it's the gap this function closes.
+//
+// Semantics:
+//   - When the note carries no `alternative`, return the input plan
+//     unchanged. No evidence to re-route on.
+//   - When it does, build a new InterventionPlan whose `selected` is
+//     a one-element array of the alternative intervention, with the
+//     plan's existing paradigm preserved (so the rejected options
+//     stay auditable) and the `summary` rewritten to declare the
+//     replan as a calibration-driven swap. The OLD selected
+//     intervention becomes a ruled-out paradigm entry with
+//     ruledOutBecause naming the calibration evidence.
+//   - The function is PURE — it does not write outcomes or publish
+//     anything. The caller decides whether to record the replan
+//     itself as an OutcomeRecord (intervention='instruction',
+//     causeFactor='instrumentation', verdict='closed' since the
+//     evidence says the alternative closes more often). Recording the
+//     replan turns the substrate's self-adaptation into a first-class
+//     observation the next calibrate() pass can learn from — a
+//     reflexive second-order loop.
+export interface CalibrationDrivenReplan {
+  /** The plan to act on next. May be byte-identical to the input. */
+  plan: InterventionPlan;
+  /** True iff the plan changed (alternative was applied). */
+  replanned: boolean;
+  /** When replanned, the intervention that was swapped out. */
+  swappedOut?: InterventionType;
+  /** When replanned, the intervention that was swapped in. */
+  swappedIn?: InterventionType;
+  /** Evidence the swap was made on (alternative.closureRate, samples). */
+  evidence?: { closureRate: number; samples: number };
+  /** Human-readable account of the decision. */
+  reasoning: string;
+}
+
+export function calibrationDrivenReplan(
+  plan: InterventionPlan,
+  note: CalibrationNote,
+): CalibrationDrivenReplan {
+  if (!note.alternative) {
+    return {
+      plan,
+      replanned: false,
+      reasoning:
+        'No alternative on record — the calibration profile has no sibling intervention out-performing the '
+        + 'current selection by ≥15pts for the same cause. The plan stands.',
+    };
+  }
+  const oldSelected = plan.selected[0];
+  // Defensive: if the plan has no current selected intervention, just
+  // tack on the alternative as the new one — there's nothing to swap
+  // out.
+  if (!oldSelected) {
+    const newOption: InterventionOption = {
+      type: note.alternative.intervention,
+      selected: true,
+      rationale:
+        `Calibration profile evidence: ${note.alternative.intervention} has closed `
+        + `${Math.round(note.alternative.closureRate * 100)}% of `
+        + `${note.alternative.samples} comparable situations; the plan had no prior selected intervention to re-route from.`,
+    };
+    return {
+      plan: { ...plan, selected: [newOption], paradigm: [...plan.paradigm, newOption], summary: `${plan.summary} | calibration-driven: selected ${note.alternative.intervention}` },
+      replanned: true,
+      swappedIn: note.alternative.intervention,
+      evidence: { closureRate: note.alternative.closureRate, samples: note.alternative.samples },
+      reasoning:
+        `Plan had no selected intervention; calibration evidence supplied ${note.alternative.intervention} `
+        + `(${Math.round(note.alternative.closureRate * 100)}% of ${note.alternative.samples} samples).`,
+    };
+  }
+  // Standard case: swap. The old selected becomes ruled-out with the
+  // calibration evidence as the reason; the alternative becomes the
+  // sole selected entry.
+  const swappedOut = oldSelected.type;
+  const swappedIn = note.alternative.intervention;
+  const newSelected: InterventionOption = {
+    type: swappedIn,
+    selected: true,
+    rationale:
+      `Calibration-driven swap. The accumulated calibration profile (regime × cause × intervention) `
+      + `shows ${swappedIn} closing ${Math.round(note.alternative.closureRate * 100)}% of `
+      + `${note.alternative.samples} comparable situations — ≥15pts better than the prior selection for the `
+      + `same cause. Downward causation: the whole pressing back on the part.`,
+  };
+  const oldAsRuledOut: InterventionOption = {
+    ...oldSelected,
+    selected: false,
+    ruledOutBecause:
+      `Calibration profile evidence — a sibling intervention (${swappedIn}) out-performs by ≥15pts on `
+      + `${note.alternative.samples} comparable situations.`,
+  };
+  // Preserve the paradigm; replace the old selected with its
+  // ruled-out form and prepend the new selected so callers iterating
+  // `selected` get the calibration choice first.
+  const paradigm = plan.paradigm.map(opt =>
+    opt.type === swappedOut ? oldAsRuledOut : opt,
+  );
+  // If the new intervention wasn't in the paradigm yet (it was a
+  // sibling cell, not necessarily a paradigm option), add it.
+  if (!paradigm.some(opt => opt.type === swappedIn)) {
+    paradigm.push(newSelected);
+  } else {
+    // It IS in the paradigm; mark it selected in-place.
+    for (let i = 0; i < paradigm.length; i++) {
+      if (paradigm[i]!.type === swappedIn) {
+        paradigm[i] = { ...paradigm[i]!, selected: true, ruledOutBecause: undefined };
+      }
+    }
+  }
+  return {
+    plan: {
+      ...plan,
+      selected: [newSelected],
+      paradigm,
+      summary: `${plan.summary} | calibration-driven replan: ${swappedOut} → ${swappedIn}`,
+    },
+    replanned: true,
+    swappedOut,
+    swappedIn,
+    evidence: { closureRate: note.alternative.closureRate, samples: note.alternative.samples },
+    reasoning:
+      `Plan re-routed from ${swappedOut} to ${swappedIn} because the calibration profile shows the latter `
+      + `closing ${Math.round(note.alternative.closureRate * 100)}% of `
+      + `${note.alternative.samples} comparable situations for the same cause — ≥15pts ahead. `
+      + `The replan itself should be recorded as an OutcomeRecord so the next calibrate() pass observes the system `
+      + `adapting itself (reflexive second-order loop).`,
   };
 }
 

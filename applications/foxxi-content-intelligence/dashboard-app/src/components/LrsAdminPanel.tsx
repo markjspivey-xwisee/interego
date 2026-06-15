@@ -45,10 +45,13 @@ function verbHref(verbId: string): string {
   return m ? `${m[1]}/term/${m[2]}` : verbId;
 }
 
-export function LrsAdminPanel({ bearer }: { bearer: string }) {
+export function LrsAdminPanel({ bearer, isAdmin = false }: { bearer: string; isAdmin?: boolean }) {
   const params = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  // Admins may browse any tenant's LRS (incl. the isolated `agent-mesh` tenant
+  // the agent-activity projector lands in); '' = the default tenant.
+  const [tenant, setTenant] = useState<string>('');
   // /statements                    → statements (default)
   // /statements/aggregates         → aggregates
   // /statements/conformance        → conformance
@@ -68,7 +71,12 @@ export function LrsAdminPanel({ bearer }: { bearer: string }) {
   };
   return (
     <Card title="xAPI / LRS administration"
-      right={<Pill tone="accent">Foxxi-as-LRS</Pill>}>
+      right={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {isAdmin && tab !== 'config' && <TenantPicker bearer={bearer} tenant={tenant} setTenant={setTenant} />}
+          <Pill tone="accent">Foxxi-as-LRS</Pill>
+        </div>
+      }>
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
         {(['statements', 'aggregates', 'conformance', 'config'] as const).map(t => (
           <Button key={t} primary={tab === t} onClick={() => setTab(t)} small>
@@ -78,17 +86,55 @@ export function LrsAdminPanel({ bearer }: { bearer: string }) {
           </Button>
         ))}
       </div>
-      {tab === 'statements' && <StatementsView bearer={bearer} />}
-      {tab === 'aggregates' && <AggregatesView bearer={bearer} />}
-      {tab === 'conformance' && <ConformanceView bearer={bearer} />}
+      {tab === 'statements' && <StatementsView bearer={bearer} tenant={tenant} />}
+      {tab === 'aggregates' && <AggregatesView bearer={bearer} tenant={tenant} />}
+      {tab === 'conformance' && <ConformanceView bearer={bearer} tenant={tenant} />}
       {tab === 'config' && <ConfigView bearer={bearer} />}
     </Card>
   );
 }
 
+/** Append ?tenant= (or &tenant=) to an admin URL when a non-default tenant is picked. */
+function withTenant(url: string, tenant: string): string {
+  if (!tenant) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'tenant=' + encodeURIComponent(tenant);
+}
+
+/** Admin-only tenant selector — lists every tenant holding statements (with
+ *  counts), derived from the statements-admin link's sibling /tenants endpoint.
+ *  Hidden when there is no non-default tenant to choose. */
+function TenantPicker({ bearer, tenant, setTenant }: { bearer: string; tenant: string; setTenant: (t: string) => void }) {
+  const { entry } = useHypermedia();
+  const base = linkOf(entry, 'statements-admin');
+  const [tenants, setTenants] = useState<{ tenant: string; count: number }[] | null>(null);
+  useEffect(() => {
+    if (!base) return;
+    const url = base.replace(/\/statements(\?.*)?$/, '/tenants');
+    let cancelled = false;
+    fetchHypermedia<{ tenants: { tenant: string; count: number }[] }>(url, bearer)
+      .then(r => { if (!cancelled) setTenants(r.tenants ?? []); })
+      .catch(() => { if (!cancelled) setTenants([]); });
+    return () => { cancelled = true; };
+  }, [bearer, base]);
+  if (!tenants || tenants.filter(t => t.tenant !== 'default').length === 0) return null;
+  const def = tenants.find(t => t.tenant === 'default');
+  return (
+    <label style={{ fontSize: 12, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 6 }}>
+      tenant
+      <select value={tenant} onChange={e => setTenant(e.target.value)}
+        style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', fontSize: 12, background: 'var(--panel)', color: 'var(--text)' }}>
+        <option value="">default{def ? ` (${def.count})` : ''}</option>
+        {tenants.filter(t => t.tenant !== 'default').map(t => (
+          <option key={t.tenant} value={t.tenant}>{t.tenant} ({t.count})</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 // ── Statement browser ───────────────────────────────────────────────
 
-function StatementsView({ bearer }: { bearer: string }) {
+function StatementsView({ bearer, tenant }: { bearer: string; tenant: string }) {
   const { entry } = useHypermedia();
   const baseUrl = linkOf(entry, 'statements-admin');
   const [data, setData] = useState<{ total: number; page: StatementRow[] } | null>(null);
@@ -109,6 +155,7 @@ function StatementsView({ bearer }: { bearer: string }) {
       q.set('offset', String(offset));
       if (verb) q.set('verb', verb);
       if (actor) q.set('actor', actor);
+      if (tenant) q.set('tenant', tenant);
       try {
         const r = await fetchHypermedia<{ total: number; page: StatementRow[] }>(`${baseUrl}?${q}`, bearer);
         if (!cancelled) { setData(r); setErr(null); }
@@ -119,7 +166,7 @@ function StatementsView({ bearer }: { bearer: string }) {
     }
     void load();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [bearer, baseUrl, verb, actor, offset, autoRefresh]);
+  }, [bearer, baseUrl, verb, actor, offset, autoRefresh, tenant]);
 
   return (
     <div>
@@ -195,7 +242,7 @@ function StatementsView({ bearer }: { bearer: string }) {
 
 // ── Aggregates ──────────────────────────────────────────────────────
 
-function AggregatesView({ bearer }: { bearer: string }) {
+function AggregatesView({ bearer, tenant }: { bearer: string; tenant: string }) {
   const { entry } = useHypermedia();
   const url = linkOf(entry, 'statements-aggregates');
   const [data, setData] = useState<null | {
@@ -211,13 +258,14 @@ function AggregatesView({ bearer }: { bearer: string }) {
   useEffect(() => {
     if (!url) return;
     let cancelled = false;
-    const fetcher = () => fetchHypermedia<NonNullable<typeof data>>(url, bearer)
+    const u = withTenant(url, tenant);
+    const fetcher = () => fetchHypermedia<NonNullable<typeof data>>(u, bearer)
       .then(r => { if (!cancelled) { setData(r); setErr(null); } })
       .catch(e => !cancelled && setErr((e as Error).message));
     void fetcher();
     const t = setInterval(fetcher, 5000);
     return () => { cancelled = true; clearInterval(t); };
-  }, [bearer, url]);
+  }, [bearer, url, tenant]);
 
   const maxHourly = useMemo(() => data?.hourlyVolume.reduce((m, [, n]) => Math.max(m, n), 0) ?? 0, [data]);
 
@@ -279,7 +327,7 @@ function TopList({ title, rows }: { title: string; rows: AggregateRow[] }) {
 
 // ── Conformance ─────────────────────────────────────────────────────
 
-function ConformanceView({ bearer }: { bearer: string }) {
+function ConformanceView({ bearer, tenant }: { bearer: string; tenant: string }) {
   const { entry } = useHypermedia();
   const url = linkOf(entry, 'statements-conformance');
   const [data, setData] = useState<null | {
@@ -297,8 +345,8 @@ function ConformanceView({ bearer }: { bearer: string }) {
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     if (!url) return;
-    fetchHypermedia<NonNullable<typeof data>>(url, bearer).then(setData).catch(e => setErr((e as Error).message));
-  }, [bearer, url]);
+    fetchHypermedia<NonNullable<typeof data>>(withTenant(url, tenant), bearer).then(setData).catch(e => setErr((e as Error).message));
+  }, [bearer, url, tenant]);
 
   if (err) return <div style={{ color: 'var(--bad)' }}>✗ {err}</div>;
   if (!data) return <div style={{ color: 'var(--text-dim)' }}>Loading…</div>;
