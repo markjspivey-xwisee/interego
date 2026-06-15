@@ -712,6 +712,25 @@ export async function dereference(iri: string, options?: DereferenceOptions): Pr
         httpStatus: /410/.test(message) ? 410 : 404,
       };
     }
+    // Non-RDF fallback (f-ldn-inbox-asymmetry residual B): fetchGraphContent
+    // content-negotiates RDF and fails on a non-RDF resource — e.g. an LDN inbox
+    // member stored application/json (CSS returns NotImplementedHttpError: no
+    // conversion to ld+json). A dereference should still SURFACE such a member
+    // (parity with the inbox reader's tolerance): fetch the raw body and report
+    // its actual content type rather than erroring.
+    try {
+      const raw = await fetchImpl(iri, { method: 'GET', headers: { Accept: 'application/ld+json, application/json;q=0.9, */*;q=0.5' } });
+      if (raw.ok) {
+        const representation = await raw.text();
+        return {
+          iri,
+          status: 'ok',
+          representation,
+          contentType: raw.headers?.get?.('content-type') ?? 'application/json',
+          affordances: [],
+        };
+      }
+    } catch { /* fall through to error */ }
     return {
       iri,
       status: 'error',
@@ -1112,12 +1131,21 @@ export async function act(
     }
     const fetchImpl = options?.fetch ?? getDefaultFetch();
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      // Honor the explicitly-supplied media_type as the request Content-Type
+      // (was hardcoded application/json) — the pre-resolved twin of the
+      // affordance-follower fix. Without this a body declared application/ld+json
+      // is stored under the wrong type (f-ldn-inbox-asymmetry residual A). Absent
+      // a mediaType, JSON is unchanged.
+      'Content-Type': affordance.mediaType ?? 'application/json',
       'Accept': affordance.mediaType ?? 'application/json, */*',
     };
     if (options?.authorization) headers['Authorization'] = options.authorization;
     const hasPayload = payload !== undefined && payload !== null;
-    const body = hasPayload ? JSON.stringify(payload) : undefined;
+    // Serialize EXACTLY ONCE: a payload that is already a JSON string is sent
+    // as-is, only an object is stringified — else an already-encoded payload is
+    // double-encoded and a strict JSON body-parser rejects the quoted string
+    // (f-act-payload-double-encode, which blocked POSTing to review_foxxi_record).
+    const body = hasPayload ? (typeof payload === 'string' ? payload : JSON.stringify(payload)) : undefined;
     const response = await withTransientRetry(async () => {
       const r = await fetchImpl(affordance.target, { method: affordance.method, headers, body });
       if (r.status >= 500) {

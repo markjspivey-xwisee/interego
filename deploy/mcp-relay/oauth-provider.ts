@@ -219,6 +219,32 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
        * store. Return null on miss.
        */
       lookupAccessTokenByRaw?: (token: string) => Promise<InteregoAuthInfo | null>;
+      /**
+       * Best-effort read-through loader for a single refresh token by its
+       * raw string. Called on exchangeRefreshToken miss BEFORE rejecting,
+       * mirroring lookupAccessTokenByRaw. Lets a refresh grant succeed for
+       * a token issued by a prior relay revision / not yet warmed into the
+       * in-memory map — the "authority on the pod, process holds only a
+       * read-through cache" discipline applied to the last critical
+       * in-process-only lookup. Return null on miss/expiry.
+       */
+      lookupRefreshTokenByRaw?: (refreshToken: string) => Promise<{
+        clientId: string;
+        scopes: string[];
+        identity: ResolvedIdentity;
+        expiresAt: number;
+        dpopJkt?: string;
+      } | null>;
+      /**
+       * Best-effort read-through loader for a single client by client_id.
+       * Called on `getClient` miss BEFORE returning undefined. Lets a
+       * client whose registration exists on the backing store but is not
+       * in the in-memory map (e.g. manifest drifted out of sync with the
+       * on-pod descriptors, or the map was started small to keep boot
+       * fast) authenticate without re-registering. Return undefined on
+       * miss. The result is cached into the in-memory map.
+       */
+      loadClient?: (clientId: string) => Promise<OAuthClientInformationFull | undefined>;
       /** Optional logger used by the fire-and-forget persistence path. */
       log?: (msg: string) => void;
     },
@@ -316,7 +342,27 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
 
   get clientsStore(): OAuthRegisteredClientsStore {
     return {
-      getClient: (clientId) => this.clients.get(clientId),
+      getClient: async (clientId) => {
+        const inMem = this.clients.get(clientId);
+        if (inMem) return inMem;
+        // Miss: try the read-through loader (covers clients present on
+        // the backing store but absent from the in-memory map). Cache
+        // the result so the next lookup is O(1).
+        const loader = this.cfg.loadClient;
+        if (loader) {
+          try {
+            const loaded = await loader(clientId);
+            if (loaded) {
+              this.clients.set(clientId, loaded);
+              return loaded;
+            }
+          } catch (err) {
+            const log = this.cfg.log;
+            if (log) log(`[oauth-provider] loadClient(${clientId}) failed: ${(err as Error)?.message ?? String(err)}`);
+          }
+        }
+        return undefined;
+      },
       registerClient: (clientData) => {
         const client_id = randomBytes(16).toString('hex');
         const client_id_issued_at = Math.floor(Date.now() / 1000);
@@ -828,6 +874,36 @@ async function didSubmit() {
         };
         this.refreshTokens.set(refreshToken, rec);
         if (bySha.dpopJkt) this.refreshDpopJkt.set(refreshToken, bySha.dpopJkt);
+      }
+    }
+    // Read-through to the backing store on a full miss (mirrors the
+    // access-token verifyAccessToken miss path). Covers a refresh token
+    // that exists on the pod but isn't in this process's maps — issued by
+    // a prior revision, or never warmed in. Promotes into both maps.
+    if (!rec && this.cfg.lookupRefreshTokenByRaw) {
+      try {
+        const loaded = await this.cfg.lookupRefreshTokenByRaw(refreshToken);
+        if (loaded) {
+          rec = {
+            clientId: loaded.clientId,
+            scopes: loaded.scopes,
+            identity: loaded.identity,
+            expiresAt: loaded.expiresAt,
+          };
+          this.refreshTokens.set(refreshToken, rec);
+          const sha = InteregoOAuthProvider.sha256Hex(refreshToken);
+          this.refreshTokensBySha.set(sha, {
+            clientId: loaded.clientId,
+            scopes: loaded.scopes,
+            identity: loaded.identity,
+            expiresAt: loaded.expiresAt,
+            ...(loaded.dpopJkt ? { dpopJkt: loaded.dpopJkt } : {}),
+          });
+          if (loaded.dpopJkt) this.refreshDpopJkt.set(refreshToken, loaded.dpopJkt);
+        }
+      } catch (err) {
+        const log = this.cfg.log;
+        if (log) log(`[oauth-provider] lookupRefreshTokenByRaw failed: ${(err as Error)?.message ?? String(err)}`);
       }
     }
     if (!rec) throw new Error('Invalid refresh token');

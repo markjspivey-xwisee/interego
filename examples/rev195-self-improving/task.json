@@ -1,0 +1,29 @@
+{
+  "title": "modalDistribution — streaming reducer over JSON-lines",
+  "description": "Implement a function `modalDistribution(input: string) => { Asserted, Hypothetical, Counterfactual, other, total }` that reads newline-separated JSON, counts the `modalStatus` field per descriptor, skips malformed JSON lines without crashing, and treats unknown / missing modal status as `other`. Empty input returns all zeros. Output ALL counters, even if zero.",
+  "workspace": "workspace",
+  "implementation_file": "workspace/modalDistribution.mjs",
+  "test_command": "node --test workspace/tests/modalDistribution.test.mjs",
+  "expected_export": "modalDistribution",
+  "tests": {
+    "file": "workspace/tests/modalDistribution.test.mjs",
+    "summary": "5 cases: empty input, single Asserted, mixed three categories, malformed-line-skip, unknown-modal-as-other"
+  },
+  "success_criteria": [
+    "node --test exits 0 against all five test cases",
+    "implementation_file exports a single named function `modalDistribution`",
+    "no crash on malformed JSON; malformed lines are silently skipped"
+  ],
+  "max_ticks": 12,
+  "hints_for_agent": [
+    "The function takes a STRING (raw JSON-lines), not an array or stream",
+    "Splitting on '\\n' is fine; each line is one JSON object",
+    "Use try/catch around JSON.parse for malformed-line resilience",
+    "All four modal counters MUST appear in the return value even when zero"
+  ],
+  "reuse_signal": {
+    "verb": "grep",
+    "objectName": "existing reducer pattern",
+    "rationale": "There may already be similar manifest-counting helpers in the repo. Agent-beta is rewarded for searching FIRST and reusing patterns rather than writing from scratch — the calibration-driven replan exercises this divergence between alpha and beta."
+  }
+}

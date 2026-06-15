@@ -640,7 +640,7 @@ jobs:
               --secret-name "$1" --query value -o tsv 2>/dev/null || true
           }
           PLAIN_VARS=(RELAY_AGENT_KEY_FILE RELAY_COMPLIANCE_WALLET_FILE RELAY_DEFAULT_SURFACE_AGENT RELAY_MAINTAINER_POD_NAME RELAY_POD_HOST_ALLOWLIST RELAY_REQUIRE_DPOP RELAY_SURFACE_AGENT IPFS_PROVIDER)
-          SECRET_VARS=(RELAY_MCP_API_KEY CDP_API_KEY_NAME CDP_API_KEY_PRIVATE IPFS_API_KEY PINATA_API_KEY)
+          SECRET_VARS=(RELAY_MCP_API_KEY CDP_API_KEY_NAME CDP_API_KEY_PRIVATE IPFS_API_KEY PINATA_API_KEY RELAY_AGENT_KEY_JSON)
           declare -a SET_ARGS
           for v in "${PLAIN_VARS[@]}"; do
             val=$(read_env "$v")
@@ -1007,6 +1007,35 @@ jobs:
             done
             echo "Latest active revision: $LATEST"
           fi
+
+      # Tier-1.B dogfood: publish a signed OutcomeRecord per relay deploy
+      # to the Foxxi bridge so substrate dev itself becomes a "performance"
+      # in the same calibration profile that observes human L&D and
+      # agent-teaching outcomes. Skips silently if the wallet env var
+      # isn't set — the deploy MUST NOT fail because observability can't
+      # write. Only runs for the relay image; other images can opt in
+      # later by matching the matrix gate below.
+      - name: Publish deploy outcome (substrate dev calibration)
+        if: steps.decide.outputs.build == 'true' && matrix.image == 'interego-relay' && job.status == 'success'
+        env:
+          CI_OUTCOME_WALLET_KEY: ${{ secrets.CI_OUTCOME_WALLET_KEY }}
+          CI_OUTCOME_BRIDGE_URL: ${{ secrets.CI_OUTCOME_BRIDGE_URL }}
+        run: |
+          LATEST=$(az containerapp show --name interego-relay --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" --query "properties.latestRevisionName" -o tsv 2>/dev/null || echo "unknown")
+          export CI_OUTCOME_REVISION="$LATEST"
+          export CI_OUTCOME_VERDICT="closed"
+          export CI_OUTCOME_CAUSE="${CI_OUTCOME_CAUSE:-knowledgeSkill}"
+          export CI_OUTCOME_NOTE="rev ${LATEST} via commit ${GITHUB_SHA::8} on ${GITHUB_REF_NAME:-unknown}"
+          if [ -z "$CI_OUTCOME_WALLET_KEY" ]; then
+            echo "CI_OUTCOME_WALLET_KEY not configured; skipping calibration write (deploy already succeeded)"
+            exit 0
+          fi
+          # ethers is already a workspace dep (used by the relay's signed
+          # authorship code path); npm install just brings it into the
+          # CI runner's local node_modules. Bounded — if it fails, the
+          # script's own graceful-degradation exits 0.
+          npm install --no-audit --no-fund --silent ethers 2>&1 | tail -3 || true
+          node deploy/publish-deploy-outcome.mjs || true
 
       - name: Summary
         if: always()

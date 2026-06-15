@@ -24,10 +24,30 @@ import { randomUUID } from 'node:crypto';
 const REPO_ROOT = join(import.meta.dirname ?? '', '..');
 
 // ── Pod target ────────────────────────────────────────────────────────
+//
+// AZURE_CSS_BASE and DEMO_POD_OWNER are env-overridable so a fresh
+// checkout doesn't have to edit source to run against a different CSS
+// or pod owner. Defaults preserve the historical hosted-Azure target
+// the demos were originally authored against.
+//
+//   AZURE_CSS_BASE  — CSS gate base URL. Default: the production
+//                     hosted Azure FQDN.
+//   DEMO_POD_OWNER  — Pod owner segment (the URL-path component that
+//                     identifies whose pod the demo writes to). Default:
+//                     u-pk-6e3bc2f9723c (the historical demo account).
+//                     Override when running against your own pod —
+//                     e.g. DEMO_POD_OWNER=u-pk-00181cd5dbee for johnny.
 
+// Use `||` not `??` so an explicit empty-string env value falls back
+// to the default (a runner who leaves DEMO_POD_OWNER= in their .env
+// expects the default, not a broken double-slash URL).
 export const AZURE_CSS_BASE =
-  'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
-const TEST_POD_BASE = `${AZURE_CSS_BASE}/u-pk-6e3bc2f9723c/`;
+  process.env.AZURE_CSS_BASE
+  || 'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io';
+
+export const DEMO_POD_OWNER = process.env.DEMO_POD_OWNER || 'u-pk-6e3bc2f9723c';
+
+const TEST_POD_BASE = `${AZURE_CSS_BASE.replace(/\/$/, '')}/${DEMO_POD_OWNER}/`;
 
 export function uniquePodUrl(prefix: string): string {
   return `${TEST_POD_BASE}${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}/`;

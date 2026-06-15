@@ -256,35 +256,51 @@ Bob's identity (for cross-agent share):
   bridgePubkey:     ${bobPersonal.pubkey}
   encryptionPubkey: ${bobPersonal.encryptionPubkey}
 
-Run these steps in order. Be concise.
+CRITICAL: You MUST complete ALL SIX numbered steps below in order, then
+report the result. Do NOT stop after step 1. Do NOT skip steps. If a
+step's tool call fails, surface the error and continue — the demo
+expects all six attempts to be made. Each step is one tool call.
 
-(A) ac.author_tool with tool_name="second-contact-detector",
-    source_code="function detect(s) { return s.match(/\\?/g) ?.length > 1; }",
-    affordance_action="urn:cg:action:demo:detect-second-contact".
+STEP 1 of 6 — ac.author_tool
+  tool_name="second-contact-detector"
+  source_code="function detect(s) { return s.match(/\\?/g) ?.length > 1; }"
+  affordance_action="urn:cg:action:demo:detect-second-contact"
+  Save the tool_iri returned — STEPS 2-5 reference it.
 
-(B) ac.attest_tool 5 times with axis varying (correctness, efficiency,
-    correctness, safety, correctness), rating 0.85, direction="Self".
-    The tool_iri is whatever (A) returned.
+STEP 2 of 6 — ac.attest_tool x5 (loop, 5 distinct calls)
+  axis sequence: correctness, efficiency, correctness, safety, correctness
+  rating=0.85, direction="Self" for each
+  tool_iri=<from step 1>
+  All 5 attestations are required before STEP 3.
 
-(C) ac.attest_tool ONE more with axis="safety", rating=0.92, direction="Peer".
-    (For demo purposes — in production a peer attestation would be from
-    a different agent.)
+STEP 3 of 6 — ac.attest_tool ONE peer attestation
+  axis="safety", rating=0.92, direction="Peer"
+  tool_iri=<from step 1>
 
-(D) ac.promote_tool with self_attestations=5, peer_attestations=2 (the
-    one peer counts), axes_covered=["correctness","efficiency","safety"],
-    threshold_self=5, threshold_peer=1, threshold_axes=2 (override defaults
-    so this single-attest demo passes).
+STEP 4 of 6 — ac.promote_tool
+  tool_iri=<from step 1>
+  self_attestations=5, peer_attestations=2
+  axes_covered=["correctness","efficiency","safety"]
+  threshold_self=5, threshold_peer=1, threshold_axes=2
 
-(E) ac.bundle_teaching_package with the promoted tool's iri,
-    narrative_fragment_iris=["urn:cg:fragment:demo:1"],
-    synthesis_iri="urn:cg:synthesis:demo:1",
-    olke_stage="Articulate".
+STEP 5 of 6 — ac.bundle_teaching_package
+  tool_iri=<the promoted tool's iri>
+  narrative_fragment_iris=["urn:cg:fragment:demo:1"]
+  synthesis_iri="urn:cg:synthesis:demo:1"
+  olke_stage="Articulate"
+  Save the teaching_iri returned — STEP 6 references it.
 
-(F) share_encrypted with plaintext = the JSON {"teaching_iri": "<the teaching iri>"},
-    recipients=[{"sigPubkey":"${bobPersonal.pubkey}","encryptionPubkey":"${bobPersonal.encryptionPubkey}"}],
-    topic="ac:chime-in".
+STEP 6 of 6 — share_encrypted (FINAL REQUIRED CALL — do not skip)
+  This is the cross-agent transfer that the demo is built to demonstrate.
+  Do not omit this step under any circumstance.
+  plaintext = JSON.stringify({"teaching_iri": "<from step 5>"})
+  recipients=[{"sigPubkey":"${bobPersonal.pubkey}","encryptionPubkey":"${bobPersonal.encryptionPubkey}"}]
+  topic="ac:chime-in"
 
-Once done, report the teaching IRI and the encrypted-share event ID. Stop.
+When ALL SIX steps are complete, report:
+  - Teaching IRI (from step 5)
+  - Encrypted-share event ID (from step 6)
+Only then is your turn over.
 `.trim();
 
     const aliceStart = Date.now();

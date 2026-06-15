@@ -95,7 +95,9 @@ export const ExecutorAAT: AbstractAgentType = {
   name: 'Executor',
   description: 'Can act on decisions',
   canPerceive: ['read', 'chain-view'],
-  canAct: ['create-atom', 'add-source', 'add-target', 'wrap-group', 'ingest-xapi', 'promote', 'constrain-paradigm'],
+  // Domain-neutral act rels only — vertical actions (e.g. Foxxi's 'ingest-xapi')
+  // are granted by a vertical-registered AAT (registerAAT), not baked in here.
+  canAct: ['create-atom', 'add-source', 'add-target', 'wrap-group', 'promote', 'constrain-paradigm'],
   mustPreserve: ['provenance', 'trust-chain', 'coherence'],
 };
 
@@ -161,11 +163,14 @@ export function getAAT(registry: AATRegistry, id: string): AbstractAgentType | u
  * Affordance rels that represent perception (read-like operations).
  * Used to match against `canPerceive`.
  */
+// Domain-neutral perceive rels only. Vertical-specific rels (e.g. Foxxi's
+// xapi-verb-uri / xapi-result-schema / xapi-context-schema) fall through to the
+// GET-method heuristic in classifyRel — the substrate does not enumerate
+// learning-domain rels.
 const PERCEIVE_RELS = new Set([
   'read', 'sparql', 'chain-view', 'discover-remote', 'ask-llm',
   'view-remote', 'verify-remote', 'view-coherence',
-  'persistence-info', 'xapi-verb-uri', 'xapi-result-schema',
-  'xapi-context-schema',
+  'persistence-info',
 ]);
 
 /**

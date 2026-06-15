@@ -445,7 +445,7 @@ relay_read_secret_value() {
     --secret-name "$1" --query value -o tsv 2>/dev/null || true
 }
 RELAY_PLAIN_VARS=(RELAY_AGENT_KEY_FILE RELAY_COMPLIANCE_WALLET_FILE RELAY_DEFAULT_SURFACE_AGENT RELAY_MAINTAINER_POD_NAME RELAY_POD_HOST_ALLOWLIST RELAY_REQUIRE_DPOP RELAY_SURFACE_AGENT IPFS_PROVIDER)
-RELAY_SECRET_VARS=(RELAY_MCP_API_KEY CDP_API_KEY_NAME CDP_API_KEY_PRIVATE IPFS_API_KEY PINATA_API_KEY)
+RELAY_SECRET_VARS=(RELAY_MCP_API_KEY CDP_API_KEY_NAME CDP_API_KEY_PRIVATE IPFS_API_KEY PINATA_API_KEY RELAY_AGENT_KEY_JSON)
 RELAY_SET_ARGS=()
 for v in "${RELAY_PLAIN_VARS[@]}"; do
   val=$(relay_read_env "$v")
@@ -991,3 +991,17 @@ echo "    --deployer-did \"\${CG_OPERATOR_DID:-did:web:identity.example#operator
 echo "    | jq"
 echo ""
 echo "Then feed the JSON into publish_context with compliance: true."
+
+# ── Tier-1.B dogfood: relay deploy as a Foxxi OutcomeRecord ──────
+# Substrate development becomes a measured "performance" — same
+# calibration profile that observes human L&D and agent-teaching
+# outcomes. Skips silently if CI_OUTCOME_WALLET_KEY is unset.
+if [ -n "${CI_OUTCOME_WALLET_KEY:-}" ]; then
+  echo ""
+  echo "── Publishing deploy OutcomeRecord to Foxxi calibration profile ──"
+  CI_OUTCOME_REVISION="$(az containerapp show --name "$RELAY_APP" --resource-group "$RESOURCE_GROUP" --query 'properties.latestRevisionName' -o tsv 2>/dev/null || echo unknown)" \
+  CI_OUTCOME_VERDICT="${CI_OUTCOME_VERDICT:-closed}" \
+  CI_OUTCOME_CAUSE="${CI_OUTCOME_CAUSE:-knowledgeSkill}" \
+  CI_OUTCOME_NOTE="${CI_OUTCOME_NOTE:-azure-deploy.sh rev $CI_OUTCOME_REVISION}" \
+    node "$(dirname "$0")/publish-deploy-outcome.mjs" || true
+fi

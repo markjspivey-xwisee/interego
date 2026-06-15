@@ -65,3 +65,13 @@ __pycache__/
 
 # Local agent scratch (patches, split helpers) — per-machine, not source.
 .claude/
+
+# Holodeck example state — wallets, MCP configs, run history (operator-local, secret).
+.holodeck/
+examples/holodeck/.holodeck/
+
+# Editor backups + per-run example artifacts (regenerated each run).
+*.bak
+examples/tic-tac-toe-tournament/_server.log
+examples/tic-tac-toe-tournament/_tournament.log
+examples/tic-tac-toe-tournament/last-run.json

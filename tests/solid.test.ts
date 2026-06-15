@@ -150,11 +150,13 @@ describe('publish', () => {
       fetch: mockFetch,
     });
 
-    // Should have made 5 fetch calls: PUT graph, PUT descriptor, GET manifest,
-    // PUT manifest, GET manifest (post-write verification — guards against
-    // N-way concurrent silent-clobber where the storage backend accepts
-    // multiple If-Match PUTs against the same etag).
-    expect(calls).toHaveLength(5);
+    // Call sequence: PUT graph, PUT descriptor, GET manifest (404), then the
+    // 404-HEAL scan (rebuildManifestFromPod walks the pod's containers via
+    // ldp:contains so a missing manifest is rebuilt from existing descriptors,
+    // never replaced by a 1-entry stub), PUT new manifest, GET manifest
+    // (post-write verification — guards against N-way concurrent silent-clobber).
+    // Assert the meaningful operations robustly (the heal-scan adds a
+    // backend-dependent number of container GETs between the 404 and the PUT).
 
     // 1. PUT TriG graph
     expect(calls[0]!.method).toBe('PUT');
@@ -169,19 +171,22 @@ describe('publish', () => {
     expect(calls[1]!.contentType).toBe('text/turtle');
     expect(calls[1]!.body).toContain('cg:ContextDescriptor');
 
-    // 3. GET existing manifest
+    // 3. GET existing manifest (404 → triggers the heal-scan)
     expect(calls[2]!.method).toBe('GET');
     expect(calls[2]!.url).toContain('.well-known/context-graphs');
 
-    // 4. PUT new manifest
-    expect(calls[3]!.method).toBe('PUT');
-    expect(calls[3]!.url).toContain('.well-known/context-graphs');
-    expect(calls[3]!.body).toContain('cg:ManifestEntry');
-    expect(calls[3]!.body).toContain('cg:describes');
+    // PUT new manifest (after the heal-scan) — carries the descriptor's entry.
+    const manifestPut = calls.find(c => c.method === 'PUT' && c.url.includes('.well-known/context-graphs'));
+    expect(manifestPut).toBeDefined();
+    expect(manifestPut!.body).toContain('cg:ManifestEntry');
+    expect(manifestPut!.body).toContain('cg:describes');
 
-    // 5. GET manifest (post-write verification)
-    expect(calls[4]!.method).toBe('GET');
-    expect(calls[4]!.url).toContain('.well-known/context-graphs');
+    // GET manifest AFTER the PUT (post-write verification).
+    const manifestPutIdx = calls.indexOf(manifestPut!);
+    const verifyGet = calls
+      .slice(manifestPutIdx + 1)
+      .find(c => c.method === 'GET' && c.url.includes('.well-known/context-graphs'));
+    expect(verifyGet, 'expected a post-write manifest GET (verification)').toBeDefined();
 
     // Check result URLs
     expect(result.descriptorUrl).toContain('test-solid.ttl');
@@ -930,13 +935,24 @@ describe('discover', () => {
     expect(entries).toEqual([]);
   });
 
-  it('throws on non-404 HTTP error', async () => {
+  it('throws on non-404 HTTP error after exhausting retries', async () => {
+    // Post-fix behavior: discover() promotes 5xx responses to throws
+    // inside the retry lambda so withTransientRetry actually retries
+    // them (6 attempts at 0.5s base, ~31s ceiling). The eventual throw
+    // still surfaces "Failed to fetch manifest" so callers see the
+    // underlying server error after retries exhaust. Test timeout
+    // bumped to 35s to accommodate the full retry schedule (was 5s,
+    // assumed instant-throw on 5xx response which silently masked the
+    // f-shin-collection-adjacent finding: 5xx responses weren't retried
+    // before the rev-188 fix).
     const fetch500 = vi.fn(async () =>
       mockResponse('', { status: 500, ok: false }),
     ) as unknown as typeof globalThis.fetch;
 
     await expect(discover(podUrl, undefined, { fetch: fetch500 })).rejects.toThrow('Failed to fetch manifest');
-  });
+    // Sanity: the mock should have been called multiple times (retries fired).
+    expect(fetch500).toHaveBeenCalledTimes(6);
+  }, 35_000);
 
   it('combines multiple filters', async () => {
     const entries = await discover(
@@ -946,6 +962,60 @@ describe('discover', () => {
     );
     expect(entries).toHaveLength(1);
     expect(entries[0]!.descriptorUrl).toContain('desc-1');
+  });
+
+  // Regression for the substrate-side gap that caused boozer's harness
+  // to fetch a ~36KB unfiltered manifest, get UI-truncated before the
+  // newest entries, and then guess IRI conventions (:g4, :g5) instead
+  // of finding the live game graph. The fix: `graphIri`, `sort`, and
+  // `limit` filter args plus default `sort: "newest-first"` ordering.
+  it('filters by graphIri (cg:describes membership)', async () => {
+    const a = await discover(podUrl, { graphIri: 'urn:graph:g1' }, { fetch: makeFetch() });
+    expect(a).toHaveLength(1);
+    expect(a[0]!.descriptorUrl).toContain('desc-1');
+
+    const b = await discover(podUrl, { graphIri: 'urn:graph:g2' }, { fetch: makeFetch() });
+    expect(b).toHaveLength(1);
+    expect(b[0]!.descriptorUrl).toContain('desc-2');
+
+    const none = await discover(podUrl, { graphIri: 'urn:graph:does-not-exist' }, { fetch: makeFetch() });
+    expect(none).toEqual([]);
+  });
+
+  it('defaults to newest-first sort (largest validFrom first)', async () => {
+    // SAMPLE_MANIFEST has desc-1 validFrom Jan 2026 and desc-2 validFrom Jul 2026.
+    // Default sort (no explicit option) is newest-first → desc-2 should come first.
+    const entries = await discover(podUrl, undefined, { fetch: makeFetch() });
+    expect(entries).toHaveLength(2);
+    expect(entries[0]!.descriptorUrl).toContain('desc-2');
+    expect(entries[1]!.descriptorUrl).toContain('desc-1');
+  });
+
+  it('honors sort: oldest-first', async () => {
+    const entries = await discover(podUrl, { sort: 'oldest-first' }, { fetch: makeFetch() });
+    expect(entries).toHaveLength(2);
+    expect(entries[0]!.descriptorUrl).toContain('desc-1');
+    expect(entries[1]!.descriptorUrl).toContain('desc-2');
+  });
+
+  it('honors limit after sort (latest N)', async () => {
+    const entries = await discover(podUrl, { limit: 1 }, { fetch: makeFetch() });
+    expect(entries).toHaveLength(1);
+    // Default newest-first + limit 1 → just desc-2 (the newer entry).
+    expect(entries[0]!.descriptorUrl).toContain('desc-2');
+  });
+
+  it('graphIri + limit composes — closes the boozer truncation gap', async () => {
+    // The substrate-honest replacement for boozer's failed workflow:
+    // "I'm looking for urn:graph:g2, give me just the latest entry."
+    const entries = await discover(
+      podUrl,
+      { graphIri: 'urn:graph:g2', limit: 1 },
+      { fetch: makeFetch() },
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.descriptorUrl).toContain('desc-2');
+    expect(entries[0]!.describes).toContain('urn:graph:g2');
   });
 });
 

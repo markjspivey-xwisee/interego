@@ -354,13 +354,23 @@ function manifestHeaderTurtle(podUrl: string): string {
 
 /**
  * Build a Turtle manifest entry for a published descriptor.
+ *
+ * `descriptorCid` (optional) is the content-CID of the descriptor's
+ * Turtle body. When supplied it's mirrored onto the entry as
+ * `cg:contentCid "<cid>"` so CAS supersession gates can compare
+ * `if_match` against the head identity without a body GET + rehash.
  */
 function manifestEntryTurtle(
   descriptorUrl: string,
   descriptor: ContextDescriptorData,
+  descriptorCid?: string,
 ): string {
   const lines: string[] = [];
   lines.push(`<${descriptorUrl}> a cg:ManifestEntry ;`);
+
+  if (descriptorCid) {
+    lines.push(`    cg:contentCid "${descriptorCid}" ;`);
+  }
 
   for (const g of descriptor.describes) {
     lines.push(`    cg:describes <${g}> ;`);
@@ -435,6 +445,7 @@ export function parseManifest(turtle: string): ManifestEntry[] {
   const entries: ManifestEntry[] = [];
   let current: {
     descriptorUrl: string;
+    cid?: string;
     describes: string[];
     facetTypes: ContextTypeName[];
     validFrom?: string;
@@ -444,6 +455,8 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     issuer?: string;
     conformsTo?: string[];
     supersedes?: string[];
+    pgslUri?: string;
+    pgslLevel?: number;
   } | null = null;
 
   const finalize = (
@@ -477,6 +490,7 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     }
     const out: ManifestEntry = {
       descriptorUrl: e.descriptorUrl,
+      ...(e.cid !== undefined ? { cid: e.cid } : {}),
       describes: e.describes,
       facetTypes: e.facetTypes,
       ...(e.validFrom !== undefined ? { validFrom: e.validFrom } : {}),
@@ -486,6 +500,8 @@ export function parseManifest(turtle: string): ManifestEntry[] {
       ...(e.issuer !== undefined ? { issuer: e.issuer } : {}),
       ...(e.conformsTo !== undefined ? { conformsTo: e.conformsTo } : {}),
       ...(e.supersedes !== undefined ? { supersedes: e.supersedes } : {}),
+      ...(e.pgslUri !== undefined ? { pgslUri: e.pgslUri } : {}),
+      ...(e.pgslLevel !== undefined ? { pgslLevel: e.pgslLevel } : {}),
       ...(facets.length > 0 ? { facets } : {}),
     };
     return out;
@@ -508,6 +524,11 @@ export function parseManifest(turtle: string): ManifestEntry[] {
     }
 
     if (!current) continue;
+
+    const cidMatch = line.match(/cg:contentCid\s+"([^"]+)"/);
+    if (cidMatch) {
+      current.cid = cidMatch[1]!;
+    }
 
     const describesMatch = line.match(/cg:describes\s+<([^>]+)>/);
     if (describesMatch) {
@@ -556,6 +577,18 @@ export function parseManifest(turtle: string): ManifestEntry[] {
       current.supersedes.push(supersedesMatch[1]!);
     }
 
+    // PGSL lattice pointer (Stage 3 projection) — links a manifest row back to
+    // the holon it projects. Content-addressed, so structural overlap across
+    // pods is detectable from the manifest alone. Additive: legacy rows omit it.
+    const pgslUriMatch = line.match(/cg:pgslUri\s+<([^>]+)>/);
+    if (pgslUriMatch) {
+      current.pgslUri = pgslUriMatch[1]!;
+    }
+    const pgslLevelMatch = line.match(/cg:pgslLevel\s+"(\d+)"/);
+    if (pgslLevelMatch) {
+      current.pgslLevel = Number(pgslLevelMatch[1]);
+    }
+
     if (line.endsWith('.')) {
       if (current) {
         entries.push(finalize(current));
@@ -569,6 +602,183 @@ export function parseManifest(turtle: string): ManifestEntry[] {
   }
 
   return entries;
+}
+
+// ── Manifest reconstruction (heals f-manifest-collapse) ─────────────
+//
+// The manifest at <pod>/.well-known/context-graphs is an INDEX, not the
+// authority — every descriptor + payload is content-addressed and
+// fetchable by URL, and supersession links live inside the descriptors.
+// So a lost/truncated index is fully recoverable by scanning the on-pod
+// descriptors and rebuilding one entry each. Used by (a) publish()'s
+// 404-heal path so a missing manifest is never replaced by a 1-entry
+// stub, and (b) the relay's /admin/rebuild-manifest one-shot restore.
+
+const _fetchFallback: FetchFn = (async (url, init) => {
+  const r = await fetch(url, init as RequestInit);
+  return {
+    ok: r.ok, status: r.status, statusText: r.statusText,
+    headers: { get: (n: string) => r.headers.get(n) },
+    text: () => r.text(), json: () => r.json(),
+  };
+}) as FetchFn;
+
+/**
+ * Build a single manifest entry from a descriptor's Turtle by extracting
+ * the indexable fields (describes, validFrom, conformsTo, supersedes,
+ * facet types, modalStatus, trustLevel, contentCid) — mirrors the shape
+ * `manifestEntryTurtle` emits. Returns null if the Turtle has no
+ * `cg:describes` (i.e. it isn't a descriptor).
+ */
+function manifestEntryFromDescriptorTurtle(descriptorUrl: string, ttl: string): string | null {
+  const grabAll = (src: string): string[] => {
+    const out: string[] = []; const re = new RegExp(src, 'g'); let m: RegExpExecArray | null;
+    while ((m = re.exec(ttl)) !== null) out.push(m[1]!);
+    return out;
+  };
+  const describes = grabAll('cg:describes\\s+<([^>]+)>');
+  if (describes.length === 0) return null;
+  const one = (src: string): string | undefined => (ttl.match(new RegExp(src)) ?? [])[1];
+  const validFrom = one('cg:validFrom\\s+"([^"]+)"');
+  const validUntil = one('cg:validUntil\\s+"([^"]+)"');
+  const conformsTo = grabAll('dct:conformsTo\\s+<([^>]+)>');
+  const supersedes = grabAll('cg:supersedes\\s+<([^>]+)>');
+  const facetTypes = [...new Set(grabAll('a\\s+cg:(\\w+)Facet\\b'))]; // 'TemporalFacet' → 'Temporal'
+  const modalStatus = one('cg:modalStatus\\s+cg:(\\w+)');
+  const trustLevel = one('cg:trustLevel\\s+cg:(\\w+)');
+  const issuer = one('cg:issuer\\s+<([^>]+)>');
+  const cid = one('cg:contentCid\\s+"([^"]+)"');
+
+  const lines: string[] = [`<${descriptorUrl}> a cg:ManifestEntry ;`];
+  if (cid) lines.push(`    cg:contentCid "${cid}" ;`);
+  for (const g of describes) lines.push(`    cg:describes <${g}> ;`);
+  for (const ft of facetTypes) lines.push(`    cg:hasFacetType cg:${ft} ;`);
+  if (validFrom) lines.push(`    cg:validFrom "${validFrom}"^^xsd:dateTime ;`);
+  if (validUntil) lines.push(`    cg:validUntil "${validUntil}"^^xsd:dateTime ;`);
+  for (const c of conformsTo) lines.push(`    dct:conformsTo <${c}> ;`);
+  for (const s of supersedes) lines.push(`    cg:supersedes <${s}> ;`);
+  if (modalStatus) lines.push(`    cg:modalStatus cg:${modalStatus} ;`);
+  if (trustLevel) lines.push(`    cg:trustLevel cg:${trustLevel} ;`);
+  if (issuer) lines.push(`    cg:issuer <${issuer}> ;`);
+  lines[lines.length - 1] = lines[lines.length - 1]!.replace(/;\s*$/, '.');
+  return lines.join('\n');
+}
+
+/** List the descriptor (.ttl, NOT -graph.trig) URLs in a pod's context-graphs/ container. */
+// Pod-root containers that never hold cg descriptors/credentials — skipped on a
+// pod-wide manifest scan (don't walk a huge LDN inbox or profile docs).
+const NON_DESCRIPTOR_CONTAINERS = new Set(['inbox/', '.well-known/', 'profile/', 'settings/']);
+
+/**
+ * Read a container's DECLARED membership — the objects of its `ldp:contains`
+ * (the LDP membership *control* the container publishes), resolved against the
+ * container base. We follow the hypermedia the container advertises rather than
+ * inferring membership from filename shape: a regex over filenames is exactly
+ * what silently dropped %-encoded credential names and whole containers. Walks
+ * the object list after each ldp:contains (prefixed or full-IRI), tolerant of
+ * dotted IRIs (`…/1781.ttl`) since each object is delimited by its own `<>`.
+ */
+function ldpContainsMembers(body: string, base: string): string[] {
+  const out: string[] = [];
+  const predRe = /(?:ldp:contains|<http:\/\/www\.w3\.org\/ns\/ldp#contains>)/gi;
+  let pm: RegExpExecArray | null;
+  while ((pm = predRe.exec(body)) !== null) {
+    let i = pm.index + pm[0].length;
+    // Collect the comma/whitespace-separated <…> objects until the statement
+    // boundary (a token that is not a separator or another <…>).
+    for (;;) {
+      while (i < body.length && /[\s,]/.test(body[i]!)) i++;
+      if (body[i] !== '<') break;
+      const end = body.indexOf('>', i);
+      if (end < 0) break;
+      const ref = body.slice(i + 1, end);
+      try { out.push(new URL(ref, base).toString()); } catch { /* skip malformed */ }
+      i = end + 1;
+    }
+  }
+  return out;
+}
+
+async function listDescriptorUrls(pod: string, fetchFn: FetchFn): Promise<string[]> {
+  // Membership comes from each container's advertised `ldp:contains`, NOT a
+  // filename regex. Enumerate the pod's child containers from the root's
+  // ldp:contains (minus known system ones), always including the two we know
+  // hold manifest content, then read each container's ldp:contains members.
+  // Non-descriptor members are filtered downstream by
+  // manifestEntryFromDescriptorTurtle (it reads each member's declared type), so
+  // the only filename heuristic left is distinguishing a descriptor (`.ttl`)
+  // from its own graph payload (`-graph.trig`) — both are real declared members.
+  const containers = new Set<string>([`${pod}${DEFAULT_CONTAINER}`, `${pod}foxxi-wallet/`]);
+  try {
+    const root = await fetchFn(pod, { method: 'GET', headers: { Accept: TURTLE_CONTENT_TYPE } });
+    if (root.ok) {
+      for (const member of ldpContainsMembers(await root.text(), pod)) {
+        if (member.startsWith(pod) && member.endsWith('/') && member !== pod
+            && !NON_DESCRIPTOR_CONTAINERS.has(member.slice(pod.length))) {
+          containers.add(member);
+        }
+      }
+    }
+  } catch { /* fall back to the known containers below */ }
+
+  const urls = new Set<string>();
+  for (const containerUrl of containers) {
+    let r: Awaited<ReturnType<FetchFn>>;
+    try { r = await fetchFn(containerUrl, { method: 'GET', headers: { Accept: TURTLE_CONTENT_TYPE } }); }
+    catch (e) { throw new Error(`container GET <${containerUrl}> failed: ${(e as Error).message}`); }
+    if (r.status === 404) continue;                       // missing container (e.g. no foxxi-wallet yet) — fine
+    // Any non-404 failure aborts the rebuild rather than PUT a PARTIAL manifest
+    // (a transient 5xx must not silently drop a whole container's entries).
+    if (!r.ok) throw new Error(`container GET <${containerUrl}> -> ${r.status} ${r.statusText}`);
+    for (const member of ldpContainsMembers(await r.text(), containerUrl)) {
+      if (member.endsWith('.ttl') && !member.endsWith('-graph.trig')) urls.add(member);
+    }
+  }
+  return [...urls];
+}
+
+/**
+ * Compose the full manifest body for a pod from its on-pod descriptors.
+ * Scans the container, fetches each descriptor, and rebuilds an entry
+ * per descriptor. Returns { body, scanned, written }.
+ */
+async function buildManifestBodyFromPod(
+  pod: string,
+  fetchFn: FetchFn,
+): Promise<{ body: string; scanned: number; written: number }> {
+  const descriptorUrls = await listDescriptorUrls(pod, fetchFn);
+  const entries: string[] = [];
+  await Promise.allSettled(descriptorUrls.map(async durl => {
+    try {
+      const r = await fetchFn(durl, { method: 'GET', headers: { Accept: TURTLE_CONTENT_TYPE } });
+      if (!r.ok) return;
+      const entry = manifestEntryFromDescriptorTurtle(durl, await r.text());
+      if (entry) entries.push(entry);
+    } catch { /* skip unreadable descriptor */ }
+  }));
+  const prefixes = turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod', 'dct']);
+  const body = `${prefixes}\n\n${manifestHeaderTurtle(pod)}\n\n${entries.join('\n\n')}\n`;
+  return { body, scanned: descriptorUrls.length, written: entries.length };
+}
+
+/**
+ * Reconstruct + write a pod's manifest from its on-pod descriptors.
+ * One-shot heal for a collapsed/lost index. Overwrites the manifest
+ * (no CAS — this is an operator restore). Returns counts.
+ */
+export async function rebuildManifestFromPod(
+  podUrl: string,
+  opts: { fetch?: FetchFn; log?: (m: string) => void } = {},
+): Promise<{ scanned: number; written: number; manifestUrl: string }> {
+  const fetchFn = opts.fetch ?? _fetchFallback;
+  const log = opts.log ?? (() => {});
+  const pod = podUrl.endsWith('/') ? podUrl : `${podUrl}/`;
+  const { body, scanned, written } = await buildManifestBodyFromPod(pod, fetchFn);
+  const manifestUrl = `${pod}${MANIFEST_PATH}`;
+  const put = await fetchFn(manifestUrl, { method: 'PUT', headers: { 'Content-Type': TURTLE_CONTENT_TYPE }, body });
+  if (!put.ok) throw new Error(`manifest PUT <${manifestUrl}> -> ${put.status} ${put.statusText}`);
+  log(`[rebuildManifestFromPod] ${manifestUrl}: scanned ${scanned}, wrote ${written}`);
+  return { scanned, written, manifestUrl };
 }
 
 // ── Filter logic ────────────────────────────────────────────
@@ -606,6 +816,16 @@ function matchesFilter(entry: ManifestEntry, filter: DiscoverFilter): boolean {
     const t = filter.effectiveAt;
     if (entry.validFrom && entry.validFrom > t) return false;
     if (entry.validUntil && entry.validUntil < t) return false;
+  }
+
+  // graphIri — narrow to descriptors that mention this graph IRI in
+  // their cg:describes set. The single most useful narrowing filter
+  // for agent workflows; without it, a learner asking "where is
+  // urn:graph:X on this pod" has to fetch the whole manifest and
+  // post-filter, which truncates on harness UIs for any pod with
+  // more than ~20 entries.
+  if (filter.graphIri) {
+    if (!entry.describes.includes(filter.graphIri as IRI)) return false;
   }
 
   return true;
@@ -683,12 +903,29 @@ async function fetchDescriptorTurtleForCas(
   descriptorUrl: string,
   fetchFn: FetchFn,
 ): Promise<string | null> {
-  const resp = await withTransientRetry(() => fetchFn(descriptorUrl, {
-    method: 'GET',
-    headers: {
-      'Accept': TURTLE_CONTENT_TYPE,
-    },
-  }), { maxAttempts: 6, baseMs: 500 });
+  // The substrate `withTransientRetry` only retries on THROWN errors —
+  // a returned 5xx response is "successful network call, server said
+  // no" and falls through without retry. Azure Files cold-cache spikes
+  // surface as 503 responses, not connection-reset throws, so we must
+  // promote 5xx responses to throws INSIDE the lambda for the retry to
+  // see them as transient. The thrown message embeds the status digits
+  // so withTransientRetry's TRANSIENT_PATTERN (/5\d\d/) matches.
+  let attempts = 0;
+  const resp = await withTransientRetry(async () => {
+    attempts++;
+    const r = await fetchFn(descriptorUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': TURTLE_CONTENT_TYPE,
+      },
+    });
+    if (r.status >= 500) {
+      throw new Error(
+        `publish: CAS prior-head fetch <${descriptorUrl}> failed: ${r.status} ${r.statusText} (attempt ${attempts})`,
+      );
+    }
+    return r;
+  }, { maxAttempts: 6, baseMs: 500 });
   if (resp.status === 404) return null;
   if (!resp.ok) {
     throw new Error(
@@ -757,8 +994,26 @@ export async function checkSupersessionPrecondition(input: {
   readonly ifMatchSupersedes?: string;
   readonly ifMatchCid?: string;
   readonly fetchFn: FetchFn;
+  /**
+   * Optional fast-path CID resolver. When provided, the precondition
+   * check consults this lookup BEFORE falling back to a full descriptor
+   * body GET + rehash. The relay populates this from the cached
+   * manifest's `cg:contentCid` mirror — which is the same source the
+   * `get_current_head` tool resolves from. Returning a string skips the
+   * body fetch entirely for that supersedes target; returning null
+   * (legacy manifest entry without the CID mirror, or unknown target)
+   * falls through to the existing body-GET path.
+   *
+   * Why this exists: the Azure-Files transient that surfaced as 503
+   * `precondition_unavailable` retryable=true was almost always the
+   * `fetchDescriptorTurtleForCas` step — a full-body Turtle GET on a
+   * cold cache. The manifest fetch the relay already does to build the
+   * supersedes list also carries the head CID, so a manifest-mirrored
+   * comparison removes the flaky read from the CAS path entirely.
+   */
+  readonly headCidLookup?: (descriptorUrl: string) => string | null | undefined;
 }): Promise<SupersessionPreconditionPass> {
-  const { supersedesList, ifMatchSupersedes, ifMatchCid, fetchFn } = input;
+  const { supersedesList, ifMatchSupersedes, ifMatchCid, fetchFn, headCidLookup } = input;
   if (ifMatchSupersedes === undefined && ifMatchCid === undefined) {
     throw new Error(
       'checkSupersessionPrecondition: at least one of ifMatchSupersedes / ifMatchCid must be set — callers should skip this function when no precondition was requested.',
@@ -776,15 +1031,65 @@ export async function checkSupersessionPrecondition(input: {
   }
   // Walk each supersedes target; collect descriptor URL + CID pairs so
   // the error response (on mismatch) carries the full observed head set.
+  //
+  // Optimization: if the caller supplied `headCidLookup` and it returns
+  // a CID for this target, skip the descriptor body fetch entirely — the
+  // manifest is the authoritative head pointer, and now (with the
+  // `cg:contentCid` mirror) the head identity too. Body fetch is the
+  // fallback when the lookup misses (legacy manifest entries written
+  // before the mirror landed).
+  //
+  // The ifMatchSupersedes URL-form comparison doesn't need a CID at all
+  // (it's a string match on supersedesList), so when only that option is
+  // set we can record cid: '' without any pod read whatsoever — saves
+  // one round-trip per supersedes target on every plain auto_supersede
+  // publish, regardless of the manifest mirror state.
   const observed: { descriptorUrl: string; cid: string }[] = [];
+  // Per-target fetch errors are recorded but do NOT abort the loop —
+  // a single unresolvable target shouldn't kill the precondition when
+  // ANOTHER target might match if_match. Surfaced only if no target
+  // ends up matching, so the operator can see what went wrong.
+  const targetErrors: { target: string; error: string }[] = [];
   for (const target of supersedesList) {
-    const headTurtle = await fetchDescriptorTurtleForCas(target, fetchFn);
-    if (headTurtle === null) {
+    const lookupCid = headCidLookup?.(target);
+    if (typeof lookupCid === 'string' && lookupCid.length > 0) {
+      observed.push({ descriptorUrl: target, cid: lookupCid });
+      continue;
+    }
+    // Only http(s) targets are reachable via fetch. Non-http schemes
+    // (urn:, did:, ipfs:, etc.) cannot be content-addressed by GET +
+    // computeCid here — they're semantic supersession references the
+    // user put in their content's `cg:supersedes` triples, lifted into
+    // descriptor.supersedes by normalizePublishInputs. Treat them as
+    // unresolvable for CAS purposes; record cid:'' so the loop
+    // continues and another (http) target can still match if_match.
+    // Without this guard, Node fetch rejects the urn: URL with
+    // `fetch failed`, the 6-attempt retry burns ~15s on the same
+    // unresolvable input, and the whole precondition surfaces as
+    // `precondition_unavailable` even when an http target in the
+    // SAME list would have resolved cleanly. (Rev 190 fix.)
+    if (!/^https?:\/\//i.test(target)) {
       observed.push({ descriptorUrl: target, cid: '' });
       continue;
     }
-    const cid = computeCid(headTurtle);
-    observed.push({ descriptorUrl: target, cid });
+    // Body-fetch the head: gates the ifMatchCid comparison AND
+    // populates resolvedHeadCid as a side effect that callers
+    // (e.g. the relay) echo back in their 202 response so the next
+    // publish can pass it as the next CAS token. Per-target failures
+    // are recorded and the loop continues — another http target may
+    // still match.
+    try {
+      const headTurtle = await fetchDescriptorTurtleForCas(target, fetchFn);
+      if (headTurtle === null) {
+        observed.push({ descriptorUrl: target, cid: '' });
+        continue;
+      }
+      const cid = computeCid(headTurtle);
+      observed.push({ descriptorUrl: target, cid });
+    } catch (err) {
+      observed.push({ descriptorUrl: target, cid: '' });
+      targetErrors.push({ target, error: (err as Error).message });
+    }
   }
 
   let witness: { matched: string; via: 'supersedes' | 'cid' } | null = null;
@@ -808,6 +1113,21 @@ export async function checkSupersessionPrecondition(input: {
   if (ifMatchCid !== undefined) {
     const hit = observed.find((o) => o.cid === ifMatchCid);
     if (!hit) {
+      // If NO target resolved to a non-empty CID AND we recorded
+      // per-target errors, this isn't "your assertion was wrong" —
+      // it's "we couldn't tell". Surface as a transient Error so the
+      // caller maps to 503 retryable, NOT 412 definitive. Without
+      // this branch, a publish whose supersedes list is entirely
+      // unresolvable (all urn:, all unreachable) would falsely
+      // surface as 412 and the caller would re-read the manifest and
+      // come back with the same urn: targets to no avail.
+      const anyResolved = observed.some(o => o.cid.length > 0);
+      if (!anyResolved && targetErrors.length > 0) {
+        const tail = targetErrors.slice(0, 3).map(e => `<${e.target}>: ${e.error}`).join('; ');
+        throw new Error(
+          `publish: CAS precondition could not be resolved — every target in descriptor.supersedes was unreachable (first errors: ${tail}). This is a substrate / connectivity issue, not a definitive ifMatchCid mismatch — retry once the underlying read recovers.`,
+        );
+      }
       throw new PublishPreconditionFailedError(
         `publish: ifMatchCid precondition failed — CID ${ifMatchCid} does not match any current supersedes head (observed CIDs: [${observed.map((o) => o.cid).filter(Boolean).join(', ')}]).`,
         { ...(ifMatchSupersedes !== undefined ? { supersedes: ifMatchSupersedes } : {}), cid: ifMatchCid },
@@ -947,6 +1267,7 @@ export async function publish(
       ...(options.ifMatchSupersedes !== undefined ? { ifMatchSupersedes: options.ifMatchSupersedes } : {}),
       ...(options.ifMatchCid !== undefined ? { ifMatchCid: options.ifMatchCid } : {}),
       fetchFn,
+      ...(options.headCidLookup ? { headCidLookup: options.headCidLookup } : {}),
     });
     resolvedHeadUrl = pass.resolvedHeadUrl;
     resolvedHeadCid = pass.resolvedHeadCid;
@@ -956,13 +1277,24 @@ export async function publish(
     // something. Compute the head CID anyway so callers can pass it back
     // as ifMatchCid on the next publish. Best-effort: a transient read
     // failure here just leaves previousHeadCid absent in the result.
-    try {
-      const headTurtle = await fetchDescriptorTurtleForCas(supersedesList[0]!, fetchFn);
-      if (headTurtle !== null) {
-        resolvedHeadUrl = supersedesList[0]!;
-        resolvedHeadCid = computeCid(headTurtle);
-      }
-    } catch { /* best-effort */ }
+    //
+    // Manifest fast-path: if the caller supplied a headCidLookup AND it
+    // has a CID for the head, skip the body fetch entirely. Falls
+    // through to body-GET only when the manifest mirror is missing
+    // (legacy entry) or the caller didn't supply the lookup.
+    const fastHeadCid = options.headCidLookup?.(supersedesList[0]!);
+    if (typeof fastHeadCid === 'string' && fastHeadCid.length > 0) {
+      resolvedHeadUrl = supersedesList[0]!;
+      resolvedHeadCid = fastHeadCid;
+    } else {
+      try {
+        const headTurtle = await fetchDescriptorTurtleForCas(supersedesList[0]!, fetchFn);
+        if (headTurtle !== null) {
+          resolvedHeadUrl = supersedesList[0]!;
+          resolvedHeadCid = computeCid(headTurtle);
+        }
+      } catch { /* best-effort */ }
+    }
   }
 
   const baseDescriptorTurtle = toTurtle(descriptor);
@@ -1069,6 +1401,11 @@ export async function publish(
     + '\n\n' + distributionBlock
     + (authorshipBlock ? ('\n\n' + authorshipBlock) : '')
     + '\n';
+  // Content-CID of the exact Turtle body about to land on the pod.
+  // Mirrored into the manifest entry below so CAS supersession gates
+  // (`checkSupersessionPrecondition`) can compare `if_match` against
+  // the head identity without re-fetching + rehashing the body.
+  const descriptorContentCid = computeCid(descriptorWithDistribution);
   await withTransientRetry(async () => {
     const descResponse = await fetchFn(descriptorUrl, {
       method: 'PUT',
@@ -1100,7 +1437,7 @@ export async function publish(
   //    the PUT succeeds only if no manifest exists — protects against
   //    two cold-start clients clobbering each other.
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
-  const newEntry = manifestEntryTurtle(descriptorUrl, descriptor);
+  const newEntry = manifestEntryTurtle(descriptorUrl, descriptor, descriptorContentCid);
   // Under N-way concurrent contention (e.g. 5 voters firing Promise.all),
   // 5 internal retries are not enough — the exponential window doesn't
   // grow fast enough to scatter every writer to a clean If-Match slot.
@@ -1118,10 +1455,20 @@ export async function publish(
     let manifestBody: string;
     let etag: string | null = null;
 
-    const existingResp = await withTransientRetry(() => fetchFn(manifestUrl, {
-      method: 'GET',
-      headers: { 'Accept': TURTLE_CONTENT_TYPE },
-    }));
+    // 5xx-as-throw promotion (see discover() / fetchDescriptorTurtleForCas
+    // for the same pattern): Azure-Files cold-cache 503s arrive as
+    // returned responses, so `withTransientRetry` only sees them retry-
+    // eligible when we throw inside the lambda.
+    const existingResp = await withTransientRetry(async () => {
+      const r = await fetchFn(manifestUrl, {
+        method: 'GET',
+        headers: { 'Accept': TURTLE_CONTENT_TYPE },
+      });
+      if (r.status >= 500) {
+        throw new Error(`manifest GET <${manifestUrl}> failed: ${r.status} ${r.statusText}`);
+      }
+      return r;
+    });
 
     let alreadyPublished = false;
     if (existingResp.ok) {
@@ -1134,8 +1481,37 @@ export async function publish(
       } else {
         manifestBody = `${existing.trimEnd()}\n\n${newEntry}\n`;
       }
+    } else if (existingResp.status === 404) {
+      // Manifest absent. This is EITHER a true cold-start (no descriptors
+      // yet) OR a lost/collapsed index whose descriptors are still intact
+      // (the f-manifest-collapse failure mode). Reconstruct from the
+      // on-pod descriptors so a missing index is never replaced by a
+      // 1-entry stub that truncates the pod. The just-written descriptor
+      // is normally picked up by the scan; append it defensively if the
+      // container listing hasn't caught up yet.
+      let rebuiltBody: string | null = null;
+      try {
+        const rebuilt = await buildManifestBodyFromPod(pod, fetchFn);
+        if (rebuilt.written > 0) {
+          rebuiltBody = rebuilt.body.includes(`<${descriptorUrl}>`)
+            ? rebuilt.body
+            : `${rebuilt.body.trimEnd()}\n\n${newEntry}\n`;
+        }
+      } catch {
+        rebuiltBody = null;
+      }
+      manifestBody = rebuiltBody
+        ?? `${turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod', 'dct'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
     } else {
-      manifestBody = `${turtlePrefixes(['cg', 'xsd', 'hydra', 'dcat', 'dprod', 'dct'])}\n\n${manifestHeaderTurtle(pod)}\n\n${newEntry}\n`;
+      // Non-404 non-ok (e.g. 403/401, or a non-5xx transient): the
+      // manifest may well EXIST but be momentarily unreadable. Rebuilding
+      // from scratch here is what truncated live indexes
+      // (f-manifest-collapse). Refuse to truncate — back off and retry;
+      // a later attempt re-reads the real manifest.
+      lastError = `manifest GET ${existingResp.status} ${existingResp.statusText} (attempt ${attempt}/${maxAttempts}); refusing to rebuild-from-scratch on a non-404`;
+      const backoff = Math.min(50 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 200), 1500);
+      await new Promise(r => setTimeout(r, backoff));
+      continue;
     }
 
     if (alreadyPublished) break;
@@ -1144,9 +1520,19 @@ export async function publish(
     if (etag) headers['If-Match'] = etag;
     else headers['If-None-Match'] = '*';   // cold-start: only PUT if no manifest exists
 
-    const manifestResp = await withTransientRetry(() => fetchFn(manifestUrl, {
-      method: 'PUT', headers, body: manifestBody,
-    }));
+    // 5xx-as-throw promotion: same rationale as the GET above. 412
+    // (CAS conflict) stays as a normal response — the loop below
+    // checks `manifestResp.ok` and falls through to retry with a
+    // freshly-read etag on 412, which is the deliberate behavior.
+    const manifestResp = await withTransientRetry(async () => {
+      const r = await fetchFn(manifestUrl, {
+        method: 'PUT', headers, body: manifestBody,
+      });
+      if (r.status >= 500) {
+        throw new Error(`manifest PUT <${manifestUrl}> failed: ${r.status} ${r.statusText}`);
+      }
+      return r;
+    });
 
     if (manifestResp.ok) {
       // Belt-and-suspenders: under N-way contention (e.g. 4+ concurrent
@@ -1157,10 +1543,16 @@ export async function publish(
       // writer's body. Verify by reading the manifest back; if our entry
       // is missing, treat as a conflict and retry. This terminates
       // because each retry GETs the freshest etag and rebuilds the body.
-      const verifyResp = await withTransientRetry(() => fetchFn(manifestUrl, {
-        method: 'GET',
-        headers: { 'Accept': TURTLE_CONTENT_TYPE },
-      }));
+      const verifyResp = await withTransientRetry(async () => {
+        const r = await fetchFn(manifestUrl, {
+          method: 'GET',
+          headers: { 'Accept': TURTLE_CONTENT_TYPE },
+        });
+        if (r.status >= 500) {
+          throw new Error(`manifest verify-GET <${manifestUrl}> failed: ${r.status} ${r.statusText}`);
+        }
+        return r;
+      });
       if (verifyResp.ok) {
         const verifyBody = await verifyResp.text();
         if (!verifyBody.includes(`<${descriptorUrl}>`)) {
@@ -1562,26 +1954,97 @@ export async function discover(
   const pod = ensureTrailingSlash(podUrl);
   const manifestUrl = `${pod}${MANIFEST_PATH}`;
 
-  const response = await withTransientRetry(() => fetchFn(manifestUrl, {
-    method: 'GET',
-    headers: { 'Accept': TURTLE_CONTENT_TYPE },
-  }));
+  // Promote 5xx RESPONSES to throws inside the lambda so
+  // `withTransientRetry` actually retries them. Without this, a single
+  // Azure-Files cold-cache 503 (a returned response, not a thrown
+  // network error) escapes the retry loop unhandled and surfaces as
+  // `precondition_unavailable` to every caller that relies on the
+  // manifest read — including the Phase A CAS pre-flight in the
+  // MCP relay's publish_context handler. The thrown message embeds the
+  // status digits so the helper's TRANSIENT_PATTERN (/5\d\d/) matches.
+  let attempts = 0;
+  const response = await withTransientRetry(async () => {
+    attempts++;
+    const r = await fetchFn(manifestUrl, {
+      method: 'GET',
+      headers: { 'Accept': TURTLE_CONTENT_TYPE },
+    });
+    if (r.status >= 500) {
+      throw new Error(
+        `Failed to fetch manifest from ${manifestUrl}: ${r.status} ${r.statusText} (attempt ${attempts})`,
+      );
+    }
+    return r;
+  }, { maxAttempts: 6, baseMs: 500 });
 
   if (!response.ok) {
     if (response.status === 404) {
       return [];
     }
     throw new Error(
-      `Failed to fetch manifest from ${manifestUrl}: ${response.status} ${response.statusText}`,
+      `Failed to fetch manifest from ${manifestUrl}: ${response.status} ${response.statusText} (after ${attempts} attempts)`,
     );
   }
 
   const turtle = await response.text();
-  const entries = parseManifest(turtle);
+  const parsed = parseManifest(turtle);
+  // Resolve relative entry URLs against the manifest base. CSS may serialize
+  // same-origin descriptor URLs as RELATIVE (e.g. `../context-graphs/X.ttl`,
+  // `../foxxi-wallet/cred-…`) — notably after a PATCH triggers a re-serialize —
+  // and downstream consumers (clr.ts fetchCredential, the mesh projector, etc.)
+  // call fetch()/new URL() on `descriptorUrl`/`describes`, which throws on a
+  // relative string ("Failed to parse URL from ../…"). Absolutize here so every
+  // consumer gets a resolvable URL regardless of how the manifest was serialized.
+  // Absolute http(s)/urn values pass through unchanged.
+  const absolutize = (u: string): string => {
+    try { return new URL(u, manifestUrl).href; } catch { return u; }
+  };
+  const entries: ManifestEntry[] = parsed.map(e => ({
+    ...e,
+    ...(e.descriptorUrl ? { descriptorUrl: absolutize(e.descriptorUrl) } : {}),
+    ...(Array.isArray(e.describes) ? { describes: e.describes.map(absolutize) } : {}),
+  }));
 
-  if (!filter) return entries;
+  // Apply filter, then sort, then limit. Order matters: filter first
+  // so the sort+limit operate over the relevant slice; sort before
+  // limit so 'latest N' actually returns the N most-recent matches
+  // rather than the N first matches in server-native order.
+  const filtered = filter
+    ? entries.filter(entry => matchesFilter(entry, filter))
+    : entries;
 
-  return entries.filter(entry => matchesFilter(entry, filter));
+  const sortMode = filter?.sort ?? 'newest-first';
+  let sorted: ManifestEntry[] = filtered;
+  if (sortMode !== 'unsorted') {
+    // Sort by `validFrom` (the descriptor's own declared instant of
+    // becoming valid — same field publish() stamps with the publish
+    // moment). Entries lacking validFrom sink to the end on
+    // newest-first, rise to the front on oldest-first — consistent
+    // with treating "no declared start" as "indeterminate, deprioritize
+    // when ranking by recency."
+    const copy = [...filtered];
+    copy.sort((a, b) => {
+      const av = a.validFrom ?? '';
+      const bv = b.validFrom ?? '';
+      if (sortMode === 'newest-first') {
+        if (!av && bv) return 1;
+        if (av && !bv) return -1;
+        if (av === bv) return 0;
+        return av < bv ? 1 : -1;
+      }
+      // oldest-first
+      if (!av && bv) return 1;
+      if (av && !bv) return -1;
+      if (av === bv) return 0;
+      return av < bv ? -1 : 1;
+    });
+    sorted = copy;
+  }
+
+  if (filter?.limit !== undefined && filter.limit >= 0) {
+    return sorted.slice(0, filter.limit);
+  }
+  return sorted;
 }
 
 // ═════════════════════════════════════════════════════════════

@@ -5,3 +5,5 @@ dist
 *.tsbuildinfo
 benchmarks/LongMemEval
 benchmarks/locomo
+.claude
+relay-agent-key-prod.json

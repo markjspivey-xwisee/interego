@@ -22,7 +22,9 @@
  */
 
 import type { IRI } from '@interego/core';
-import type { PGSLInstance, Value, NodeProvenance } from './types.js';
+import { createEncryptedEnvelope, openEncryptedEnvelope } from '@interego/core';
+import type { EncryptionKeyPair, EncryptedEnvelope } from '@interego/core';
+import type { PGSLInstance, Value, NodeProvenance, Node } from './types.js';
 import { resolve as pgslResolve } from './lattice.js';
 import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -199,6 +201,200 @@ export async function promoteToPod(
     endpoint: resourceUrl,
     promotedBy: node.provenance.wasAttributedTo,
   });
+}
+
+/**
+ * Promote a node to tier 2 (pod) ENCRYPTED — the canonical, encrypted-by-default
+ * form. The holon is the source of truth; this writes it as an encrypted
+ * envelope (JWE-style, per-recipient wrapped content key) so the pod holds
+ * ciphertext, never plaintext. `resourceUrl` is supplied by the caller (resolved
+ * via the agent's shape-driven Type Index placement), keeping this layer free of
+ * any Solid/placement dependency. Pair with {@link resolveHolonFromPod}.
+ */
+export async function promoteToPodEncrypted(
+  pgsl: PGSLInstance,
+  uri: IRI,
+  resourceUrl: string,
+  recipientPublicKeys: readonly string[],
+  senderKeyPair: EncryptionKeyPair,
+  fetchFn: typeof fetch,
+): Promise<PersistenceRecord> {
+  const node = pgsl.nodes.get(uri);
+  if (!node) throw new Error(`Node not found: ${uri}`);
+
+  // Canonical, lossless holon serialization → encrypted envelope. (JSON of the
+  // node round-trips exactly; the projection layer renders RDF/Turtle separately.)
+  const plaintext = JSON.stringify(node);
+  const envelope = createEncryptedEnvelope(plaintext, recipientPublicKeys, senderKeyPair);
+
+  const response = await fetchFn(resourceUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(envelope),
+  });
+  if (!response.ok && response.status !== 412) {
+    throw new Error(`Encrypted pod publish failed: ${response.status} ${response.statusText}`);
+  }
+
+  return recordPersistence(createPersistenceRegistry(), uri, 2, {
+    endpoint: resourceUrl,
+    encryptedFor: [...recipientPublicKeys],
+    promotedBy: node.provenance.wasAttributedTo,
+  });
+}
+
+/**
+ * Resolve + decrypt a holon persisted via {@link promoteToPodEncrypted}.
+ * Returns the node, or null if unauthorized / unreadable / decryption fails.
+ */
+export async function resolveHolonFromPod(
+  resourceUrl: string,
+  recipientKeyPair: EncryptionKeyPair,
+  fetchFn: typeof fetch,
+): Promise<Node | null> {
+  const r = await fetchFn(resourceUrl, { headers: { Accept: 'application/json' } });
+  if (!r.ok) return null;
+  let envelope: EncryptedEnvelope;
+  try { envelope = (await r.json()) as EncryptedEnvelope; } catch { return null; }
+  const plaintext = openEncryptedEnvelope(envelope, recipientKeyPair);
+  if (plaintext == null) return null;
+  try { return JSON.parse(plaintext) as Node; } catch { return null; }
+}
+
+/** All nodes reachable from a top holon — the lattice slice it spans (items +
+ *  left/right constituents, transitively). This is the CANONICAL extent of an
+ *  artifact: persisting only the top node leaves its item URIs dangling. */
+export function collectLatticeSlice(pgsl: PGSLInstance, topUri: IRI): Map<IRI, Node> {
+  const out = new Map<IRI, Node>();
+  const stack: IRI[] = [topUri];
+  while (stack.length > 0) {
+    const uri = stack.pop()!;
+    if (out.has(uri)) continue;
+    const node = pgsl.nodes.get(uri);
+    if (!node) continue;
+    out.set(uri, node);
+    if (node.kind === 'Fragment') {
+      for (const item of node.items) stack.push(item);
+      if (node.left) stack.push(node.left);
+      if (node.right) stack.push(node.right);
+    }
+  }
+  return out;
+}
+
+/** Serialized, decryptable form of a full lattice slice. */
+export interface EncryptedLatticeSlice {
+  readonly topUri: IRI;
+  /** uri → node, for every node reachable from topUri. */
+  readonly nodes: Record<string, Node>;
+}
+
+/**
+ * Promote the FULL lattice slice spanned by `topUri` to tier 2 (pod), ENCRYPTED
+ * — the canonical, self-contained, encrypted form of an artifact. Unlike
+ * {@link promoteToPodEncrypted} (top node only), this persists every node
+ * reachable from the holon, so {@link resolveLatticeFromPod} can rebuild the
+ * artifact in full from ciphertext alone. `resourceUrl` is supplied by the
+ * caller (resolved via the agent's shape-driven Type Index placement).
+ */
+export async function promoteLatticeSliceEncrypted(
+  pgsl: PGSLInstance,
+  topUri: IRI,
+  resourceUrl: string,
+  recipientPublicKeys: readonly string[],
+  senderKeyPair: EncryptionKeyPair,
+  fetchFn: typeof fetch,
+): Promise<PersistenceRecord> {
+  const top = pgsl.nodes.get(topUri);
+  if (!top) throw new Error(`Node not found: ${topUri}`);
+
+  const slice = collectLatticeSlice(pgsl, topUri);
+  const payload: EncryptedLatticeSlice = {
+    topUri,
+    nodes: Object.fromEntries(slice) as Record<string, Node>,
+  };
+  const envelope = createEncryptedEnvelope(JSON.stringify(payload), recipientPublicKeys, senderKeyPair);
+
+  const response = await fetchFn(resourceUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(envelope),
+  });
+  if (!response.ok && response.status !== 412) {
+    throw new Error(`Encrypted lattice-slice publish failed: ${response.status} ${response.statusText}`);
+  }
+
+  return recordPersistence(createPersistenceRegistry(), topUri, 2, {
+    endpoint: resourceUrl,
+    encryptedFor: [...recipientPublicKeys],
+    promotedBy: top.provenance.wasAttributedTo,
+  });
+}
+
+/**
+ * Promote the ENTIRE lattice instance to tier 2 (pod), ENCRYPTED, anchored at
+ * `topUri`. Use this when the instance holds exactly one artifact (e.g. a fresh
+ * per-artifact lattice) — it persists every node, so multi-chain ingests (whose
+ * chains aren't all reachable from a single top) are captured in full. Same
+ * encrypted wire shape as {@link promoteLatticeSliceEncrypted}; read back with
+ * {@link resolveLatticeFromPod}.
+ */
+export async function promoteInstanceEncrypted(
+  pgsl: PGSLInstance,
+  topUri: IRI,
+  resourceUrl: string,
+  recipientPublicKeys: readonly string[],
+  senderKeyPair: EncryptionKeyPair,
+  fetchFn: typeof fetch,
+): Promise<PersistenceRecord> {
+  const top = pgsl.nodes.get(topUri);
+  if (!top) throw new Error(`Node not found: ${topUri}`);
+
+  const payload: EncryptedLatticeSlice = {
+    topUri,
+    nodes: Object.fromEntries(pgsl.nodes) as Record<string, Node>,
+  };
+  const envelope = createEncryptedEnvelope(JSON.stringify(payload), recipientPublicKeys, senderKeyPair);
+
+  const response = await fetchFn(resourceUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(envelope),
+  });
+  if (!response.ok && response.status !== 412) {
+    throw new Error(`Encrypted instance publish failed: ${response.status} ${response.statusText}`);
+  }
+
+  return recordPersistence(createPersistenceRegistry(), topUri, 2, {
+    endpoint: resourceUrl,
+    encryptedFor: [...recipientPublicKeys],
+    promotedBy: top.provenance.wasAttributedTo,
+  });
+}
+
+/**
+ * Resolve + decrypt a full lattice slice persisted via
+ * {@link promoteLatticeSliceEncrypted}. Returns the top URI + the node map (so
+ * the caller can rebuild a PGSLInstance / walk the full artifact), or null if
+ * unauthorized / unreadable / decryption fails.
+ */
+export async function resolveLatticeFromPod(
+  resourceUrl: string,
+  recipientKeyPair: EncryptionKeyPair,
+  fetchFn: typeof fetch,
+): Promise<{ topUri: IRI; nodes: Map<IRI, Node> } | null> {
+  const r = await fetchFn(resourceUrl, { headers: { Accept: 'application/json' } });
+  if (!r.ok) return null;
+  let envelope: EncryptedEnvelope;
+  try { envelope = (await r.json()) as EncryptedEnvelope; } catch { return null; }
+  const plaintext = openEncryptedEnvelope(envelope, recipientKeyPair);
+  if (plaintext == null) return null;
+  try {
+    const payload = JSON.parse(plaintext) as EncryptedLatticeSlice;
+    return { topUri: payload.topUri, nodes: new Map(Object.entries(payload.nodes)) as Map<IRI, Node> };
+  } catch {
+    return null;
+  }
 }
 
 /** Promote a node to tier 3 — pin to IPFS, return CID. */

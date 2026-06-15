@@ -33,9 +33,17 @@ import type {
 import type {
   PGSLInstance,
 } from '@interego/pgsl';
-import type {
-  XapiStatement,
-} from '@interego/pgsl';
+// xAPI is a FOXXI-VERTICAL ingestion profile, NOT a substrate built-in. The test
+// therefore imports the xAPI shape from the vertical that owns it and registers
+// the vertical's profiles onto the substrate registry before exercising them.
+import {
+  registerFoxxiIngestionProfiles,
+  type XapiStatement,
+} from '../applications/foxxi-content-intelligence/src/pgsl-ingestion-profiles.js';
+
+// Register the Foxxi vertical's PGSL ingestion profiles (xapi, lers) once — the
+// substrate ships only the domain-neutral rdf + raw profiles.
+registerFoxxiIngestionProfiles();
 
 // ── Test Data ─────────────────────────────────────────────
 

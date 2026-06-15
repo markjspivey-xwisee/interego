@@ -53,6 +53,8 @@ scenarios=(
   "21-federated-inquiry-emergent-paradigm"
   "22-game-design-build-play"
   "23-zero-copy-semantic-layer"
+  "24-dual-audience-owm"
+  "25-dual-audience-learning"
 )
 
 # Optional filter — accept positional args like "01" or "01 03 14"

@@ -186,8 +186,6 @@ export {
 } from './profiles.js';
 export type {
   IngestionProfile,
-  XapiStatement,
-  LersCredential,
   RdfTriple,
 } from './profiles.js';
 // SPARQL engine
@@ -261,11 +259,11 @@ export {
   registerDecorator,
   removeDecorator,
   decorateNode,
+  makeAffordance,
   coreSystemDecorator,
   ontologyPatternDecorator,
   coherenceDecorator,
   persistenceDecorator,
-  xapiDomainDecorator,
   federationDecorator,
   llmAdvisorDecorator,
 } from './affordance-decorators.js';
@@ -350,6 +348,12 @@ export {
   getNodesAtTier,
   promoteToLocal,
   promoteToPod,
+  promoteToPodEncrypted,
+  resolveHolonFromPod,
+  promoteLatticeSliceEncrypted,
+  promoteInstanceEncrypted,
+  resolveLatticeFromPod,
+  collectLatticeSlice,
   promoteToIpfs,
   promoteToChain,
   resolve as resolveFromTiers,
@@ -363,6 +367,28 @@ export type {
   ResolutionResult,
   PersistenceRegistry,
 } from './persistence.js';
+// Projection engine (Stage 3) — holon → cg-RDF descriptor + manifest entry.
+// The manifest is a deterministic render of a lattice slice (not a pod scan).
+export {
+  projectHolon,
+  projectLatticeSlice,
+  renderManifestEntry,
+  renderManifestBody,
+  descriptorSlug,
+  projectHolonToCredential,
+  projectHolonToActivity,
+  CG_NS,
+  DCT_NS,
+} from './projection.js';
+export type {
+  HolonProjection,
+  ProjectHolonOptions,
+  LatticeSliceProjection,
+  HolonCredential,
+  ProjectCredentialOptions,
+  HolonActivity,
+  ProjectActivityOptions,
+} from './projection.js';
 // Cognitive strategy (bridges question analysis with the affordance engine)
 export { computeCognitiveStrategy } from './cognitive-strategy.js';
 export type { CognitiveStrategy } from './cognitive-strategy.js';

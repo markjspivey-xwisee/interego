@@ -193,3 +193,86 @@ describe('TriG parser — adversarial / edge cases', () => {
     expect(() => parseTrig(open + close)).not.toThrow();
   });
 });
+
+describe('TriG parser — RDF Collection syntax `( ... )`', () => {
+  // Regression for the f-shin-collection finding: a shape with
+  // `sh:in ( "X" "O" )` tripped the parser, validateAgainstShape
+  // caught the throw and silently returned conforms:true, and the
+  // gate vacuously accepted every value (including illegal marks
+  // outside the enumeration). The parser now desugars `( ... )` into
+  // the standard RDF list form (head bnode + rdf:first/rdf:rest
+  // chain terminating at rdf:nil) so downstream consumers can walk it.
+  const RDF_FIRST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first' as IRI;
+  const RDF_REST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest' as IRI;
+  const RDF_NIL = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil' as IRI;
+
+  it('object-position collection ( "X" "O" ) parses without throwing', () => {
+    const trig = `@prefix ex: <http://example/> .
+<urn:s:1> ex:p ( "X" "O" ) .`;
+    expect(() => parseTrig(trig)).not.toThrow();
+  });
+
+  it('object-position collection desugars to a walkable rdf:first/rdf:rest chain', () => {
+    const trig = `@prefix ex: <http://example/> .
+<urn:s:1> ex:p ( "X" "O" ) .`;
+    const doc = parseTrig(trig);
+    const subject = doc.subjects.find(s => s.subject === 'urn:s:1');
+    expect(subject).toBeDefined();
+    const head = subject!.properties.get('http://example/p' as IRI)?.[0];
+    expect(head?.kind).toBe('bnode');
+    // Walk the rdf:first/rdf:rest chain and collect the literal values.
+    const values: string[] = [];
+    let cursor = head;
+    for (let i = 0; i < 16 && cursor && cursor.kind === 'bnode'; i++) {
+      const cellId = cursor.id;
+      const cell = doc.subjects.find(s =>
+        typeof s.subject === 'object' && 'bnode' in s.subject && s.subject.bnode === cellId,
+      );
+      if (!cell) break;
+      const first = cell.properties.get(RDF_FIRST)?.[0];
+      if (first?.kind === 'literal') values.push(first.value);
+      const rest = cell.properties.get(RDF_REST)?.[0];
+      if (!rest) break;
+      if (rest.kind === 'iri' && rest.iri === RDF_NIL) break;
+      cursor = rest;
+    }
+    expect(values).toEqual(['X', 'O']);
+  });
+
+  it('empty collection () desugars to rdf:nil', () => {
+    const trig = `@prefix ex: <http://example/> .
+<urn:s:1> ex:p () .`;
+    const doc = parseTrig(trig);
+    const subject = doc.subjects.find(s => s.subject === 'urn:s:1');
+    const head = subject!.properties.get('http://example/p' as IRI)?.[0];
+    expect(head?.kind).toBe('iri');
+    if (head?.kind === 'iri') expect(head.iri).toBe(RDF_NIL);
+  });
+
+  it('nested collection ( ( "X" ) "Y" ) parses without throwing', () => {
+    const trig = `@prefix ex: <http://example/> .
+<urn:s:1> ex:p ( ( "X" ) "Y" ) .`;
+    expect(() => parseTrig(trig)).not.toThrow();
+  });
+
+  it('collection inside a blank-node property list parses', () => {
+    const trig = `@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix ttt: <urn:ttt:> .
+ttt:Shape a sh:NodeShape ;
+  sh:property [
+    sh:path ttt:mark ;
+    sh:in ( "X" "O" )
+  ] .`;
+    expect(() => parseTrig(trig)).not.toThrow();
+  });
+
+  it('unterminated collection throws (does not silently accept)', () => {
+    // `.` inside the collection short-circuits the inner term parse
+    // before the loop's own "missing `)`" check fires. Either error
+    // path is fine — what matters is that the parser does NOT silently
+    // accept a malformed list.
+    const trig = `@prefix ex: <http://example/> .
+<urn:s:1> ex:p ( "X" "O" .`;
+    expect(() => parseTrig(trig)).toThrow();
+  });
+});

@@ -58,7 +58,11 @@ RUN npm install --no-save tsx@4.22.0
 #   - applications/_shared/                           (vertical-bridge + affordance-mcp + aggregate-privacy + scorm + vc-jwt)
 #   - applications/foxxi-content-intelligence/        (the vertical itself)
 #   - applications/learner-performer-companion/src/   (grounded-answer.ts imported by course-qa.ts)
-COPY packages/core/ ./packages/core/
+# All workspace packages — the foxxi vertical imports @interego/core,
+# @interego/solid (discover/resolveDid for mesh + federation), @interego/pgsl,
+# and @interego/passport. Copy + build the whole set (mirrors Dockerfile.relay)
+# so every @interego/* the bridge loads at runtime resolves to its built dist/.
+COPY packages/ ./packages/
 COPY docs/ns/ ./docs/ns/
 COPY applications/_shared/ ./applications/_shared/
 COPY applications/foxxi-content-intelligence/ ./applications/foxxi-content-intelligence/
@@ -67,10 +71,11 @@ COPY applications/learner-performer-companion/src/ ./applications/learner-perfor
 # foxxi bridge composes for foxxi.query_experience_index.
 COPY applications/lrs-adapter/src/ ./applications/lrs-adapter/src/
 
-# Compile @interego/core → packages/core/dist/. The foxxi vertical imports
-# the substrate as the `@interego/core` package, and that package's exports
-# map resolves to dist/ — so the compile is load-bearing at runtime.
-RUN npm run build:core
+# Compile all @interego/* packages → their dist/. The foxxi vertical imports
+# @interego/core + @interego/solid + @interego/pgsl + @interego/passport, and
+# each package's exports map resolves to dist/ — so the full build is
+# load-bearing at runtime (mirrors Dockerfile.relay's `npm run build`).
+RUN npm run build
 
 # Make `@interego/core` resolvable by name. The substrate kernel package
 # now lives at packages/core/ (the repo root is @interego/workspace);
@@ -79,7 +84,11 @@ RUN npm run build:core
 # points at the dist/ just compiled. npm ci will have created this
 # symlink as part of the workspace install — this line is explicit and
 # idempotent.
-RUN mkdir -p node_modules/@interego && ln -sfn /app/packages/core node_modules/@interego/core
+RUN mkdir -p node_modules/@interego \
+  && ln -sfn /app/packages/core node_modules/@interego/core \
+  && ln -sfn /app/packages/solid node_modules/@interego/solid \
+  && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl \
+  && ln -sfn /app/packages/passport node_modules/@interego/passport
 
 # ────────────────────────────────────────────────────────────
 #  Runtime stage

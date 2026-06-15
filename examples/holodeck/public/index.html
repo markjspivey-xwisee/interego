@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Holodeck — Interego Multi-Agent Control Room</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1><span class="dot"></span>Holodeck</h1>
+    <span class="small">Interego multi-agent control room</span>
+    <span class="status" id="status">Connecting…</span>
+  </header>
+
+  <div class="main">
+    <!-- LEFT: agent roster + spawn -->
+    <div class="panel" id="panel-left">
+      <h2>Agents <span class="count" id="agent-count">0</span>
+        <button class="primary sm" onclick="App.openMintModal()">+ mint</button>
+      </h2>
+      <div class="panel-body" id="agent-list">
+        <div class="empty">No agents minted yet.</div>
+      </div>
+    </div>
+
+    <!-- CENTER: live runs -->
+    <div class="panel" id="panel-center">
+      <h2>Live runs <span class="count" id="run-count">0</span>
+        <button class="sm" onclick="App.openPromptModal()">+ send prompt</button>
+      </h2>
+      <div class="panel-body" id="run-list">
+        <div class="empty">No active runs. Spawn an agent with a prompt to see live output.</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: loops + activity -->
+    <div class="panel" id="panel-right">
+      <h2>Loops <span class="count" id="loop-count">0</span>
+        <button class="primary sm" onclick="App.openLoopModal()">+ loop</button>
+      </h2>
+      <div class="panel-body" id="loop-list" style="max-height: 40%;">
+        <div class="empty">No loops defined.</div>
+      </div>
+      <h2>Substrate activity <span class="count" id="activity-count">0</span>
+        <button class="sm" onclick="App.refreshActivity()">refresh</button>
+      </h2>
+      <div class="panel-body" id="activity-feed">
+        <div class="empty">No activity yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- modals (rendered by app.js into a portal) -->
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

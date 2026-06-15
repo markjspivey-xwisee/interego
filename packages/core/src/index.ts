@@ -200,7 +200,6 @@ export type {
   IPFSAnchor,
   BlockchainAnchor,
   OpenBadgeCredential,
-  LERSRecord,
   IdentityAnchors,
   // Payment (§11)
   PaymentRequirement,

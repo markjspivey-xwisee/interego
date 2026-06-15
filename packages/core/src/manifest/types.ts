@@ -25,6 +25,20 @@ import type {
 export interface ManifestEntry {
   /** IRI of the context descriptor resource. */
   readonly descriptorUrl: string;
+  /**
+   * Content-addressable identity of this descriptor's Turtle body.
+   * Mirrored on the manifest row at publish time so CAS supersession
+   * gates (`checkSupersessionPrecondition`) can compare `if_match`
+   * against the head CID without a round-trip body GET + rehash. The
+   * manifest is already the head pointer; mirroring the CID makes it
+   * the head identity too, which closes the precondition fully inside
+   * one manifest fetch.
+   *
+   * Optional — legacy entries written before this field landed are
+   * still valid; consumers (the precondition gate) fall back to a
+   * descriptor-body fetch + recompute when this field is absent.
+   */
+  readonly cid?: string;
   /** IRIs of the named graphs this descriptor covers. */
   readonly describes: readonly string[];
   /** Facet types present on this descriptor. */

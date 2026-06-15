@@ -994,18 +994,15 @@ export interface OpenBadgeCredential {
   readonly evidence?: readonly IRI[];
 }
 
-/** IEEE LERS (Learning & Employment Record). */
-export interface LERSRecord {
-  readonly recordId: IRI;
-  readonly issuer: IRI;
-  readonly competency: string;
-  readonly assessmentDate: string;
-  readonly level: string;                // e.g. 'proficient', 'expert'
-}
-
 /**
  * Identity anchors — multi-standard identity/verification proofs
  * attached to the Trust facet.
+ *
+ * Domain-neutral standards only. Learning/employment-vertical records (e.g.
+ * IEEE-LERS competency records, xAPI/CLR shapes) are NOT anchored here — those
+ * are Foxxi-vertical and project from holons in the vertical, not the substrate.
+ * General-purpose credentials (Open Badges, W3C VCs) remain because they are not
+ * specific to any one vertical.
  */
 export interface IdentityAnchors {
   // Blockchain identity
@@ -1016,9 +1013,8 @@ export interface IdentityAnchors {
   readonly ipfs?: IPFSAnchor;
   readonly blockchain?: BlockchainAnchor;
 
-  // Capability credentials
+  // Capability credentials (general-purpose standards)
   readonly openBadges?: readonly OpenBadgeCredential[];
-  readonly lers?: readonly LERSRecord[];
 
   // W3C standards (complement existing WebID + DID + VC)
   readonly additionalVCs?: readonly IRI[];

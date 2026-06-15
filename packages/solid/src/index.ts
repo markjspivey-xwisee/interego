@@ -1,5 +1,6 @@
 export {
   publish, discover, subscribe, parseManifest,
+  rebuildManifestFromPod,
   fetchGraphContent,
   parseDistributionFromDescriptorTurtle,
   parseAuthorshipProofFromDescriptorTurtle,
@@ -51,6 +52,18 @@ export {
   WELL_KNOWN_AGENTS_PATH,
 } from './discovery.js';
 export type { DiscoveryResult, DiscoveryTier, AgentCatalogEntry } from './discovery.js';
+export {
+  resolveStorageForShape,
+  registerShapeStorage,
+  type StorageResolution,
+  type ResolveStorageOptions,
+} from './type-index.js';
+export {
+  publishAgentEncryptionKey,
+  resolveAgentEncryptionKey,
+  AGENT_ENCRYPTION_KEY_PATH,
+  type AgentEncryptionKey,
+} from './encryption-keys.js';
 export { socialWalk } from './social-walk.js';
 export type { SocialWalkResult, PodNode, PodEdge, SocialWalkOptions } from './social-walk.js';
 

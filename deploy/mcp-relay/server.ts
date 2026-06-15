@@ -20,6 +20,8 @@ import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { WebSocket } from 'ws';
+import { Agent, setGlobalDispatcher } from 'undici';
+import { Wallet as EthersWalletCtor } from 'ethers';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -38,6 +40,9 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 import { InteregoOAuthProvider } from './oauth-provider.js';
 import {
   loadClients as loadOAuthClients,
+  loadOneClient as loadOneOAuthClient,
+  listClientFilesOnPod as listOAuthClientFilesOnPod,
+  removeClient as removeOAuthClient,
   saveClient as saveOAuthClient,
   resolveMaintainerPodUrl as resolveOAuthStorePodUrl,
   relayDidFromAddress,
@@ -47,6 +52,7 @@ import {
   loadAccessTokens as loadOAuthAccessTokens,
   loadRefreshTokens as loadOAuthRefreshTokens,
   loadAccessTokenByRaw as loadOAuthAccessTokenByRaw,
+  loadRefreshTokenByRaw as loadOAuthRefreshTokenByRaw,
   persistAccessToken as persistOAuthAccessToken,
   persistRefreshToken as persistOAuthRefreshToken,
   removeAccessToken as removeOAuthAccessToken,
@@ -60,6 +66,25 @@ import {
   type FederationStoreConfig,
   type FederationEntry,
 } from './federation-store.js';
+import {
+  inboxUrlFor,
+  buildNotification,
+  deliverNotification,
+  readInbox as readAgentInbox,
+  type NotificationInput,
+} from './agent-mesh.js';
+import {
+  actorUrl as apActorUrl,
+  buildWebfinger as apBuildWebfinger,
+  buildActor as apBuildActor,
+  buildOutbox as apBuildOutbox,
+  type AgentCardLite,
+} from './activitypub.js';
+import {
+  fanOut as reachFanOut,
+  KNOWN_CHANNEL_TYPES,
+  type Channel as ReachChannel,
+} from './reachability.js';
 import {
   validateDpopJwt,
   athFromAccessToken,
@@ -108,10 +133,13 @@ import {
   type SignedDescriptor,
   type DelegationSigner,
   type DelegationVerifier,
+  recoverMessageSigner,
+  importWallet,
   toTurtle,
   validate,
   validateAgainstShape,
   verifyDescriptorSignature,
+  withTransientRetry,
   type ShaclResult,
 } from '@interego/core';
 import {
@@ -138,6 +166,8 @@ import type {
 import {
   publish,
   discover,
+  parseManifest,
+  rebuildManifestFromPod,
   subscribe,
   writeAgentRegistry,
   readAgentRegistry,
@@ -432,6 +462,25 @@ const AUTH_REQUIRED_TOOLS = new Set([
   'publish_context', 'register_agent', 'revoke_agent',
   'publish_directory',
   'subscribe_to_pod', 'add_pod', 'resolve_webfinger',
+  // record_trajectory_step ultimately calls publish_context internally,
+  // so it MUST be auth-gated at the wire to prevent unauthenticated
+  // trajectory writes (which would then attribute to the relay's
+  // session agent, polluting the trajectory pod). pgsl_decide stays
+  // public — it's a read-only lattice query.
+  'record_trajectory_step',
+  // notify_agent writes a notification into another agent's inbox and
+  // attributes the sender — must be authenticated. read_inbox defaults
+  // to the caller's own pod, so it needs the bound identity too.
+  // set_reachability mutates the caller's own agent card.
+  'notify_agent', 'read_inbox', 'set_reachability',
+  // sign_request signs a payload AS the bound caller (session-derived identity)
+  // with the relay delegation key — the agent's signing primitive for
+  // signed-request affordances. Must be auth-gated so it can never sign for
+  // anyone but the authenticated caller.
+  'sign_request',
+  // rebuild_manifest rewrites a pod's manifest index (non-destructive,
+  // reconstructs from on-pod descriptors) — gate it behind auth.
+  'rebuild_manifest',
 ]);
 
 // Tools that are public (read operations)
@@ -485,6 +534,110 @@ async function verifyBearerToken(authHeader: string | undefined): Promise<AuthRe
   }
 }
 
+// ── Signed-request auth (machine-to-machine, headless) ─────────
+//
+// OAuth answers "did this human grant this app permission to act on
+// their behalf?" — browser-mediated, suitable for claude.ai / ChatGPT
+// connector flows. ECDSA signature auth answers a different question:
+// "is this caller really who they claim to be?" — machine-to-machine,
+// suitable for headless agents, CI runners, sensors, IoT, and scripts
+// that cannot complete a browser-based authorization flow.
+//
+// Both are legitimate auth questions. The relay supports both; either
+// satisfies the AUTH_REQUIRED_TOOLS gate, neither requires the other.
+//
+// Wire shape: the caller's body includes
+//   { _signature: '0x...', _signed_payload: '<canonical JSON string>' }
+// and inside the signed payload there MUST be:
+//   - `agent_id`: a did:ethr:<addr> the caller claims to be
+//   - `timestamp`: ISO 8601 instant, within ±60s of relay time (replay
+//                  protection — without it, a leaked signature would
+//                  be replayable forever)
+//
+// The signer signs `sha256:<hex(sha256(signedPayload))>` with their
+// wallet (same canonical scheme Foxxi's verifySignature uses for
+// /agent/teach and /performance/outcome, kept consistent so a wallet
+// that signs one signs all). Verification recovers the address and
+// compares it against the address inside the claimed agent_id DID.
+//
+// Identity binding: when signature auth succeeds, the caller's
+// effective agent_id is OVERRIDDEN by the DID the signature recovers
+// to. This blocks spoofing: a caller cannot claim agent_id=alice in
+// the body while signing with bob's wallet — the recovered DID wins.
+interface SignedAuthResult extends AuthResult {
+  // When signature auth succeeded, this is the recovered did:ethr — the
+  // descriptor's authorship MUST be set from here, not from any
+  // caller-claimed agent_id.
+  recoveredDid?: string;
+}
+
+const SIGNATURE_REPLAY_WINDOW_MS = 60_000;
+
+function verifySignedRequest(body: unknown): SignedAuthResult {
+  if (!body || typeof body !== 'object') {
+    return { authenticated: false, error: 'signed-request body is not an object' };
+  }
+  const b = body as Record<string, unknown>;
+  const signature = typeof b._signature === 'string' ? b._signature : undefined;
+  const signedPayload = typeof b._signed_payload === 'string' ? b._signed_payload : undefined;
+  if (!signature || !signedPayload) {
+    return { authenticated: false, error: 'missing _signature or _signed_payload' };
+  }
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(signedPayload) as Record<string, unknown>;
+  } catch (err) {
+    return { authenticated: false, error: `_signed_payload is not valid JSON: ${(err as Error).message}` };
+  }
+  const claimedAgentId = typeof payload.agent_id === 'string' ? payload.agent_id : undefined;
+  const timestamp = typeof payload.timestamp === 'string' ? payload.timestamp : undefined;
+  if (!claimedAgentId) {
+    return { authenticated: false, error: 'signed payload missing agent_id' };
+  }
+  if (!timestamp) {
+    return { authenticated: false, error: 'signed payload missing timestamp (replay protection — include ISO 8601 instant)' };
+  }
+  const t = Date.parse(timestamp);
+  if (!Number.isFinite(t)) {
+    return { authenticated: false, error: `signed payload timestamp is not a parseable instant: ${timestamp}` };
+  }
+  const drift = Math.abs(Date.now() - t);
+  if (drift > SIGNATURE_REPLAY_WINDOW_MS) {
+    return { authenticated: false, error: `signature timestamp drift ${Math.round(drift / 1000)}s exceeds ±${SIGNATURE_REPLAY_WINDOW_MS / 1000}s window — replay protection` };
+  }
+  // Recover signer; canonical message is `sha256:<hex(sha256(signedPayload))>`.
+  const message = `sha256:${createHash('sha256').update(signedPayload, 'utf8').digest('hex')}`;
+  let recovered: string;
+  try {
+    recovered = recoverMessageSigner(message, signature);
+  } catch (err) {
+    return { authenticated: false, error: `signature recovery threw: ${(err as Error).message}` };
+  }
+  // Compare against the address embedded in the agent_id DID. Accepts
+  // did:ethr:<addr> and did:key:0x<addr> conventions (case-insensitive).
+  const addrMatch = claimedAgentId.toLowerCase().match(/0x[0-9a-f]{40}/);
+  if (!addrMatch) {
+    return { authenticated: false, error: `agent_id ${claimedAgentId} does not embed a recognizable Ethereum address (did:ethr:<addr> expected)` };
+  }
+  if (recovered.toLowerCase() !== addrMatch[0]) {
+    return {
+      authenticated: false,
+      error: `signature recovered to ${recovered} but agent_id claimed ${addrMatch[0]}`,
+    };
+  }
+  // The recovered DID is the canonical identity — use it, not the
+  // (matching) caller-claimed agent_id, so identity binding is uniform
+  // regardless of which form the caller used in the claim.
+  const recoveredDid = `did:ethr:${recovered}`;
+  return {
+    authenticated: true,
+    agentId: recoveredDid,
+    userId: recoveredDid,
+    recoveredDid,
+    scope: 'mcp', // signed requests get baseline MCP scope; finer-grained scoping is OAuth's job
+  };
+}
+
 // ── Migration: old public-host → internal-FQDN URL translation ──
 //
 // Pre-migration the CSS pod was reachable at `interego-css.livelysky-<id>...`;
@@ -518,6 +671,23 @@ async function verifyBearerToken(authHeader: string | undefined): Promise<AuthRe
 //
 // (`normalizeCssUrl` is imported alongside the other local helpers at the
 // top of the file.)
+
+// ── Outbound HTTP keep-alive pool ───────────────────────────
+//
+// Every outbound fetch the relay makes — solidFetch (CSS reads/writes),
+// raw fetch to IDENTITY_URL (token verify, /agents/me, etc.), webhook
+// POST fan-out — flows through Node's global undici dispatcher. Pinning
+// a single shared Agent with keep-alive on lets all of them reuse pooled
+// TCP+TLS sockets to the env-internal CSS/identity envoy instead of
+// handshaking per request. Single source-of-truth: setGlobalDispatcher
+// covers solidFetch + every raw fetch site without per-callsite edits.
+const outboundAgent = new Agent({
+  keepAliveTimeout: 30_000,
+  keepAliveMaxTimeout: 120_000,
+  connections: 64,
+  pipelining: 1,
+});
+setGlobalDispatcher(outboundAgent);
 
 // ── Fetch wrapper ───────────────────────────────────────────
 
@@ -664,33 +834,53 @@ const pgslProvenance: NodeProvenance = {
 };
 
 // Per-process X25519 keypair used to encrypt content the relay publishes on
-// behalf of the authenticated mobile agent. Persisted to disk so container
-// restarts preserve the same identity (matters for recipient membership on
-// previously-encrypted envelopes). Generated fresh on first run.
-const RELAY_AGENT_KEY_FILE = process.env['RELAY_AGENT_KEY_FILE'] ?? '/app/relay-agent-key.json';
-const relayAgentKey: EncryptionKeyPair = (() => {
-  // If the file exists, it MUST be loadable. Silently regenerating
-  // on parse failure would mint a new identity and orphan every
-  // previously-encrypted envelope keyed to the old public key.
-  // Better to fail fast and let the operator restore from backup.
-  if (existsSync(RELAY_AGENT_KEY_FILE)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(RELAY_AGENT_KEY_FILE, 'utf8'));
-    } catch (err) {
-      throw new Error(
-        `RELAY_AGENT_KEY_FILE (${RELAY_AGENT_KEY_FILE}) exists but is not valid JSON: ${(err as Error).message}. ` +
-        `Restore from backup or move the file aside to mint a new identity.`,
-      );
-    }
-    const p = parsed as Partial<EncryptionKeyPair>;
-    if (p?.publicKey && p?.secretKey && p?.algorithm === 'X25519-XSalsa20-Poly1305') {
-      return p as EncryptionKeyPair;
-    }
+// behalf of the authenticated mobile agent, and to seal the persisted
+// OAuth client_secrets + access/refresh identity bearers at rest. Stable
+// across revisions or every redeploy orphans every previously-sealed
+// envelope (new key cannot decrypt old payloads) — surfaced as the
+// `failed to unseal identityToken at .../tokens-refresh/...` log line
+// and forced Claude/ChatGPT re-authorization on each rollover.
+//
+// Resolution order (first match wins):
+//   1. RELAY_AGENT_KEY_JSON — inline JSON content. Wire from a
+//      Container Apps secretref so the keypair survives every revision
+//      rollover. This is the ONLY path that works on ephemeral
+//      filesystems (Container Apps, Lambda, etc.).
+//   2. RELAY_AGENT_KEY_FILE — on-disk JSON file (default
+//      /app/relay-agent-key.json). Useful for self-hosted / bare-metal
+//      deployments where the container has a persistent volume.
+//   3. Mint a fresh keypair and try to persist to the file path. On
+//      ephemeral storage this resets every restart — warned at startup.
+function parseRelayAgentKey(source: string, label: string): EncryptionKeyPair {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch (err) {
     throw new Error(
-      `RELAY_AGENT_KEY_FILE (${RELAY_AGENT_KEY_FILE}) is missing required fields ` +
-      `(publicKey + secretKey + algorithm=X25519-XSalsa20-Poly1305). ` +
-      `Restore from backup or move the file aside to mint a new identity.`,
+      `${label} is not valid JSON: ${(err as Error).message}. ` +
+      `Restore from backup or unset the variable to mint a new identity.`,
+    );
+  }
+  const p = parsed as Partial<EncryptionKeyPair>;
+  if (p?.publicKey && p?.secretKey && p?.algorithm === 'X25519-XSalsa20-Poly1305') {
+    return p as EncryptionKeyPair;
+  }
+  throw new Error(
+    `${label} is missing required fields ` +
+    `(publicKey + secretKey + algorithm=X25519-XSalsa20-Poly1305). ` +
+    `Restore from backup or unset to mint a new identity.`,
+  );
+}
+const RELAY_AGENT_KEY_FILE = process.env['RELAY_AGENT_KEY_FILE'] ?? '/app/relay-agent-key.json';
+const RELAY_AGENT_KEY_JSON = process.env['RELAY_AGENT_KEY_JSON'];
+const relayAgentKey: EncryptionKeyPair = (() => {
+  if (RELAY_AGENT_KEY_JSON && RELAY_AGENT_KEY_JSON.trim().length > 0) {
+    return parseRelayAgentKey(RELAY_AGENT_KEY_JSON, 'RELAY_AGENT_KEY_JSON env var');
+  }
+  if (existsSync(RELAY_AGENT_KEY_FILE)) {
+    return parseRelayAgentKey(
+      readFileSync(RELAY_AGENT_KEY_FILE, 'utf8'),
+      `RELAY_AGENT_KEY_FILE (${RELAY_AGENT_KEY_FILE})`,
     );
   }
   const kp = generateKeyPair();
@@ -698,7 +888,8 @@ const relayAgentKey: EncryptionKeyPair = (() => {
     writeFileSync(RELAY_AGENT_KEY_FILE, JSON.stringify(kp, null, 2), { mode: 0o600 });
   } catch (err) {
     log(`[startup-warn] Could not persist relay agent key to ${RELAY_AGENT_KEY_FILE}: ${(err as Error).message}. ` +
-        `Identity will reset on next restart, orphaning any envelopes encrypted this session.`);
+        `Identity will reset on next restart, orphaning any envelopes encrypted this session. ` +
+        `Set RELAY_AGENT_KEY_JSON as a Container Apps secretref to make the keypair stable across revisions.`);
   }
   return kp;
 })();
@@ -707,14 +898,64 @@ const relayAgentKey: EncryptionKeyPair = (() => {
 // to the X25519 envelope key. Loaded lazily on first compliance publish.
 const RELAY_COMPLIANCE_WALLET_FILE = process.env['RELAY_COMPLIANCE_WALLET_FILE']
   ?? RELAY_AGENT_KEY_FILE.replace(/\.json$/, '-ecdsa.json');
+// Inline-JSON path — the ONLY way to keep relayDid stable on ephemeral
+// container filesystems (Container Apps /app resets every revision).
+// This ECDSA wallet derives relayDid, which the OAuth DCR client store
+// is keyed to; if it regenerates per revision, every previously
+// registered MCP client_id is orphaned (→ invalid_client on reconnect).
+// Mirror RELAY_AGENT_KEY_JSON (X25519): wire from a Container Apps
+// secretref. Shape: { "privateKey": "0x..." }.
+const RELAY_COMPLIANCE_WALLET_JSON = process.env['RELAY_COMPLIANCE_WALLET_JSON'];
 let _relayComplianceWallet: PersistedComplianceWallet | null = null;
 async function ensureRelayComplianceWallet(): Promise<PersistedComplianceWallet> {
   if (_relayComplianceWallet) return _relayComplianceWallet;
+  if (RELAY_COMPLIANCE_WALLET_JSON && RELAY_COMPLIANCE_WALLET_JSON.trim().length > 0) {
+    let pk: string | undefined;
+    try {
+      pk = (JSON.parse(RELAY_COMPLIANCE_WALLET_JSON) as { privateKey?: string }).privateKey;
+    } catch (err) {
+      throw new Error(`RELAY_COMPLIANCE_WALLET_JSON is not valid JSON: ${(err as Error).message}. Restore from backup or unset to mint a new (ephemeral) wallet.`);
+    }
+    if (!pk) throw new Error('RELAY_COMPLIANCE_WALLET_JSON missing required field `privateKey`.');
+    const wallet = new EthersWalletCtor(pk) as unknown as PersistedComplianceWallet['wallet'];
+    _relayComplianceWallet = {
+      wallet,
+      privateKey: pk,
+      createdAt: new Date().toISOString(),
+      path: 'env:RELAY_COMPLIANCE_WALLET_JSON',
+      fresh: false,
+      historyCount: 0,
+    };
+    registerComplianceWalletForSigning(_relayComplianceWallet);
+    return _relayComplianceWallet;
+  }
   _relayComplianceWallet = await loadOrCreateComplianceWallet(
     RELAY_COMPLIANCE_WALLET_FILE,
     'relay-compliance-signer',
   );
+  registerComplianceWalletForSigning(_relayComplianceWallet);
   return _relayComplianceWallet;
+}
+
+// Register the compliance wallet's private key in @interego/core's
+// in-process walletKeys map so signMessageRaw → getSigningWallet(addr)
+// can actually sign with it. WITHOUT this, the wallet object exists and
+// the address is pinned (RELAY_COMPLIANCE_WALLET_JSON), but every
+// sign_authorship / delegation-credential signing throws "No private key
+// available for <addr>. Only wallets created in this process can sign."
+// — because getSigningWallet only knows wallets registered via
+// createWallet/importWallet, and the compliance wallet is constructed
+// directly. This was the root cause of finding f-agent-identity-persistence
+// symptoms #1 (sign_authorship signed:false) and #2 (register_agent's
+// credential step throwing → verify_agent finds nothing). Pinning the
+// wallet (durable address) + registering it here (signable in every
+// process) together close the finding for the relay's single-signer model.
+function registerComplianceWalletForSigning(cw: PersistedComplianceWallet): void {
+  try {
+    importWallet(cw.privateKey, 'agent', 'relay-compliance-signer');
+  } catch (err) {
+    log(`[startup-warn] could not register compliance wallet for signing: ${(err as Error).message}`);
+  }
 }
 
 // ── Delegation VC signer + verifier ─────────────────────────
@@ -802,9 +1043,25 @@ const oauthTokenStoreCfg: OAuthTokenStoreConfig = {
   // round-trips encrypt/decrypt locally.
   encryptionKey: relayAgentKey,
 };
+// Access tokens stay EAGER-loaded: introspectAccessToken (the css-gate
+// /verify-token path) is synchronous and can't read-through, so the
+// sha-map must be warm for it. They're short-lived (1h) so the set is
+// small — a cheap boot cost.
 const _oauthInitialAccessTokensBySha = await loadOAuthAccessTokens(oauthTokenStoreCfg);
-const _oauthInitialRefreshTokensBySha = await loadOAuthRefreshTokens(oauthTokenStoreCfg);
-log(`OAuth token store: pod=${oauthStorePodUrl} access=${_oauthInitialAccessTokensBySha.size} refresh=${_oauthInitialRefreshTokensBySha.size}`);
+// Refresh tokens warm in the BACKGROUND (not awaited) — they were the
+// slow boot leg (~115 entries × CSS read latency). The provider holds
+// this Map by reference, so background fills are visible to it, and the
+// new lookupRefreshTokenByRaw read-through covers any token used before
+// the warm completes. "Authority on the pod; the process holds only a
+// read-through cache" — so boot no longer blocks loading it.
+const _oauthInitialRefreshTokensBySha: Awaited<ReturnType<typeof loadOAuthRefreshTokens>> = new Map();
+void loadOAuthRefreshTokens(oauthTokenStoreCfg)
+  .then(loaded => {
+    for (const [k, v] of loaded) if (!_oauthInitialRefreshTokensBySha.has(k)) _oauthInitialRefreshTokensBySha.set(k, v);
+    log(`OAuth refresh tokens warmed (background): ${_oauthInitialRefreshTokensBySha.size}`);
+  })
+  .catch(err => log(`[startup-warn] background refresh-token warm failed: ${(err as Error).message}`));
+log(`OAuth token store: pod=${oauthStorePodUrl} access=${_oauthInitialAccessTokensBySha.size} refresh=<warming in background>`);
 
 oauthProvider = new InteregoOAuthProvider({
   identityUrl: IDENTITY_URL,
@@ -812,6 +1069,10 @@ oauthProvider = new InteregoOAuthProvider({
   initialClients: _oauthInitialClients,
   persistClient: (client_id, client_data) =>
     saveOAuthClient(client_id, client_data, oauthStoreCfg),
+  // Read-through fallback on getClient miss: a registration that exists
+  // on the pod but isn't in the boot-loaded map (manifest drift) still
+  // authenticates. See loadOneClient in oauth-client-store.ts.
+  loadClient: (client_id) => loadOneOAuthClient(client_id, oauthStoreCfg),
   initialAccessTokensBySha: _oauthInitialAccessTokensBySha,
   initialRefreshTokensBySha: _oauthInitialRefreshTokensBySha,
   persistAccessToken: (token, info) => persistOAuthAccessToken(token, info, oauthTokenStoreCfg),
@@ -819,6 +1080,7 @@ oauthProvider = new InteregoOAuthProvider({
   removeAccessToken: (sha) => removeOAuthAccessToken(sha, oauthTokenStoreCfg),
   removeRefreshToken: (sha) => removeOAuthRefreshToken(sha, oauthTokenStoreCfg),
   lookupAccessTokenByRaw: (token) => loadOAuthAccessTokenByRaw(token, oauthTokenStoreCfg),
+  lookupRefreshTokenByRaw: (token) => loadOAuthRefreshTokenByRaw(token, oauthTokenStoreCfg),
   log: (msg: string) => log(msg),
 });
 
@@ -867,18 +1129,262 @@ async function getCachedRelayProfile(podUrl: string): Promise<OwnerProfileData |
 // Invalidated locally on publish since this handler just changed it.
 const MANIFEST_CACHE_TTL_MS = 10 * 1000;
 const MANIFEST_CACHE_MAX = 1024;
-const manifestCache = new Map<string, { entries: ManifestEntry[]; expiresAt: number }>();
+const manifestCache = new Map<string, { entries: ManifestEntry[]; expiresAt: number; graphIriIndex: Map<string, ManifestEntry[]> }>();
 async function getCachedManifest(podUrl: string): Promise<ManifestEntry[]> {
   const hit = manifestCache.get(podUrl);
   if (hit && hit.expiresAt > Date.now()) return hit.entries;
   if (hit) manifestCache.delete(podUrl);
-  const entries = await discover(podUrl, undefined, { fetch: solidFetch });
+  // Read the monolithic manifest (always — legacy + authoritative).
+  // When append-only is enabled, ALSO read the per-entry container and
+  // union/dedupe by descriptor URL. The monolithic version is
+  // preferred on collision (it's the published-and-CAS-verified version).
+  const [monolithic, appendOnly] = await Promise.all([
+    discover(podUrl, undefined, { fetch: solidFetch }),
+    APPEND_ONLY_ENABLED ? readAppendOnlyEntries(podUrl) : Promise.resolve([] as ManifestEntry[]),
+  ]);
+  const byUrl = new Map<string, ManifestEntry>();
+  for (const e of appendOnly) byUrl.set(String(e.descriptorUrl), e);
+  for (const e of monolithic) byUrl.set(String(e.descriptorUrl), e); // monolithic wins on collision
+  const entries = [...byUrl.values()];
   if (manifestCache.size >= MANIFEST_CACHE_MAX) {
     const oldestKey = manifestCache.keys().next().value;
     if (oldestKey !== undefined) manifestCache.delete(oldestKey);
   }
-  manifestCache.set(podUrl, { entries, expiresAt: Date.now() + MANIFEST_CACHE_TTL_MS });
+  // Build a graph_iri → entries index alongside the cache. The rev-192
+  // graph_iri filter is the hot path on discover_context (and on the
+  // auto-supersede sweep inside publish_context) — without the index
+  // both paths do O(N) linear scans of the manifest. With it they're
+  // O(1) per matching graph IRI.
+  const graphIriIndex = new Map<string, ManifestEntry[]>();
+  for (const e of entries) {
+    for (const g of e.describes ?? []) {
+      const list = graphIriIndex.get(g);
+      if (list) list.push(e); else graphIriIndex.set(g, [e]);
+    }
+  }
+  manifestCache.set(podUrl, { entries, expiresAt: Date.now() + MANIFEST_CACHE_TTL_MS, graphIriIndex });
   return entries;
+}
+
+// Apply filter/sort/limit to cached manifest entries in-process. Mirrors
+// the logic inside @interego/solid's discover() at packages/solid/src/
+// client.ts L1768-1808, but starts from cached entries (avoiding the
+// full manifest GET + parseManifest on every call) and short-circuits
+// graph_iri filter through the graphIriIndex (O(1) instead of O(N)).
+//
+// Filter shape mirrors DiscoverFilter (graphIri, facetType, validFrom,
+// validUntil, effectiveAt, sort, limit). The rev-192 graph_iri filter
+// is the only one for which we have a server-side index; other
+// predicates still scan, but only the cached entries.
+type DiscoverFilterLite = {
+  graphIri?: string;
+  facetType?: string;
+  validFrom?: string;
+  validUntil?: string;
+  effectiveAt?: string;
+  sort?: 'newest-first' | 'oldest-first' | 'unsorted';
+  limit?: number;
+};
+async function discoverCached(podUrl: string, filter?: DiscoverFilterLite): Promise<ManifestEntry[]> {
+  // Force a fresh fetch when no cache hit, so callers see writes that
+  // happened in the same request flow (publish_context invalidates).
+  await getCachedManifest(podUrl);
+  const cached = manifestCache.get(podUrl);
+  if (!cached) return [];
+  // Fast path: graph_iri filter via index.
+  let candidates: ManifestEntry[];
+  if (filter?.graphIri) {
+    candidates = cached.graphIriIndex.get(filter.graphIri) ?? [];
+  } else {
+    candidates = cached.entries;
+  }
+  // Apply remaining predicates linearly.
+  const filtered = candidates.filter(e => {
+    if (filter?.facetType && !(e.facetTypes ?? []).some(f => f === filter.facetType)) return false;
+    if (filter?.validFrom && (e.validFrom ?? '') < filter.validFrom) return false;
+    if (filter?.validUntil && (e.validUntil ?? '') > filter.validUntil) return false;
+    if (filter?.effectiveAt) {
+      const t = filter.effectiveAt;
+      if ((e.validFrom ?? '') > t) return false;
+      if (e.validUntil && e.validUntil < t) return false;
+    }
+    return true;
+  });
+  // Sort (default newest-first by validFrom).
+  const sortMode = filter?.sort ?? 'newest-first';
+  let sorted: ManifestEntry[] = filtered;
+  if (sortMode !== 'unsorted') {
+    sorted = filtered.slice().sort((a, b) => {
+      const av = a.validFrom ?? '';
+      const bv = b.validFrom ?? '';
+      return sortMode === 'newest-first' ? bv.localeCompare(av) : av.localeCompare(bv);
+    });
+  }
+  if (typeof filter?.limit === 'number' && filter.limit >= 0) {
+    return sorted.slice(0, filter.limit);
+  }
+  return sorted;
+}
+
+// ── Append-only manifest (Fix-5, feature-flagged) ───────────
+//
+// The monolithic manifest at `<pod>/.well-known/context-graphs` is a
+// single Turtle resource updated via GET-modify-PUT with If-Match CAS.
+// Under sustained load this is the bottleneck — every publish reads,
+// edits, and rewrites the entire manifest, and concurrent writes
+// have to serialize through the relay's per-pod mutex (Fix-1).
+//
+// The append-only path writes EACH manifest entry as its own resource
+// at `<pod>/.well-known/cg-entries/<descriptor-slug>.entry.ttl` (one
+// PUT, no RMW, no CAS). Reads union the monolithic manifest + the
+// container listing of cg-entries/.
+//
+// Feature-flagged + ADDITIVE — when on, every publish writes BOTH the
+// monolithic update (legacy) AND the entry file. When off, behavior is
+// identical to pre-Fix-5. Turn on via env to test in prod without risk.
+const APPEND_ONLY_ENABLED = String(process.env.MANIFEST_APPEND_ONLY_ENABLED ?? '').toLowerCase() === 'true';
+// NOT under .well-known/ — CSS serializes writes to .well-known/* through
+// a shared lock, so entry PUTs there collide with the monolithic manifest
+// CAS (observed live: "412 concurrent manifest update detected after 8
+// attempts" + "post-PUT verification: entry missing after 200 OK" when
+// both paths shared the .well-known/ prefix). A regular pod-level
+// container gets per-resource locks only.
+const APPEND_ONLY_CONTAINER_SLUG = 'cg-entries';
+function appendOnlyContainerUrl(podUrl: string): string {
+  return `${podUrl}${APPEND_ONLY_CONTAINER_SLUG}/`;
+}
+function appendOnlyEntryUrl(podUrl: string, descriptorUrl: string): string {
+  // Derive a stable filename from the descriptor URL's last segment.
+  const tail = descriptorUrl.replace(/\.ttl$/, '').split('/').pop() ?? `entry-${Date.now()}`;
+  return `${appendOnlyContainerUrl(podUrl)}${tail}.entry.ttl`;
+}
+
+// Build a standalone single-entry Turtle document — same predicates
+// the legacy manifestEntryTurtle (packages/solid/src/client.ts L363)
+// uses, with prefix declarations included so it can be parsed in
+// isolation by the existing parseManifest regex.
+function renderAppendOnlyEntry(args: {
+  descriptorUrl: string;
+  contentCid?: string;
+  graphIris: string[];
+  facetTypes: string[];
+  validFrom?: string;
+  validUntil?: string;
+  conformsTo?: string[];
+  supersedes?: string[];
+  modalStatus?: string;
+  trustLevel?: string;
+  issuer?: string;
+}): string {
+  const lines: string[] = [
+    '@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .',
+    '@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .',
+    '@prefix dct: <http://purl.org/dc/terms/> .',
+    '',
+    `<${args.descriptorUrl}> a cg:ManifestEntry ;`,
+  ];
+  if (args.contentCid) lines.push(`    cg:contentCid "${args.contentCid}" ;`);
+  for (const g of args.graphIris ?? []) lines.push(`    cg:describes <${g}> ;`);
+  for (const ft of args.facetTypes ?? []) lines.push(`    cg:hasFacetType cg:${ft} ;`);
+  if (args.validFrom)  lines.push(`    cg:validFrom "${args.validFrom}"^^xsd:dateTime ;`);
+  if (args.validUntil) lines.push(`    cg:validUntil "${args.validUntil}"^^xsd:dateTime ;`);
+  for (const c of args.conformsTo ?? []) lines.push(`    dct:conformsTo <${c}> ;`);
+  for (const s of args.supersedes ?? []) lines.push(`    cg:supersedes <${s}> ;`);
+  if (args.modalStatus) lines.push(`    cg:modalStatus cg:${args.modalStatus} ;`);
+  if (args.trustLevel)  lines.push(`    cg:trustLevel cg:${args.trustLevel} ;`);
+  if (args.issuer)      lines.push(`    cg:issuer <${args.issuer}> ;`);
+  // Terminate (replace trailing semicolon)
+  const last = lines[lines.length - 1];
+  lines[lines.length - 1] = last.endsWith(' ;') ? last.slice(0, -2) + ' .' : last + ' .';
+  return lines.join('\n') + '\n';
+}
+
+// Write a single-entry file. Fire-and-forget so it doesn't block the
+// caller's publish response. Best-effort: failures are logged but do
+// not affect the monolithic manifest (which is still the authoritative
+// store while the flag is being rolled out).
+function writeAppendOnlyEntryAsync(podUrl: string, descriptorUrl: string, entryTurtle: string): void {
+  const url = appendOnlyEntryUrl(podUrl, descriptorUrl);
+  // Bootstrap the container if needed — single best-effort PUT, the
+  // request that follows will work even if this is a no-op.
+  void (async () => {
+    try {
+      await solidFetch(appendOnlyContainerUrl(podUrl), {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'text/turtle',
+          'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"',
+        },
+        body: '',
+      });
+      const res = await solidFetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'text/turtle' },
+        body: entryTurtle,
+      });
+      if (!res.ok && res.status !== 201 && res.status !== 204) {
+        console.warn(`[relay] append-only entry write ${url} → ${res.status}`);
+      }
+    } catch (err) {
+      console.warn(`[relay] append-only entry write ${url} failed: ${(err as Error).message}`);
+    }
+  })();
+}
+
+// Read entries from the append-only container. Returns the parsed
+// ManifestEntry[] (parseManifest can handle our renderAppendOnlyEntry
+// format since each entry uses the same `<url> a cg:ManifestEntry`
+// anchor). Empty array if container does not exist.
+async function readAppendOnlyEntries(podUrl: string): Promise<ManifestEntry[]> {
+  const containerUrl = appendOnlyContainerUrl(podUrl);
+  try {
+    const listResp = await solidFetch(containerUrl, {
+      method: 'GET',
+      headers: { 'Accept': 'application/ld+json' },
+    });
+    if (!listResp.ok) return [];
+    const listJson = await listResp.json() as Array<{ '@id'?: string }>;
+    const entryUrls = (Array.isArray(listJson) ? listJson : [])
+      .map(x => x?.['@id'])
+      .filter((u): u is string => typeof u === 'string' && u.endsWith('.entry.ttl'));
+    if (entryUrls.length === 0) return [];
+    // Fetch entries in parallel (bounded by undici pool).
+    const entryTurtles = await Promise.all(entryUrls.map(async u => {
+      const cached = descriptorBodyCache.get(u);
+      if (cached && cached.expiresAt > Date.now()) return cached.content;
+      const r = await solidFetch(u, { method: 'GET', headers: { 'Accept': 'text/turtle' } });
+      if (!r.ok) return null;
+      const text = await r.text();
+      cacheDescriptorBody(u, { content: text, mediaType: 'text/turtle', encrypted: false });
+      return text;
+    }));
+    const combined = entryTurtles.filter((t): t is string => typeof t === 'string').join('\n\n');
+    if (!combined) return [];
+    return parseManifest(combined);
+  } catch {
+    return [];
+  }
+}
+
+// ── Descriptor body cache (Fix-4 outer) ─────────────────────
+//
+// Descriptors and their graph bodies are content-addressed via
+// cg:contentCid — once published, the URL → bytes mapping is immutable.
+// Cache plaintext (non-encrypted) bodies with a long TTL so repeated
+// dereference / get_descriptor / federated-read calls don't hit CSS
+// for the same URL. Encrypted envelopes are NEVER cached (the bytes
+// depend on the recipient key thumbprint; cross-recipient leakage
+// would be a security bug).
+const DESCRIPTOR_BODY_CACHE_TTL_MS = 5 * 60 * 1000;  // 5 minutes
+const DESCRIPTOR_BODY_CACHE_MAX = 2048;
+const descriptorBodyCache = new Map<string, { content: string; mediaType: string; encrypted: boolean; expiresAt: number }>();
+function cacheDescriptorBody(url: string, value: { content: string; mediaType: string; encrypted: boolean }): void {
+  if (value.encrypted) return;
+  if (descriptorBodyCache.size >= DESCRIPTOR_BODY_CACHE_MAX) {
+    const oldest = descriptorBodyCache.keys().next().value;
+    if (oldest !== undefined) descriptorBodyCache.delete(oldest);
+  }
+  descriptorBodyCache.set(url, { ...value, expiresAt: Date.now() + DESCRIPTOR_BODY_CACHE_TTL_MS });
 }
 
 // ── Deferred-publish tracker ────────────────────────────────
@@ -1287,6 +1793,26 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     if (res.ok) bootstrappedPods.add(podUrl);
   }
 
+  // ── Per-pod write serialization ───────────────────────────────
+  //
+  // Everything below — manifest pre-fetch, priorVersions computation,
+  // agent-registry read-modify-write, Phase A precondition, and the
+  // substrate publish() call — needs to run atomically per pod or
+  // concurrent publish_context calls to the same pod will all read
+  // the same stale manifest snapshot and compute the same
+  // auto-supersede list before any of them commit. The CAS gate
+  // inside publish() catches the head mismatch (412 retry), but the
+  // priorVersions / auto-supersede computation that runs OUTSIDE
+  // publish() will still be stale.
+  //
+  // Wrap the full handler body in withPodMutex (the existing per-pod
+  // mutex primitive at ~L7052) so manifest-read + decisions + commit
+  // are atomic from this relay's perspective. The deferred-publish
+  // path's inner withPodMutex (L2149) stays — its background IIFE
+  // runs AFTER this outer mutex releases, and serializes against
+  // newer concurrent callers via the same gate.
+  return await withPodMutex(podUrl, async () => {
+
   // Privacy-hygiene preflight: scan content for credentials, PII, etc.
   // We always WARN. We don't block automatically — the calling agent
   // decides. Warning is appended to the response so any LLM in the
@@ -1332,17 +1858,103 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // for the NEXT call.
   const ifMatch = args.if_match as string | undefined;
   const priorVersions: IRI[] = [];
-  if (args.auto_supersede_prior !== false && args.graph_iri) {
+  // Manifest entries the substrate gate / best-effort head-CID echo can
+  // reuse. Populated when EITHER (a) auto_supersede needs to look up
+  // prior versions, OR (b) an if_match precondition was supplied.
+  // Built once so the manifest GET round-trip is shared.
+  //
+  // Stale-cache defence: when an if_match precondition was supplied we
+  // FORCE a fresh manifest read (same `manifestCache.delete` policy
+  // `handleGetCurrentHead` uses — see deploy/mcp-relay/server.ts:3760)
+  // rather than risk consulting a 10-s-old snapshot that predates the
+  // post-backfill mirror. Without this, the first publish after the
+  // backfill admin endpoint ran would see a pre-mirror cached snapshot
+  // (cidByUrl empty) and fall through to the body-fetch path the
+  // backfill was meant to retire — exact failure mode johnny pinned.
+  let manifestEntriesForLookup: readonly ManifestEntry[] | null = null;
+  const needsManifest =
+    (args.auto_supersede_prior !== false && args.graph_iri) ||
+    ifMatch !== undefined;
+  if (needsManifest) {
+    if (ifMatch !== undefined) {
+      manifestCache.delete(podUrl);
+    }
     try {
-      const entries = await getCachedManifest(podUrl);
-      for (const e of entries) {
+      manifestEntriesForLookup = await getCachedManifest(podUrl);
+    } catch (err) {
+      log(`[publish/phaseA] manifest pre-fetch threw for ${podUrl}: ${(err as Error).message}`);
+      manifestEntriesForLookup = null;
+    }
+    if (manifestEntriesForLookup && args.auto_supersede_prior !== false && args.graph_iri) {
+      for (const e of manifestEntriesForLookup) {
         if (e.describes.includes((args.graph_iri as string) as IRI) && e.descriptorUrl !== descId) {
           priorVersions.push(e.descriptorUrl as IRI);
         }
       }
-    } catch {
-      // Manifest not yet present, or pod unreachable — proceed without supersedes.
     }
+  }
+  // Manifest-mirrored head-CID lookup. Threaded into Phase A precondition
+  // AND into publish()'s sync path so the descriptor-body GET +
+  // computeCid step is skipped whenever the manifest carries the head's
+  // cg:contentCid (always the case for entries written by post-fix
+  // publishes; legacy entries fall through to the body fetch).
+  //
+  // URL-form normalization: manifest entries can carry either the
+  // internal-FQDN host (`interego-css.internal.livelysky-...`) OR the
+  // legacy public host (`interego-css.livelysky-...`) depending on when
+  // they were written, and `descriptor.supersedes` may carry either
+  // form too. Index by the canonical (internal) form on BOTH sides so a
+  // legacy-public supersedes target still hits an internal-form
+  // manifest entry (and vice versa). `normalizeCssUrl` is idempotent so
+  // applying it on a canonical URL is a no-op.
+  const manifestHeadCidLookupOpt: { headCidLookup?: (url: string) => string | null } = (() => {
+    if (!manifestEntriesForLookup) return {};
+    const cidByUrl = new Map<string, string>();
+    for (const e of manifestEntriesForLookup) {
+      if (!e.cid) continue;
+      // Index by BOTH the raw + normalized form so neither side of the
+      // lookup has to know which host shape the other indexed under.
+      cidByUrl.set(e.descriptorUrl, e.cid);
+      const normalized = normalizeCssUrl(e.descriptorUrl);
+      if (normalized !== e.descriptorUrl) cidByUrl.set(normalized, e.cid);
+    }
+    if (cidByUrl.size === 0) return {};
+    return {
+      headCidLookup: (url: string) => {
+        const direct = cidByUrl.get(url);
+        if (direct) return direct;
+        const normalized = normalizeCssUrl(url);
+        return cidByUrl.get(normalized) ?? null;
+      },
+    };
+  })();
+  // Wire-level visibility for Phase A diagnosis. Logs whether the
+  // mirror lookup is populated, the supersedes list the precondition
+  // will iterate, and a sample of indexed URLs so a publish that 503s
+  // can be triaged by reading one log line instead of binary-searching
+  // the codepath. The descriptor URL is in `descId` (the relay's slug
+  // form, NOT the predicted descriptor URL — that's resolved later).
+  if (ifMatch !== undefined) {
+    const cidIndexSize = manifestHeadCidLookupOpt.headCidLookup
+      ? (() => {
+        if (!manifestEntriesForLookup) return 0;
+        let n = 0;
+        for (const e of manifestEntriesForLookup) if (e.cid) n++;
+        return n;
+      })()
+      : 0;
+    const sampleEntries = (manifestEntriesForLookup ?? [])
+      .filter(e => e.cid)
+      .slice(0, 3)
+      .map(e => `${e.descriptorUrl.slice(-40)}→${e.cid?.slice(0, 16)}…`);
+    // Split priorVersions by scheme so we see at the wire whether
+    // urn:/non-http targets are in the supersedes set (the failure
+    // mode rev 190 fixes): those skip-via-non-http-guard cleanly
+    // instead of body-fetching and burning the retry budget on
+    // unreachable URLs.
+    const httpTargets = priorVersions.filter(u => /^https?:\/\//i.test(u));
+    const otherTargets = priorVersions.filter(u => !/^https?:\/\//i.test(u));
+    log(`[publish/phaseA] cidIndex=${cidIndexSize} supersedes.http=${httpTargets.length} supersedes.other=${otherTargets.length} sample.http=[${httpTargets.slice(0, 2).map(u => u.slice(-50)).join(', ')}] sample.other=[${otherTargets.slice(0, 2).join(', ')}] sample.indexed=[${sampleEntries.join(', ')}]`);
   }
 
   // Heuristic: distinguish URL-form (URI scheme present) from CID-form
@@ -1711,6 +2323,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         ...(authorshipProof ? { authorshipProof } : {}),
         ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
         ...(ifMatchCid ? { ifMatchCid } : {}),
+        ...manifestHeadCidLookupOpt,
         ...conformsToShapesOpt,
       }
     : {
@@ -1719,6 +2332,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         ...(authorshipProof ? { authorshipProof } : {}),
         ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
         ...(ifMatchCid ? { ifMatchCid } : {}),
+        ...manifestHeadCidLookupOpt,
         ...conformsToShapesOpt,
       };
   // Per-pod mutex: serialize same-process publishers to this pod so the
@@ -1784,6 +2398,15 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   // 202 can echo previousHeadCid / previousHeadUrl synchronously
   // (unlike the default async path, which leaves them null because no
   // CAS read happened on the request thread).
+  //
+  // Manifest-CID fast-path: getCachedManifest is a single lightweight
+  // GET on `.well-known/context-graphs` that already mirrors the head
+  // CID into each entry's `cg:contentCid` triple (publish path always
+  // writes it; legacy entries fall through to the body-fetch path
+  // inside the substrate gate). Threading the cached entries' CIDs
+  // through as `headCidLookup` removes 1xN descriptor body GETs from
+  // Phase A — the exact flaky read johnny pinned as the 503
+  // `precondition_unavailable` source on cold Azure-Files caches.
   let phaseAPass: Awaited<ReturnType<typeof checkSupersessionPrecondition>> | null = null;
   if (!syncRequired && ifMatch !== undefined) {
     try {
@@ -1792,6 +2415,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         ...(ifMatchSupersedes ? { ifMatchSupersedes } : {}),
         ...(ifMatchCid ? { ifMatchCid } : {}),
         fetchFn: solidFetch,
+        ...manifestHeadCidLookupOpt,
       });
     } catch (err) {
       if (err instanceof PublishPreconditionFailedError) {
@@ -1827,9 +2451,9 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
   let publishDeferred = false;
   if (syncRequired) {
     try {
-      result = await withPodMutex(podUrl, () =>
-        publish(descriptor, args.graph_content as string, podUrl, publishOptions),
-      );
+      // Outer withPodMutex (Fix-1) already holds the per-pod gate, so
+      // the inner mutex wrap is removed — it would deadlock.
+      result = await publish(descriptor, args.graph_content as string, podUrl, publishOptions);
     } catch (err) {
       if (err instanceof PublishPreconditionFailedError) {
         // Surface the precondition-failed response as a tool result the
@@ -1851,6 +2475,30 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
       throw err;
     }
     manifestCache.delete(podUrl);
+
+    // Append-only mirror (Fix-5, feature-flagged). Best-effort, fire-and-
+    // forget — the monolithic manifest is still the authoritative store.
+    // When this flag is on, each entry also lands at
+    // <pod>/.well-known/cg-entries/<slug>.entry.ttl so unioned reads pick
+    // it up even if a future monolithic update is racing.
+    if (APPEND_ONLY_ENABLED) {
+      const facetTypes = [...new Set(descriptor.facets.map(f => f.type))];
+      const issuerFacet = descriptor.facets.find(f => f.type === 'Trust') as { type: 'Trust'; issuer?: string; trustLevel?: string } | undefined;
+      const semioticFacet = descriptor.facets.find(f => f.type === 'Semiotic') as { type: 'Semiotic'; modalStatus?: string } | undefined;
+      const entryTurtle = renderAppendOnlyEntry({
+        descriptorUrl: result.descriptorUrl,
+        graphIris: [...(descriptor.describes ?? [])] as string[],
+        facetTypes,
+        validFrom: descriptor.validFrom,
+        validUntil: descriptor.validUntil,
+        conformsTo: descriptor.conformsTo ? [...descriptor.conformsTo] as string[] : undefined,
+        supersedes: descriptor.supersedes ? [...descriptor.supersedes] as string[] : undefined,
+        modalStatus: semioticFacet?.modalStatus,
+        trustLevel: issuerFacet?.trustLevel,
+        issuer: issuerFacet?.issuer,
+      });
+      writeAppendOnlyEntryAsync(podUrl, result.descriptorUrl, entryTurtle);
+    }
 
     // For 'public' visibility, write per-resource .acl entries that
     // explicitly grant acl:Read to acl:agentClass foaf:Agent on the
@@ -1896,6 +2544,33 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
     void (async () => {
       const startedAt = Date.now();
       try {
+        // Append-only mirror (Fix-5, deferred path). Fired BEFORE
+        // publish() on purpose: the failure mode this path heals is
+        // "graph + descriptor PUTs landed but the monolithic manifest
+        // CAS failed" — if we waited for publish() to resolve, the
+        // entry would be skipped in exactly the case it's needed.
+        // The descriptor URL is deterministic (predictDescriptorUrl),
+        // so the entry is correct even written ahead of the commit.
+        // Worst case (descriptor PUT itself fails) leaves a dangling
+        // entry pointing at a 404 — readers dereferencing it skip it.
+        if (APPEND_ONLY_ENABLED) {
+          const facetTypes = [...new Set(descriptor.facets.map(f => f.type))];
+          const issuerFacet = descriptor.facets.find(f => f.type === 'Trust') as { type: 'Trust'; issuer?: string; trustLevel?: string } | undefined;
+          const semioticFacet = descriptor.facets.find(f => f.type === 'Semiotic') as { type: 'Semiotic'; modalStatus?: string } | undefined;
+          const entryTurtle = renderAppendOnlyEntry({
+            descriptorUrl: predictedDescriptorUrl,
+            graphIris: [...(descriptor.describes ?? [])] as string[],
+            facetTypes,
+            validFrom: descriptor.validFrom,
+            validUntil: descriptor.validUntil,
+            conformsTo: descriptor.conformsTo ? [...descriptor.conformsTo] as string[] : undefined,
+            supersedes: descriptor.supersedes ? [...descriptor.supersedes] as string[] : undefined,
+            modalStatus: semioticFacet?.modalStatus,
+            trustLevel: issuerFacet?.trustLevel,
+            issuer: issuerFacet?.issuer,
+          });
+          writeAppendOnlyEntryAsync(podUrl, predictedDescriptorUrl, entryTurtle);
+        }
         const real = await withPodMutex(podUrl, () =>
           publish(descriptor, args.graph_content as string, podUrl, publishOptions),
         );
@@ -2159,11 +2834,12 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
               }
               const sigIpfsConfig = resolveIpfsConfig(args._req ?? {});
               if (sigIpfsConfig.provider !== 'local-unpinned' && sigIpfsConfig.apiKey) {
-                try {
-                  await pinToIpfs(sigBody, `signature-${descriptor.id}`, sigIpfsConfig, solidFetch);
-                } catch (err) {
-                  log(`compliance signature pin failed for ${descriptor.id}: ${(err as Error).message}`);
-                }
+                // Fire-and-forget the compliance-signature pin so the
+                // background compliance-sign chain doesn't serialize on
+                // Pinata. Matches the main descriptor-pin pattern at
+                // ~L2210 (void pinToIpfs(...).then(...).catch(...)).
+                void pinToIpfs(sigBody, `signature-${descriptor.id}`, sigIpfsConfig, solidFetch)
+                  .catch(err => log(`compliance signature pin failed for ${descriptor.id}: ${(err as Error).message}`));
               }
             } catch (err) {
               log(`compliance sign chain failed for ${descriptor.id}: ${(err as Error).message}`);
@@ -2176,6 +2852,7 @@ async function handlePublishContext(args: ToolArgs): Promise<string> {
         })()
       : {}),
   });
+  }); // end of withPodMutex wrap (Fix-1: per-pod serialization)
 }
 
 /**
@@ -2212,20 +2889,203 @@ async function ensurePodDirectory(podUrl: string, ownerWebId: string): Promise<v
   }
 }
 
+// ── Tier-1 dogfood: substrate-native trajectory recording ─────
+//
+// `record_trajectory_step` is the smallest possible MCP surface for an
+// agent to record what it just did, as a first-class signed
+// ContextDescriptor on the agent's own pod. The descriptor uses
+// substrate-native facets (Temporal, Provenance, Agent, Semiotic) so
+// any reader can discover, verify, and reason about the step without
+// importing a vertical.
+//
+// Why this lives in the relay (not Foxxi): the trajectory record
+// itself is substrate (signed, content-addressed, supersedes-chained).
+// The L&D interpretation (verifyCapabilityTransfer, OutcomeRecord,
+// calibration) is Foxxi and reads these descriptors from the pod via
+// discover_context (the rev-192 `graph_iri` filter is exactly what
+// makes the read efficient).
+//
+// Steps describe a stable per-agent graph IRI
+// `urn:graph:trajectory:<agentSlug>` so an agent's whole trajectory is
+// discoverable with one filtered call. Each step is its own descriptor
+// with the verb + objectName the verify path needs, plus modal status
+// (so an agent can record a Hypothetical "I'm about to X" and later
+// supersede with an Asserted "I did X").
+async function handleRecordTrajectoryStep(args: ToolArgs): Promise<string> {
+  const verb = typeof args.verb === 'string' ? args.verb.trim() : '';
+  const objectName = typeof args.object_name === 'string' ? args.object_name.trim() : '';
+  if (!verb || !objectName) {
+    return JSON.stringify({ error: 'record_trajectory_step: `verb` and `object_name` are both required (load-bearing for verifyCapabilityTransfer signal matching).' });
+  }
+  const modalStatus = typeof args.modal_status === 'string'
+    && ['Asserted', 'Hypothetical', 'Counterfactual'].includes(args.modal_status as string)
+    ? (args.modal_status as 'Asserted' | 'Hypothetical' | 'Counterfactual')
+    : 'Asserted';
+  const granularity = typeof args.granularity === 'string'
+    && ['task', 'subtask', 'tool-call'].includes(args.granularity as string)
+    ? (args.granularity as string)
+    : 'tool-call';
+  const agentId = (args.agent_id as string) ?? 'urn:agent:remote:unknown';
+  const ownerWebId = (args.owner_webid as string) ?? '';
+  const agentSlug = (agentId.match(/[^:/#]+$/)?.[0] ?? 'unknown').toLowerCase();
+  const sessionId = typeof args.session_id === 'string' && args.session_id.length > 0
+    ? args.session_id
+    : `default-${new Date().toISOString().slice(0, 10)}`;
+  const graphIri = `urn:graph:trajectory:${agentSlug}`;
+  const stepId = `urn:cg:trajectory-step:${agentSlug}:${Date.now()}`;
+  // Inline turtle for the step's graph payload. Facets are emitted on
+  // the publish_context side; this is the substantive content the
+  // verifier reads.
+  const escape = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const parentLine = typeof args.parent_step_id === 'string' && args.parent_step_id
+    ? `    traj:parentStep <${args.parent_step_id}> ;\n`
+    : '';
+  const supersedesLine = typeof args.supersedes_step_id === 'string' && args.supersedes_step_id
+    ? `    cg:supersedes <${args.supersedes_step_id}> ;\n`
+    : '';
+  const derivedLines = Array.isArray(args.was_derived_from)
+    ? (args.was_derived_from as unknown[])
+        .filter((u): u is string => typeof u === 'string')
+        .map(u => `    prov:wasDerivedFrom <${u}> ;\n`)
+        .join('')
+    : '';
+  const resultBlock = (() => {
+    const success = typeof args.result_success === 'boolean' ? args.result_success : undefined;
+    const quality = typeof args.result_quality === 'number' ? args.result_quality : undefined;
+    const note = typeof args.result_note === 'string' ? args.result_note : undefined;
+    if (success === undefined && quality === undefined && note === undefined) return '';
+    const inner: string[] = [];
+    if (success !== undefined) inner.push(`        traj:resultSuccess ${success ? 'true' : 'false'}`);
+    if (quality !== undefined) inner.push(`        traj:resultQuality "${quality}"^^xsd:double`);
+    if (note !== undefined) inner.push(`        traj:resultNote "${escape(note)}"`);
+    return `    traj:result [\n${inner.join(' ;\n')}\n    ] ;\n`;
+  })();
+  const graphContent = `@prefix traj: <urn:cg:ns:trajectory:> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<${stepId}>
+    a traj:Step ;
+    traj:trajectory <${graphIri}> ;
+    traj:session "${escape(sessionId)}" ;
+    traj:verb "${escape(verb)}" ;
+    traj:objectName "${escape(objectName)}" ;
+    traj:granularity "${granularity}" ;
+${parentLine}${supersedesLine}${derivedLines}${resultBlock}    prov:wasAttributedTo <${agentId}> ;
+    cg:modalStatus cg:${modalStatus} .
+`;
+
+  // Defaults that match the trajectory recording's intent:
+  //   - sign_authorship default true: trajectories are evidence,
+  //     readers need to verify they came from the claimed agent
+  //   - auto_supersede_prior false: each step is its own descriptor,
+  //     not a replacement for prior steps describing the same urn
+  //   - visibility 'public': trajectory steps are public by default
+  //     (a private trajectory is opt-in via the arg below)
+  const publishArgs: ToolArgs = {
+    graph_iri: graphIri,
+    graph_content: graphContent,
+    descriptor_id: stepId,
+    agent_id: agentId,
+    ...(ownerWebId ? { owner_webid: ownerWebId } : {}),
+    sign_authorship: args.sign_authorship !== false,
+    auto_supersede_prior: false,
+    visibility: typeof args.visibility === 'string' ? args.visibility : 'public',
+    modal_status: modalStatus,
+  };
+  // Pass through the auth-context injectors if present (the relay's
+  // /mcp dispatcher injects these; tests may not).
+  if (typeof args._identity_token === 'string') publishArgs._identity_token = args._identity_token;
+  if (typeof args._session_agent_did === 'string') publishArgs._session_agent_did = args._session_agent_did;
+  if (typeof args._session_agent_id === 'string') publishArgs._session_agent_id = args._session_agent_id;
+  if (typeof args.pod_name === 'string') publishArgs.pod_name = args.pod_name;
+
+  const publishResultJson = await handlePublishContext(publishArgs);
+  let publishResult: Record<string, unknown> = {};
+  try { publishResult = JSON.parse(publishResultJson); } catch { /* keep raw */ }
+  return JSON.stringify({
+    recorded: !publishResult.error,
+    stepId,
+    trajectoryGraphIri: graphIri,
+    sessionId,
+    verb,
+    objectName,
+    granularity,
+    modalStatus,
+    publish: publishResult,
+  });
+}
+
+// ── Tier-2 dogfood: substrate-native OODA decide tool ─────────
+//
+// Surfaces packages/pgsl/src/decision-functor.ts (the OODA functor
+// already living in the codebase but never wired to an MCP tool).
+// The functor takes the agent's PGSL lattice view + optional
+// coherence certificates and returns a strategy:
+//
+//   'exploit'  — high coherence (>0.7) with another agent: act on
+//                shared knowledge
+//   'explore'  — no coherence data OR low coherence (<0.3) with
+//                everyone: gather more observations first
+//   'delegate' — medium coherence (0.3–0.7) AND another agent has
+//                higher overlap: delegate to them
+//   'abstain'  — no observations or no affordances: cannot decide
+//
+// The substrate-honest framing of "I write loops" (Cherny): an
+// agent inside a persistent loop calls this on every tick to get
+// the next OODA decision rather than reasoning from scratch.
+async function handlePgslDecide(args: ToolArgs): Promise<string> {
+  try {
+    const agentId = typeof args.agent_id === 'string' && args.agent_id.length > 0
+      ? args.agent_id
+      : 'urn:agent:remote:unknown';
+    // The decision functor operates over the kernel's PGSL singleton —
+    // the same lattice pgsl_ingest writes to, so observations reflect
+    // anything the agent (or its session) has previously ingested.
+    const { decide } = await import('@interego/pgsl');
+    const pgsl = getKernelPGSL(pgslProvenance);
+    // Caller can optionally pre-supply coherence certificates from
+    // pgsl_meet calls; default to empty (functor will return 'explore'
+    // when no coherence data exists, which IS the right move).
+    const certificates = Array.isArray(args.certificates)
+      ? (args.certificates as unknown[]).filter((c): c is Record<string, unknown> => typeof c === 'object' && c !== null) as never
+      : [];
+    const result = decide(pgsl, agentId, certificates);
+    return JSON.stringify({
+      agent: agentId,
+      strategy: result.strategy,
+      decisionCount: result.decisions.length,
+      topDecision: result.decisions[0] ?? null,
+      coverage: result.coverage,
+      ungroundedObservations: result.ungroundedObservations,
+      note: 'OODA decision functor — Observe (presheaf section) + Orient (coherence) + Decide (this strategy) + Act (follow the top decision\'s affordance via the act / invoke_affordance / publish_context tools). Returns "abstain" when there are no atoms ingested or no affordances available — pgsl_ingest something first.',
+    });
+  } catch (err) {
+    return JSON.stringify({
+      error: 'pgsl_decide: decision functor threw',
+      message: (err as Error).message,
+    });
+  }
+}
+
 async function handleDiscoverContext(args: ToolArgs): Promise<string> {
   const podUrl = args.pod_url as string;
-  const filter: Record<string, unknown> = {};
-  if (args.facet_type) filter.facetType = args.facet_type;
-  if (args.valid_from) filter.validFrom = args.valid_from;
-  if (args.valid_until) filter.validUntil = args.valid_until;
-  if (args.effective_at) filter.effectiveAt = args.effective_at;
+  const filter: DiscoverFilterLite = {};
+  if (args.facet_type)   filter.facetType   = args.facet_type as string;
+  if (args.valid_from)   filter.validFrom   = args.valid_from as string;
+  if (args.valid_until)  filter.validUntil  = args.valid_until as string;
+  if (args.effective_at) filter.effectiveAt = args.effective_at as string;
+  if (args.graph_iri)    filter.graphIri    = args.graph_iri as string;
+  if (args.sort)         filter.sort        = args.sort as 'newest-first' | 'oldest-first' | 'unsorted';
+  if (typeof args.limit === 'number' && args.limit >= 0) filter.limit = args.limit;
 
+  // Route through the cached + indexed path (Fix-4 inner). The cache
+  // is invalidated on publish_context locally (manifestCache.delete),
+  // so reads within ~10s of a write see the write. Other callers see
+  // up-to-10s-old entries — acceptable for discover semantics.
   const [entries, delegationProfile] = await Promise.all([
-    discover(
-      podUrl,
-      Object.keys(filter).length > 0 ? filter as Parameters<typeof discover>[1] : undefined,
-      { fetch: solidFetch },
-    ),
+    discoverCached(podUrl, filter),
     args.verify_delegation
       ? getCachedRelayProfile(podUrl)
       : Promise.resolve(null),
@@ -2259,6 +3119,12 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
   // recipients registered on the pod include us when we published, so
   // round-tripping is seamless).
   if (url.endsWith('.envelope.jose.json') || url.endsWith('.trig')) {
+    // Cache plaintext envelopes only — encrypted ones depend on the
+    // recipient key, and we don't want to leak cross-recipient.
+    const cached = !args.bypass_cache ? descriptorBodyCache.get(url) : undefined;
+    if (cached && cached.expiresAt > Date.now() && !cached.encrypted) {
+      return JSON.stringify({ url, encrypted: false, mediaType: cached.mediaType, content: cached.content });
+    }
     const { content, encrypted, mediaType } = await fetchGraphContent(url, {
       fetch: solidFetch,
       recipientKeyPair: relayAgentKey,
@@ -2270,17 +3136,29 @@ async function handleGetDescriptor(args: ToolArgs): Promise<string> {
         error: 'Relay agent key is not a recipient of this envelope; cannot decrypt.',
       });
     }
+    if (!encrypted && content !== null) {
+      cacheDescriptorBody(url, { content, mediaType, encrypted: false });
+    }
     return JSON.stringify({ url, encrypted, mediaType, content });
   }
 
-  const resp = await solidFetch(url, {
-    method: 'GET',
-    headers: { 'Accept': 'text/turtle' },
-  });
-  if (!resp.ok) {
-    return JSON.stringify({ error: `${resp.status} ${resp.statusText}` });
+  // Descriptor turtle is immutable (content-addressed) so cache it with
+  // a long TTL keyed by URL only.
+  const cached = !args.bypass_cache ? descriptorBodyCache.get(url) : undefined;
+  let turtle: string;
+  if (cached && cached.expiresAt > Date.now() && !cached.encrypted) {
+    turtle = cached.content;
+  } else {
+    const resp = await solidFetch(url, {
+      method: 'GET',
+      headers: { 'Accept': 'text/turtle' },
+    });
+    if (!resp.ok) {
+      return JSON.stringify({ error: `${resp.status} ${resp.statusText}` });
+    }
+    turtle = await resp.text();
+    cacheDescriptorBody(url, { content: turtle, mediaType: 'text/turtle', encrypted: false });
   }
-  const turtle = await resp.text();
 
   // Hypermedia follow-your-nose: the descriptor Turtle includes
   // cg:hasDistribution [ dcat:accessURL <...> ; dcat:mediaType "..." ;
@@ -2823,7 +3701,19 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
   // .azurecontainerapps.io/markj/` was returning "No agent registry
   // found" because that public host no longer serves the canonical pod
   // tree. solidFetch ALSO rewrites at the HTTP layer.
-  const podUrl = normalizeCssUrl(args.pod_url as string);
+  const rawPodUrl = (args.pod_url ?? args.podUrl) as string | undefined;
+  if (typeof rawPodUrl !== 'string' || rawPodUrl.length === 0) {
+    // Defensive: a caller (or a mis-unwrapped signed request) reached
+    // verify_agent without a pod_url. Return a clean, well-shaped
+    // negative rather than dereferencing undefined downstream (which
+    // crashed in readAgentRegistry's ensureTrailingSlash on `undefined`).
+    return JSON.stringify(buildVerifyAgentEnvelope({
+      valid: false,
+      agent: (args.agent_id as IRI) ?? ('urn:unknown' as IRI),
+      reason: 'verify_agent requires a pod_url',
+    }));
+  }
+  const podUrl = normalizeCssUrl(rawPodUrl);
   // Pass the verifier so the registry-only path is upgraded to a real
   // cryptographic chain walk: the signed VC at /credentials/<agent>.jsonld
   // is fetched, its proof is checked against the owner's wallet key,
@@ -2856,7 +3746,7 @@ async function handleVerifyAgent(args: ToolArgs): Promise<string> {
 //                 see selfPodEntry()). 'self' wins on URL collisions
 //                 so users see their own pod as their own pod even
 //                 if a directory import previously listed it.
-type KnownPodVia = 'manual' | 'directory' | 'webfinger' | 'self';
+type KnownPodVia = 'manual' | 'directory' | 'webfinger' | 'self' | 'auto';
 interface KnownPodEntry {
   url: string;
   label?: string;
@@ -2864,6 +3754,14 @@ interface KnownPodEntry {
   via: KnownPodVia;
   /** ISO-8601 — when this entry first landed in the federation. */
   addedAt: string;
+  // Agent-card fields (populated by the auto-registration path).
+  did?: string;
+  webId?: string;
+  inbox?: string;
+  surface?: string;
+  handle?: string;
+  channels?: ReadonlyArray<{ type: string; value: string }>;
+  updatedAt?: string;
 }
 const knownPods: Map<string, KnownPodEntry> = new Map();
 
@@ -3125,10 +4023,10 @@ async function selfPodEntry(args: ToolArgs): Promise<{ url: string; label?: stri
 // values. 'self' is always first; URL collisions are de-duped with
 // 'self' winning (so a user who imported a directory that listed
 // their own pod still sees it labelled as their own).
-async function knownPodsWithSelf(args: ToolArgs): Promise<Array<{ url: string; label?: string; owner?: string; via: KnownPodVia; addedAt?: string }>> {
+async function knownPodsWithSelf(args: ToolArgs): Promise<Array<{ url: string; label?: string; owner?: string; via: KnownPodVia; addedAt?: string; did?: string; webId?: string; inbox?: string; surface?: string; handle?: string; channels?: ReadonlyArray<{ type: string; value: string }> }>> {
   const self = await selfPodEntry(args);
-  const others = [...knownPods.values()].filter(p => !self || p.url !== self.url);
-  return self ? [self, ...others] : others;
+  const others = [...knownPods.values()].filter(p => !self || p.url !== self.url).map(p => ({ ...p }));
+  return self ? [{ ...self }, ...others] : others;
 }
 
 async function handleDiscoverAll(args: ToolArgs): Promise<string> {
@@ -3143,6 +4041,12 @@ async function handleDiscoverAll(args: ToolArgs): Promise<string> {
     try {
       const filter: Record<string, unknown> = {};
       if (args.facet_type) filter.facetType = args.facet_type;
+      if (args.graph_iri) filter.graphIri = args.graph_iri;
+      if (args.valid_from) filter.validFrom = args.valid_from;
+      if (args.valid_until) filter.validUntil = args.valid_until;
+      if (args.effective_at) filter.effectiveAt = args.effective_at;
+      if (args.sort) filter.sort = args.sort;
+      if (typeof args.limit === 'number' && args.limit >= 0) filter.limit = args.limit;
       const entries = await discover(
         pod.url,
         Object.keys(filter).length > 0 ? filter as Parameters<typeof discover>[1] : undefined,
@@ -3179,13 +4083,402 @@ async function handleListKnownPods(args: ToolArgs): Promise<string> {
   //     can sanity-check that the relay is reading from the expected
   //     service-account pod.
   await awaitFederationHydrateWithBudget(50);
+  // De-dup on display by canonical host form (gate vs internal differ as
+  // map keys but are the same pod) so the directory reads cleanly even
+  // when an entry was added manually (gate URL) and auto-registered
+  // (internal URL).
+  const seen = new Set<string>();
+  const pods = (await knownPodsWithSelf(args)).filter(p => {
+    const key = canonicalPodKey(p.url);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   return JSON.stringify({
-    pods: await knownPodsWithSelf(args),
+    pods,
     lastPersistedAt: federationLastPersistedAt ?? '<no mutations since startup>',
     lastHydratedAt: federationLastHydratedAt,
     hydrateSourceCount: federationHydrateSourceCount,
     hydrateSource: oauthStorePodUrl,
   });
+}
+
+// ── Agent mesh: auto-registration, agent cards, notify, inbox ───────
+//
+// Canonical key for de-duping pod URLs that differ only by host
+// (interego-css-gate.* public host vs interego-css.internal.* host) or
+// trailing slash. Used for directory de-dup + target resolution.
+function canonicalPodKey(url: string): string {
+  try {
+    const u = new URL(url);
+    return ensureTrailingSlashLocal(u.pathname).toLowerCase();
+  } catch {
+    return url.toLowerCase();
+  }
+}
+function ensureTrailingSlashLocal(s: string): string {
+  return s.endsWith('/') ? s : `${s}/`;
+}
+
+// Evict any OTHER knownPods entries that are the same pod as `keepUrl`
+// (same canonical path, different host form — e.g. a gate-host entry
+// added manually vs the internal-host entry written by auto-register).
+// Also deletes their persisted federation files so the dup doesn't
+// re-hydrate on restart. Keeps the directory one-entry-per-pod.
+function evictCanonicalDuplicates(keepUrl: string): void {
+  const key = canonicalPodKey(keepUrl);
+  for (const [u] of [...knownPods.entries()]) {
+    if (u !== keepUrl && canonicalPodKey(u) === key) {
+      knownPods.delete(u);
+      void removeFederationEntry(u, federationStoreCfg).catch(() => {});
+    }
+  }
+}
+
+// Map any pod URL (public gate host or legacy host) to the relay's
+// internal CSS host, which the relay's solidFetch writes/reads against
+// (the gate enforces per-user auth + rejects the relay's service writes;
+// the internal host is the relay's allow-all write path). Preserves the
+// path (the userId/eth- pod segment) exactly.
+function toInternalPodUrl(url: string): string {
+  try {
+    return `${CSS_URL.replace(/\/$/, '')}${new URL(url).pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+// Relay host used to mint WebFinger-style acct: handles.
+const RELAY_HANDLE_HOST = (() => {
+  try { return PUBLIC_BASE_URL ? new URL(PUBLIC_BASE_URL).host : `localhost:${PORT}`; }
+  catch { return `localhost:${PORT}`; }
+})();
+
+function podLocalPart(podUrl: string): string {
+  try {
+    const segs = new URL(podUrl).pathname.split('/').filter(Boolean);
+    return segs[segs.length - 1] ?? 'agent';
+  } catch { return 'agent'; }
+}
+
+// Process-local guard so we persist each agent card at most once per
+// process unless something changed — keeps the auto-register hook on the
+// hot path effectively free after first contact.
+const _autoRegistered = new Set<string>();
+
+/**
+ * Idempotently upsert the calling agent into the federation directory as
+ * an agent card (DID + pod + LDN inbox + acct handle), and persist it
+ * fire-and-forget. Called from the tool-dispatch identity hook so EVERY
+ * authenticated participant lands in the directory automatically — the
+ * "everyone is discoverable" property, without manual add_pod.
+ */
+function autoRegisterAgentCard(
+  podUrl: string | undefined,
+  did: string | undefined,
+  surface?: string,
+  label?: string,
+): void {
+  if (!podUrl || !did) return;
+  const key = `${did}|${canonicalPodKey(podUrl)}`;
+  if (_autoRegistered.has(key)) return;
+  _autoRegistered.add(key);
+  const now = new Date().toISOString();
+  const existing = knownPods.get(podUrl);
+  const lp = podLocalPart(podUrl);
+  const handle = `acct:${lp}@${RELAY_HANDLE_HOST}`;
+  const inbox = inboxUrlFor(podUrl);
+  // Native channels every agent carries; merge any externally-declared
+  // (non-native) channels the agent set via set_reachability.
+  const nativeChannels: Array<{ type: string; value: string }> = [
+    { type: 'ldn', value: inbox },
+    { type: 'activitypub', value: apActorUrl((PUBLIC_BASE_URL || `http://localhost:${PORT}`), lp) },
+    { type: 'acct', value: handle },
+  ];
+  const externalChannels = (existing?.channels ?? []).filter(c => !['ldn', 'activitypub', 'acct'].includes(c.type));
+  const entry: KnownPodEntry = {
+    url: podUrl,
+    via: existing && existing.via !== 'self' ? existing.via : 'auto',
+    label: label ?? existing?.label,
+    owner: did,
+    addedAt: existing?.addedAt ?? now,
+    updatedAt: now,
+    did,
+    webId: did,
+    inbox,
+    handle,
+    channels: [...nativeChannels, ...externalChannels],
+    ...(surface ? { surface } : existing?.surface ? { surface: existing.surface } : {}),
+  };
+  knownPods.set(podUrl, entry);
+  evictCanonicalDuplicates(podUrl);
+  void saveFederationEntry(
+    {
+      url: podUrl,
+      via: entry.via as FederationEntry['via'],
+      addedAt: entry.addedAt,
+      ...(entry.label ? { label: entry.label } : {}),
+      owner: did,
+      did,
+      webId: did,
+      inbox,
+      handle,
+      channels: entry.channels,
+      ...(surface ? { surface } : {}),
+      updatedAt: now,
+    },
+    federationStoreCfg,
+  ).then(() => { federationLastPersistedAt = new Date().toISOString(); }).catch(() => {});
+}
+
+/**
+ * Resolve a notify target (DID, pod URL, or acct: handle) to a pod URL.
+ * Prefers a directory match (so handles + DIDs work); falls back to
+ * treating a u-pk-/eth-/did-shaped id as a pod under CSS_URL.
+ */
+function resolveTargetPodUrl(to: string): string | undefined {
+  if (!to) return undefined;
+  // A registered agent (by did/handle/webId) resolves to its canonical pod URL —
+  // checked FIRST so a WebID never short-circuits to a profile-local inbox.
+  for (const e of knownPods.values()) {
+    if (e.did === to || e.handle === to || e.webId === to) return e.url;
+  }
+  // An Interego WebID/profile URL carries the agent's pod id (u-pk-/u-did-/eth-)
+  // in its path. Resolve to the CSS pod root — its /inbox/ is the OPERATIONAL
+  // inbox the recipient's read_inbox polls — NOT the profile-local inbox a raw
+  // WebID would otherwise be delivered to (f-foxxi-webid-inbox-routing: a
+  // WebID-addressed notification returned delivered:true but silently
+  // dead-lettered into …/profile/inbox/, which no one polls).
+  const idm = to.match(/(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i);
+  if (/^https?:\/\//.test(to)) {
+    if (idm) return `${CSS_URL}${idm[0].toLowerCase()}/`;
+    return to;   // external / non-Interego URL — best-effort, delivered as given
+  }
+  // Bare id (e.g. "u-pk-…", "eth-…").
+  if (/^(u-pk-|u-did-|u-eth-|eth-)/.test(to)) return `${CSS_URL}${to}/`;
+  // did:ethr → eth-<slug> pod.
+  const m = to.match(/^did:ethr:0x([0-9a-fA-F]{40})$/);
+  if (m) return `${CSS_URL}eth-${m[1]!.slice(0, 12).toLowerCase()}/`;
+  return undefined;
+}
+
+/** Whether a resolved target is the recipient's canonical CSS-pod inbox (the one
+ *  read_inbox polls) vs a best-effort external URL. Lets notify_agent qualify
+ *  delivered:true instead of reporting an unpolled dead-letter as success. */
+function isCanonicalPodTarget(targetPod: string): boolean {
+  return targetPod.startsWith(CSS_URL)
+    || toInternalPodUrl(targetPod).startsWith(toInternalPodUrl(CSS_URL))
+    || /(u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+/i.test(targetPod);
+}
+
+async function handleNotifyAgent(args: ToolArgs): Promise<string> {
+  const to = (args.to ?? args.recipient ?? args.agent) as string | undefined;
+  const summary = (args.summary ?? args.subject) as string | undefined;
+  if (!to || typeof to !== 'string') return JSON.stringify({ delivered: false, error: 'notify_agent requires `to` (DID, pod URL, or acct: handle)' });
+  if (!summary || typeof summary !== 'string') return JSON.stringify({ delivered: false, error: 'notify_agent requires `summary`' });
+  const targetPod = resolveTargetPodUrl(to);
+  if (!targetPod) return JSON.stringify({ delivered: false, error: `could not resolve recipient "${to}" to a pod` });
+  const from = (args.agent_id as string) ?? 'urn:unknown';
+  const now = new Date().toISOString();
+  const idSlug = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const input: NotificationInput = {
+    from,
+    to,
+    summary,
+    published: now,
+    ...(typeof args.content === 'string' ? { content: args.content } : {}),
+    ...(typeof args.about === 'string' ? { about: args.about } : {}),
+    ...(typeof args.in_reply_to === 'string' ? { inReplyTo: args.in_reply_to } : {}),
+    ...(typeof args.type === 'string' ? { type: args.type } : {}),
+  };
+  const notif = buildNotification(input, idSlug);
+  const internalPod = toInternalPodUrl(targetPod);
+  // Fan out to the recipient's declared channels: native LDN is always
+  // attempted; any external channels (discord/telegram/email/sms/voice)
+  // the recipient registered via set_reachability are delivered through
+  // their adapters (live where credentials/targets are present).
+  const tk = canonicalPodKey(targetPod);
+  const cardMatches = [...knownPods.values()].filter(e => canonicalPodKey(e.url) === tk);
+  // Prefer the entry that actually declares channels (avoids a stale
+  // host-form duplicate that lacks them).
+  const card = cardMatches.find(e => (e.channels?.length ?? 0) > 0) ?? cardMatches[0];
+  const channels = (card?.channels ?? []) as ReachChannel[];
+  const results = await reachFanOut(
+    channels,
+    { summary, from, ...(typeof args.content === 'string' ? { content: args.content } : {}), ...(typeof args.about === 'string' ? { about: args.about } : {}) },
+    { deliverLdn: () => deliverNotification(internalPod, notif, idSlug, solidFetch, (m) => log(m)) },
+  );
+  const ldn = results.find(r => r.type === 'ldn');
+  // delivered:true must mean the recipient's REAL (polled) inbox was reached, not
+  // that some inbox was written. Qualify it when the target isn't the canonical
+  // CSS-pod inbox, so a best-effort external delivery can't masquerade as a sure
+  // hand-off (f-foxxi-webid-inbox-routing).
+  const canonicalInbox = isCanonicalPodTarget(targetPod);
+  return JSON.stringify({
+    delivered: ldn?.ok ?? false,
+    canonicalInbox,
+    to,
+    targetPod,
+    inbox: inboxUrlFor(targetPod),
+    notificationUrl: ldn?.detail,
+    channels: results,
+    from,
+    ...(ldn?.ok && !canonicalInbox
+      ? { warning: `delivered to ${targetPod} but this is not a recognized CSS-pod inbox the recipient is known to poll — confirm the recipient reads this inbox, or address them by did:ethr / pod-id / a registered WebID.` }
+      : {}),
+  });
+}
+
+// NOTE: Foxxi performance review is intentionally NOT a relay tool. Foxxi is a
+// composed vertical over Interego, not a substrate primitive, so baking a
+// foxxi-named tool into the relay would couple the substrate to a vertical. The
+// capability is reached emergently instead: an agent discovers the published
+// cg:Affordance urn:interego:foxxi:capability:review_foxxi_record, dereferences
+// it, and invokes it with the generic `act` verb — the Foxxi bridge authenticates
+// the agent's OWN signed request directly (no relay vouching).
+
+// sign_request — substrate signing primitive (the dual of the signature
+// verification the relay already runs on every signed request). The relay is
+// single-signer, so a relay-mediated agent (which holds no key of its own)
+// cannot produce a rev-196 signed envelope for a signed-request affordance like
+// the Foxxi review endpoint. sign_request signs a caller-chosen payload with the
+// relay's compliance delegation key, binding the caller's OWN authenticated
+// agent identity. That identity is SESSION-DERIVED (server-injected at OAuth,
+// non-overridable from the wire) — a caller can NEVER sign as anyone else, which
+// matters because the compliance key anchors every agent's delegation VC. The
+// verifier resolves the agent's delegation on their own pod (anchored by this
+// same key), so NO key material is handed out and the relay can only sign for
+// agents it has actually been delegated to. Returns { _signature, _signed_payload }
+// — pass it verbatim as the `payload` of `act` on the target affordance.
+async function handleSignRequest(args: ToolArgs): Promise<string> {
+  // Identity is SESSION-DERIVED (server-injected), never a caller argument.
+  const agentId = (args._session_agent_id as string | undefined)
+    ?? (args._session_agent_did as string | undefined);
+  if (!agentId) {
+    return JSON.stringify({ error: 'sign_request: no authenticated session identity — sign_request signs only for the bound caller (authenticate first).' });
+  }
+  const podUrl = await selfPodUrl(args);
+  // Caller-chosen, response-affecting options to fold INTO the signed assertion.
+  // Accept them nested under `payload` OR at the top level (MCP clients vary), so
+  // they become part of the verified message rather than an unsigned wrapper
+  // (johnny's f-foxxi-include-clr-unsigned). Strip identity/timestamp/envelope and
+  // server-injected session fields — those are set from the session, not the wire,
+  // so the caller cannot claim a different agent_id, pod, or replay window.
+  const reserved = new Set([
+    'agent_id', 'timestamp', '_signature', '_signed_payload', 'subject_pod_url', 'payload',
+    '_session_agent_id', '_session_agent_did', '_identity_token', 'pod_name', 'owner_webid', 'owner_name',
+  ]);
+  const safe: Record<string, unknown> = {};
+  const collectOptions = (o: unknown): void => {
+    // MCP clients vary: `payload` may arrive as an object OR a JSON-encoded
+    // string. Parse strings so caller options (e.g. include_clr) are captured
+    // either way — without this they were silently dropped from the signed
+    // payload (johnny's f-foxxi-include-clr-unsigned "fix-did-not-land" re-run).
+    let obj = o;
+    if (typeof obj === 'string') { try { obj = JSON.parse(obj); } catch { return; } }
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+      for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+        if (!reserved.has(k)) safe[k] = v;
+      }
+    }
+  };
+  collectOptions(args);          // top-level options
+  collectOptions(args.payload);  // nested options (object OR JSON string)
+  const signedObj: Record<string, unknown> = {
+    ...safe,
+    agent_id: agentId,
+    ...(podUrl ? { subject_pod_url: podUrl } : {}),
+    timestamp: new Date().toISOString(),
+  };
+  const signedPayload = JSON.stringify(signedObj);
+  const message = `sha256:${createHash('sha256').update(signedPayload, 'utf8').digest('hex')}`;
+  try {
+    const signer = await getDelegationSigner();
+    const { signature, signerAddress } = await signer(message);
+    return JSON.stringify({
+      _signature: signature,
+      _signed_payload: signedPayload,
+      signed_as: agentId,
+      anchor: `did:ethr:${signerAddress}`,
+      hint: 'Pass this object as the `payload` of `act` on a rev-196 signed-request affordance (e.g. cg:action urn:cg:action:foxxi:review-record). The endpoint verifies your delegation on your own pod — no key material leaves the relay.',
+    });
+  } catch (err) {
+    return JSON.stringify({ error: `sign_request: signing failed: ${(err as Error).message}` });
+  }
+}
+
+async function handleSetReachability(args: ToolArgs): Promise<string> {
+  // The caller declares external reachability channels on their OWN card.
+  // Native channels (ldn/activitypub/acct) are managed automatically and
+  // cannot be set here. Pod target = the caller's own pod.
+  const podUrl = await selfPodUrl(args);
+  const did = (args.agent_id as string | undefined);
+  if (!podUrl || !did) return JSON.stringify({ error: 'set_reachability: could not resolve your identity/pod' });
+  const raw = Array.isArray(args.channels) ? args.channels : [];
+  const incoming: ReachChannel[] = [];
+  for (const c of raw) {
+    if (c && typeof c === 'object' && typeof (c as any).type === 'string' && typeof (c as any).value === 'string') {
+      const t = (c as any).type as string;
+      if (['ldn', 'activitypub', 'acct'].includes(t)) continue; // native, managed
+      if (!KNOWN_CHANNEL_TYPES.includes(t)) continue;
+      incoming.push({ type: t, value: (c as any).value });
+    }
+  }
+  const existing = knownPods.get(podUrl);
+  const native = (existing?.channels ?? []).filter(c => ['ldn', 'activitypub', 'acct'].includes(c.type));
+  const merged = [...native, ...incoming];
+  const now = new Date().toISOString();
+  const lp = podLocalPart(podUrl);
+  const updated: KnownPodEntry = {
+    url: podUrl,
+    via: existing && existing.via !== 'self' ? existing.via : 'auto',
+    label: existing?.label,
+    owner: did,
+    addedAt: existing?.addedAt ?? now,
+    updatedAt: now,
+    did,
+    webId: did,
+    inbox: inboxUrlFor(podUrl),
+    handle: `acct:${lp}@${RELAY_HANDLE_HOST}`,
+    channels: merged,
+    ...(existing?.surface ? { surface: existing.surface } : {}),
+  };
+  knownPods.set(podUrl, updated);
+  evictCanonicalDuplicates(podUrl);
+  void saveFederationEntry(
+    { url: podUrl, via: updated.via as FederationEntry['via'], addedAt: updated.addedAt, owner: did, did, webId: did, inbox: updated.inbox, handle: updated.handle, channels: merged, updatedAt: now, ...(updated.surface ? { surface: updated.surface } : {}) },
+    federationStoreCfg,
+  ).then(() => { federationLastPersistedAt = new Date().toISOString(); }).catch(() => {});
+  return JSON.stringify({ ok: true, pod: podUrl, channels: merged });
+}
+
+async function handleReadInbox(args: ToolArgs): Promise<string> {
+  const explicit = (args.pod_url ?? args.podUrl) as string | undefined;
+  const podUrl = explicit ?? await selfPodUrl(args);
+  if (!podUrl) return JSON.stringify({ error: 'read_inbox: no pod_url and could not derive your own pod' });
+  const limit = typeof args.limit === 'number' ? args.limit : 50;
+  const items = await readAgentInbox(toInternalPodUrl(podUrl), solidFetch, limit);
+  return JSON.stringify({ inbox: inboxUrlFor(podUrl), count: items.length, items });
+}
+
+async function handleRebuildManifest(args: ToolArgs): Promise<string> {
+  // Heal f-manifest-collapse: reconstruct a pod's .well-known/context-graphs
+  // index from its on-pod descriptors. Non-destructive (descriptors are the
+  // authority; this only rebuilds the index). Defaults to the caller's own
+  // pod; an explicit pod_url lets an operator restore a peer pod whose index
+  // collapsed. Goes through the relay's internal CSS write path.
+  const explicit = (args.pod_url ?? args.podUrl) as string | undefined;
+  const podUrl = explicit ?? await selfPodUrl(args);
+  if (!podUrl) return JSON.stringify({ error: 'rebuild_manifest: no pod_url and could not derive your own pod' });
+  const internal = toInternalPodUrl(podUrl);
+  try {
+    const r = await rebuildManifestFromPod(internal, { fetch: solidFetch, log: (m) => log(m) });
+    manifestCache.delete(internal);
+    manifestCache.delete(podUrl);
+    return JSON.stringify({ ok: true, pod: podUrl, manifestUrl: r.manifestUrl, scanned: r.scanned, written: r.written });
+  } catch (err) {
+    return JSON.stringify({ ok: false, pod: podUrl, error: (err as Error).message });
+  }
 }
 
 async function handleAddPod(args: ToolArgs): Promise<string> {
@@ -3721,8 +5014,20 @@ async function handleGetCurrentHead(args: ToolArgs): Promise<string> {
   const heads = describing.filter((e) => !superseded.has(e.descriptorUrl));
   // Compute CIDs for each candidate head. If there are multiple, the
   // chain has forked — the caller needs to see all of them.
+  //
+  // Manifest fast-path: post-fix manifest entries carry `cg:contentCid`
+  // mirroring the descriptor's content-CID, so the head CID is already
+  // known from the single manifest GET above — no need to body-fetch +
+  // rehash each candidate. Legacy entries (no mirror) fall through to
+  // the descriptor body GET so the response shape is identical either
+  // way. Same source-of-truth the Phase-A precondition uses, so
+  // `get_current_head` → `if_match` → `precondition_pass` round-trips
+  // without a single descriptor body read on the happy path.
   const headResults = await Promise.all(
     heads.map(async (h) => {
+      if (h.cid) {
+        return { descriptorUrl: h.descriptorUrl, cid: h.cid };
+      }
       try {
         const resp = await solidFetch(h.descriptorUrl, {
           method: 'GET',
@@ -3778,7 +5083,9 @@ async function handleInvokeAffordance(args: ToolArgs): Promise<string> {
   // solidFetch ALSO rewrites at the HTTP layer.
   const descriptorUrl = normalizeCssUrl(args.descriptor_url as string);
   const actionIri = args.action_iri as string;
-  const payload = (args.payload ?? {}) as Record<string, unknown>;
+  // Same connector double-encode tolerance as handleKernelAct (this shim is an
+  // internal `act`): peel a redundantly-quoted payload before invoking.
+  const payload = normalizeActPayload(args.payload ?? {});
   const authorization = args.authorization as string | undefined;
   if (!descriptorUrl) throw new Error('invoke_affordance: descriptor_url is required');
   if (!actionIri) throw new Error('invoke_affordance: action_iri is required');
@@ -3879,6 +5186,35 @@ async function handleKernelCompose(args: ToolArgs): Promise<string> {
     ],
   }));
 }
+/** Defensive tolerance for MCP connectors that DOUBLE-ENCODE a nested `payload`
+ *  arg (JSON.stringify an already-JSON string), so the relay receives a quoted
+ *  JSON string instead of the object/JSON it should. The kernel `act` +
+ *  `followAffordance` serializers are correct (they send a string body AS-IS),
+ *  but that means a connector's extra encode is faithfully forwarded and the
+ *  target's strict JSON body-parser 400s — silently dead-lettering cross-agent
+ *  act calls (f-act-payload-double-encode, connector-side). If the payload is a
+ *  string that parses to ANOTHER string, peel the redundant layer(s); objects
+ *  and correctly single-encoded JSON-object strings are returned untouched. */
+function normalizeActPayload(payload: unknown): unknown {
+  let v: unknown = payload;
+  // Peel up to a few redundant JSON-string wrappings a connector may have added.
+  // A correctly-encoded body is either an OBJECT (act stringifies it once) or raw
+  // JSON text starting with '{'/'[' (act sends a string as-is). Only a QUOTED
+  // string ('"…') is an over-encoded layer to peel. Stop at the first object or
+  // raw-JSON-text we reach. Robust to single/double/triple quoting + whitespace.
+  for (let i = 0; i < 6; i++) {
+    if (typeof v !== 'string') return v;            // object/array → act stringifies once
+    const t = v.trim();
+    if (!t || t[0] !== '"') return v;               // raw JSON text or plain string → as-is
+    try {
+      v = JSON.parse(t);                            // peel one quote layer
+    } catch {
+      return v;                                     // unparseable → leave untouched
+    }
+  }
+  return v;
+}
+
 async function handleKernelAct(args: ToolArgs): Promise<string> {
   // Translate legacy public-host CSS URLs at the handler boundary so the
   // act-via-descriptor + act-via-affordance paths both target the
@@ -3900,7 +5236,20 @@ async function handleKernelAct(args: ToolArgs): Promise<string> {
   // affordance returns plaintext when the relay's agent is in the
   // envelope's recipient set. Non-recipients fall through and see the
   // raw envelope as today.
-  const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], args['payload'], {
+  // Diagnostic (f-act-payload-double-encode): capture the EXACT shape of the
+  // incoming payload so a connector's over-encoding is visible in the relay log
+  // without guessing. Logs structure only (first 80 chars), not full signed
+  // content. Lets us confirm whether normalization fires for real connector traffic.
+  const rawPayload = args['payload'];
+  const normPayload = normalizeActPayload(rawPayload);
+  try {
+    if (typeof rawPayload === 'string') {
+      log(`[act-payload-diag] type=string len=${rawPayload.length} normalized=${rawPayload !== normPayload} rawHead=${JSON.stringify(rawPayload.slice(0, 80))} normHead=${JSON.stringify(String(typeof normPayload === 'string' ? normPayload : JSON.stringify(normPayload)).slice(0, 80))}`);
+    } else {
+      log(`[act-payload-diag] type=${typeof rawPayload} keys=${rawPayload && typeof rawPayload === 'object' ? Object.keys(rawPayload as object).slice(0, 6).join(',') : '-'}`);
+    }
+  } catch { /* logging must never break the call */ }
+  const r = await kernelAct(affordance as Parameters<typeof kernelAct>[0], normPayload, {
     fetch: solidFetch,
     recipientKeyPair: relayAgentKey,
     ...(authorization ? { authorization } : {}),
@@ -4086,6 +5435,8 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   reduce_chain: { description: 'Kernel verb — fold a cg:supersedes chain through a declarative reducer (turtle-template OR shacl-transform) and return the canonical head state + a content-addressed ReplayProof (chain CIDs, reducer CID, periodic state checkpoints, head-state CID) that any third party can use to independently re-fetch + re-fold + verify.', handler: handleKernelReduceChain },
   // ── Core tools (compatibility shims; internal implementation routes through kernel where natural) ──
   publish_context: { description: 'Publish a context-annotated knowledge graph', handler: handlePublishContext },
+  record_trajectory_step: { description: 'Record one step of an agent\'s trajectory as a signed, content-addressed ContextDescriptor — substrate-native dogfood that turns the agent\'s own actions into discoverable evidence (later read by verifyCapabilityTransfer and the calibration loop)', handler: handleRecordTrajectoryStep },
+  pgsl_decide: { description: 'OODA decision functor — returns the next-strategy recommendation (exploit / explore / delegate / abstain) for an agent based on its lattice observations + coherence with peers. The substrate-honest "decide" tool that closes the OODA tick.', handler: handlePgslDecide },
   get_current_head: { description: 'Resolve the current chain head (descriptorUrl + content-CID) for a urn:graph:* on a pod — used as the read half of CAS supersession', handler: handleGetCurrentHead },
   discover_context: { description: 'Discover descriptors on a pod', handler: handleDiscoverContext },
   get_descriptor: { description: 'Fetch a descriptor\'s Turtle', handler: handleGetDescriptor },
@@ -4102,6 +5453,12 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   discover_directory: { description: 'Import pods from a directory graph', handler: handleDiscoverDirectory },
   publish_directory: { description: 'Publish pod registry as a directory', handler: handlePublishDirectory },
   resolve_webfinger: { description: 'Resolve WebFinger to find a pod', handler: handleResolveWebfinger },
+  // Agent-to-agent messaging (Linked Data Notifications over Solid inboxes)
+  notify_agent: { description: 'Send a notification to another agent (fans out across their declared channels: LDN inbox + any discord/telegram/email/sms/voice)', handler: handleNotifyAgent },
+  read_inbox: { description: 'Read notifications delivered to your (or a given) pod\'s LDN inbox, newest-first', handler: handleReadInbox },
+  sign_request: { description: 'Sign a payload as your bound identity (rev-196 envelope) so you can act on a signed-request affordance', handler: handleSignRequest },
+  set_reachability: { description: 'Declare external reachability channels on your own agent card (discord/telegram/email/sms/voice)', handler: handleSetReachability },
+  rebuild_manifest: { description: 'Reconstruct a pod\'s .well-known/context-graphs index from its on-pod descriptors (heals a collapsed/lost manifest; non-destructive)', handler: handleRebuildManifest },
   // Subscription management
   unsubscribe_from_pod: { description: 'Close an active WebSocket subscription on a pod', handler: handleUnsubscribeFromPod },
   subscribe_all: { description: 'Subscribe to notifications from all known pods', handler: handleSubscribeAll },
@@ -4121,51 +5478,266 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   invoke_affordance: { description: 'Invoke a vertical affordance by descriptor URL + cg:action IRI', handler: handleInvokeAffordance },
 };
 
+// ── Tier-4: dynamic relay-tool registry over ac:AgentTool ────
+//
+// Tools authored via ac.author_tool, attested to threshold, and
+// promoted to Asserted via ac.promote_tool can be loaded into the
+// running relay's tool surface — without a redeploy. The substrate is
+// using its own promote-by-attestation pipeline to grow the relay.
+//
+// Trust boundary: only ONE pod is scanned (RELAY_DYNAMIC_TOOLS_POD,
+// default = the relay's own service pod). The pod owner controls
+// what lives there; attestations are the gate-keeping mechanism, not
+// the relay. Asserted modal status is REQUIRED — Hypothetical tools
+// (newly authored, not yet attested to threshold) are not loaded.
+//
+// Handlers proxy through the affordance machinery: when a dynamic
+// tool is invoked, the handler dereferences the descriptor and
+// returns its cg:affordance block + body so the caller can follow it
+// (or, when hydra:target is present, invokes it directly via
+// kernelAct). Either way the relay never executes arbitrary code
+// from a pod — the affordance is itself a hypermedia operation, not
+// raw JS.
+interface DynamicToolEntry {
+  readonly description: string;
+  readonly handler: (args: ToolArgs) => Promise<string>;
+  readonly descriptorUrl: string;
+  readonly affordanceAction?: string;
+}
+const dynamicTools = new Map<string, DynamicToolEntry>();
+let dynamicToolsLastLoadedAt: string | null = null;
+let dynamicToolsLastLoadCount = 0;
+const RELAY_DYNAMIC_TOOLS_POD = process.env['RELAY_DYNAMIC_TOOLS_POD'];
+
+/**
+ * Discover Asserted ac:AgentTool descriptors on the configured pod
+ * and register them as runtime-loaded MCP tools. Idempotent: re-runs
+ * replace the existing dynamicTools registry wholesale. Returns the
+ * count of tools loaded.
+ *
+ * The discovery uses the same primitives the substrate already
+ * exposes: discover_context for manifest listing, get_descriptor for
+ * each ac:AgentTool descriptor body. No new wire surface; the relay
+ * is consuming its own MCP capabilities to grow itself.
+ */
+async function loadDynamicTools(): Promise<number> {
+  if (!RELAY_DYNAMIC_TOOLS_POD) return 0;
+  const podUrl = RELAY_DYNAMIC_TOOLS_POD.endsWith('/') ? RELAY_DYNAMIC_TOOLS_POD : `${RELAY_DYNAMIC_TOOLS_POD}/`;
+  let entries: Awaited<ReturnType<typeof discover>>;
+  try {
+    // Newest-first sort + reasonable limit so initial load is bounded.
+    // No graph_iri filter here — we want every Asserted AgentTool, and
+    // by-convention they describe graphs prefixed `urn:graph:ac:tool:`.
+    // Filtering by that prefix client-side keeps the wire request simple.
+    entries = await discover(podUrl, { sort: 'newest-first', limit: 200 }, { fetch: solidFetch });
+  } catch (err) {
+    log(`[dynamic-tools] discover failed: ${(err as Error).message}`);
+    return 0;
+  }
+  const candidates = entries.filter(e => e.describes.some(g => g.startsWith('urn:graph:ac:tool:')));
+  dynamicTools.clear();
+  let loaded = 0;
+  for (const entry of candidates) {
+    try {
+      const resp = await solidFetch(entry.descriptorUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'text/turtle' },
+      });
+      if (!resp.ok) continue;
+      const turtle = await resp.text();
+      // Only Asserted, only ac:AgentTool.
+      if (!/cg:modalStatus\s+cg:Asserted/i.test(turtle)) continue;
+      if (!/\ba ac:AgentTool\b|\ba\s+ac:AgentTool/.test(turtle)) continue;
+      const labelMatch = turtle.match(/rdfs:label\s+"([^"]+)"/);
+      const actionMatch = turtle.match(/cg:action\s+<([^>]+)>/);
+      const commentMatch = turtle.match(/cg:affordance\s+\[[\s\S]*?rdfs:comment\s+"([^"]+)"/);
+      if (!labelMatch) continue;
+      const rawName = labelMatch[1]!;
+      const toolName = `dynamic:${rawName.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase()}`;
+      const description =
+        `[Dynamic, pod-loaded ac:AgentTool] ${commentMatch?.[1] ?? rawName}. `
+        + `Promoted to Asserted via ac:promote_tool attestations. `
+        + `Source descriptor: ${entry.descriptorUrl}. `
+        + (actionMatch ? `Affordance action: ${actionMatch[1]} (follow via act/invoke_affordance).` : 'No callable affordance — descriptor-only introspection.');
+      const descriptorUrl = entry.descriptorUrl;
+      const affordanceAction = actionMatch?.[1];
+      const handler = async (args: ToolArgs): Promise<string> => {
+        // The dynamic tool's handler is a thin wrapper: dereference the
+        // descriptor and return its representation + affordances. The
+        // caller decides how to follow them (act / invoke_affordance /
+        // publish_context). This is the substrate-honest "execution
+        // model": the descriptor IS the tool definition; calling it
+        // surfaces its callable affordances rather than running code.
+        try {
+          const r = await kernelDereference(descriptorUrl, {
+            fetch: solidFetch,
+            recipientKeyPair: relayAgentKey,
+          });
+          return JSON.stringify({
+            tool: toolName,
+            sourceDescriptor: descriptorUrl,
+            affordanceAction: affordanceAction ?? null,
+            dereference: r,
+            args,
+            note:
+              `This is a dynamic tool loaded from the relay's configured ac:AgentTool pod. `
+              + `Its handler dereferences the source descriptor and returns its affordances; `
+              + `follow them via the \`act\` or \`invoke_affordance\` tools. The relay does NOT `
+              + `execute arbitrary code from pods — the descriptor IS the executable definition `
+              + `(as a hypermedia affordance), and following the affordance is how the tool runs.`,
+          });
+        } catch (err) {
+          return JSON.stringify({
+            tool: toolName,
+            error: 'dynamic tool handler threw',
+            message: (err as Error).message,
+            sourceDescriptor: descriptorUrl,
+          });
+        }
+      };
+      dynamicTools.set(toolName, {
+        description,
+        handler,
+        descriptorUrl,
+        ...(affordanceAction ? { affordanceAction } : {}),
+      });
+      loaded++;
+    } catch (err) {
+      log(`[dynamic-tools] failed to load ${entry.descriptorUrl}: ${(err as Error).message}`);
+    }
+  }
+  dynamicToolsLastLoadedAt = new Date().toISOString();
+  dynamicToolsLastLoadCount = loaded;
+  log(`[dynamic-tools] loaded ${loaded} ac:AgentTool descriptor(s) from ${podUrl} (scanned ${candidates.length} candidate entries)`);
+  return loaded;
+}
+
+// Schedule initial load: don't block module evaluation, but don't
+// await either — fire-and-forget like the federation hydrate. Subsequent
+// reloads can be triggered via the admin endpoint added below.
+if (RELAY_DYNAMIC_TOOLS_POD) {
+  void loadDynamicTools().catch(err => {
+    log(`[dynamic-tools] initial load failed: ${(err as Error).message}`);
+  });
+} else {
+  log(`[dynamic-tools] RELAY_DYNAMIC_TOOLS_POD not set; static TOOLS only`);
+}
+
 // ── MCP Tool Schemas ────────────────────────────────────────
 // Input schemas for each tool. Claude's LLM uses these to know how to call
 // each tool; empty inputSchema means the model can never pick the right args.
 // Property names match what each handler reads off args.
 //
-// outputSchema describes the wire-level MCP response envelope (top-level
-// `type: 'object'` is required by the SDK validator). Where the handler
-// returns a known JSON object, the inner `text` payload schema is
-// attached as `x-payload-schema` so downstream catalogs can show clients
-// the structured response shape (no more "output schema missing" in
-// OpenAI Apps). Generic tools fall back to a permissive object. Tier-1
+// outputSchema describes the structured RESULT PAYLOAD — i.e. the object
+// the relay returns as `structuredContent` (the parsed form of the JSON
+// the handler emits in content[0].text). This is what the MCP spec means
+// by outputSchema (2025-06-18): a tool that declares one MUST return
+// `structuredContent` conforming to it. The relay's /mcp dispatch attaches
+// structuredContent = JSON.parse(handler output) for every tool, so the
+// schema must describe that payload, NOT the wire envelope.
+//
+// Two robustness rules, both load-bearing:
+//   1. additionalProperties: true  — handlers return success OR soft-error
+//      JSON ({error, code}) on the same tool; extras must not fail validation.
+//   2. NO top-level `required`     — a soft-error return won't carry the
+//      success fields; requiring them would trade the "missing
+//      structuredContent" error for a "schema mismatch" error on a strict
+//      client. Property descriptions are kept (documentation); only the
+//      hard presence constraint is dropped. Nested `required` (inside array
+//      items, e.g. each manifest entry must have descriptorUrl) is kept —
+//      it only validates items that actually appear.
+//
+// Generic tools fall back to a fully permissive object. Tier-1
 // (publish_context / discover_context / get_descriptor / list_known_pods /
-// get_pod_status / analyze_question) have hand-authored shapes. This is
-// metadata only — handler behavior is untouched.
+// get_pod_status / analyze_question / invoke_affordance) keep their
+// hand-authored property docs. Handler behavior is untouched.
+
+// Recursively make a JSON Schema null-tolerant: drop `required` at EVERY
+// level and widen every declared `type` to also accept `null`. This closes
+// the f-schema-nullability class — a strict MCP client (Anthropic Messages
+// API mcp_servers) validates structuredContent against outputSchema and
+// rejects a `null` where the schema said `"string"`. Handlers legitimately
+// emit null for "absent" optional fields (previousHeadCid on a fresh-URN
+// publish, authorship when unsigned, precondition on a non-CAS publish, …),
+// so rather than chase every field per dogfood cycle we make the declared
+// schema accept what the handlers actually produce. Belt to the
+// toStructuredContent omit-nulls suspenders below.
+// `isRoot` MUST stay false for the top-level call: the MCP spec types a
+// tool's outputSchema as an object whose root `type` is the LITERAL
+// "object", and a strict client can reject the tool definition on
+// tools/list if the root is a union like ["object","null"]. So at the
+// root we drop `required` and recurse, but DON'T widen the root type.
+// Nested property/items types ARE widened to include null (a nested
+// object/string field can legitimately be null).
+function makeSchemaNullTolerant(node: unknown, isRoot = false): unknown {
+  if (Array.isArray(node)) return node.map(n => makeSchemaNullTolerant(n, false));
+  if (node && typeof node === 'object') {
+    const o: Record<string, unknown> = { ...(node as Record<string, unknown>) };
+    delete o.required; // drop required at every nesting level
+    if (!isRoot) {
+      if (typeof o.type === 'string' && o.type !== 'null') {
+        o.type = [o.type, 'null'];
+      } else if (Array.isArray(o.type) && !o.type.includes('null')) {
+        o.type = [...o.type, 'null'];
+      }
+    }
+    if (o.properties && typeof o.properties === 'object') {
+      const props: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(o.properties as Record<string, unknown>)) {
+        props[k] = makeSchemaNullTolerant(v, false);
+      }
+      o.properties = props;
+    }
+    if (o.items) o.items = makeSchemaNullTolerant(o.items, false);
+    return o;
+  }
+  return node;
+}
 
 function mcpOutputSchema(
-  textPayloadSchema?: Record<string, unknown>,
+  payloadSchema?: Record<string, unknown>,
 ): Record<string, unknown> {
-  const textProp: Record<string, unknown> = {
-    type: 'string',
-    description: textPayloadSchema && typeof textPayloadSchema.description === 'string'
-      ? textPayloadSchema.description
-      : 'JSON-encoded result payload (or human-readable summary with embedded URLs).',
-  };
-  if (textPayloadSchema) {
-    textProp['x-payload-schema'] = textPayloadSchema;
+  if (!payloadSchema) {
+    return { type: 'object', additionalProperties: true };
   }
-  return {
-    type: 'object',
-    properties: {
-      content: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            type: { type: 'string', const: 'text' },
-            text: textProp,
-          },
-          required: ['type', 'text'],
-        },
-      },
-      isError: { type: 'boolean' },
-    },
-    required: ['content'],
-  };
+  const schema = makeSchemaNullTolerant({ ...payloadSchema, type: 'object' }, true) as Record<string, unknown>;
+  if (!('additionalProperties' in schema)) schema.additionalProperties = true;
+  return schema;
+}
+
+// Parse a handler's JSON-string return into the structuredContent object
+// the /mcp dispatch attaches to every tool result. Always yields an object
+// so it conforms to the permissive payload outputSchema: a JSON object is
+// returned as-is; a non-object JSON value (number/bool/string/array) or an
+// unparseable string is wrapped as { result: <value> }.
+// Recursively drop null/undefined-valued KEYS from objects (johnny's
+// preferred "omit optional fields when empty" — cleaner payloads + nothing
+// for a strict validator to reject). Array elements are preserved as-is
+// (removing them would shift indices / change semantics); the null-tolerant
+// outputSchema above covers any null that survives inside an array.
+function omitNullish(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(omitNullish);
+  if (v && typeof v === 'object') {
+    const o: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (val === null || val === undefined) continue;
+      o[k] = omitNullish(val);
+    }
+    return o;
+  }
+  return v;
+}
+
+function toStructuredContent(text: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return omitNullish(parsed) as Record<string, unknown>;
+    }
+    return { result: parsed };
+  } catch {
+    return { result: text };
+  }
 }
 
 const GENERIC_OUTPUT_SCHEMA = mcpOutputSchema({
@@ -4700,6 +6272,49 @@ const TOOL_SCHEMAS = [
     annotations: { title: 'Publish context graph', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
+    name: 'record_trajectory_step',
+    description: 'Record one step of the calling agent\'s OODA trajectory as a substrate-native ContextDescriptor. Each step lands on the agent\'s own pod, signed (sign_authorship default true), discoverable via discover_context with `graph_iri: "urn:graph:trajectory:<agentSlug>"`, and consumable by verifyCapabilityTransfer / the Foxxi calibration loop. Use Hypothetical when recording intent BEFORE acting, then call again with Asserted + supersedes_step_id pointing at the Hypothetical to mark it executed. The `verb` + `object_name` pair is what verifyCapabilityTransfer pattern-matches against signal/anti-signal markers, so write them as the action you took, e.g. verb: "ratified", object_name: "g3 agreement v2 CID anchor". This is the smallest possible "I write loops" dogfood — every tool call your loop makes becomes a discoverable, attestable trajectory step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        verb: { type: 'string', description: 'What the agent did (e.g. "published", "verified", "supersededBoard"). Combined with `object_name` for substring matching by verifyCapabilityTransfer.' },
+        object_name: { type: 'string', description: 'What the agent did it to (e.g. "move:4", "g3 agreement", "Phase A precondition"). Combined with `verb` for verifier matching.' },
+        modal_status: { type: 'string', enum: ['Asserted', 'Hypothetical', 'Counterfactual'], description: 'Asserted (default) for completed actions; Hypothetical for intent recorded BEFORE acting; Counterfactual to retract a prior step. Use Hypothetical+supersedes_step_id to flip plan→execute.' },
+        granularity: { type: 'string', enum: ['task', 'subtask', 'tool-call'], description: 'task (high-level goal), subtask (intermediate), tool-call (one tool invocation). Default: tool-call.' },
+        session_id: { type: 'string', description: 'Optional grouping label. Default: "default-YYYY-MM-DD".' },
+        parent_step_id: { type: 'string', description: 'Optional URN of the parent step (for hierarchical decomposition: task → subtask → tool-call).' },
+        supersedes_step_id: { type: 'string', description: 'Optional URN of a step this one supersedes (use to flip a Hypothetical intent into an Asserted execution).' },
+        was_derived_from: { type: 'array', items: { type: 'string' }, description: 'Optional list of descriptor URLs/URNs this step drew on (prov:wasDerivedFrom).' },
+        result_success: { type: 'boolean', description: 'Optional: did the action succeed?' },
+        result_quality: { type: 'number', minimum: 0, maximum: 1, description: 'Optional quality score in [0,1].' },
+        result_note: { type: 'string', description: 'Optional short description of the outcome.' },
+        sign_authorship: { type: 'boolean', description: 'Default true (trajectory steps are evidence; readers need to verify the signer). Set false only for low-stakes scratch.' },
+        visibility: { type: 'string', enum: ['public', 'shared', 'private'], description: 'Default "public" — trajectory steps are discoverable evidence. Use "private" for sensitive ones.' },
+      },
+      required: ['verb', 'object_name'],
+      examples: [
+        { verb: 'walked', object_name: 'cg:supersedes chain to head' },
+        { verb: 'planning', object_name: 'rev5 supersession of rev4', modal_status: 'Hypothetical', granularity: 'task' },
+        { verb: 'published', object_name: 'rev5 via signed+CAS', modal_status: 'Asserted', supersedes_step_id: 'urn:cg:trajectory-step:johnny:1780851000000', result_success: true },
+      ],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Record trajectory step', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: 'pgsl_decide',
+    description: 'Run the OODA decision functor over the calling agent\'s PGSL lattice view + (optionally) supplied coherence certificates. Returns one of four strategies: "exploit" (high coherence with peer — act on shared knowledge), "explore" (low or no coherence — gather more observations first), "delegate" (medium coherence, peer has higher overlap — delegate to them), "abstain" (no atoms ingested OR no affordances — cannot decide; pgsl_ingest first). The substrate-honest "decide" tool: instead of an agent reasoning from scratch about its next move, it asks the lattice. Used inside a persistent loop as the natural transformation between Observe (the lattice atoms+patterns) and Act (follow the returned top affordance).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'The calling agent\'s identity (used as the agent slot in the decision functor\'s observation section). Default: derived from auth context.' },
+        certificates: { type: 'array', items: { type: 'object' }, description: 'Optional coherence certificates from prior pgsl_meet calls. Without them the functor returns "explore" (which is the right move when coherence is unknown).' },
+      },
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'OODA decide (PGSL)', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
     name: 'get_current_head',
     description: 'Resolve the current chain head for a urn:graph:* IRI on a pod — returns the descriptorUrl + content-CID of the descriptor that no other descriptor supersedes. Used as the read half of a CAS supersession chain: call this BEFORE composing a new descriptor that supersedes the urn, pass the returned `cid` (or `descriptorUrl`) as `if_match` on the follow-up publish_context, and the substrate-level precondition gate detects any concurrent writer that raced ahead of you. Returns `forked: true` + a `heads` array when the chain has diverged into multiple unresolved tips — a CAS miss that already happened — so the caller can pick one or compose them.',
     inputSchema: {
@@ -4743,14 +6358,18 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'discover_context',
-    description: 'Compatibility shim — internally `dereference(podUrl + "/.well-known/context-graphs")` plus filter post-processing. For pure substrate access, use the kernel verb `dereference` directly. Discovers context descriptors on a specific Solid pod. Optionally verify the agent delegation chain.',
+    description: 'Compatibility shim — internally `dereference(podUrl + "/.well-known/context-graphs")` plus filter post-processing. Discovers context descriptors on a specific Solid pod. WHEN TO REACH FOR THIS vs `get_current_head`: if you ALREADY KNOW the specific `urn:graph:*` IRI you want and just need its live (unsuperseded) head — call `get_current_head` instead, NOT this tool followed by post-filtering; `get_current_head` does the supersedes walk for you and returns one entry instead of an unbounded list. Use `discover_context` for "show me what is on this pod" / lineage / supersedes-chain walks. Narrow the result set with `graph_iri` (most useful filter — drops manifest size from ~tens of KB to one or two entries when you know the urn), `facet_type`, `valid_from`/`valid_until`/`effective_at`, and bound it with `limit` + `sort` (defaults: `sort: "newest-first"`, no limit). Optionally verify the agent delegation chain. For pure substrate access, use the kernel verb `dereference` directly.',
     inputSchema: {
       type: 'object',
       properties: {
         pod_url: { type: 'string', description: 'Solid pod URL to discover from (e.g. https://pod.example.com/agent/)' },
+        graph_iri: { type: 'string', description: 'Narrow to descriptors that mention this urn:graph:* IRI in their cg:describes set. Server-side filter — avoids fetching+truncating the full manifest. If you only want the LIVE HEAD descriptor for this IRI (not the whole lineage), prefer `get_current_head`.' },
         facet_type: { type: 'string', enum: ['Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation'], description: 'Filter by facet type' },
         valid_from: { type: 'string', description: 'Filter: valid at or after this ISO datetime' },
         valid_until: { type: 'string', description: 'Filter: valid at or before this ISO datetime' },
+        effective_at: { type: 'string', description: 'Filter: descriptors that are currently valid at the given instant (validFrom <= T AND (validUntil >= T OR validUntil absent)). The "currently-valid-at-time-T" semantic — distinct from valid_from/valid_until which only filter on the endpoints.' },
+        sort: { type: 'string', enum: ['newest-first', 'oldest-first', 'unsorted'], description: 'Sort order applied after filters. Default: "newest-first" (largest validFrom first) — matches the typical "find what just landed" workflow.' },
+        limit: { type: 'integer', minimum: 0, description: 'Cap result count. Combined with sort, gives the "latest N descriptors" affordance. Default: unbounded.' },
         verify_delegation: { type: 'boolean', description: 'If true, also fetch the agent registry to verify delegation' },
       },
       required: ['pod_url'],
@@ -4760,11 +6379,11 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'get_descriptor',
-    description: 'Compatibility shim — internally `dereference(descriptorUrl)`. For pure substrate access, use `dereference` directly. Fetches the full Turtle content of a specific context descriptor.',
+    description: 'Compatibility shim — internally `dereference(descriptorUrl)`. Fetches the full Turtle content of a specific context descriptor. WHEN TO REACH FOR THIS: when you already have a concrete descriptor URL (e.g. from a prior `get_current_head` / `discover_context` / `prov:wasDerivedFrom` link) and want the body — including its `cg:affordance` block which self-describes how to participate (action IRIs, hydra:target endpoints, input templates). Reading affordances from a descriptor IS the emergent agent-teaching pattern: the publisher embeds the call surface, the consumer dereferences and invokes. For pure substrate access, use `dereference` directly.',
     inputSchema: {
       type: 'object',
       properties: {
-        url: { type: 'string', description: 'Full URL of the descriptor resource (ends in .ttl)' },
+        url: { type: 'string', description: 'Full URL of the descriptor resource (ends in .ttl). If you don\'t have the URL yet but know the urn:graph IRI it describes, call get_current_head first.' },
       },
       required: ['url'],
     },
@@ -4844,11 +6463,17 @@ const TOOL_SCHEMAS = [
   },
   {
     name: 'discover_all',
-    description: 'Compatibility shim — `Promise.all(knownPods.map(p => dereference(p + manifest)))` + result merge. Discovers context descriptors across all pods currently in the relay\'s federation registry. Use add_pod or discover_directory first to populate.',
+    description: 'Compatibility shim — `Promise.all(knownPods.map(p => dereference(p + manifest)))` + result merge. Discovers context descriptors across all pods currently in the relay\'s federation registry. Use add_pod or discover_directory first to populate. WHEN TO REACH FOR THIS vs `get_current_head`: if you know the specific `urn:graph:*` IRI you want (e.g. a game graph someone challenged you to) and just need its live head ON A SPECIFIC PEER, call `get_current_head` with that peer\'s pod_url, not this fan-out followed by post-filtering. Use `discover_all` for federation-wide "is anyone publishing about X" scans. Same filter set as discover_context — `graph_iri` is the most useful narrowing arg; default `sort: "newest-first"` per pod.',
     inputSchema: {
       type: 'object',
       properties: {
+        graph_iri: { type: 'string', description: 'Narrow to descriptors mentioning this urn:graph:* IRI in their cg:describes set. Applied per pod, server-side.' },
         facet_type: { type: 'string', enum: ['Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation'], description: 'Filter by facet type' },
+        valid_from: { type: 'string', description: 'Filter: valid at or after this ISO datetime' },
+        valid_until: { type: 'string', description: 'Filter: valid at or before this ISO datetime' },
+        effective_at: { type: 'string', description: 'Filter: descriptors currently valid at the given instant.' },
+        sort: { type: 'string', enum: ['newest-first', 'oldest-first', 'unsorted'], description: 'Sort order per pod. Default: "newest-first".' },
+        limit: { type: 'integer', minimum: 0, description: 'Cap result count per pod. Default: unbounded.' },
       },
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
@@ -4927,6 +6552,85 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Resolve WebFinger handle', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: 'notify_agent',
+    description: 'Send a notification to another agent on the Interego federation. Delivered as an ActivityStreams 2.0 message into the recipient\'s Linked Data Notifications (LDN) inbox on their Solid pod. Address the recipient by DID (did:ethr:0x…), pod URL, or acct: handle (acct:<id>@<relay-host>) — resolve via list_known_pods. Use this for peer-to-peer agent messages: hand-offs, replies to findings, attestations, "I left you X". The recipient reads it with read_inbox.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'Recipient: a DID, pod URL, or acct: handle (see list_known_pods).' },
+        summary: { type: 'string', description: 'One-line summary (shows in inbox previews).' },
+        content: { type: 'string', description: 'Optional longer message body.' },
+        about: { type: 'string', description: 'Optional IRI this is about (a finding, resolution, descriptor, or graph).' },
+        in_reply_to: { type: 'string', description: 'Optional IRI this notification replies to.' },
+        type: { type: 'string', description: 'ActivityStreams type: Create (default), Announce, Offer, Question, Update.' },
+      },
+      required: ['to', 'summary'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Notify an agent', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: 'sign_request',
+    description: 'Sign a payload AS your bound identity, producing a rev-196 signed-request envelope { _signature, _signed_payload }. This is your signing primitive: relay-mediated agents hold no key of their own, so to invoke an affordance that authenticates via a signed request (e.g. the Foxxi performance-record review, cg:action urn:cg:action:foxxi:review-record) you call sign_request with your intended args as `payload`, then pass the returned envelope as the `payload` of `act` on that affordance. The relay signs with its delegation key, binding YOUR authenticated identity (derived from your session — you cannot sign as anyone else); the target verifies your delegation against your own pod. No key material is exposed. WHAT IS SIGNED: the canonical message commits to your IDENTITY (agent_id), your pod, and a fresh timestamp (replay protection) — these are the security boundary, and the target binds the acted-on subject to this signed identity, so a caller can never reach another subject\'s data. Response-affecting options you pass (e.g. include_clr) are folded into the signed payload on a best-effort basis (object or JSON-string `payload`); treat them as ADVISORY — they only ever shape your OWN response and are never a cross-subject authority.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        payload: { description: 'The request arguments you want signed (an object). Your identity + a fresh timestamp are added automatically; any agent_id/timestamp/subject_pod_url you pass is ignored and overwritten from your session.' },
+      },
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Sign a request as yourself', readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'read_inbox',
+    description: 'Read notifications delivered to your Linked Data Notifications (LDN) inbox, newest-first. Defaults to your own pod; pass pod_url to read a specific pod\'s inbox. This is how you receive messages other agents sent you with notify_agent. Check it when someone says "I left you a message on Interego".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pod_url: { type: 'string', description: 'Pod whose inbox to read. Defaults to your own pod.' },
+        limit: { type: 'integer', description: 'Max notifications to return (default 50).' },
+      },
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Read your inbox', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: 'set_reachability',
+    description: 'Declare external reachability channels on your own agent card so other agents (and notify_agent) can reach you beyond the substrate. Native channels (LDN inbox, ActivityPub, acct: handle) are automatic. Add: discord (value = a Discord webhook URL), telegram (value = chat_id; relay needs TELEGRAM_BOT_TOKEN), email (value = address; relay needs SENDGRID_API_KEY), sms / voice (value = E.164 phone; relay needs Twilio creds). Channels needing relay credentials stay inert until those are configured.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channels: {
+          type: 'array',
+          description: 'Channels to set: [{ type, value }]. type ∈ {discord, telegram, email, sms, voice}.',
+          items: {
+            type: 'object',
+            properties: {
+              type: { type: 'string', description: 'discord | telegram | email | sms | voice' },
+              value: { type: 'string', description: 'webhook URL / chat_id / email / E.164 phone' },
+            },
+            required: ['type', 'value'],
+          },
+        },
+      },
+      required: ['channels'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Set reachability channels', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: 'rebuild_manifest',
+    description: 'Reconstruct a pod\'s .well-known/context-graphs manifest index from its on-pod descriptors. Heals f-manifest-collapse — a lost or truncated index where the descriptors + payloads are still intact. Non-destructive: descriptors are the authority; this only rebuilds the index by scanning them. Defaults to your own pod; pass pod_url to restore a peer pod.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pod_url: { type: 'string', description: 'Pod whose manifest to rebuild. Defaults to your own pod.' },
+      },
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Rebuild pod manifest', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'unsubscribe_from_pod',
@@ -5121,6 +6825,38 @@ MODAL STATUS (don't drift to "Asserted for safety"):
 - Asserted: you commit to truth. Use for verified facts.
 - Hypothetical: tentative, inferred, predicted. USE THIS DEFAULT for inferences.
 - Counterfactual: explicitly negated / retracted. Rare.
+
+TRUST TIER (don't drift to "SelfAsserted by omission" when a verifier is reading):
+The substrate has a trust-level ladder. The body's cg:trustLevel is a CLAIM;
+what readers actually see is effectiveTrustLevel, which the relay computes
+when proofs verify. Pick the tier on PURPOSE based on who will read your
+descriptor and what they need to be sure of:
+- SelfAsserted (default — no extra arg): the descriptor body declares who
+  the agent is, but no cryptographic proof. The relay's OAuth gate already
+  authenticated the principal, so for memory / scratchpad / inferences this
+  is the right tier (and matches Hypothetical's neutrality discipline).
+- CryptographicallyVerified — pass \`sign_authorship: true\` on publish_context.
+  The relay embeds a cg:authorshipProof signed with the calling agent's
+  delegation key (ECDSA-secp256k1). The proof verifies from the descriptor
+  ALONE — readers don't need to trust pod storage. USE THIS when: another
+  agent will verify this came from YOU (not just your pod), you are
+  publishing into an audit trail, or you are entering/ratifying a contract
+  (odrl:Agreement, rules-of-engagement) that requires a verified principal.
+- HighAssurance — pass \`compliance: true\` (and a compliance_framework).
+  Adds an operator-grade signature over the WHOLE descriptor turtle. For
+  regulated evidence (EU AI Act, NIST RMF, SOC 2) and high-stakes attestations.
+  Requires non-Hypothetical modal status.
+
+CONTRACTS MAY REQUIRE A MINIMUM TIER. When publishing into an existing
+odrl:Agreement, ttt:Game, ratification flow, or similar policy, READ the
+contract's required cg:trustLevel before publishing. If it asks for
+CryptographicallyVerified, pass sign_authorship: true — do NOT emit a
+\`"signed": true\` triple in the body and call it done; that is a SelfAsserted
+CLAIM about signing, not an actual signature. The relay's verifier (and any
+third-party replayer) treats the two completely differently. If your client
+surface does not appear to expose sign_authorship in its UI, try passing it
+in the tool-call args anyway — MCP arg names are pass-through; some clients
+filter UI parameters but transmit args verbatim.
 
 VERSIONING (auto_supersede_prior=true is the right default):
 - Leave true when updating, sharing, or republishing the same memory.
@@ -5454,7 +7190,7 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const { name, arguments: rawArgs } = req.params;
-    const tool = TOOLS[name];
+    const tool = TOOLS[name] ?? dynamicTools.get(name);
     if (!tool) {
       return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
     }
@@ -5539,6 +7275,23 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
         ? authContext.agentId.split(':').pop()
         : authContext.agentId;
       if (bareSessionId) args._session_agent_id = bareSessionId;
+      // Auto-register this participant into the federation directory as
+      // an agent card (idempotent, fire-and-forget) so everyone who
+      // authenticates becomes discoverable + notifiable without manual
+      // add_pod. Use the caller's OWN pod (authContext.podUrl) — NOT
+      // args.pod_url, which on tools like discover_context / read_inbox /
+      // notify_agent is a TARGET pod, not the caller's. Surface is
+      // derived from the session-agent slug prefix when available.
+      {
+        const sessId = (args._session_agent_id as string | undefined) ?? '';
+        const surf = sessId.includes('-') ? sessId.split('-')[0] : undefined;
+        autoRegisterAgentCard(
+          authContext.podUrl,
+          (args._session_agent_did as string | undefined) ?? (args.agent_id as string | undefined),
+          surf,
+          args.owner_name as string | undefined,
+        );
+      }
     }
 
     // ── Lazy pod-init middleware (FIX A) ─────────────────────
@@ -5597,7 +7350,16 @@ function buildMcpServer(authContext: { agentId: string; ownerWebId?: string; use
 
     try {
       const text = await tool.handler(args);
-      return { content: [{ type: 'text' as const, text }] };
+      // MCP spec: a tool that declares an outputSchema MUST return
+      // structuredContent conforming to it. Every relay handler returns
+      // a JSON string, so we parse it and attach the object as
+      // structuredContent (also serialized into content[0].text for
+      // backward-compat with lenient clients). Strict clients
+      // (mcp-client-2025-04-04) validate it; lenient ones ignore it.
+      // Non-object / unparseable returns are wrapped as { result: ... }
+      // so structuredContent is always an object (the permissive
+      // outputSchema accepts it).
+      return { content: [{ type: 'text' as const, text }], structuredContent: toStructuredContent(text) };
     } catch (err) {
       return { content: [{ type: 'text' as const, text: `Error: ${(err as Error).message}` }], isError: true };
     }
@@ -5954,6 +7716,78 @@ app.get('/.well-known/operations', (req, res) => {
     'hydra:totalItems': members.length,
     'hydra:member': members,
   });
+});
+
+// ── WebFinger (RFC 7033) + ActivityPub (W3C) discovery surface ──────
+//
+// Public, pre-auth: these are federation discovery endpoints. They read
+// the same agent cards the agent-mesh auto-registration maintains, so an
+// agent becomes a resolvable acct: handle + ActivityPub actor the moment
+// it first authenticates — no extra registration step.
+const RELAY_AP_BASE = (PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+
+function cardForLocalPart(localPart: string): AgentCardLite | undefined {
+  // Collect all matches (there can be host-form duplicates pre-eviction)
+  // and prefer the richest — one that actually carries a DID.
+  const matches = [...knownPods.values()].filter(e =>
+    e.via !== 'self' &&
+    (podLocalPart(e.url) === localPart || e.handle === `acct:${localPart}@${RELAY_HANDLE_HOST}`));
+  if (matches.length === 0) return undefined;
+  const e = matches.find(x => x.did) ?? matches[0]!;
+  return { url: e.url, did: e.did, handle: e.handle, inbox: e.inbox ?? inboxUrlFor(e.url), label: e.label, surface: e.surface };
+}
+
+app.get('/.well-known/webfinger', async (req, res) => {
+  await awaitFederationHydrateWithBudget(50);
+  const resource = String(req.query.resource ?? '');
+  const m = resource.match(/^acct:([^@]+)@(.+)$/);
+  if (!m) { res.status(400).json({ error: 'resource must be acct:<user>@<host>' }); return; }
+  const localPart = m[1]!;
+  const card = cardForLocalPart(localPart);
+  if (!card) { res.status(404).json({ error: `no agent for ${resource}` }); return; }
+  res.type('application/jrd+json').json(apBuildWebfinger(resource, RELAY_AP_BASE, localPart, card));
+});
+
+app.get('/agents/:localPart', async (req, res) => {
+  await awaitFederationHydrateWithBudget(50);
+  const card = cardForLocalPart(req.params.localPart);
+  if (!card) { res.status(404).json({ error: 'unknown agent' }); return; }
+  res.type('application/activity+json').json(apBuildActor(RELAY_AP_BASE, req.params.localPart, card));
+});
+
+app.get('/agents/:localPart/outbox', async (req, res) => {
+  await awaitFederationHydrateWithBudget(50);
+  const card = cardForLocalPart(req.params.localPart);
+  if (!card) { res.status(404).json({ error: 'unknown agent' }); return; }
+  let descriptors: Array<{ descriptorUrl?: string; graphIri?: string; validFrom?: string; modalStatus?: string }> = [];
+  try {
+    const entries = await discover(toInternalPodUrl(card.url), { sort: 'newest-first', limit: 50 } as Parameters<typeof discover>[1], { fetch: solidFetch });
+    descriptors = entries.map(e => ({ descriptorUrl: e.descriptorUrl, graphIri: (e as { graphIri?: string }).graphIri, validFrom: e.validFrom, modalStatus: (e as { modalStatus?: string }).modalStatus }));
+  } catch { /* empty outbox on read failure */ }
+  res.type('application/activity+json').json(apBuildOutbox(RELAY_AP_BASE, req.params.localPart, card, descriptors));
+});
+
+app.post('/agents/:localPart/inbox', async (req, res) => {
+  await awaitFederationHydrateWithBudget(50);
+  const card = cardForLocalPart(req.params.localPart);
+  if (!card) { res.status(404).json({ error: 'unknown agent' }); return; }
+  // NOTE: untrusted cross-server delivery should verify an HTTP Signature
+  // here before accepting. For now we accept + map the activity onto the
+  // agent's native LDN inbox so federated + in-substrate messages converge.
+  const act = (req.body ?? {}) as Record<string, any>;
+  const obj = (act.object ?? {}) as Record<string, any>;
+  const idSlug = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const notif = buildNotification({
+    from: typeof act.actor === 'string' ? act.actor : 'urn:activitypub:remote',
+    to: card.did ?? card.url,
+    summary: (act.summary ?? obj.summary ?? `${act.type ?? 'Activity'} via ActivityPub`) as string,
+    published: new Date().toISOString(),
+    ...(typeof obj.content === 'string' ? { content: obj.content } : {}),
+    ...(typeof obj.id === 'string' ? { about: obj.id } : {}),
+    type: typeof act.type === 'string' ? act.type : 'Create',
+  }, idSlug);
+  const url = await deliverNotification(toInternalPodUrl(card.url), notif, idSlug, solidFetch, (mm) => log(mm));
+  res.status(url ? 202 : 502).json({ accepted: url !== null, stored: url });
 });
 
 // ── Shared next-step hint table for relay shim responses ──
@@ -7773,6 +9607,290 @@ app.post('/verify-token', verifyTokenLimiter, async (req, res) => {
 });
 
 /**
+ * POST /admin/backfill-manifest-cid — one-shot rewrite that adds the
+ * `cg:contentCid "<cid>"` triple to existing manifest entries that
+ * predate the mirror. Closes the legacy-entry gap in the Phase A CAS
+ * precondition fast-path: post-fix publishes always write the mirror,
+ * but entries written by pre-fix publishes (every head currently on
+ * every pod) still force a body-fetch + rehash inside
+ * `checkSupersessionPrecondition`. That body fetch is the flaky read
+ * johnny pinned as the 503 `precondition_unavailable` source. After
+ * backfill, Phase A reads the head CID straight from the manifest and
+ * the descriptor body GET is gone from the CAS path entirely.
+ *
+ * Auth: `Authorization: Bearer <RELAY_INTROSPECTION_SECRET>` — same
+ * shared secret /verify-token uses. Fail closed (503) when unset.
+ *
+ * Body:
+ *   { podUrl: string,                 // pod root, trailing slash OK
+ *     descriptorUrls?: string[] }     // optional whitelist; default = all
+ *                                     // entries missing the mirror
+ *
+ * Response:
+ *   200 { ok: true, podUrl, manifestUrl, scanned, backfilled, skipped,
+ *         entries: [{ descriptorUrl, cid, action }] }
+ *   400 missing/invalid body
+ *   401 introspection bearer wrong
+ *   412 manifest changed mid-rewrite (caller can retry)
+ *   503 RELAY_INTROSPECTION_SECRET unset
+ *
+ * Semantics: identical CID derivation to `publish()` —
+ * `computeCid(descriptorBody)` over the bytes returned by GET, same
+ * function the substrate gate would invoke on the fallback path. The
+ * read pulls each descriptor with `Cache-Control: no-cache` so a stale
+ * intermediary can't poison the mirror. Writes go through the same
+ * If-Match CAS dance the manifest-update path uses inside `publish()`,
+ * so a concurrent publisher's update is detected and reported rather
+ * than clobbered.
+ */
+// POST /admin/reload-dynamic-tools — re-scan the configured
+// RELAY_DYNAMIC_TOOLS_POD for Asserted ac:AgentTool descriptors and
+// rebuild the dynamicTools registry. Same auth model as
+// /admin/backfill-manifest-cid (introspection-secret-gated). The
+// substrate-honest "grow myself" tool: a new tool gets authored +
+// attested on a pod, this endpoint surfaces it, and the next MCP
+// `tools/list` call shows the new entry.
+app.post('/admin/reload-dynamic-tools', async (req, res) => {
+  if (!RELAY_INTROSPECTION_SECRET) {
+    res.status(503).json({ ok: false, reason: 'RELAY_INTROSPECTION_SECRET not configured on relay; admin endpoints disabled' });
+    return;
+  }
+  const auth = req.headers.authorization ?? '';
+  if (!auth.startsWith('Bearer ')) {
+    res.status(401).json({ ok: false, reason: 'introspection bearer required' });
+    return;
+  }
+  const presented = auth.slice(7);
+  const a = Buffer.from(presented, 'utf8');
+  const b = Buffer.from(RELAY_INTROSPECTION_SECRET, 'utf8');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    res.status(401).json({ ok: false, reason: 'introspection bearer rejected' });
+    return;
+  }
+  if (!RELAY_DYNAMIC_TOOLS_POD) {
+    res.status(503).json({ ok: false, reason: 'RELAY_DYNAMIC_TOOLS_POD not configured; no pod to scan' });
+    return;
+  }
+  const loaded = await loadDynamicTools();
+  res.status(200).json({
+    ok: true,
+    podUrl: RELAY_DYNAMIC_TOOLS_POD,
+    loaded,
+    tools: [...dynamicTools.keys()],
+    lastLoadedAt: dynamicToolsLastLoadedAt,
+  });
+});
+
+// GET /admin/dynamic-tools-status — read-only view of the dynamic
+// registry's current state (count + names + last-load timestamp).
+// Same introspection-secret gate. Useful for ops monitoring without
+// triggering a rescan.
+app.get('/admin/dynamic-tools-status', async (req, res) => {
+  if (!RELAY_INTROSPECTION_SECRET) {
+    res.status(503).json({ ok: false, reason: 'RELAY_INTROSPECTION_SECRET not configured' });
+    return;
+  }
+  const auth = req.headers.authorization ?? '';
+  if (!auth.startsWith('Bearer ')) {
+    res.status(401).json({ ok: false, reason: 'introspection bearer required' });
+    return;
+  }
+  const presented = auth.slice(7);
+  const a = Buffer.from(presented, 'utf8');
+  const b = Buffer.from(RELAY_INTROSPECTION_SECRET, 'utf8');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    res.status(401).json({ ok: false, reason: 'introspection bearer rejected' });
+    return;
+  }
+  res.status(200).json({
+    ok: true,
+    configuredPod: RELAY_DYNAMIC_TOOLS_POD ?? null,
+    lastLoadedAt: dynamicToolsLastLoadedAt,
+    lastLoadCount: dynamicToolsLastLoadCount,
+    tools: [...dynamicTools.entries()].map(([name, t]) => ({
+      name,
+      descriptorUrl: t.descriptorUrl,
+      affordanceAction: t.affordanceAction ?? null,
+    })),
+  });
+});
+
+app.post('/admin/backfill-manifest-cid', async (req, res) => {
+  if (!RELAY_INTROSPECTION_SECRET) {
+    res.status(503).json({ ok: false, reason: 'RELAY_INTROSPECTION_SECRET not configured on relay; admin endpoints disabled' });
+    return;
+  }
+  const auth = req.headers.authorization ?? '';
+  if (!auth.startsWith('Bearer ')) {
+    res.status(401).json({ ok: false, reason: 'introspection bearer required' });
+    return;
+  }
+  const presented = auth.slice(7);
+  const a = Buffer.from(presented, 'utf8');
+  const b = Buffer.from(RELAY_INTROSPECTION_SECRET, 'utf8');
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    res.status(401).json({ ok: false, reason: 'introspection bearer rejected' });
+    return;
+  }
+
+  const body = req.body as { podUrl?: unknown; descriptorUrls?: unknown } | undefined;
+  const podUrlRaw = body && typeof body.podUrl === 'string' ? body.podUrl : null;
+  if (!podUrlRaw) {
+    res.status(400).json({ ok: false, reason: 'request body must include { podUrl: string }' });
+    return;
+  }
+  const podUrl = podUrlRaw.endsWith('/') ? podUrlRaw : `${podUrlRaw}/`;
+  const whitelist = Array.isArray(body!.descriptorUrls)
+    ? new Set((body!.descriptorUrls as unknown[]).filter((x): x is string => typeof x === 'string'))
+    : null;
+
+  const manifestUrl = `${podUrl}.well-known/context-graphs`;
+
+  // 1. GET manifest with ETag. We need the etag for the rewrite CAS.
+  //    Wrap in withTransientRetry + 5xx-as-throw promotion so a single
+  //    Azure-Files cold-cache 503 doesn't surface as a backfill
+  //    failure when the substrate is otherwise healthy.
+  let getResp;
+  try {
+    getResp = await withTransientRetry(async () => {
+      const r = await solidFetch(manifestUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'text/turtle', 'Cache-Control': 'no-cache' },
+      });
+      if (r.status >= 500) {
+        throw new Error(`manifest GET <${manifestUrl}> failed: ${r.status} ${r.statusText}`);
+      }
+      return r;
+    }, { maxAttempts: 6, baseMs: 500 });
+  } catch (err) {
+    res.status(502).json({ ok: false, reason: `manifest GET failed after retries: ${(err as Error).message}` });
+    return;
+  }
+  if (!getResp.ok) {
+    res.status(getResp.status).json({ ok: false, reason: `manifest GET failed: ${getResp.status} ${getResp.statusText}` });
+    return;
+  }
+  const manifestTurtle = await getResp.text();
+  const etag = getResp.headers?.get('etag') ?? null;
+
+  // 2. Parse + compute backfill targets.
+  const entries = parseManifest(manifestTurtle);
+  const targets: { descriptorUrl: string; existingCid?: string }[] = [];
+  for (const e of entries) {
+    if (whitelist && !whitelist.has(e.descriptorUrl)) continue;
+    if (e.cid) continue; // already mirrored
+    targets.push({ descriptorUrl: e.descriptorUrl });
+  }
+
+  if (targets.length === 0) {
+    res.status(200).json({
+      ok: true,
+      podUrl,
+      manifestUrl,
+      scanned: entries.length,
+      backfilled: 0,
+      skipped: entries.length,
+      entries: [],
+      note: whitelist
+        ? 'All whitelisted entries already carry cg:contentCid (or were not present in the manifest); nothing to backfill.'
+        : 'All manifest entries already carry cg:contentCid; nothing to backfill.',
+    });
+    return;
+  }
+
+  // 3. For each target: GET descriptor body, computeCid, build edit set.
+  const edits: { descriptorUrl: string; cid: string }[] = [];
+  const failures: { descriptorUrl: string; error: string }[] = [];
+  for (const t of targets) {
+    try {
+      const dResp = await solidFetch(t.descriptorUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'text/turtle', 'Cache-Control': 'no-cache' },
+      });
+      if (!dResp.ok) {
+        failures.push({ descriptorUrl: t.descriptorUrl, error: `descriptor GET ${dResp.status} ${dResp.statusText}` });
+        continue;
+      }
+      const turtle = await dResp.text();
+      const cid = cryptoComputeCid(turtle);
+      edits.push({ descriptorUrl: t.descriptorUrl, cid });
+    } catch (err) {
+      failures.push({ descriptorUrl: t.descriptorUrl, error: (err as Error).message });
+    }
+  }
+
+  if (edits.length === 0) {
+    res.status(502).json({
+      ok: false,
+      reason: 'all descriptor body fetches failed; manifest unchanged',
+      failures,
+    });
+    return;
+  }
+
+  // 4. Inject `cg:contentCid "<cid>" ;` into each target entry.
+  // The manifest format is line-oriented (parseManifest is too): each
+  // entry begins with `<URL> a cg:ManifestEntry ;` and runs until a
+  // line ending in `.`. Insert the new triple right after the entry
+  // header so it sits in the same field-order publish() now emits.
+  const editByUrl = new Map(edits.map(e => [e.descriptorUrl, e.cid]));
+  const lines = manifestTurtle.split(/\r?\n/);
+  const out: string[] = [];
+  for (const ln of lines) {
+    out.push(ln);
+    const m = ln.match(/^<([^>]+)>\s+a\s+cg:ManifestEntry\s*;/);
+    if (m) {
+      const url = m[1]!;
+      const cid = editByUrl.get(url);
+      if (cid) {
+        // Match the indentation of the existing entry triples (4 spaces
+        // is the manifestEntryTurtle convention; fall back to leading
+        // whitespace of the next non-blank if present).
+        const indent = '    ';
+        out.push(`${indent}cg:contentCid "${cid}" ;`);
+      }
+    }
+  }
+  const rewritten = out.join('\n');
+
+  // 5. CAS PUT back. If-Match guards against a concurrent publisher
+  // having moved the manifest between our GET and this PUT.
+  const putHeaders: Record<string, string> = { 'Content-Type': 'text/turtle' };
+  if (etag) putHeaders['If-Match'] = etag;
+  const putResp = await solidFetch(manifestUrl, {
+    method: 'PUT',
+    headers: putHeaders,
+    body: rewritten,
+  });
+  if (!putResp.ok) {
+    res.status(putResp.status === 412 ? 412 : 502).json({
+      ok: false,
+      reason: `manifest PUT failed: ${putResp.status} ${putResp.statusText}`,
+      retryable: putResp.status === 412,
+      edits,
+      failures,
+    });
+    return;
+  }
+
+  // 6. Invalidate the in-process manifest cache so the next read sees
+  // the mirrored entries.
+  manifestCache.delete(podUrl);
+
+  res.status(200).json({
+    ok: true,
+    podUrl,
+    manifestUrl,
+    scanned: entries.length,
+    backfilled: edits.length,
+    skipped: entries.length - targets.length,
+    failed: failures.length,
+    entries: edits.map(e => ({ descriptorUrl: e.descriptorUrl, cid: e.cid, action: 'mirror-added' })),
+    ...(failures.length > 0 ? { failures } : {}),
+  });
+});
+
+/**
  * GET /render/:descriptorIri — server-side plaintext projection of an
  * encrypted graph payload for thin clients (no X25519 keypair).
  *
@@ -8147,7 +10265,7 @@ const toolInvokeLimiter = rateLimit({
 });
 app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
   const toolName = req.params.name as string;
-  const tool = TOOLS[toolName];
+  const tool = TOOLS[toolName] ?? dynamicTools.get(toolName);
   if (!tool) {
     res.status(404).type('application/ld+json').json({
       '@context': KERNEL_JSONLD_CONTEXT,
@@ -8157,16 +10275,42 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
     return;
   }
 
-  // Auth check for write operations
+  // Auth check for write operations. Two paths accepted: OAuth bearer
+  // (browser-mediated, the claude.ai/ChatGPT connector flow) OR an
+  // ECDSA signed-request envelope (headless-agent flow — see
+  // verifySignedRequest above). Either satisfies the gate; the
+  // recovered identity is used to bind descriptor authorship.
   if (AUTH_REQUIRED_TOOLS.has(toolName)) {
-    const auth = await verifyBearerToken(req.headers.authorization);
+    let auth: SignedAuthResult = await verifyBearerToken(req.headers.authorization);
+    let viaSignature = false;
+    if (!auth.authenticated) {
+      // Fall back to signed-request auth.
+      const sig = verifySignedRequest(req.body);
+      if (sig.authenticated) {
+        auth = sig;
+        viaSignature = true;
+        // Unwrap the signed payload into the request body so handlers
+        // see the actual call args. The wrapper fields are stripped.
+        try {
+          const payload = JSON.parse(req.body._signed_payload as string);
+          for (const k of Object.keys(payload)) {
+            // Don't let the signed payload smuggle a different agent_id
+            // — the recovered DID is authoritative.
+            if (k === 'agent_id' || k === 'timestamp') continue;
+            req.body[k] = payload[k];
+          }
+          delete req.body._signature;
+          delete req.body._signed_payload;
+        } catch { /* already validated by verifySignedRequest */ }
+      }
+    }
     if (!auth.authenticated) {
       res.status(401).type('application/ld+json').json({
         '@context': KERNEL_JSONLD_CONTEXT,
         '@type': ['hydra:Status', 'urn:cg:error:Unauthorized'],
         error: 'Authentication required for write operations',
         detail: auth.error,
-        hint: `POST ${IDENTITY_URL}/try for an anonymous bootstrap token, or visit ${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/authorize for full passwordless enrollment`,
+        hint: `Two paths: (1) OAuth bearer via ${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/authorize (browser-mediated), or (2) ECDSA signed request — POST body with { _signature: "0x...", _signed_payload: JSON.stringify({ ...args, agent_id: "did:ethr:<addr>", timestamp: <ISO 8601> }) } signed with the wallet matching agent_id.`,
         affordances: [
           {
             '@type': ['cg:Affordance', 'hydra:Operation'],
@@ -8184,10 +10328,63 @@ app.post('/tool/:name', toolInvokeLimiter, async (req, res) => {
       });
       return;
     }
-    // Inject authenticated identity into args if not provided
-    if (!req.body.agent_id) req.body.agent_id = auth.agentId;
-    if (!req.body.owner_webid) req.body.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
-    if (!req.body.pod_name) req.body.pod_name = auth.userId;
+    // Bind authenticated identity into args.
+    // OAuth bearer: inject userId-derived defaults (existing behavior).
+    // Signature auth: the recovered DID IS the identity — override
+    // body.agent_id even if it was supplied (prevents spoofing).
+    if (viaSignature) {
+      req.body.agent_id = auth.recoveredDid;
+      // For pod naming, derive from the address suffix so signed
+      // agents land on their own pods.
+      const addr = auth.recoveredDid!.slice('did:ethr:'.length).toLowerCase();
+      if (!req.body.pod_name) req.body.pod_name = `eth-${addr.slice(2, 14)}`;
+      if (!req.body.owner_webid) req.body.owner_webid = auth.recoveredDid;
+    } else {
+      if (!req.body.agent_id) req.body.agent_id = auth.agentId;
+      if (!req.body.owner_webid) req.body.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
+      if (!req.body.pod_name) req.body.pod_name = auth.userId;
+    }
+    // Auto-register the authenticated participant into the directory
+    // (idempotent, fire-and-forget) — REST/signed path counterpart of
+    // the MCP-path hook above. Use the caller's OWN pod derived from the
+    // bound identity (pod_name), NEVER req.body.pod_url — that is a
+    // TARGET on tools like notify_agent / read_inbox / discover_context
+    // and would mis-attribute the caller's DID to someone else's pod.
+    autoRegisterAgentCard(
+      req.body.pod_name ? `${CSS_URL}${req.body.pod_name}/` : undefined,
+      req.body.agent_id as string | undefined,
+      viaSignature ? 'signed' : undefined,
+    );
+  } else if (
+    req.body && typeof req.body === 'object' &&
+    typeof (req.body as Record<string, unknown>)._signed_payload === 'string'
+  ) {
+    // A signed-request envelope was sent to a NON-auth-required (read)
+    // tool — e.g. verify_agent / discover_context / get_descriptor.
+    // The auth-enforcement block above only unwraps the payload for
+    // AUTH_REQUIRED_TOOLS, so without this branch the handler would
+    // receive `{ _signature, _signed_payload }` with none of the real
+    // args (pod_url, etc.), and tools that deref args.pod_url would
+    // crash on undefined. Reads are public so we don't enforce auth
+    // here, but we MUST unwrap the args, and we bind the recovered
+    // identity when the signature checks out so a signed read can
+    // default to the caller's own pod.
+    const sig = verifySignedRequest(req.body);
+    try {
+      const payload = JSON.parse(req.body._signed_payload as string);
+      for (const k of Object.keys(payload)) {
+        if (k === 'agent_id' || k === 'timestamp') continue;
+        req.body[k] = payload[k];
+      }
+    } catch { /* validated by verifySignedRequest above */ }
+    if (sig.authenticated && sig.recoveredDid) {
+      req.body.agent_id = sig.recoveredDid;
+      const addr = sig.recoveredDid.slice('did:ethr:'.length).toLowerCase();
+      if (!req.body.pod_name) req.body.pod_name = `eth-${addr.slice(2, 14)}`;
+      if (!req.body.owner_webid) req.body.owner_webid = sig.recoveredDid;
+    }
+    delete req.body._signature;
+    delete req.body._signed_payload;
   }
 
   try {
@@ -8383,15 +10580,35 @@ app.post('/messages', messagesLimiter, async (req, res) => {
 
   if (method === 'tools/call') {
     const toolName = params?.name;
-    const tool = TOOLS[toolName];
+    const tool = TOOLS[toolName] ?? dynamicTools.get(toolName);
     if (!tool) {
       res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Unknown tool: ${toolName}` } });
       return;
     }
 
-    const args = { ...(params?.arguments ?? {}) };
+    const args: Record<string, unknown> = { ...(params?.arguments ?? {}) };
     if (AUTH_REQUIRED_TOOLS.has(toolName)) {
-      const auth = await verifyBearerToken(req.headers.authorization);
+      // Same dual-path auth as /tool/:name: OAuth bearer OR ECDSA
+      // signed-request envelope. See verifySignedRequest for the
+      // headless-agent flow rationale.
+      let auth: SignedAuthResult = await verifyBearerToken(req.headers.authorization);
+      let viaSignature = false;
+      if (!auth.authenticated) {
+        const sig = verifySignedRequest(args);
+        if (sig.authenticated) {
+          auth = sig;
+          viaSignature = true;
+          try {
+            const payload = JSON.parse(args._signed_payload as string);
+            for (const k of Object.keys(payload)) {
+              if (k === 'agent_id' || k === 'timestamp') continue;
+              args[k] = payload[k];
+            }
+            delete args._signature;
+            delete args._signed_payload;
+          } catch { /* already validated */ }
+        }
+      }
       if (!auth.authenticated) {
         res.status(401).json({
           jsonrpc: '2.0',
@@ -8401,20 +10618,34 @@ app.post('/messages', messagesLimiter, async (req, res) => {
             message: 'Authentication required for write operations',
             data: {
               detail: auth.error,
-              hint: `POST ${IDENTITY_URL}/try for an anonymous bootstrap token, or visit ${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/authorize for full passwordless enrollment`,
+              hint: `Two paths: (1) OAuth bearer via ${(PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '')}/authorize, or (2) ECDSA signed request — args.{_signature, _signed_payload}, signedPayload JSON with agent_id (did:ethr:<addr>) + timestamp (±60s).`,
             },
           },
         });
         return;
       }
-      if (!args.agent_id) args.agent_id = auth.agentId;
-      if (!args.owner_webid) args.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
-      if (!args.pod_name) args.pod_name = auth.userId;
+      if (viaSignature) {
+        args.agent_id = auth.recoveredDid;
+        const addr = auth.recoveredDid!.slice('did:ethr:'.length).toLowerCase();
+        if (!args.pod_name) args.pod_name = `eth-${addr.slice(2, 14)}`;
+        if (!args.owner_webid) args.owner_webid = auth.recoveredDid;
+      } else {
+        if (!args.agent_id) args.agent_id = auth.agentId;
+        if (!args.owner_webid) args.owner_webid = `${IDENTITY_URL}/users/${auth.userId}/profile#me`;
+        if (!args.pod_name) args.pod_name = auth.userId;
+      }
     }
 
     try {
       const result = await tool.handler(args);
-      res.json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: result }] } });
+      // Attach structuredContent on this (legacy /messages) transport too,
+      // through the same chokepoint as /mcp — so a strict client on either
+      // transport gets schema-conformant, null-stripped structured output.
+      // Without this the /messages path advertises outputSchema (via
+      // tools/list) but emits no structuredContent (the original
+      // f-structuredcontent gap) — and any structuredContent it did emit
+      // would hit f-schema-nullability. toStructuredContent runs omitNullish.
+      res.json({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: result }], structuredContent: toStructuredContent(result) } });
     } catch (err) {
       res.json({ jsonrpc: '2.0', id, error: { code: -32000, message: (err as Error).message } });
     }
@@ -8737,3 +10968,100 @@ app.listen(PORT, () => {
   log(`  GET  /.well-known/operations                  Substrate-operation catalog`);
   log(`  */authorize /token /register /revoke           OAuth endpoints (SDK)`);
 });
+
+// ── One-shot store hygiene (env-gated, background, after listen) ─────
+//
+// Set RELAY_PRUNE_DEAD_CLIENTS=1 for a single deploy to clean the
+// svc-relay-dcr pod. Runs AFTER app.listen so it never blocks the
+// health probe, and only when explicitly enabled.
+//
+// Two passes, both safe for active connectors:
+//   1. Dead client descriptors. Observed: 336 oauth-client-*.ttl files
+//      on the pod but only a handful tracked in the manifest — every
+//      connector add / re-add / test registration is a permanent file
+//      and nothing ever GC'd them (removeClient existed but was never
+//      wired). We delete a client file iff its client_id is NOT in the
+//      boot-loaded map AND has NO live refresh token AND the file is
+//      older than a 1h grace window. Live connectors (johnny et al.)
+//      keep a live refresh token, so they are never touched. The
+//      read-through getClient added alongside this means a kept-but-
+//      manifest-orphaned client still authenticates.
+//   2. Duplicate refresh tokens. Every authorization mints a new refresh
+//      token; the old ones linger until their 14d expiry (loadRefreshTokens
+//      already drops expired ones, so all 115 loaded are live — they're
+//      stale DUPLICATES from repeated re-auth of the same client, not
+//      expired). A connector only ever presents its newest. We keep the
+//      newest (max expiresAt) per client_id and delete the rest, which
+//      is what actually shrinks the slow refresh-token boot load.
+if ((process.env['RELAY_PRUNE_DEAD_CLIENTS'] ?? '').trim() === '1') {
+  void (async () => {
+    try {
+      const now = Date.now();
+      const GRACE_MS = 60 * 60 * 1000;
+
+      // The live client_ids are exactly those carrying a refresh token
+      // (loadRefreshTokens already dropped expired ones, so all loaded
+      // are live). These accumulated because every connector re-add
+      // mints a NEW client_id + refresh token and nothing supersedes the
+      // old one. Read each live client's identity (name + redirect_uris)
+      // and keep only the NEWEST registration per identity; the older
+      // ones are abandoned re-adds the connector no longer presents.
+      const liveClientIds = new Set<string>();
+      for (const rec of _oauthInitialRefreshTokensBySha.values()) {
+        if (rec.expiresAt > now) liveClientIds.add(rec.clientId);
+      }
+      log(`[prune] start. live clientIds (have refresh token)=${liveClientIds.size}, manifest=${_oauthInitialClients.size}`);
+
+      // identity key -> [{ clientId, issuedAt }]
+      const groups = new Map<string, Array<{ clientId: string; issuedAt: number }>>();
+      const ungrouped: string[] = []; // couldn't read identity — keep, never prune
+      await Promise.allSettled([...liveClientIds].map(async clientId => {
+        const c = await loadOneOAuthClient(clientId, oauthStoreCfg);
+        if (!c) { ungrouped.push(clientId); return; }
+        const key = `${c.client_name ?? '(none)'}|${(c.redirect_uris ?? []).slice().sort().join(',')}`;
+        const issuedAt = typeof c.client_id_issued_at === 'number' ? c.client_id_issued_at : 0;
+        const arr = groups.get(key) ?? [];
+        arr.push({ clientId, issuedAt });
+        groups.set(key, arr);
+      }));
+
+      // keep = manifest clients + newest-per-identity + any unreadable.
+      const keep = new Set<string>(_oauthInitialClients.keys());
+      for (const id of ungrouped) keep.add(id);
+      const superseded = new Set<string>();
+      for (const [key, arr] of groups.entries()) {
+        arr.sort((a, b) => b.issuedAt - a.issuedAt); // newest first
+        keep.add(arr[0]!.clientId);
+        for (let i = 1; i < arr.length; i++) superseded.add(arr[i]!.clientId);
+        if (arr.length > 1) log(`[prune] identity "${key}": ${arr.length} registrations, keep ${arr[0]!.clientId}, supersede ${arr.length - 1}`);
+      }
+      log(`[prune] identities=${groups.size} keep=${keep.size} superseded=${superseded.size} unreadable=${ungrouped.length}`);
+
+      // Delete superseded clients' refresh tokens — this is what shrinks
+      // the slow refresh-token boot load.
+      let removedRefresh = 0;
+      for (const [sha, rec] of _oauthInitialRefreshTokensBySha.entries()) {
+        if (superseded.has(rec.clientId)) {
+          try { await removeOAuthRefreshToken(sha, oauthTokenStoreCfg); removedRefresh++; }
+          catch { /* best effort */ }
+        }
+      }
+
+      // Delete client descriptor files that are superseded OR dead
+      // (no live refresh token, not in manifest) and older than grace.
+      const files = await listOAuthClientFilesOnPod(oauthStoreCfg);
+      let removedSuperseded = 0, removedDead = 0, keptRecent = 0;
+      for (const f of files) {
+        if (keep.has(f.clientId)) continue;
+        if (now - f.modifiedMs < GRACE_MS) { keptRecent++; continue; }
+        try {
+          await removeOAuthClient(f.clientId, oauthStoreCfg);
+          if (superseded.has(f.clientId)) removedSuperseded++; else removedDead++;
+        } catch (err) { log(`[prune] removeClient(${f.clientId}) failed: ${(err as Error).message}`); }
+      }
+      log(`[prune] DONE. refreshTokensRemoved=${removedRefresh} clientFilesOnPod=${files.length} removedSuperseded=${removedSuperseded} removedDead=${removedDead} keptRecent=${keptRecent} kept=${keep.size}`);
+    } catch (err) {
+      log(`[prune] aborted: ${(err as Error).message}`);
+    }
+  })();
+}

@@ -256,6 +256,25 @@ export interface PublishOptions {
   readonly ifMatchCid?: string;
 
   /**
+   * Optional manifest-mirrored head-CID resolver. When provided AND a
+   * supersedes target has its content-CID mirrored on the manifest (the
+   * `cg:contentCid` triple added at publish time), the CAS precondition
+   * comparison skips the descriptor body GET + rehash entirely and uses
+   * the manifest-supplied CID. Falls through to body-fetch when the
+   * lookup misses (legacy manifest entries written before the mirror
+   * landed). Pure latency / reliability optimization — no semantic
+   * change: the manifest mirror is written from the same `computeCid`
+   * the body-fetch path recomputes.
+   *
+   * Wired by the MCP relay's Phase A pre-flight: the cached
+   * `.well-known/context-graphs` GET already carries the head identity,
+   * so threading it here removes the flaky descriptor-body GET that
+   * surfaced as 503 `precondition_unavailable` on cold Azure-Files
+   * caches.
+   */
+  readonly headCidLookup?: (descriptorUrl: string) => string | null | undefined;
+
+  /**
    * Optional SHACL conformance gate, run BEFORE any pod write. Lets the
    * caller (typically the MCP relay, but anything calling publish()
    * directly) declare a list of shape graphs the inbound `graphContent`
@@ -302,6 +321,36 @@ export interface DiscoverFilter {
   readonly trustLevel?: TrustLevel;
   /** Only return descriptors with this modal status. */
   readonly modalStatus?: ModalStatus;
+  /**
+   * Only return descriptors whose `cg:describes` set includes this
+   * graph IRI. The single most useful narrowing filter for typical
+   * agent workflows ("find the descriptors for `urn:graph:X` on this
+   * pod") — without it, callers fetch the whole manifest and post-
+   * filter client-side, which truncates on harness UIs for any pod
+   * with more than ~20 entries.
+   *
+   * Note: when a learner already knows the specific urn:graph IRI it
+   * is looking for, prefer `get_current_head` (relay tool) — it
+   * returns just the unsuperseded head directly. This filter is for
+   * "give me ALL descriptors describing this urn" workflows
+   * (lineage / supersedes-chain walks / audit).
+   */
+  readonly graphIri?: string;
+  /**
+   * Sort order applied AFTER filters. Defaults to 'newest-first' so
+   * the most recently published descriptor (largest `validFrom`)
+   * comes first — matching the discovery pattern agents typically
+   * want ("find what just landed"). 'oldest-first' walks the chain
+   * forward from genesis; 'unsorted' returns server-native order
+   * (cheaper, but observably arbitrary).
+   */
+  readonly sort?: 'newest-first' | 'oldest-first' | 'unsorted';
+  /**
+   * Cap the result count. Combined with `sort` this gives the
+   * common "latest N descriptors" affordance without a server-side
+   * pagination cursor. Applied AFTER filter + sort.
+   */
+  readonly limit?: number;
 }
 
 // `ManifestEntry` lives in `@interego/core` (substrate-level shape) so

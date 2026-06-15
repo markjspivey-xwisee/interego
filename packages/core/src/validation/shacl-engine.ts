@@ -61,6 +61,62 @@ const SH_HAS_VALUE = `${SHACL}hasValue` as IRI;
 const SH_MESSAGE = `${SHACL}message` as IRI;
 const SH_IN = `${SHACL}in` as IRI;
 
+const RDF_FIRST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first' as IRI;
+const RDF_REST  = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest'  as IRI;
+const RDF_NIL   = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil'   as IRI;
+
+/**
+ * Walk an rdf:List starting at `head` and return its members in
+ * order. Tolerates the three common shapes any of which sh:in can
+ * arrive in:
+ *
+ *   1. Turtle Collection: `sh:in ( "X" "O" )` — the parser desugars
+ *      this into a head bnode whose rdf:first/rdf:rest chain we walk.
+ *   2. Turtle comma-list:  `sh:in "X", "O"` — predicate has multiple
+ *      objects directly; no list to walk, each object IS a value.
+ *   3. Single value:       `sh:in "X"` — one object, treated as a
+ *      one-element list.
+ *
+ * The SHACL spec MANDATES form (1) — `sh:in` takes an rdf:List. Form
+ * (2) was accepted by an earlier comment in this file ("parsed as
+ * comma list") because the parser didn't support Collections; we now
+ * accept both so existing comma-form shapes don't regress.
+ *
+ * Returns the empty array on rdf:nil OR on a malformed list (e.g.
+ * a bnode head with no rdf:first). Cycle-safe: bounded to 1024 hops.
+ */
+function walkRdfList(
+  doc: ParsedDocument,
+  head: ParsedTerm,
+): readonly ParsedTerm[] {
+  if (head.kind === 'iri' && head.iri === RDF_NIL) return [];
+  // Form (1) — Collection: head is a bnode pointing at an rdf:first/rdf:rest chain.
+  if (head.kind === 'bnode') {
+    const out: ParsedTerm[] = [];
+    let cursor: ParsedTerm = head;
+    const seen = new Set<string>();
+    for (let i = 0; i < 1024; i++) {
+      if (cursor.kind === 'iri' && cursor.iri === RDF_NIL) return out;
+      if (cursor.kind !== 'bnode') return out;
+      if (seen.has(cursor.id)) return out;
+      seen.add(cursor.id);
+      const cell = doc.subjects.find(s =>
+        typeof s.subject === 'object' && 'bnode' in s.subject && s.subject.bnode === (cursor as { kind: 'bnode'; id: string }).id,
+      );
+      if (!cell) return out;
+      const first = cell.properties.get(RDF_FIRST)?.[0];
+      const rest = cell.properties.get(RDF_REST)?.[0];
+      if (!first) return out; // malformed cell — abort cleanly
+      out.push(first);
+      if (!rest) return out;
+      cursor = rest;
+    }
+    return out;
+  }
+  // Form (2) / (3) — head is itself a value (literal or IRI), not a list head.
+  return [head];
+}
+
 const SH_IRI = `${SHACL}IRI` as IRI;
 const SH_LITERAL = `${SHACL}Literal` as IRI;
 const SH_BLANK_NODE = `${SHACL}BlankNode` as IRI;
@@ -142,11 +198,22 @@ function isShape(subj: ParsedSubject): boolean {
   return types.some(t => t.kind === 'iri' && (t.iri === SH_NODE_SHAPE || t.iri === SH_PROPERTY_SHAPE));
 }
 
-function compilePropertyShape(subj: ParsedSubject): PropertyShape | null {
+function compilePropertyShape(doc: ParsedDocument, subj: ParsedSubject): PropertyShape | null {
   const path = asIri(getOne(subj, SH_PATH));
   if (!path) return null;
   const minCountLit = asLiteral(getOne(subj, SH_MIN_COUNT));
   const maxCountLit = asLiteral(getOne(subj, SH_MAX_COUNT));
+  // sh:in resolution: every object under sh:in is either
+  //   - the head of an rdf:List (Turtle Collection form), or
+  //   - a direct value (comma form / single value).
+  // walkRdfList handles all three; flatten so the engine's downstream
+  // termsEqual sweep sees a flat allowed-value set regardless of how
+  // the shape author wrote it.
+  const rawIn = getAll(subj, SH_IN);
+  const inValues: ParsedTerm[] = [];
+  for (const head of rawIn) {
+    for (const v of walkRdfList(doc, head)) inValues.push(v);
+  }
   return {
     id: subjectKey(subj),
     path,
@@ -157,7 +224,7 @@ function compilePropertyShape(subj: ParsedSubject): PropertyShape | null {
     clazz: asIri(getOne(subj, SH_CLASS)),
     pattern: asLiteral(getOne(subj, SH_PATTERN)),
     hasValue: getOne(subj, SH_HAS_VALUE),
-    inValues: getAll(subj, SH_IN),
+    inValues,
     message: asLiteral(getOne(subj, SH_MESSAGE)),
   };
 }
@@ -189,13 +256,13 @@ function compileShapes(doc: ParsedDocument): readonly NodeShape[] {
       if (ref.kind === 'iri') {
         const target = propertyShapesByKey.get(ref.iri);
         if (target) {
-          const ps = compilePropertyShape(target);
+          const ps = compilePropertyShape(doc, target);
           if (ps) propertyShapes.push(ps);
         }
       } else if (ref.kind === 'bnode') {
         const target = propertyShapesByKey.get(`_:${ref.id}`);
         if (target) {
-          const ps = compilePropertyShape(target);
+          const ps = compilePropertyShape(doc, target);
           if (ps) propertyShapes.push(ps);
         }
       }
@@ -426,8 +493,26 @@ export function validateAgainstShape(
   let shapeDoc: ParsedDocument;
   try {
     shapeDoc = parseTrig(shapeTurtle);
-  } catch {
-    return { conforms: true, results: [] };
+  } catch (err) {
+    // Silent vacuous-pass on shape parse failure was the actual cause
+    // of the f-shin-collection finding: a shape containing
+    // `sh:in ( "X" "O" )` (RDF Collection form) tripped the parser,
+    // got caught here, and turned the shape into a no-op — every
+    // value passed. Now we surface the failure as a Violation so the
+    // gate REJECTS the publish and the operator sees why. (Existing
+    // callers that fetched an unparseable shape and expected "no
+    // constraints, no problem" now get a structured rejection, which
+    // is the substrate-honest behavior — a shape the engine can't
+    // read can't be relied on as a gate.)
+    return {
+      conforms: false,
+      results: [{
+        focusNode: '',
+        constraintComponent: `${SHACL}ShapeGraphParseFailure`,
+        severity: 'Violation',
+        message: `Shape graph is not parseable as Turtle/TriG: ${(err as Error).message}`,
+      }],
+    };
   }
   let dataDoc: ParsedDocument;
   try {

@@ -66,7 +66,7 @@ export interface FederationStoreConfig {
  * union still includes it for type compatibility with the in-memory
  * shape, but `saveEntry()` rejects it.
  */
-export type FederationVia = 'manual' | 'directory' | 'webfinger' | 'self';
+export type FederationVia = 'manual' | 'directory' | 'webfinger' | 'self' | 'auto';
 
 /**
  * The shape persisted on the pod. `addedAt` is an ISO-8601 timestamp
@@ -79,6 +79,22 @@ export interface FederationEntry {
   readonly addedAt: string;
   readonly label?: string;
   readonly owner?: string;
+  // ── Agent-card fields (optional, backward-compatible) ───────
+  // Promote a flat pod entry into a discoverable agent card: who lives
+  // there, how to reach them, what channels they accept. Absent on
+  // legacy entries; populated by the auto-registration path.
+  readonly did?: string;
+  readonly webId?: string;
+  /** LDP inbox URL for Linked Data Notifications delivery. */
+  readonly inbox?: string;
+  /** Surface the agent runs on (claude.ai, chatgpt, claude-code-vscode, ...). */
+  readonly surface?: string;
+  /** WebFinger-style acct: handle, e.g. acct:johnny@<relay-host>. */
+  readonly handle?: string;
+  /** Reachability channels the agent accepts: [{type,value}]. */
+  readonly channels?: ReadonlyArray<{ type: string; value: string }>;
+  /** ISO-8601 last-updated; lets the upsert path detect real changes. */
+  readonly updatedAt?: string;
 }
 
 // Subcontainer below the service-account pod root. Sibling to the
@@ -136,6 +152,13 @@ interface PersistedEntry {
   addedAt: string;
   label?: string;
   owner?: string;
+  did?: string;
+  webId?: string;
+  inbox?: string;
+  surface?: string;
+  handle?: string;
+  channels?: ReadonlyArray<{ type: string; value: string }>;
+  updatedAt?: string;
 }
 
 const JSONLD_CTX: Record<string, string> = {
@@ -178,6 +201,13 @@ export async function saveEntry(
     addedAt: entry.addedAt,
     ...(entry.label !== undefined ? { label: entry.label } : {}),
     ...(entry.owner !== undefined ? { owner: entry.owner } : {}),
+    ...(entry.did !== undefined ? { did: entry.did } : {}),
+    ...(entry.webId !== undefined ? { webId: entry.webId } : {}),
+    ...(entry.inbox !== undefined ? { inbox: entry.inbox } : {}),
+    ...(entry.surface !== undefined ? { surface: entry.surface } : {}),
+    ...(entry.handle !== undefined ? { handle: entry.handle } : {}),
+    ...(entry.channels !== undefined ? { channels: entry.channels } : {}),
+    ...(entry.updatedAt !== undefined ? { updatedAt: entry.updatedAt } : {}),
   };
 
   try {
@@ -332,6 +362,13 @@ export async function loadEntries(
         addedAt: body.addedAt ?? new Date(0).toISOString(),
         ...(body.label !== undefined ? { label: body.label } : {}),
         ...(body.owner !== undefined ? { owner: body.owner } : {}),
+        ...(body.did !== undefined ? { did: body.did } : {}),
+        ...(body.webId !== undefined ? { webId: body.webId } : {}),
+        ...(body.inbox !== undefined ? { inbox: body.inbox } : {}),
+        ...(body.surface !== undefined ? { surface: body.surface } : {}),
+        ...(body.handle !== undefined ? { handle: body.handle } : {}),
+        ...(body.channels !== undefined ? { channels: body.channels } : {}),
+        ...(body.updatedAt !== undefined ? { updatedAt: body.updatedAt } : {}),
       };
       out.push(entry);
     } catch (err) {

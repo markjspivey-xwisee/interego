@@ -55,7 +55,10 @@ export interface ParsedDocument {
   readonly subjects: readonly ParsedSubject[];
 }
 
-const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' as IRI;
+const RDF_TYPE  = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'  as IRI;
+const RDF_FIRST = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#first' as IRI;
+const RDF_REST  = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#rest'  as IRI;
+const RDF_NIL   = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil'   as IRI;
 
 class ParseError extends Error {
   constructor(message: string, public readonly position: number) {
@@ -359,7 +362,72 @@ function parseTermAsTerm(s: ParserState): ParsedTerm {
     expectPunct(s, ']');
     return { kind: 'bnode', id };
   }
+  if (t.type === 'punct' && t.value === '(') {
+    return parseCollection(s);
+  }
   throw new ParseError(`unexpected token type "${t.type}"`, t.pos);
+}
+
+/**
+ * Parse a Turtle Collection — `( item1 item2 item3 )` — into the
+ * standard RDF rdf:List desugaring:
+ *
+ *     _:b0 rdf:first item1 ; rdf:rest _:b1 .
+ *     _:b1 rdf:first item2 ; rdf:rest _:b2 .
+ *     _:b2 rdf:first item3 ; rdf:rest rdf:nil .
+ *
+ * Returns the head bnode (or rdf:nil for the empty collection `()`).
+ * Per the Turtle spec, collections can nest and contain any term:
+ * `( ( "X" ) "Y" )` is two-item with the first item itself a list.
+ *
+ * Why this exists: shapes commonly carry `sh:in ( "X" "O" )` and
+ * `sh:languageIn ( "en" "fr" )` constraints. Before this support, the
+ * parser threw `unexpected token type "punct"` on `(`,
+ * `validateAgainstShape` silently caught the throw and returned
+ * `conforms: true` (vacuous pass), and the gate let through every
+ * value — including ones the shape was meant to reject. This
+ * surfaced as the f-shin-collection finding during the tic-tac-toe
+ * rematch (a SHACL shape with `sh:in ( "X" "O" )` failed to gate ANY
+ * mark, including illegal ones).
+ *
+ * The collection cells go into `bnodeProperties` (same place inline
+ * `[ ... ]` cells go) so `compileShapes` can walk them via the same
+ * subject-lookup path it uses for any other bnode.
+ */
+function parseCollection(s: ParserState): ParsedTerm {
+  const openTok = consume(s); // (
+  if (s.depth >= MAX_NESTING_DEPTH) {
+    throw new ParseError(`maximum nesting depth (${MAX_NESTING_DEPTH}) exceeded — refusing deeply-nested collection input`, openTok?.pos ?? -1);
+  }
+  s.depth++;
+  const items: ParsedTerm[] = [];
+  while (true) {
+    const next = peek(s);
+    if (!next) throw new ParseError('unterminated collection — missing `)`', openTok?.pos ?? -1);
+    if (next.type === 'punct' && next.value === ')') {
+      consume(s);
+      break;
+    }
+    items.push(parseTermAsTerm(s));
+  }
+  s.depth--;
+
+  if (items.length === 0) return { kind: 'iri', iri: RDF_NIL };
+
+  // Build the linked list from the tail back so each cell's rdf:rest
+  // points at the next-built cell. Cells are registered in
+  // bnodeProperties so the SHACL engine (and any other consumer that
+  // walks rdf:first/rdf:rest) can dereference the head and follow it.
+  let rest: ParsedTerm = { kind: 'iri', iri: RDF_NIL };
+  for (let i = items.length - 1; i >= 0; i--) {
+    const cellId = `_anon${s.bnodeCounter++}`;
+    const cellProps = new Map<IRI, ParsedTerm[]>();
+    cellProps.set(RDF_FIRST, [items[i]!]);
+    cellProps.set(RDF_REST, [rest]);
+    s.bnodeProperties.set(cellId, cellProps);
+    rest = { kind: 'bnode', id: cellId };
+  }
+  return rest;
 }
 
 function parsePredicate(s: ParserState): IRI {
@@ -405,6 +473,31 @@ function parseSubject(s: ParserState): { key: string; props: Map<IRI, ParsedTerm
     parsePropertyList(s, props);
     s.depth--;
     expectPunct(s, ']');
+    return { key, props };
+  }
+  if (t.type === 'punct' && t.value === '(') {
+    // Subject-position collection: the head bnode IS the subject.
+    // Spec-permitted (`( "X" "Y" ) :p :o .`) though rare in practice.
+    const head = parseCollection(s);
+    // parseCollection only ever returns rdf:nil (empty) or a bnode head
+    // — never a literal — but narrow explicitly for the type checker.
+    if (head.kind === 'iri') {
+      // Empty collection `()` — subject is rdf:nil. Register a subject
+      // entry so subsequent property-list parsing has somewhere to land.
+      const key = head.iri;
+      if (!s.subjects.has(key)) s.subjects.set(key, new Map());
+      return { key, props: s.subjects.get(key)! };
+    }
+    if (head.kind !== 'bnode') {
+      throw new ParseError('internal: subject-position collection returned non-bnode head', t.pos);
+    }
+    const key = `_:${head.id}`;
+    // The head bnode's properties (rdf:first / rdf:rest) already live
+    // in bnodeProperties; surface them as a subject too so any further
+    // predicates attached to the list head land there.
+    const existing = s.bnodeProperties.get(head.id);
+    const props = existing ?? new Map<IRI, ParsedTerm[]>();
+    s.subjects.set(key, props);
     return { key, props };
   }
   throw new ParseError(`expected subject, got ${t.type}`, t.pos);

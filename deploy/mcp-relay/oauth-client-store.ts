@@ -576,6 +576,91 @@ export async function loadClients(
   return out;
 }
 
+/**
+ * Read-through loader for a SINGLE client by client_id. The descriptor
+ * slug is deterministic (`oauth-client-<client_id>-graph.trig`), so this
+ * fetches the graph directly — no manifest/discover round-trip. Returns
+ * undefined on any miss (404, parse failure, id mismatch).
+ *
+ * Why this exists: the relay's in-memory client map is seeded at boot
+ * from the manifest (`loadClients`). If the manifest and the on-pod
+ * descriptors drift out of sync — which is exactly what was observed:
+ * 336 `oauth-client-*.ttl` files on disk but only 3 manifest entries —
+ * a perfectly valid client whose manifest entry was lost would get
+ * `invalid_client` even though its descriptor is right there on the pod.
+ * Wiring this into the provider's `getClient` as a miss-fallback makes
+ * authentication robust to manifest truncation: any client file present
+ * on the pod can still authorize. It also means the boot load no longer
+ * has to be exhaustive — the map can start small and fill on demand.
+ */
+export async function loadOneClient(
+  clientId: string,
+  cfg: OAuthClientStoreConfig,
+): Promise<OAuthClientInformationFull | undefined> {
+  // client_id is hex from randomBytes(16); reject anything else so a
+  // crafted clientId can't be turned into an arbitrary pod path.
+  if (!/^[0-9a-f]+$/.test(clientId)) return undefined;
+  const log = cfg.log ?? (() => {});
+  const graphUrl = graphUrlForClient(cfg.podUrl, clientId);
+  try {
+    const { content } = await withTransientRetry(() =>
+      fetchGraphContent(graphUrl, { fetch: cfg.fetch }));
+    if (!content) return undefined;
+    const doc = parseTrig(content);
+    const subjects = findSubjectsOfType(doc, RELAY_OAUTH_CLIENT_TYPE);
+    if (subjects.length === 0) return undefined;
+    const reconstructed = reconstructClientFromSubject(subjects[0]!, cfg);
+    if (!reconstructed || reconstructed.client_id !== clientId) return undefined;
+    log(`[oauth-client-store] read-through loaded client ${clientId} from ${graphUrl}.`);
+    return reconstructed;
+  } catch (err) {
+    log(`[oauth-client-store] read-through load failed for ${clientId}: ${(err as Error).message}`);
+    return undefined;
+  }
+}
+
+/**
+ * List every client_id that has a descriptor file on the pod, by listing
+ * the LDP container directly (NOT the manifest — the whole point is to
+ * find files the manifest has drifted away from). Returns the client_ids
+ * plus each file's last-modified time so a pruning pass can apply a
+ * grace window. Best-effort: returns [] on any listing failure.
+ */
+export async function listClientFilesOnPod(
+  cfg: OAuthClientStoreConfig,
+): Promise<Array<{ clientId: string; modifiedMs: number }>> {
+  const fetchFn: FetchFn = cfg.fetch ?? (async (url, init) => {
+    const rr = await fetch(url, init as RequestInit);
+    return {
+      ok: rr.ok, status: rr.status, statusText: rr.statusText,
+      headers: { get: (n: string) => rr.headers.get(n) },
+      text: () => rr.text(), json: () => rr.json(),
+    };
+  });
+  const containerUrl = `${ensureTrailingSlash(cfg.podUrl)}${DEFAULT_CONTAINER}`;
+  try {
+    const r = await fetchFn(containerUrl, { method: 'GET', headers: { Accept: 'text/turtle' } });
+    if (!r.ok) return [];
+    const txt = await r.text();
+    // Each member is a top-level subject: `<oauth-client-<id>.ttl> a ldp:Resource ; dc:modified "…"`.
+    // Pull the descriptor (.ttl) entries and their dc:modified timestamps.
+    const out: Array<{ clientId: string; modifiedMs: number }> = [];
+    // Non-greedy `[\s\S]*?` (NOT `[^.]*?`) — the gap between the subject
+    // and its dc:modified contains media-type IRIs with dots
+    // (…/text/turtle#Resource), which a dot-excluding class stops at,
+    // making the match fail. Match across to this subject's dc:modified.
+    const re = /<oauth-client-([0-9a-f]+)\.ttl>\s+a\b[\s\S]*?dc:modified\s+"([^"]+)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(txt)) !== null) {
+      const t = Date.parse(m[2]!);
+      out.push({ clientId: m[1]!, modifiedMs: Number.isFinite(t) ? t : 0 });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 // ── save ────────────────────────────────────────────────────
 
 /**

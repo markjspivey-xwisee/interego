@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Agent-designed Tic-Tac-Toe — Live</title>
+  <style>
+    :root {
+      --bg: #0a0a0a; --fg: #e5e5e5;
+      --dim: #888; --dimmer: #555;
+      --accent: #7dd3fc; --accent2: #a78bfa;
+      --win: #84cc16; --loss: #ef4444; --draw: #fbbf24;
+      --line: #141414; --line2: #1a1a1a;
+      --highlight: #1e3a3a;
+    }
+    * { box-sizing: border-box; }
+    body { font: 12.5px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; background: var(--bg); color: var(--fg); margin: 0; padding: 14px; }
+    h1 { font-size: 17px; margin: 0 0 6px; color: var(--accent); display: flex; align-items: center; gap: 8px; }
+    h2 { font-size: 11px; margin: 14px 0 6px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.07em; }
+    .small { font-size: 10.5px; color: var(--dim); }
+    code { color: var(--accent); font-size: 10px; word-break: break-all; }
+    pre { font: 10.5px/1.35 ui-monospace, Consolas, monospace; background: #0d1117; border-left: 2px solid var(--dim); padding: 6px 10px; margin: 4px 0; max-height: 230px; overflow: auto; color: #d4d4d4; border-radius: 3px; }
+
+    .phase-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 10px; font-weight: bold; letter-spacing: 0.05em; text-transform: uppercase; }
+    .phase-pill.goal        { background: #292929; color: var(--dim); }
+    .phase-pill.designing   { background: #4c1d95; color: var(--accent2); }
+    .phase-pill.evaluating  { background: #422006; color: var(--draw); }
+    .phase-pill.selecting   { background: #075985; color: var(--accent); }
+    .phase-pill.playing     { background: #052e16; color: var(--win); }
+    .phase-pill.closed      { background: #1e293b; color: var(--accent); }
+    .phase-pill.none        { background: #292929; color: var(--dim); }
+
+    .panel { background: var(--line); border-radius: 5px; padding: 10px; }
+
+    /* Top row: goal + status */
+    .goal-card { background: #112b3c; border-left: 2px solid var(--accent); padding: 8px; border-radius: 4px; margin-bottom: 8px; }
+
+    /* Designs: two side-by-side */
+    .designs-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 1000px) { .designs-row { grid-template-columns: 1fr; } }
+    .design-card { background: var(--line); border-radius: 5px; padding: 10px; border: 1px solid #222; }
+    .design-card.winner { border-color: var(--win); background: #0e1f0e; }
+    .design-card .head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+    .design-card .head .who { color: var(--accent2); font-weight: bold; font-size: 11px; }
+    .design-card .head .bias { color: var(--dim); font-size: 10px; }
+    .design-card .gname { font-size: 14px; font-weight: bold; color: var(--accent); margin: 2px 0 4px; }
+    .design-card .rules { font-size: 11px; color: #c5c5c5; margin-bottom: 6px; }
+    .design-card .score-row { display: flex; gap: 8px; font-size: 10px; color: var(--dim); margin-top: 4px; align-items: center; flex-wrap: wrap; }
+    .design-card .score { background: #1a1a1a; padding: 1px 6px; border-radius: 3px; }
+    .design-card .score b { color: var(--fg); }
+    .design-card .winner-pill { background: var(--win); color: #000; padding: 1px 8px; border-radius: 999px; font-size: 9px; font-weight: bold; letter-spacing: 0.05em; }
+    .design-card.idle { opacity: 0.5; border-style: dashed; }
+
+    /* Three-column main layout */
+    .main-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-top: 8px; }
+    @media (max-width: 1100px) { .main-grid { grid-template-columns: 1fr; } }
+
+    /* Leaderboard */
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 3px 6px; }
+    th { color: var(--dim); font-weight: normal; border-bottom: 1px solid #222; font-size: 10px; text-transform: uppercase; }
+    .lpill { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 10px; }
+    .lpill.w { background: rgba(132, 204, 22, 0.15); color: var(--win); }
+    .lpill.l { background: rgba(239, 68, 68, 0.15); color: var(--loss); }
+    .lpill.d { background: rgba(251, 191, 36, 0.15); color: var(--draw); }
+
+    /* Games grid */
+    .games-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+    .game-card { background: var(--line); border-radius: 5px; padding: 8px; border: 1px solid #222; position: relative; }
+    .game-card.in-progress { border-color: var(--draw); }
+    .game-card.terminal    { border-color: var(--accent); opacity: 0.85; }
+    .game-card.active      { border-color: var(--win); }
+    .game-card .gnum { position: absolute; top: 4px; right: 6px; color: var(--dimmer); font-size: 9px; }
+    .game-card .gnames { font-size: 10.5px; margin-bottom: 4px; }
+    .game-card .gnames .x { color: var(--accent); font-weight: bold; }
+    .game-card .gnames .o { color: var(--draw); font-weight: bold; }
+    .game-card .gmeta { font-size: 9.5px; color: var(--dim); margin-bottom: 4px; min-height: 1.2em; }
+    .game-card .gverdict { font-size: 10px; font-weight: bold; }
+    .game-card .gverdict.win { color: var(--win); }
+    .game-card .gverdict.draw { color: var(--draw); }
+
+    .board { display: grid; gap: 2px; background: #222; padding: 2px; border-radius: 3px; margin: 4px 0; }
+    .cell { background: var(--bg); aspect-ratio: 1; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: bold; min-width: 18px; transition: background 0.3s; }
+    .cell.X { color: var(--accent); }
+    .cell.O { color: var(--draw); }
+    .cell.winning { background: var(--highlight); }
+
+    /* Activity log */
+    .activity-log { max-height: 600px; overflow-y: auto; }
+    .activity-row { padding: 4px 6px; border-bottom: 1px solid #161616; font-size: 11px; display: flex; gap: 6px; }
+    .activity-row:last-child { border-bottom: 0; }
+    .activity-row .chan { display: inline-block; padding: 0 4px; font-size: 9px; font-weight: bold; text-transform: uppercase; border-radius: 2px; align-self: center; min-width: 64px; text-align: center; }
+    .activity-row .chan.phases        { background: #422006; color: var(--draw); }
+    .activity-row .chan.goal          { background: #1e293b; color: var(--accent); }
+    .activity-row .chan.designs       { background: #4c1d95; color: var(--accent2); }
+    .activity-row .chan.attestations  { background: #422006; color: var(--draw); }
+    .activity-row .chan.selection     { background: #052e16; color: var(--win); }
+    .activity-row .chan.games         { background: #1e293b; color: var(--fg); }
+    .activity-row .chan.moves         { background: #052e16; color: var(--win); }
+    .activity-row .chan.results       { background: #831843; color: #f9a8d4; }
+    .activity-row .text { flex: 1; }
+
+    /* Header bits */
+    .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--win); margin-right: 4px; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+    .status-bar { display: flex; gap: 14px; align-items: center; }
+    .status-item { font-size: 10.5px; color: var(--dim); }
+    .status-item b { color: var(--fg); }
+    .err { color: var(--loss); font-size: 10px; }
+
+    .toggle { color: var(--accent); cursor: pointer; font-size: 10px; user-select: none; }
+    .toggle:hover { text-decoration: underline; }
+    .collapsed { display: none; }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="live-dot"></span>
+    Agent-designed Tic-Tac-Toe
+    <span class="phase-pill none" id="phase-pill">—</span>
+  </h1>
+  <div class="status-bar">
+    <span class="status-item" id="status">Connecting…</span>
+    <span class="status-item">tournament: <b id="tid">—</b></span>
+    <span class="status-item">games: <b id="game-count">0</b></span>
+    <span class="status-item">moves: <b id="move-count">0</b></span>
+    <span class="status-item">results: <b id="result-count">0</b></span>
+  </div>
+
+  <div id="goal-block">
+    <div class="goal-card">
+      <div class="small">Goal (not yet published)</div>
+    </div>
+  </div>
+
+  <h2>Agent-authored designs</h2>
+  <div class="designs-row" id="designs-row">
+    <div class="design-card idle"><div class="small">Awaiting design proposals…</div></div>
+    <div class="design-card idle"><div class="small">Awaiting design proposals…</div></div>
+  </div>
+
+  <div class="main-grid">
+    <div>
+      <h2>Leaderboard</h2>
+      <div class="panel">
+        <table id="leaderboard">
+          <thead><tr><th>#</th><th>Agent</th><th>W</th><th>L</th><th>D</th><th>Games</th><th>Score</th></tr></thead>
+          <tbody><tr><td colspan="7" class="small">Tournament hasn't started.</td></tr></tbody>
+        </table>
+      </div>
+      <h2>All games (live)</h2>
+      <div class="games-grid" id="games-grid">
+        <div class="panel small">No games yet.</div>
+      </div>
+    </div>
+    <div>
+      <h2>Substrate activity</h2>
+      <div class="panel activity-log" id="activity-log">
+        <div class="small">Waiting…</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = sel => document.querySelector(sel);
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function renderBoard(boardStr, winningCells = []) {
+      if (!boardStr) return '';
+      const n = Math.round(Math.sqrt(boardStr.length));
+      if (!Number.isFinite(n) || n * n !== boardStr.length) return `<pre class="small">${escapeHtml(boardStr.slice(0,80))}</pre>`;
+      const cells = [];
+      for (let i = 0; i < boardStr.length; i++) {
+        const ch = boardStr[i];
+        const winning = winningCells.includes(i);
+        cells.push(`<div class="cell ${ch === '.' ? '' : ch} ${winning ? 'winning' : ''}">${ch === '.' ? '' : ch}</div>`);
+      }
+      return `<div class="board" style="grid-template-columns: repeat(${n}, 1fr)">${cells.join('')}</div>`;
+    }
+
+    function renderPhase(phase) {
+      const pill = $('#phase-pill');
+      const name = phase?.phase ?? 'none';
+      pill.textContent = name;
+      pill.className = `phase-pill ${name}`;
+    }
+
+    function renderGoal(g) {
+      $('#goal-block').innerHTML = g
+        ? `<div class="goal-card">
+             <div class="small">Goal published — ${escapeHtml(new Date(g.issuedAt).toLocaleTimeString())}</div>
+             <div>${escapeHtml(g.statement)}</div>
+           </div>`
+        : `<div class="goal-card"><div class="small">Goal not yet published…</div></div>`;
+    }
+
+    function renderDesigns(designs, attestations, selection) {
+      const row = $('#designs-row');
+      if (!designs || designs.length === 0) {
+        row.innerHTML = `
+          <div class="design-card idle"><div class="small">Awaiting design proposals…</div></div>
+          <div class="design-card idle"><div class="small">Awaiting design proposals…</div></div>`;
+        return;
+      }
+      const attMap = new Map((attestations || []).map(a => [a.designId, a]));
+      const winnerId = selection?.designId;
+      row.innerHTML = designs.map((d, i) => {
+        const att = attMap.get(d.designId);
+        const isWinner = d.designId === winnerId;
+        const headerExtras = isWinner ? '<span class="winner-pill">selected</span>' : '';
+        const sourceId = `src-${i}`;
+        return `
+          <div class="design-card ${isWinner ? 'winner' : ''}">
+            <div class="head">
+              <span class="who">${escapeHtml(d.designerLabel)}</span>
+              <span class="bias">${escapeHtml(d.bias)}</span>
+              ${headerExtras}
+            </div>
+            <div class="gname">${escapeHtml(d.name)}</div>
+            <div class="rules">${escapeHtml(d.rulesText || '')}</div>
+            <div class="score-row">
+              <span class="score">self-test <b>${d.selfBattery?.passed ?? 0}/${d.selfBattery?.total ?? 0}</b></span>
+              ${att ? `
+                <span class="score">battery <b>${att.battery?.passed ?? 0}/${att.battery?.total ?? 0}</b></span>
+                <span class="score">clarity <b>${(att.clarity ?? 0).toFixed(2)}</b></span>
+                <span class="score">novelty <b>${(att.novelty ?? 0).toFixed(2)}</b></span>
+                <span class="score">composite <b>${(att.composite ?? 0).toFixed(2)}</b></span>
+              ` : '<span class="score small">awaiting evaluator…</span>'}
+            </div>
+            <div style="margin-top:6px;">
+              <span class="toggle" onclick="document.getElementById('${sourceId}').classList.toggle('collapsed')">show / hide engine source</span>
+              <pre id="${sourceId}" class="collapsed">${escapeHtml(d.engineSource || '')}</pre>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function renderLeaderboard(rows) {
+      const tbody = $('#leaderboard tbody');
+      if (!rows || rows.length === 0 || rows.every(r => r.games_played === 0)) {
+        tbody.innerHTML = '<tr><td colspan="7" class="small">Tournament hasn\'t started.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map((r, i) =>
+        `<tr><td>${i+1}</td><td>${escapeHtml(r.label)}</td><td><span class="lpill w">${r.wins}</span></td><td><span class="lpill l">${r.losses}</span></td><td><span class="lpill d">${r.draws}</span></td><td>${r.games_played}</td><td><b>${r.score}</b></td></tr>`
+      ).join('');
+    }
+
+    function renderGames(games) {
+      const grid = $('#games-grid');
+      if (!games || games.length === 0) { grid.innerHTML = '<div class="panel small">No games yet.</div>'; return; }
+      grid.innerHTML = games.map(g => {
+        const cls = g.terminal ? 'terminal' : (g.moveNumber > 0 ? 'in-progress' : 'active');
+        const verdict = g.terminal
+          ? (g.draw ? '<div class="gverdict draw">DRAW</div>' : `<div class="gverdict win">${escapeHtml(g.winnerLabel)} wins</div>`)
+          : `<div class="gmeta">move ${g.moveNumber}</div>`;
+        const reason = g.lastReason ? `<div class="gmeta" title="${escapeHtml(g.lastReason)}">"${escapeHtml(g.lastReason.slice(0, 50))}${g.lastReason.length > 50 ? '…' : ''}"</div>` : '';
+        return `
+          <div class="game-card ${cls}">
+            <div class="gnum">#${g.gameNumber ?? '?'}</div>
+            <div class="gnames"><span class="x">${escapeHtml(g.xLabel)}</span> v <span class="o">${escapeHtml(g.oLabel)}</span></div>
+            ${renderBoard(g.currentBoard, g.winningCells || [])}
+            ${verdict}
+            ${reason}
+          </div>`;
+      }).join('');
+    }
+
+    function renderActivity(activity) {
+      const log = $('#activity-log');
+      if (!activity || activity.length === 0) { log.innerHTML = '<div class="small">Waiting…</div>'; return; }
+      log.innerHTML = activity.map(a =>
+        `<div class="activity-row"><span class="chan ${a.channel}">${escapeHtml(a.channel)}</span><span class="text">${escapeHtml(a.summary)}</span></div>`
+      ).join('');
+    }
+
+    async function fetchState() {
+      try {
+        const resp = await fetch('/api/state');
+        if (!resp.ok) throw new Error(`status ${resp.status}`);
+        const j = await resp.json();
+        renderPhase(j.phase);
+        renderGoal(j.goal);
+        renderDesigns(j.designs || [], j.attestations || [], j.selection);
+        renderLeaderboard(j.leaderboard);
+        renderGames(j.all_games || []);
+        renderActivity(j.activity || []);
+        $('#tid').textContent = j.tournament_id ?? '—';
+        $('#game-count').textContent = (j.all_games || []).length;
+        $('#move-count').textContent = (j.recent_moves || []).length;
+        $('#result-count').textContent = (j.recent_results || []).length;
+        $('#status').textContent = `Live · last updated ${new Date().toLocaleTimeString()}`;
+      } catch (err) {
+        $('#status').innerHTML = `<span class="err">${err.message}</span>`;
+      }
+    }
+
+    fetchState();
+    setInterval(fetchState, 4000);
+    try {
+      const es = new EventSource('/api/events');
+      es.onmessage = () => fetchState();
+      es.onerror = () => { /* fall through to polling */ };
+    } catch { /* fall through */ }
+  </script>
+</body>
+</html>

@@ -89,6 +89,16 @@ const TOURNAMENT_POD = `${CSS}/demos/tic-tac-toe-${TOURNAMENT_DATE}/`;
 const MODEL = process.env.TICTAC_MODEL ?? 'claude-sonnet-4-6';
 const POLL_INTERVAL_MS = Number(process.env.TICTAC_POLL_MS ?? 30_000);
 
+// Relay notification surface (rev 190+). When set, the watcher also
+// opens an SSE connection to /notifications/<podSlug> on the relay
+// and triggers an out-of-band tick the moment a new descriptor lands
+// on the tournament pod. The polling interval above is kept as a
+// safety net for any case where the SSE link drops (network blips,
+// relay restarts, etc.) — the two paths are belt-and-suspenders.
+const RELAY_URL = (process.env.CG_RELAY_URL ?? process.env.MCP_RELAY_URL
+  ?? 'https://interego-relay.livelysky-8b81abb0.eastus.azurecontainerapps.io').replace(/\/$/, '');
+const SSE_ENABLED = process.env.TICTAC_SSE_DISABLED !== '1';
+
 const TOURNAMENT_NS = `urn:demo:tic-tac-toe:${TOURNAMENT_DATE}`;
 const RULES_IRI = `${TOURNAMENT_NS}:rules`;
 
@@ -995,11 +1005,78 @@ async function main() {
 
   const handle = setInterval(() => { void tick(collective); }, POLL_INTERVAL_MS);
 
+  // SSE-driven wake (Tier-2.B): subscribe to the relay's
+  // /notifications/<podSlug> SSE channel and trigger a tick the
+  // moment a new descriptor lands on the tournament pod. The polling
+  // interval above stays as a safety net for SSE-drop scenarios.
+  // Re-entrancy is handled by tickInFlight so an SSE-arrival doesn't
+  // step on an in-flight polled tick. The connection auto-reconnects
+  // on close with exponential backoff up to ~60s.
+  let sseController = null;
+  let sseStopRequested = false;
+  async function runSseLoop() {
+    if (!SSE_ENABLED) return;
+    const { createHash } = await import('node:crypto');
+    const podSlug = createHash('sha256').update(TOURNAMENT_POD).digest('hex').slice(0, 16);
+    const sseUrl = `${RELAY_URL}/notifications/${podSlug}`;
+    let backoffMs = 1_000;
+    log(`SSE wake listener: ${sseUrl} (pod slug ${podSlug.slice(0, 8)}…)`);
+    while (!sseStopRequested) {
+      try {
+        sseController = new AbortController();
+        const resp = await fetch(sseUrl, {
+          method: 'GET',
+          headers: { 'Accept': 'text/event-stream' },
+          signal: sseController.signal,
+        });
+        if (!resp.ok) {
+          log(`SSE connect HTTP ${resp.status} ${resp.statusText} — retrying in ${backoffMs}ms`);
+          await new Promise(r => setTimeout(r, backoffMs));
+          backoffMs = Math.min(backoffMs * 2, 60_000);
+          continue;
+        }
+        backoffMs = 1_000;
+        // Stream parse: SSE events are blank-line separated; we care
+        // only about the `data:` lines. Each NotificationEvent is a
+        // line of JSON; on any event, kick a tick.
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        log('SSE channel open — wake-on-descriptor active');
+        while (!sseStopRequested) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buffer.indexOf('\n\n')) >= 0) {
+            const event = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            // Any event on this channel means a new descriptor
+            // touched our pod — tick.
+            if (/^data:/m.test(event)) {
+              log(`SSE wake: descriptor landed on tournament pod — kicking tick`);
+              void tick(collective);
+            }
+          }
+        }
+      } catch (err) {
+        if (sseStopRequested) break;
+        log(`SSE connection error: ${err.message} — retrying in ${backoffMs}ms`);
+        await new Promise(r => setTimeout(r, backoffMs));
+        backoffMs = Math.min(backoffMs * 2, 60_000);
+      }
+    }
+  }
+  void runSseLoop();
+
   const shutdown = async (signal) => {
     if (stopRequested) return;
     stopRequested = true;
     log(`${signal} received — finishing in-flight work before exit`);
     clearInterval(handle);
+    // Close the SSE wake channel.
+    sseStopRequested = true;
+    try { sseController?.abort(); } catch { /* ignore */ }
     // Wait for any in-flight tick to land.
     const start = Date.now();
     while (tickInFlight && Date.now() - start < 60_000) {

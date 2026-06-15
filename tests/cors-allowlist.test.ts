@@ -244,9 +244,18 @@ describe('CORS allowlist — sync across mcp-relay / identity / css-gate', () =>
     const relayServer = readFileSync(join(REPO_ROOT, 'deploy', 'mcp-relay', 'server.ts'), 'utf8');
     const identityServer = readFileSync(join(REPO_ROOT, 'deploy', 'identity', 'server.ts'), 'utf8');
 
-    // The literal wildcard middleware line MUST NOT appear in either server file.
-    expect(relayServer).not.toMatch(/setHeader\(['"]Access-Control-Allow-Origin['"],\s*['"]\*['"]\)/);
-    expect(identityServer).not.toMatch(/setHeader\(['"]Access-Control-Allow-Origin['"],\s*['"]\*['"]\)/);
+    // Public-discovery endpoints (RFC 7033 WebFinger, did.json, JWKS) are
+    // unauthenticated, read-only and carry no credentials, so ACAO:* on them is
+    // correct — NOT the reflected-origin CSRF risk this guard exists for. Such
+    // lines are exempt ONLY when explicitly tagged `cors-public-discovery`; any
+    // UNMARKED wildcard still fails, so the guard against the general handler
+    // reflecting arbitrary origins stays intact.
+    const stripPublicDiscovery = (src: string): string =>
+      src.split('\n').filter(line => !line.includes('cors-public-discovery')).join('\n');
+
+    // The literal wildcard middleware line MUST NOT appear (unmarked) in either server file.
+    expect(stripPublicDiscovery(relayServer)).not.toMatch(/setHeader\(['"]Access-Control-Allow-Origin['"],\s*['"]\*['"]\)/);
+    expect(stripPublicDiscovery(identityServer)).not.toMatch(/setHeader\(['"]Access-Control-Allow-Origin['"],\s*['"]\*['"]\)/);
     // And the css-gate must not literally write the wildcard either.
     expect(cssGateSrc).not.toMatch(/['"]Access-Control-Allow-Origin['"]\s*:\s*['"]\*['"]/);
   });

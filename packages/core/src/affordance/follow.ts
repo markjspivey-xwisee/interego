@@ -286,8 +286,14 @@ export async function followAffordance(
     : { action: actionIri, target, method };
 
   // ── 5. Invoke the target ─────────────────────────────────
+  // Send the affordance's declared dcat:mediaType as the request Content-Type,
+  // not a hardcoded application/json — otherwise a body the affordance declares
+  // as e.g. application/ld+json is stored under the wrong type (CSS then refuses
+  // to serve it as ld+json, and a strict reader never surfaces it: the sender
+  // half of f-ldn-inbox-asymmetry). Affordances that declare no mediaType keep
+  // application/json, so existing JSON affordances are unchanged.
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    'Content-Type': mediaType ?? 'application/json',
     'Accept': mediaType ?? 'application/json, */*',
   };
   if (options?.authorization) {
@@ -298,7 +304,9 @@ export async function followAffordance(
   // still serialize when a payload is supplied — the target server is
   // the authority on what it accepts — but allow undefined-body invokes.
   const hasPayload = payload !== undefined && payload !== null;
-  const body = hasPayload ? JSON.stringify(payload) : undefined;
+  // Serialize exactly once — a payload that is already a JSON string is sent
+  // as-is (see f-act-payload-double-encode); only an object is stringified.
+  const body = hasPayload ? (typeof payload === 'string' ? payload : JSON.stringify(payload)) : undefined;
 
   const response = await withTransientRetry(async () => {
     const r = await fetchImpl(target, { method, headers, body });

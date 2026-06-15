@@ -3202,7 +3202,12 @@ app.get('/agents/:id/profile', (req, res) => {
 // both the GET response and the OPTIONS preflight, overriding the
 // `corsMiddleware` allowlist that the rest of the identity server uses.
 function setWebFingerCors(res: express.Response): void {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  // cors-public-discovery: RFC 7033 §4.4 requires /.well-known/webfinger to be
+  // world-readable cross-origin. Unauthenticated + read-only + carries no
+  // credentials, so ACAO:* here is correct and is NOT the reflected-origin
+  // CSRF risk the cors-allowlist test guards against (which still forbids any
+  // UNMARKED wildcard in the general handlers).
+  res.setHeader('Access-Control-Allow-Origin', '*'); // cors-public-discovery
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Accept');
   res.setHeader('Vary', 'Origin');

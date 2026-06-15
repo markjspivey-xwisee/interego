@@ -84,6 +84,9 @@ COPY deploy/mcp-relay/federation-store.ts ./
 COPY deploy/mcp-relay/url-rewrite.ts ./
 COPY deploy/mcp-relay/lazy-pod-init.ts ./
 COPY deploy/mcp-relay/compliance-sign.ts ./
+COPY deploy/mcp-relay/agent-mesh.ts ./
+COPY deploy/mcp-relay/activitypub.ts ./
+COPY deploy/mcp-relay/reachability.ts ./
 RUN npx tsc
 
 # ────────────────────────────────────────────────────────────

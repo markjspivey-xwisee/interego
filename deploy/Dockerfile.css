@@ -8,7 +8,15 @@ WORKDIR /app
 # Install Community Solid Server
 RUN npm install -g @solid/community-server@7
 
-# Copy CSS config (file-backed storage; see css-config.json)
+# Copy CSS config (file-backed storage; memory resource-locker → single
+# replica only). NOTE: css-config-redis.json (a Redis-locker variant for
+# multi-replica) was TESTED 2026-06-11 and FAILED a concurrent-write
+# torture test — AzureFile's SMB cross-replica read cache means a replica
+# reads a stale manifest under the Redis lock and loses/incoherently-reads
+# writes. A distributed lock cannot fix an incoherent shared filesystem.
+# CSS stays maxReplicas=1 until/unless the storage backend is re-platformed
+# off the AzureFile file-backend (DB/SPARQL/object-store). See
+# css-config-redis.json (kept as a reference artifact, NOT used).
 COPY examples/multi-agent/css-config.json /app/css-config.json
 
 # CSS data root — mount an Azure Files (or any persistent) volume here.
@@ -20,8 +28,13 @@ RUN mkdir -p /data
 EXPOSE 3456
 
 # Use shell form so env vars are expanded at runtime.
+# Substitute the Redis locker address from $REDIS_ADDR at startup so the
+# connection target is a deploy-time env var (changeable via
+# `az containerapp update --set-env-vars REDIS_ADDR=...` with no rebuild),
+# not baked into the image. Defaults to localhost if unset.
 # --rootFilePath tells CSS where the file backend should root its quads.
-CMD community-solid-server \
+CMD sed -i "s|__REDIS_ADDR__|${REDIS_ADDR:-127.0.0.1:6379}|g" /app/css-config.json && \
+  community-solid-server \
   -c /app/css-config.json \
   -p 3456 \
   -l info \
