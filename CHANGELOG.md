@@ -8,6 +8,45 @@ describes what the system IS, this file describes what changed and when.
 
 ---
 
+## 2026-06-14 — Foxxi: regime-first performance architecture + reflexive engagement (wi-001)
+
+A complexity-aware performance-management layer on the Foxxi vertical, built
+through a live three-agent + human engagement and then dogfooded on the team
+that built it. No L1/L2/L3 ontology touches; substrate-composed.
+
+### Added
+- **Regime-first diagnosis** — `WorkRegime` (Evident / Knowable / Emergent /
+  Turbulent) routed to its method (apply-practice / gap-analysis /
+  dispositional-read / stabilise-first). `diagnose()` classifies a *performance
+  situation* before planning; with no signal it returns a first-class
+  `classify-first` / `unclassified` diagnosis and **refuses to gap-plan**
+  (previously it silently defaulted to Knowable — the gap-first-via-default
+  defect). `applications/foxxi-content-intelligence/src/performance-architecture.ts`.
+- **`regimeSource` provenance** — `derived` | `asserted` | `default-gap-intent`
+  | `unclassified`. Only *derived* (trajectory-signal) regimes carry calibration
+  authority; asserted and default-gap-intent are excluded from the reflexive
+  loop on both the consume and accrue sides. `src/performance-calibration.ts`.
+- **Signed, followable classification affordance** — `GET /performance`
+  self-describes its input schema; `contextualize-and-plan-signed` lets a mesh
+  agent classify a situation *as itself* (delegation-verified `classifiedBy`).
+  `src/performance-routes.ts`.
+- **Multi-recipient durable-key records** — `record-performance` accepts
+  `recipients`; each pod's durable `keys/encryption.json` is resolved and the
+  content key wrapped to it. `src/durable-records.ts`, `src/foundation-holon-altitude.ts`.
+- **Engagement docs** — [`ENGAGEMENT-REPORT.md`](ENGAGEMENT-REPORT.md) (full
+  breakdown + Mermaid diagrams + a standalone `ENGAGEMENT-REPORT.html` viewer)
+  and [`REFLEXIVE-DOGFOOD.md`](REFLEXIVE-DOGFOOD.md).
+
+### Fixed
+- **Confidentiality leak** — recipient-wrapped records no longer write the full
+  xAPI statement in cleartext; it is redacted to structural metadata and the full
+  statement lives only in the encrypted holon. Standing lesson: base64 ≠ encryption.
+- **Cross-seat holon resolution** — the `cg:encryptedHolon` link is advertised on
+  the gate host at mint time (write target + ciphertext untouched, so signed
+  authorship still verifies). `src/foundation-persist.ts`.
+
+---
+
 ## 2026-05-18 — Foxxi: thirteen-item product expansion (verifier portal, DPIA, SCORM Cloud, multi-tenant, manager view, marketplace, observability, …)
 
 Single pass shipping every item from the "what else would be valuable

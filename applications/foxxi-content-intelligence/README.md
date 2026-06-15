@@ -55,6 +55,41 @@ record — superseded by `foxxi-vocab.ts`, not loaded at runtime.
 | Federated multi-course catalog | [`hyprcat:`](../../docs/ns/hyprcat.ttl) data-product catalog | Federation IRI base in `federation_payload.json` matches the HyprCat federation discipline |
 | LMS connectors (Cornerstone OnDemand, Workday Learning, etc.) | [`src/connectors/`](../../src/connectors/) extensibility surface | Foxxi reuses the connector registry pattern |
 
+## Performance architecture (regime-first)
+
+Foxxi's governing primitive is the **work regime**, not content. The unit of work
+is a *performance situation*; the first move is to read its regime — the
+relationship between cause and effect — and route to that regime's method.
+`WorkRegime` is a closed four-valued union:
+
+| Regime | Method | When |
+|---|---|---|
+| **Evident** | `apply-practice` | an established practice exists — look it up, don't teach it |
+| **Knowable** | `gap-analysis` | cause is analysable — read the gap and close it (*the one regime where the gap frame is correct*) |
+| **Emergent** | `dispositional-read` | no fixable gap — read the disposition, steer by safe-to-fail probes + a coaching loop |
+| **Turbulent** | `stabilise-first` | act to stabilise, then re-classify |
+
+A situation must be **classified before it is planned.** With no signal,
+`diagnose()` returns a first-class `classify-first` / `unclassified` diagnosis and
+**refuses to gap-plan** — it never silently defaults to Knowable. Every diagnosis
+carries `regimeSource` (`derived` from agent-trajectory signal · `asserted` by the
+caller · `default-gap-intent` · `unclassified`); only a *derived* regime carries
+calibration authority, so a caller cannot assert or gap-frame its way past the
+invariant, nor ride a borrowed track record.
+
+| Concern | Code |
+|---|---|
+| classify → recommend | [`src/performance-architecture.ts`](src/performance-architecture.ts) |
+| reflexive calibration loop | [`src/performance-calibration.ts`](src/performance-calibration.ts) |
+| `GET /performance` (self-describing schema), `POST /performance/plan`, signed `contextualize-and-plan` affordance | [`src/performance-routes.ts`](src/performance-routes.ts) |
+| durable multi-recipient records + cross-seat holon resolution | [`src/durable-records.ts`](src/durable-records.ts), [`src/foundation-holon-altitude.ts`](src/foundation-holon-altitude.ts), [`src/foundation-persist.ts`](src/foundation-persist.ts) |
+
+The architecture was built and then **used on the team that built it** — the first
+performance situation it managed was the team's own coordination work, classified
+**Emergent** and steered by probe + coaching, not gap-planned. Full breakdown with
+diagrams: [`ENGAGEMENT-REPORT.md`](../../ENGAGEMENT-REPORT.md); the running record:
+[`REFLEXIVE-DOGFOOD.md`](../../REFLEXIVE-DOGFOOD.md).
+
 ## Imported assets (`imported/`)
 
 The original Foxxi system files, preserved as-is. Authoritative for
