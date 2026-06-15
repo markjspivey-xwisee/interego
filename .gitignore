@@ -4,6 +4,9 @@ dist/
 .env
 .env.*
 
+# Relay agent keypair — secret, lives in Container Apps secret store only.
+relay-agent-key*.json
+
 # MCP server dependencies and build output (installed/built separately)
 mcp-server/node_modules/
 mcp-server/dist/
@@ -58,3 +61,7 @@ __pycache__/
 *.pyc
 
 .write-secret.tmp
+.interego/
+
+# Local agent scratch (patches, split helpers) — per-machine, not source.
+.claude/
