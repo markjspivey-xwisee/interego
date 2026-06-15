@@ -323,6 +323,12 @@ const learningEngineerWebIds = new Set(
     .split(',').map(s => s.trim()).filter(Boolean),
 );
 
+// Sync snapshot of the published-directory users (with wallet_address) used
+// to verify session-token signers on the synchronous express gates
+// (operator-auth + the xapi-admin gate). Refreshed off autoFetchAdmin
+// (itself 60s-cached); empty until first load, then last-good retained.
+let directoryUsersCache: ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }> = [];
+
 if (!adminKeySeed) {
   console.warn('[foxxi-bridge] WARNING: FOXXI_ADMIN_KEY_SEED is unset — admin sections cannot be decrypted; learner queries will fail. Set FOXXI_ADMIN_KEY_SEED to the same seed used at publish time.');
 }
@@ -389,6 +395,14 @@ async function autoFetchAdmin(args: Record<string, unknown>): Promise<FoxxiAdmin
     console.error('[foxxi-bridge] autoFetchAdmin failed:', (err as Error).message);
     return null;
   }
+}
+
+/** Refresh the directory-users cache used by the synchronous session-token gates. */
+async function refreshDirectoryCache(): Promise<void> {
+  try {
+    const a = await autoFetchAdmin({});
+    if (a?.users) directoryUsersCache = a.users as typeof directoryUsersCache;
+  } catch { /* keep last good snapshot */ }
 }
 
 async function autoFetchCourse(args: Record<string, unknown>, courseId: string): Promise<FoxxiAgenticPayload | null> {
@@ -2176,9 +2190,14 @@ const app = createVerticalBridge({
     // + stages LaunchData, and mints the one-time fetch token the AU
     // exchanges for LRS auth (GET /cmi5/launch, POST /cmi5/fetch/:token).
     // Operator-auth for the L3 REST surfaces — honor ?tenant_pod_url only
-    // for an admin/learning-engineer (session-token sub claim, the same bar
-    // as the existing admin gate); pin everyone else to the default tenant.
-    const operatorAuth = { adminWebId, learningEngineerWebIds };
+    // for a SIGNATURE-VERIFIED admin/learning-engineer; pin everyone else to
+    // the default tenant. loadUsers feeds verifySessionToken the published
+    // directory's wallet_address map.
+    const operatorAuth = { adminWebId, learningEngineerWebIds, loadUsers: () => directoryUsersCache };
+    // Warm + periodically refresh the directory cache (everything is
+    // initialized here) so the synchronous gates can verify signers.
+    void refreshDirectoryCache();
+    { const t = setInterval(() => void refreshDirectoryCache(), 5 * 60_000); (t as { unref?: () => void }).unref?.(); }
 
     attachCmi5LmsRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
@@ -2375,6 +2394,7 @@ const app = createVerticalBridge({
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       basicAuthPairs: process.env.FOXXI_LRS_BASIC_AUTH_PAIRS ?? '',
       forwardingTargets: process.env.FOXXI_LRS_FORWARDING_TARGETS ?? '',
+      loadUsers: () => directoryUsersCache,
     });
 
     // OAuth 2.0 client_credentials token endpoint — for partner-eng SDKs

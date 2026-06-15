@@ -21,6 +21,7 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import { listStoredStatements, statementStoreTenants } from './xapi-lrs.js';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { FOXXI_PROFILE_ID } from './xapi-profile.js';
+import { verifySessionToken, buildAddressMap } from './auth.js';
 import {
   listForwardingTargets, addForwardingTarget, updateForwardingTarget,
   deleteForwardingTarget, retryDeadLetter, deadLetterFor,
@@ -33,27 +34,32 @@ interface AdminConfig {
   selfBaseUrl: string;
   basicAuthPairs: string;
   forwardingTargets: string;
+  /** Published directory users (with wallet_address) for session-token signature verification. */
+  loadUsers?: () => ReadonlyArray<{ user_id: string; web_id: string; wallet_address?: string }>;
 }
 
-function decodeBearerSub(req: Request): string | null {
+function bearerOf(req: Request): string | null {
   const header = (req.headers['authorization'] ?? req.headers['Authorization']) as string | undefined;
   if (!header) return null;
   const m = /^Bearer\s+(.+)$/i.exec(header);
-  if (!m) return null;
-  try {
-    const padded = m[1]!.replace(/-/g, '+').replace(/_/g, '/');
-    const t = JSON.parse(Buffer.from(padded, 'base64').toString('utf8')) as { sub?: string };
-    return t.sub ?? null;
-  } catch { return null; }
+  return m ? m[1]!.trim() : null;
 }
 
 function makeAdminGate(config: AdminConfig) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    const sub = decodeBearerSub(req);
-    if (!sub) {
+    const token = bearerOf(req);
+    if (!token) {
       res.status(401).json({ error: 'session token required' });
       return;
     }
+    // Full ECDSA verification against the published directory's
+    // wallet_address map — not a forgeable sub-claim decode.
+    const verified = verifySessionToken(token, buildAddressMap(config.loadUsers?.() ?? []));
+    if (!verified.ok) {
+      res.status(401).json({ error: `session token rejected: ${verified.reason}` });
+      return;
+    }
+    const sub = verified.callerDid;
     const isAdmin = sub === config.adminWebId;
     const isLe = config.learningEngineerWebIds.has(sub);
     if (!isAdmin && !isLe) {
