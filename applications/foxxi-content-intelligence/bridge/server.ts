@@ -113,6 +113,11 @@ import {
 } from '../src/agent-disposition.js';
 import { ingestExternalRun, type ExternalRunInput, type ToolCallInput, type HarnessMeta } from '../src/agent-run-ingest.js';
 import { projectMeshEntry, actorForPod, type MeshDiscoverEntry, type ProjectedMeshEvent } from '../src/mesh-event-projector.js';
+import {
+  forwardStatement as forwardToTargets,
+  addForwardingTarget, listForwardingTargets,
+  deleteForwardingTarget, inboundCredentials,
+} from '../src/lrs-forwarding.js';
 import { EvaluationRegistry, type CandidateRun } from '../src/agent-evaluation.js';
 import { comparePortfolio, type CandidateEvidence } from '../src/agent-portfolio.js';
 import { TenantPartition, tenantIdOf, type TenantId } from '../src/tenant-context.js';
@@ -2173,6 +2178,16 @@ const app = createVerticalBridge({
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
       // A cmi5 launch's auth-token resolves to the launch's tenant.
       bearerTenantResolver: cmi5BearerTenant,
+      // Per-user self-sovereign forwarding: a statement forwards to the
+      // OWNER's lens targets, derived from the actor's identity. Only
+      // recognizable self-sovereign identities map to an owner lens; generic
+      // upstream account names return null and fall back to the caller tenant.
+      ownerTenantOfStatement: (stmt) => {
+        const name = (stmt?.actor as { account?: { name?: string } } | undefined)?.account?.name;
+        if (typeof name !== 'string' || !name) return null;
+        if (!/^did:(ethr|web|key):/.test(name) && !/(u-pk-|u-did-|u-eth-|eth-0x)/.test(name)) return null;
+        return lensTenantFor(actorForPod(resolveSubjectPodUrl(name), MESH_ACTOR_LABELS));
+      },
       // cmi5 moveOn orchestration — after each Statement is stored, the
       // LMS re-evaluates the AU's moveOn and auto-emits `satisfied`.
       onStatementStored: (stmt, tenant) => {
@@ -2994,6 +3009,9 @@ app.post('/agent/record-performance', async (req, res) => {
     // the call; it just means this record re-derives only until the next write.
     void persistRecordedStatement({ podUrl: subjectPod, agentDid: callerDid, statement: { ...statement, id: statementId }, ...(recipientPods.length ? { recipientPods } : {}) })
       .catch(e => console.warn('[durable-record][record-performance]', (e as Error).message));
+    // Forward to the performer's OWN downstream targets (no-op if they set none).
+    forwardToTargets(lensTenantFor(label), { ...statement, id: statementId })
+      .catch(e => console.warn('[foxxi-forward][record-performance]', (e as Error).message));
     res.json({ ok: true, recorded: true, statementId, performer: callerDid, taskId, taskName, activityType, success: p.success, durable: subjectPod, lensTenant: lensTenantFor(label) });
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
@@ -3085,11 +3103,120 @@ app.post('/agent/record-course-completion', async (req, res) => {
       // Durable + self-sovereign: persist each cmi5 statement to the learner's own pod.
       void persistRecordedStatement({ podUrl: subjectPod, agentDid: callerDid, statement: withId })
         .catch(e => console.warn('[durable-record][record-course-completion]', (e as Error).message));
+      // Forward to the learner's OWN downstream targets (no-op if none set).
+      forwardToTargets(lensTenantFor(label), withId)
+        .catch(e => console.warn('[foxxi-forward][record-course-completion]', (e as Error).message));
     }
     res.json({ ok: true, completedBy: callerDid, courseId, courseActivityId, scoreScaled, masteryScore, passed: true, statementCount: statementIds.length, durable: subjectPod, lensTenant: lensTenantFor(label) });
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
   }
+});
+
+// ── Self-sovereign forwarding (delegated auth) ─────────────────────────────
+// Each user manages their OWN xAPI forwarding on their own lens, as themselves
+// (the /agent/ingest-course pattern). Owner = the verified caller's DID -> their
+// pod -> their lens; there is no subject_pod_url arg, so you can only manage your
+// own. Outbound targets + inbound credentials are scoped to your lens, so a
+// statement of yours only forwards to YOUR targets, and a credential of yours
+// only lands forwarded-in statements in YOUR record.
+
+const FORWARDING_TARGETS_AFFORDANCE: Affordance = {
+  action: 'urn:cg:action:foxxi:set-forwarding-targets-signed' as Affordance['action'],
+  toolName: 'set_foxxi_forwarding_targets',
+  title: 'Manage your own downstream xAPI forwarding targets',
+  description: 'Set / list / remove the downstream LRS endpoints YOUR OWN xAPI statements are forwarded to (per-user Statement Forwarding). Owner = your verified delegation; targets are scoped to your own lens, so only your statements forward to them, never another user\'s. Reach it: sign_request the args, then act this affordance.',
+  method: 'POST',
+  targetTemplate: '{base}/agent/forwarding/targets',
+  mediaType: 'application/json',
+  inputs: [
+    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id, timestamp, targets?: [{ endpoint, credentials, label?, version?, enabled? }], delete?: string[] }). targets are added/updated (credentials = downstream LRS 'user:pass'); delete removes by id. Omit both to just list (downstream secrets are never echoed)." },
+    { name: '_signature', type: 'string', required: true, description: 'secp256k1 over sha256:<hex(sha256(_signed_payload))> by the wallet matching agent_id (use the relay sign_request tool).' },
+  ],
+};
+
+app.get('/agent/forwarding/targets/affordance', (_req, res) => {
+  const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
+  res.type('text/turtle').send(
+    affordancesManifestTurtle(`${base}/agent/forwarding/targets/affordance`, [FORWARDING_TARGETS_AFFORDANCE], base, {
+      verticalLabel: 'Foxxi self-sovereign forwarding',
+      rdfsComment: 'Manage your own downstream xAPI forwarding targets, as yourself.',
+    }),
+  );
+});
+
+app.post('/agent/forwarding/targets', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:cg:action:foxxi:set-forwarding-targets-signed.' }); return; }
+    const callerDid = auth.callerDid;
+    const p = auth.payload as { targets?: unknown; delete?: unknown };
+    // Owner = verified caller (DID -> own pod -> own lens). No subject_pod_url:
+    // you can only manage your OWN forwarding.
+    const ownerTenant = lensTenantFor(actorForPod(resolveSubjectPodUrl(callerDid), MESH_ACTOR_LABELS));
+    if (Array.isArray(p.targets)) {
+      for (const t of p.targets as Array<Record<string, unknown>>) {
+        if (!t || typeof t.endpoint !== 'string' || typeof t.credentials !== 'string' || !t.credentials.includes(':')) continue;
+        addForwardingTarget(ownerTenant, {
+          endpoint: t.endpoint, credentials: t.credentials,
+          label: typeof t.label === 'string' ? t.label : undefined,
+          version: typeof t.version === 'string' ? t.version : undefined,
+          enabled: typeof t.enabled === 'boolean' ? t.enabled : undefined,
+        });
+      }
+    }
+    if (Array.isArray(p.delete)) {
+      for (const id of p.delete as unknown[]) if (typeof id === 'string') deleteForwardingTarget(ownerTenant, id);
+    }
+    res.json({ ok: true, owner: callerDid, ownerTenant, targets: listForwardingTargets(ownerTenant) });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+});
+
+const INBOUND_CREDENTIALS_AFFORDANCE: Affordance = {
+  action: 'urn:cg:action:foxxi:set-inbound-credentials-signed' as Affordance['action'],
+  toolName: 'set_foxxi_inbound_credentials',
+  title: 'Manage your own inbound forwarding credentials',
+  description: 'Mint / list / revoke the Basic-auth credentials an upstream system uses to forward xAPI statements INTO your OWN lens. Owner = your verified delegation; credentials are scoped to your lens, so forwarded-in statements land in your record. Secrets are never echoed back. Reach it: sign_request the args, then act this affordance.',
+  method: 'POST',
+  targetTemplate: '{base}/agent/credentials',
+  mediaType: 'application/json',
+  inputs: [
+    { name: '_signed_payload', type: 'string', required: true, description: "JSON.stringify({ agent_id, timestamp, credentials?: [{ principal, secret, label? }], revoke?: string[] }). credentials are added (the 'user:pass' an upstream presents on /xapi/statements); revoke removes by id. Omit both to just list (secrets never returned)." },
+    { name: '_signature', type: 'string', required: true, description: 'secp256k1 over sha256:<hex(sha256(_signed_payload))> by the wallet matching agent_id (use the relay sign_request tool).' },
+  ],
+};
+
+app.get('/agent/credentials/affordance', (_req, res) => {
+  const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
+  res.type('text/turtle').send(
+    affordancesManifestTurtle(`${base}/agent/credentials/affordance`, [INBOUND_CREDENTIALS_AFFORDANCE], base, {
+      verticalLabel: 'Foxxi self-sovereign inbound forwarding',
+      rdfsComment: 'Manage your own inbound forwarding credentials, as yourself.',
+    }),
+  );
+});
+
+app.post('/agent/credentials', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:cg:action:foxxi:set-inbound-credentials-signed.' }); return; }
+    const callerDid = auth.callerDid;
+    const p = auth.payload as { credentials?: unknown; revoke?: unknown };
+    const ownerTenant = lensTenantFor(actorForPod(resolveSubjectPodUrl(callerDid), MESH_ACTOR_LABELS));
+    if (Array.isArray(p.credentials)) {
+      for (const c of p.credentials as Array<Record<string, unknown>>) {
+        if (!c || typeof c.principal !== 'string' || typeof c.secret !== 'string') continue;
+        inboundCredentials.add({ principal: c.principal, secret: c.secret, tenant: String(ownerTenant), label: typeof c.label === 'string' ? c.label : undefined });
+      }
+    }
+    // Scope every read/revoke to THIS owner's tenant — never touch another user's credentials.
+    const mineIds = new Set(inboundCredentials.list().filter(c => c.tenant === String(ownerTenant)).map(c => c.id));
+    if (Array.isArray(p.revoke)) {
+      for (const id of p.revoke as unknown[]) if (typeof id === 'string' && mineIds.has(id)) inboundCredentials.remove(id);
+    }
+    const mine = inboundCredentials.list().filter(c => c.tenant === String(ownerTenant));
+    res.json({ ok: true, owner: callerDid, ownerTenant, credentials: mine });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 
 // ── Agentic SCORM RTE (delegated auth) ─────────────────────────────────────

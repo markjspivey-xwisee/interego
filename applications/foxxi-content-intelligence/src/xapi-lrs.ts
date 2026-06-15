@@ -111,6 +111,11 @@ export interface XapiLrsConfig {
   /** Optional: invoked after each Statement is stored, with its tenant.
    *  The cmi5 LMS uses this to watch for moveOn satisfaction. */
   onStatementStored?: (statement: Record<string, unknown>, tenant: TenantId) => void;
+  /** Optional: resolve the OWNER tenant for outbound forwarding from the
+   *  statement's actor (self-sovereign per-user forwarding). Returns null
+   *  when the actor has no resolvable owner — forwarding then falls back to
+   *  the caller's tenant (preserves behavior for non-self-sovereign upstreams). */
+  ownerTenantOfStatement?: (statement: Record<string, unknown>) => TenantId | null;
 }
 
 // ── In-process statement store accessors ────────────────────────────
@@ -572,7 +577,10 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
     persistAttachmentData(enriched, multipartParts, attachStore);
     notifyStatementStored(enriched, tenantOf(req), config);
     recordInboundIfForwarded(req, enriched);
-    forwardToTargets(tenantOf(req), enriched).catch(err => {
+    // Forward to the OWNER's targets (per-user self-sovereign forwarding) when
+    // the actor resolves to an owner; else the caller's tenant. So user A's
+    // statements only ever reach A's downstream targets, never B's.
+    forwardToTargets(config.ownerTenantOfStatement?.(enriched) ?? tenantOf(req), enriched).catch(err => {
       // eslint-disable-next-line no-console
       console.warn('[foxxi-lrs] forwarding failed:', (err as Error).message);
     });
@@ -758,7 +766,7 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   persistAttachmentData(enriched, multipartParts, attachmentStores.for(tenantOf(req)));
   notifyStatementStored(enriched, tenantOf(req), config);
   recordInboundIfForwarded(req, enriched);
-  forwardToTargets(tenantOf(req), enriched).catch(() => undefined);
+  forwardToTargets(config.ownerTenantOfStatement?.(enriched) ?? tenantOf(req), enriched).catch(() => undefined);
   res.status(204).end();
 }
 
