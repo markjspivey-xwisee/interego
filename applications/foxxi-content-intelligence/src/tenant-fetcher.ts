@@ -232,14 +232,38 @@ export async function fetchAdminPayload(config: TenantFetchConfig): Promise<unkn
   const hit = getCached<unknown>(key);
   if (hit !== null) return hit;
 
-  const [catalog, directory, policies, connections, events, audit] = await Promise.all([
-    fetchSection(TENANT_TYPES.CourseCatalog, config),
-    fetchSection(TENANT_TYPES.TenantDirectory, config),
-    fetchSection(TENANT_TYPES.AssignmentPolicySet, config),
-    fetchSection(TENANT_TYPES.ConnectorRegistry, config),
-    fetchSection(TENANT_TYPES.EnrollmentEventStream, config),
-    fetchSection(TENANT_TYPES.AuditLogStream, config),
-  ]);
+  // Resilient composition: a tenant may have published some sections and
+  // not others (e.g. the directory exists but the course catalog was never
+  // published). The OLD Promise.all rejected the WHOLE admin payload if ANY
+  // section was absent — which silently broke session-token verification
+  // (auth needs only the directory's `users`) for the entire bridge. Fetch
+  // each section independently and default a missing one to empty, so a
+  // partial publish degrades gracefully instead of disabling auth.
+  const SECTIONS: Array<[string, IRI]> = [
+    ['catalog', TENANT_TYPES.CourseCatalog],
+    ['directory', TENANT_TYPES.TenantDirectory],
+    ['policies', TENANT_TYPES.AssignmentPolicySet],
+    ['connections', TENANT_TYPES.ConnectorRegistry],
+    ['events', TENANT_TYPES.EnrollmentEventStream],
+    ['audit', TENANT_TYPES.AuditLogStream],
+  ];
+  const settled = await Promise.allSettled(SECTIONS.map(([, iri]) => fetchSection(iri, config)));
+  const missing: string[] = [];
+  const section = (i: number): unknown => {
+    if (settled[i]!.status === 'fulfilled') return (settled[i] as PromiseFulfilledResult<unknown>).value;
+    missing.push(SECTIONS[i]![0]);
+    return undefined;
+  };
+  const catalog = section(0) ?? [];
+  const directory = section(1) ?? { users: [], groups: [] };
+  const policies = section(2) ?? [];
+  const connections = section(3) ?? [];
+  const events = section(4) ?? [];
+  const audit = section(5) ?? [];
+  if (missing.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(`[foxxi-tenant-fetcher] tenant ${config.podUrl} is missing sections [${missing.join(', ')}] — composed admin payload with empty defaults (auth/directory still works if 'directory' is present).`);
+  }
 
   // directory was published as { users, groups }
   const dir = directory as { users?: unknown; groups?: unknown };
