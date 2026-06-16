@@ -34,7 +34,7 @@
 
 import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
-import { PERFORMED_VERB, PERF_EXT } from './learner-record.js';
+import { PERFORMED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
 import type { TrajectoryStepInput, TrajectoryModalStatus } from './agent-trajectory.js';
 
 /** xAPI core voiding verb (ADL) — the protocol-native mapping for a Retracted descriptor. */
@@ -67,6 +67,14 @@ export interface MeshDiscoverEntry {
    *  (those are epistemic, not task success). Absent → no result is emitted. */
   success?: boolean;
   scoreScaled?: number;
+  /** OPTIONAL provenance/role envelope, when the manifest or pushed mesh-event
+   *  carries it: WHO acted (actorKind: human | agent) and in WHAT context
+   *  (contextKind: production | training | support). Read straight through to the
+   *  xAPI context extensions so H2A/A2A direction + production/training/support
+   *  splits become queryable. Absent → the structural defaults (agent / production)
+   *  apply; like every other field, the projector never invents a non-default value. */
+  actorKind?: string;
+  contextKind?: string;
 }
 
 export interface ProjectedMeshEvent {
@@ -143,8 +151,16 @@ export function projectMeshEntry(
   const graph = entry.describes[0] ?? entry.descriptorUrl;
   const label = humanLabel(graph);
   const mode = modalMode(entry.modalStatus);
-  // The descriptor's OWN type, passed through verbatim — Foxxi routes by it, never interprets it.
-  const objectType = entry.conformsTo?.[0] ?? entry.facetTypes?.[0] ?? ASSERTED_CONTEXT_TYPE;
+  // The descriptor's OWN type, passed through verbatim — Foxxi routes by it, never
+  // interprets it. When a descriptor declares MULTIPLE conformsTo types, prefer a
+  // genuine DOMAIN type over a protocol-envelope facet (Temporal/SignedAuthorship/…):
+  // the domain type is what the competency engine keys a skill off (isDomainActivityType),
+  // so surfacing it — instead of whichever type happened to be listed first — is what
+  // makes cross-instance competency rollups possible (GAP 3). This only ORDERS which
+  // already-declared type names the activity; it still invents nothing and reads no
+  // domain term's meaning. Fallbacks: first conformsTo → first facet → AssertedContext.
+  const objectType = (entry.conformsTo ?? []).find(isDomainActivityType)
+    ?? entry.conformsTo?.[0] ?? entry.facetTypes?.[0] ?? ASSERTED_CONTEXT_TYPE;
   const superseded = (entry.supersedes && entry.supersedes.length > 0) ? entry.supersedes[0] : undefined;
   // Real event time, in preference order: explicit provenance time → the
   // descriptor URL's own 13-digit millis → the GRAPH (describes) IRIs' millis
@@ -169,8 +185,11 @@ export function projectMeshEntry(
   // Context extensions — all envelope-derived, none fabricated.
   const extensions: Record<string, unknown> = {
     [PERF_EXT.observedBy]: agent,
-    [PERF_EXT.actorKind]: 'agent',
-    [PERF_EXT.contextKind]: 'production',
+    // Direction (H2A/A2A) + context-kind splits: emit the envelope's own values when
+    // present, else the structural defaults — an autonomous agent doing production work
+    // (GAP 4). Never fabricated beyond the default: a bare descriptor stays agent/production.
+    [PERF_EXT.actorKind]: entry.actorKind ?? 'agent',
+    [PERF_EXT.contextKind]: entry.contextKind ?? 'production',
     [`${FOXXI_NS}substrateDescriptorIri`]: entry.descriptorUrl,
     ...(superseded ? { [`${FOXXI_NS}supersededDescriptor`]: superseded } : {}),
     ...(entry.trustLevel ? { [`${FOXXI_NS}trustLevel`]: entry.trustLevel } : {}),

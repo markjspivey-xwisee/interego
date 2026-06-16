@@ -399,7 +399,7 @@ const PROTOCOL_ENVELOPE_TYPE_LOCALNAMES: ReadonlySet<string> = new Set([
   'Temporal', 'Provenance', 'Agent', 'Semiotic', 'Trust', 'Federation', 'Structural',
   'TemporalFacet', 'ProvenanceFacet', 'AgentFacet', 'SemioticFacet', 'TrustFacet', 'FederationFacet', 'StructuralFacet',
 ]);
-function isDomainActivityType(typeIri?: string): boolean {
+export function isDomainActivityType(typeIri?: string): boolean {
   if (!typeIri) return false;
   const local = typeLocalName(typeIri);
   if (PROTOCOL_ENVELOPE_TYPE_LOCALNAMES.has(local)) return false;

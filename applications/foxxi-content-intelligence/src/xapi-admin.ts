@@ -22,6 +22,7 @@ import { listStoredStatements, statementStoreTenants } from './xapi-lrs.js';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { FOXXI_PROFILE_ID } from './xapi-profile.js';
 import { verifySessionToken, buildAddressMap } from './auth.js';
+import { PERF_EXT } from './learner-record.js';
 import {
   listForwardingTargets, addForwardingTarget, updateForwardingTarget,
   deleteForwardingTarget, retryDeadLetter, deadLetterFor,
@@ -142,6 +143,11 @@ async function handleAggregates(req: Request, res: Response): Promise<void> {
   const actorCounts = new Map<string, { name?: string; count: number }>();
   const errorCount = { total: 0 };
   const hourBuckets = new Map<string, number>();
+  // GAP 4 — direction (actorKind: human|agent) + context (contextKind:
+  // production|training|support) are now varied at emission, so they are
+  // first-class queryable splits rather than constant dimensions.
+  const actorKindCounts = new Map<string, number>();
+  const contextKindCounts = new Map<string, number>();
 
   for (const r of all) {
     const verb = r.statement.verb as { id?: string; display?: Record<string, string> } | undefined;
@@ -167,6 +173,13 @@ async function handleAggregates(req: Request, res: Response): Promise<void> {
     const result = r.statement.result as { success?: boolean } | undefined;
     if (result && result.success === false) errorCount.total++;
 
+    // Direction + context-kind splits (GAP 4) — read from the context extensions.
+    const ext = (r.statement.context as { extensions?: Record<string, unknown> } | undefined)?.extensions;
+    const ak = ext?.[PERF_EXT.actorKind];
+    if (typeof ak === 'string') actorKindCounts.set(ak, (actorKindCounts.get(ak) ?? 0) + 1);
+    const ck = ext?.[PERF_EXT.contextKind];
+    if (typeof ck === 'string') contextKindCounts.set(ck, (contextKindCounts.get(ck) ?? 0) + 1);
+
     // Bucket by the REAL event time when present (GAP 2), not the projection
     // write-instant — so the hourly histogram reflects when work happened.
     const when = (r.statement.timestamp as string | undefined) ?? r.stored;
@@ -189,6 +202,8 @@ async function handleAggregates(req: Request, res: Response): Promise<void> {
     topVerbs: topN(verbCounts, 10),
     topActivities: topN(activityCounts, 10),
     topActors: topN(actorCounts, 10),
+    byActorKind: [...actorKindCounts.entries()].sort((a, b) => b[1] - a[1]).map(([id, count]) => ({ id, count })),
+    byContextKind: [...contextKindCounts.entries()].sort((a, b) => b[1] - a[1]).map(([id, count]) => ({ id, count })),
     hourlyVolume: [...hourBuckets.entries()].sort((a, b) => a[0].localeCompare(b[0])),
   });
 }

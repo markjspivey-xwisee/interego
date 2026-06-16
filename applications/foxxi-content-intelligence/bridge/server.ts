@@ -3481,7 +3481,8 @@ app.post('/agent/scorm/submit', async (req, res) => {
 // projector reads ONLY the protocol envelope — never a domain term. Body:
 // { descriptorUrl, describes?[]|graphIri?, conformsTo?[], modalStatus?,
 // supersedes?[], trustLevel?, epistemicConfidence?, groundTruth?,
-// generatedAtTime?, originPod }. Trajectory/disposition refresh on the next
+// generatedAtTime?, success?, scoreScaled?, actorKind?, contextKind?, originPod }.
+// Trajectory/disposition refresh on the next
 // PULL cycle; the push gives instant LRS + dashboard visibility.
 app.post('/agent/mesh-event', (req, res) => {
   try {
@@ -3503,6 +3504,10 @@ app.post('/agent/mesh-event', (req, res) => {
       // Optional task outcome — flows straight to xAPI result (honest; omitted when absent).
       ...(typeof b.success === 'boolean' ? { success: b.success } : {}),
       ...(typeof b.scoreScaled === 'number' ? { scoreScaled: b.scoreScaled } : {}),
+      // Optional provenance/role envelope — direction (actorKind: human|agent) +
+      // context (contextKind: production|training|support); defaults to agent/production.
+      ...(typeof b.actorKind === 'string' ? { actorKind: b.actorKind } : {}),
+      ...(typeof b.contextKind === 'string' ? { contextKind: b.contextKind } : {}),
     };
     if (!entry.descriptorUrl || !originPod) {
       res.status(400).json({ ok: false, error: 'descriptorUrl + originPod required' });
