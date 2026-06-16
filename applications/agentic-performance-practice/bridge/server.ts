@@ -22,12 +22,13 @@
  */
 
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
-import { ontologyServingMiddleware } from '../../_shared/ontology-serve/index.js';
+import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { agpAffordances } from '../affordances.js';
 import {
   AGP_NS, AGP_ONTOLOGY_IRI,
   readOntologyTurtle, readShapesTurtle, renderOntologyJsonLd, renderTermJsonLd,
 } from '../src/ontology.js';
+import { buildAgpProfileDoc, AGP_PROFILE_ID } from '../src/xapi-profile.js';
 
 // ── Stage-1 handler: validate + echo, mark pending Stage 2 (no fake publish) ──
 function pendingHandler(toolName: string, required: string[]) {
@@ -61,21 +62,29 @@ const app = createVerticalBridge({
   affordances: agpAffordances,
   handlers,
   defaultPodUrl: process.env.AGP_DEFAULT_POD_URL,
-  // Dereferenceable ontology serving via the shared primitive (content
-  // negotiation + HATEOAS + per-term + SHACL shapes) — same helper every
-  // vertical + the substrate use.
-  middleware: ontologyServingMiddleware({
-    mountPath: '/ns/agp',
-    ontologyIri: AGP_ONTOLOGY_IRI,
-    namespace: AGP_NS,
-    ontologyTurtle: readOntologyTurtle,
-    shapesTurtle: readShapesTurtle,
-    jsonld: renderOntologyJsonLd,
-    term: renderTermJsonLd,
-  }),
+  // Dereferenceable serving: the agp ontology (shared primitive — content
+  // negotiation + HATEOAS + per-term + SHACL shapes) AND the vertical's OWN
+  // xAPI Profile, authored via Foxxi's parameterized builder (it composes,
+  // rather than reimplements, the standards layer).
+  middleware: (a) => {
+    attachOntologyServing(a, {
+      mountPath: '/ns/agp',
+      ontologyIri: AGP_ONTOLOGY_IRI,
+      namespace: AGP_NS,
+      ontologyTurtle: readOntologyTurtle,
+      shapesTurtle: readShapesTurtle,
+      jsonld: renderOntologyJsonLd,
+      term: renderTermJsonLd,
+    });
+    a.get('/xapi/profile', (_req, res) => {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.type('application/ld+json').json(buildAgpProfileDoc({ generatedAt: new Date().toISOString() }));
+    });
+  },
 });
 app.listen(PORT, () => {
   console.log(`agentic-performance-practice bridge on http://localhost:${PORT}`);
   console.log(`  MCP: http://localhost:${PORT}/mcp  |  Manifest: http://localhost:${PORT}/affordances`);
   console.log(`  Ontology: http://localhost:${PORT}/ns/agp  |  Shapes: http://localhost:${PORT}/ns/agp/shapes`);
+  console.log(`  xAPI Profile: http://localhost:${PORT}/xapi/profile  (id: ${AGP_PROFILE_ID})`);
 });
