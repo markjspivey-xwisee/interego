@@ -119,6 +119,9 @@ async function handleStatementsAdmin(req: Request, res: Response): Promise<void>
     page: page.map(r => ({
       id: r.id,
       stored: r.stored,
+      // real performed-at time (mesh projector now resolves it from the
+      // descriptor's own millis); falls back to stored when the envelope has none.
+      timestamp: (r.statement as { timestamp?: string }).timestamp ?? null,
       voided: r.voided,
       actor: r.statement.actor,
       verb: r.statement.verb,
@@ -164,7 +167,10 @@ async function handleAggregates(req: Request, res: Response): Promise<void> {
     const result = r.statement.result as { success?: boolean } | undefined;
     if (result && result.success === false) errorCount.total++;
 
-    const hour = r.stored.slice(0, 13) + ':00:00Z';
+    // Bucket by the REAL event time when present (GAP 2), not the projection
+    // write-instant — so the hourly histogram reflects when work happened.
+    const when = (r.statement.timestamp as string | undefined) ?? r.stored;
+    const hour = when.slice(0, 13) + ':00:00Z';
     hourBuckets.set(hour, (hourBuckets.get(hour) ?? 0) + 1);
   }
 
