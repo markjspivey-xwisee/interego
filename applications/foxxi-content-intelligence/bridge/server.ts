@@ -3500,6 +3500,9 @@ app.post('/agent/mesh-event', (req, res) => {
       ...(typeof b.epistemicConfidence === 'number' ? { epistemicConfidence: b.epistemicConfidence } : {}),
       ...(typeof b.groundTruth === 'boolean' ? { groundTruth: b.groundTruth } : {}),
       ...(typeof b.generatedAtTime === 'string' ? { generatedAtTime: b.generatedAtTime } : {}),
+      // Optional task outcome — flows straight to xAPI result (honest; omitted when absent).
+      ...(typeof b.success === 'boolean' ? { success: b.success } : {}),
+      ...(typeof b.scoreScaled === 'number' ? { scoreScaled: b.scoreScaled } : {}),
     };
     if (!entry.descriptorUrl || !originPod) {
       res.status(400).json({ ok: false, error: 'descriptorUrl + originPod required' });

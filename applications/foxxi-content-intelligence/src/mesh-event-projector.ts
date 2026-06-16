@@ -61,6 +61,12 @@ export interface MeshDiscoverEntry {
   epistemicConfidence?: number;
   trustLevel?: string;
   generatedAtTime?: string;
+  /** OPTIONAL task-outcome signal, when the envelope actually carries one (e.g. an
+   *  outcome facet mirrored to the manifest, or a pushed mesh-event). Read straight
+   *  through to xAPI result — NEVER fabricated from modal status / trust / ground-truth
+   *  (those are epistemic, not task success). Absent → no result is emitted. */
+  success?: boolean;
+  scoreScaled?: number;
 }
 
 export interface ProjectedMeshEvent {
@@ -140,7 +146,25 @@ export function projectMeshEntry(
   // The descriptor's OWN type, passed through verbatim — Foxxi routes by it, never interprets it.
   const objectType = entry.conformsTo?.[0] ?? entry.facetTypes?.[0] ?? ASSERTED_CONTEXT_TYPE;
   const superseded = (entry.supersedes && entry.supersedes.length > 0) ? entry.supersedes[0] : undefined;
-  const ts = entry.generatedAtTime ?? timestampFromDescriptor(entry.descriptorUrl);
+  // Real event time, in preference order: explicit provenance time → the
+  // descriptor URL's own 13-digit millis → the GRAPH (describes) IRIs' millis
+  // (agents slug the content-graph IRI with the authoring-time millis, so this
+  // is where the real time usually lives — the descriptor URL often has none) →
+  // the superseded IRI's. All deterministic + truthful; only when none resolves
+  // is the statement left timestamp-less (never a fabricated "now").
+  const ts = entry.generatedAtTime
+    ?? timestampFromDescriptor(entry.descriptorUrl)
+    ?? entry.describes.map(timestampFromDescriptor).find(Boolean)
+    ?? (superseded ? timestampFromDescriptor(superseded) : undefined);
+  // Task outcome — ONLY when the envelope actually carries it (honest; the
+  // protocol envelope normally does not, so this stays absent for bare
+  // descriptors). Never derived from modal status / trust / ground-truth.
+  const result = (typeof entry.success === 'boolean' || typeof entry.scoreScaled === 'number')
+    ? {
+        ...(typeof entry.success === 'boolean' ? { success: entry.success } : {}),
+        ...(typeof entry.scoreScaled === 'number' ? { score: { scaled: entry.scoreScaled } } : {}),
+      }
+    : undefined;
 
   // Context extensions — all envelope-derived, none fabricated.
   const extensions: Record<string, unknown> = {
@@ -184,7 +208,10 @@ export function projectMeshEntry(
           extensions,
           ...(superseded ? { contextActivities: { other: [{ id: superseded, objectType: 'Activity' }] } } : {}),
         },
-        // NO result: the envelope carries no task-outcome signal, so none is invented.
+        // result is emitted ONLY when the envelope actually carried an outcome
+        // (success / scoreScaled); for a bare context descriptor it stays absent —
+        // disposition + calibration read a real signal, never a fabricated one.
+        ...(result ? { result } : {}),
         ...(ts ? { timestamp: ts } : {}),
       };
 
