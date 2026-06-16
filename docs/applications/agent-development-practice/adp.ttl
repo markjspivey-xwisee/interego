@@ -1,0 +1,279 @@
+@prefix adp:      <https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#> .
+@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix abac:     <https://markjspivey-xwisee.github.io/interego/ns/abac#> .
+@prefix passport: <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
+@prefix olke:     <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
+@prefix amta:     <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix registry: <https://markjspivey-xwisee.github.io/interego/ns/registry#> .
+@prefix rdf:      <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:     <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:      <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:      <http://www.w3.org/2002/07/owl#> .
+@prefix dct:      <http://purl.org/dc/terms/> .
+@prefix prov:     <http://www.w3.org/ns/prov#> .
+@prefix vann:     <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════════════════
+#  VERTICAL APPLICATION ONTOLOGY — non-normative
+#  NOT part of the Interego protocol (L1/L2/L3).
+#  This vocabulary is scoped to the agent-development-practice vertical.
+#  See applications/agent-development-practice/README.md for the framing.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#  adp: — Agent Development Practice
+#
+#  A complexity-informed (Cynefin / Snowden) framing for managing AI agent
+#  development. Substrate is Interego; this vertical only COMPOSES existing
+#  L1/L2/L3 primitives. Every adp: class subclasses an existing class
+#  without modifying it.
+#
+#  Layering: application-over-L3. If you find yourself wanting to add a
+#  property here that "really belongs in cg:" — STOP. Either generalize
+#  it for an L1/L2/L3 ontology in a separate proposal, or keep it scoped
+#  to this vertical. The protocol does not bend toward verticals.
+#
+#  Reference runtime: applications/agent-development-practice/examples/.
+
+<https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp>
+    a owl:Ontology ;
+    dct:title "adp: — Agent Development Practice (vertical application)" ;
+    dct:description "Vertical-scoped, non-normative vocabulary for complexity-informed agent development. NOT part of the Interego protocol. Composes cg:, abac:, passport:, olke:, amta:, registry:." ;
+    vann:preferredNamespacePrefix "adp" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#" ;
+    rdfs:comment "Vertical application ontology. Non-normative. The Interego protocol does not depend on this; it is one specific use case / implementation." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/abac> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/passport> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/olke> .
+
+# ── Classes ────────────────────────────────────────────────────────────
+
+adp:Capability a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Capability (open-ended space)" ;
+    rdfs:comment "An open-ended capability SPACE — not a target threshold. Mastery is recognized through emerging behavior patterns in narrative observations, not threshold-crossing on metrics. The Cynefin domain (adp:cynefinDomain) determines which governance pattern is appropriate." .
+
+adp:RubricCriterion a owl:Class ;
+    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:label "Rubric Criterion (guide, not gate)" ;
+    rdfs:comment "A guide for what we care about — NOT a pass/fail threshold. Used during sensemaking to direct attention; never used as a binary acceptance test." .
+
+adp:Constraint a owl:Class ;
+    rdfs:subClassOf abac:Policy ;
+    rdfs:label "Constraint (boundary, not prescription)" ;
+    rdfs:comment "Governance via boundary, not via prescription. A constraint says 'the agent must not X' or 'must operate within Y'. Observable + enforceable; does not specify HOW the agent achieves the boundary. Refined from synthesis cycles, not declared up-front." .
+
+adp:Probe a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Safe-to-Fail Probe" ;
+    rdfs:comment "A small parallel experiment. Carries a Hypothetical hypothesis, a variant (prompt / tools / model), explicit amplification + dampening triggers, and a time-bound. Many probes run concurrently; many fail; a few amplify. Never has cg:modalStatus Asserted." .
+
+adp:NarrativeFragment a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Narrative Fragment" ;
+    rdfs:comment "A qualitative observation: situation signifiers + agent response + emergent signifiers. ALWAYS recorded with cg:modalStatus Hypothetical — we are recording an observation, not asserting causation. Multiple fragments compose into a synthesis." .
+
+adp:Signifier a owl:Class ;
+    rdfs:subClassOf cg:SemioticFacet ;
+    rdfs:label "Signifier (SenseMaker-style)" ;
+    rdfs:comment "Short tag emerging from a narrative — used later to find patterns across many fragments. A signifier is descriptive, not evaluative; it labels what is present, not whether it is good or bad." .
+
+adp:Synthesis a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Sensemaking Synthesis" ;
+    rdfs:comment "Composed view of many narrative fragments via cg:union. Surfaces recurring signifier patterns; PRESERVES MULTIPLE COHERENT NARRATIVES rather than declaring one root cause. cg:modalStatus stays Hypothetical." .
+
+adp:EvolutionStep a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Amplify/Dampen Decision" ;
+    rdfs:comment "Operator decision to amplify some probes and dampen others, based on a synthesis. Carries an explicit-decision-not-made statement to prevent the decision from being read as a 'fix' or 'answer'. The decision is provisional and re-examinable; carries a next-revisit time." .
+
+adp:CapabilityEvolution a owl:Class ;
+    rdfs:subClassOf passport:LifeEvent ;
+    rdfs:label "Capability Evolution Event" ;
+    rdfs:comment "Recognition of an emergent capability pattern in an agent's behavior. NOT a promotion or certification. Carries explicit-decision-not-made clauses that travel with the agent across deployments, so receiving organizations see what was AND was not claimed." .
+
+adp:CynefinDomain a owl:Class ;
+    rdfs:label "Cynefin Domain" ;
+    rdfs:comment "Enumerated value identifying which Cynefin domain a situation lives in. Determines the governance pattern. Per Snowden, choosing the wrong pattern for the wrong domain is itself a failure mode." .
+
+adp:EvolutionType a owl:Class ;
+    rdfs:label "Evolution Type" ;
+    rdfs:comment "Enumerated value classifying a capability-evolution event." .
+
+# ── Cynefin Domain individuals (enum members) ──────────────────────────
+
+adp:Clear a adp:CynefinDomain ;
+    rdfs:label "Clear domain" ;
+    rdfs:comment "Cause-effect known and obvious. Sense → Categorize → Respond. Best-practice / rules. Tool invocation with well-defined inputs." .
+
+adp:Complicated a adp:CynefinDomain ;
+    rdfs:label "Complicated domain" ;
+    rdfs:comment "Cause-effect knowable through expertise. Sense → Analyze → Respond. Good-practice / process. Routing a structured query to the right knowledge base." .
+
+adp:Complex a adp:CynefinDomain ;
+    rdfs:label "Complex domain" ;
+    rdfs:comment "Cause-effect only knowable in hindsight. Probe → Sense → Respond. Emergent practice. Most interesting agent behavior — tone, judgment under ambiguity, multi-step decomposition — lives here. THIS VERTICAL ADDRESSES COMPLEX SITUATIONS SPECIFICALLY." .
+
+adp:Chaotic a adp:CynefinDomain ;
+    rdfs:label "Chaotic domain" ;
+    rdfs:comment "No discernible cause-effect. Act → Sense → Respond. Novel practice. Active incident response when an agent is misbehaving." .
+
+adp:Confused a adp:CynefinDomain ;
+    rdfs:label "Confused domain (formerly 'Disorder')" ;
+    rdfs:comment "The practitioner does not know which domain they are in. The most common state, and the most dangerous — recognizing it requires decomposing the situation into other domains." .
+
+# ── Evolution Type individuals (enum members) ──────────────────────────
+
+adp:EmergentRecognition a adp:EvolutionType ;
+    rdfs:label "Emergent Recognition" ;
+    rdfs:comment "An emergent pattern in agent behavior is recognized after multiple synthesis cycles. Not a promotion." .
+
+adp:ConstraintRefinement a adp:EvolutionType ;
+    rdfs:label "Constraint Refinement" ;
+    rdfs:comment "An adp:Constraint has been added or revised based on accumulated synthesis." .
+
+adp:VariantAmplified a adp:EvolutionType ;
+    rdfs:label "Variant Amplified" ;
+    rdfs:comment "A probe variant's deployment has been increased based on synthesis. Provisional." .
+
+adp:VariantDampened a adp:EvolutionType ;
+    rdfs:label "Variant Dampened" ;
+    rdfs:comment "A probe variant's deployment has been decreased based on synthesis. Provisional." .
+
+# ── Properties ─────────────────────────────────────────────────────────
+
+adp:cynefinDomain a owl:ObjectProperty ;
+    rdfs:label "cynefin domain" ;
+    rdfs:comment "Identifies which Cynefin domain a capability space, probe, or situation lives in. Determines which governance pattern is appropriate." ;
+    rdfs:range adp:CynefinDomain .
+
+adp:probe a owl:ObjectProperty ;
+    rdfs:label "probe" ;
+    rdfs:comment "Links a narrative fragment or synthesis to the adp:Probe whose hypothesis it is observing." ;
+    rdfs:range adp:Probe .
+
+adp:variant a owl:DatatypeProperty ;
+    rdfs:label "variant" ;
+    rdfs:comment "Identifies the concrete variant being probed (prompt scaffold version, tool inventory, model class, etc.)." ;
+    rdfs:range xsd:string .
+
+adp:hypothesis a owl:DatatypeProperty ;
+    rdfs:label "hypothesis" ;
+    rdfs:comment "Free-text statement of what the probe is exploring. Always Hypothetical — explicitly NOT a claim about cause-effect." ;
+    rdfs:range xsd:string .
+
+adp:amplificationTrigger a owl:DatatypeProperty ;
+    rdfs:label "amplification trigger" ;
+    rdfs:comment "Narrative pattern that, if observed, increases this probe variant's deployment. Stated up-front so amplification is not retconned." ;
+    rdfs:range xsd:string .
+
+adp:dampeningTrigger a owl:DatatypeProperty ;
+    rdfs:label "dampening trigger" ;
+    rdfs:comment "Narrative pattern that, if observed, decreases this probe variant's deployment. Stated up-front so dampening is not retconned." ;
+    rdfs:range xsd:string .
+
+adp:timeBound a owl:DatatypeProperty ;
+    rdfs:label "time-bound" ;
+    rdfs:comment "When to revisit the probe regardless of triggers. Prevents indefinite probes." ;
+    rdfs:range xsd:dateTime .
+
+adp:contextSignifier a owl:DatatypeProperty ;
+    rdfs:label "context signifier" ;
+    rdfs:comment "A SenseMaker-style descriptive tag for the situation the agent encountered. Multiple per fragment." ;
+    rdfs:range xsd:string .
+
+adp:emergentSignifier a owl:DatatypeProperty ;
+    rdfs:label "emergent signifier" ;
+    rdfs:comment "A SenseMaker-style descriptive tag for what emerged from the agent's response. Used to find patterns across fragments." ;
+    rdfs:range xsd:string .
+
+adp:response a owl:DatatypeProperty ;
+    rdfs:label "response" ;
+    rdfs:comment "Narrative description of what the agent did and what followed. Qualitative; not a score." ;
+    rdfs:range xsd:string .
+
+adp:fragmentsConsidered a owl:ObjectProperty ;
+    rdfs:label "fragments considered" ;
+    rdfs:comment "Links a synthesis to the narrative fragments it composes." ;
+    rdfs:range adp:NarrativeFragment .
+
+adp:emergentPattern a owl:DatatypeProperty ;
+    rdfs:label "emergent pattern" ;
+    rdfs:comment "Description of a pattern surfaced by the synthesis. Hypothetical; preserved alongside alternative coherent narratives, not declared as root cause." ;
+    rdfs:range xsd:string .
+
+adp:coherentNarrative a owl:DatatypeProperty ;
+    rdfs:label "coherent narrative" ;
+    rdfs:comment "An equally-coherent reading of the synthesis. Multiple per synthesis is the norm; the synthesis preserves them rather than picking one." ;
+    rdfs:range xsd:string .
+
+adp:basedOnSynthesis a owl:ObjectProperty ;
+    rdfs:label "based on synthesis" ;
+    rdfs:comment "Links an evolution step or constraint to the synthesis it was informed by." ;
+    rdfs:range adp:Synthesis .
+
+adp:amplifyProbe a owl:ObjectProperty ;
+    rdfs:label "amplify probe" ;
+    rdfs:comment "Probe whose deployment is being increased by this evolution step. Provisional." ;
+    rdfs:range adp:Probe .
+
+adp:dampenProbe a owl:ObjectProperty ;
+    rdfs:label "dampen probe" ;
+    rdfs:comment "Probe whose deployment is being decreased by this evolution step. Provisional." ;
+    rdfs:range adp:Probe .
+
+adp:nextRevisitAt a owl:DatatypeProperty ;
+    rdfs:label "next revisit at" ;
+    rdfs:comment "Time at which an evolution decision must be re-examined. Encodes the provisional nature of every amplification / dampening choice." ;
+    rdfs:range xsd:dateTime .
+
+adp:explicitDecisionNotMade a owl:DatatypeProperty ;
+    rdfs:label "explicit decision not made" ;
+    rdfs:comment "Free-text statement of what the operator is NOT claiming with this decision. Counter-cultural and intentional — forces the operator to write down what is being left open, so future readers (humans or agents) do not read amplification as 'fix' or recognition as 'certification'. Travels with the agent across deployments." ;
+    rdfs:range xsd:string .
+
+adp:emergedFrom a owl:ObjectProperty ;
+    rdfs:label "emerged from" ;
+    rdfs:comment "Links a constraint or capability-evolution event to the synthesis cycles that produced it." ;
+    rdfs:range cg:ContextDescriptor .
+
+adp:olkeStage a owl:ObjectProperty ;
+    rdfs:label "OLKE stage" ;
+    rdfs:comment "Knowledge maturity stage from olke: (Tacit / Articulate / Collective / Institutional). A capability-evolution event records what stage the practice has reached." ;
+    rdfs:range olke:KnowledgeStage .
+
+adp:appliesTo a owl:ObjectProperty ;
+    rdfs:label "applies to" ;
+    rdfs:comment "Links a constraint to the capability it bounds." ;
+    rdfs:range adp:Capability .
+
+adp:boundary a owl:DatatypeProperty ;
+    rdfs:label "boundary" ;
+    rdfs:comment "Free-text description of the boundary the agent must operate within. Observable + enforceable; does not specify HOW the agent achieves it." ;
+    rdfs:range xsd:string .
+
+adp:exitsConstraint a owl:DatatypeProperty ;
+    rdfs:label "exits constraint" ;
+    rdfs:comment "Free-text description of conditions under which the constraint is relaxed (e.g., user explicitly waives the requirement). Constraints are not absolute; they have explicit exits." ;
+    rdfs:range xsd:string .
+
+adp:capability a owl:ObjectProperty ;
+    rdfs:label "capability" ;
+    rdfs:comment "Links a capability-evolution event or rubric criterion to the capability space it concerns." ;
+    rdfs:range adp:Capability .
+
+adp:evolutionType a owl:ObjectProperty ;
+    rdfs:label "evolution type" ;
+    rdfs:comment "Classifies a capability-evolution event." ;
+    rdfs:range adp:EvolutionType .
+
+adp:rubricCriterion a owl:ObjectProperty ;
+    rdfs:label "rubric criterion" ;
+    rdfs:comment "Links a capability to the rubric criteria that guide attention during sensemaking. Multiple per capability." ;
+    rdfs:range adp:RubricCriterion .
+
+adp:constraint a owl:ObjectProperty ;
+    rdfs:label "constraint" ;
+    rdfs:comment "Links a capability or probe to the constraints it operates within." ;
+    rdfs:range adp:Constraint .

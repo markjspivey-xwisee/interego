@@ -12,7 +12,9 @@
  *     node dist/server.js
  */
 
+import { readFileSync } from 'node:fs';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { ontologyServingMiddleware } from '../../_shared/ontology-serve/index.js';
 import { adpAffordances } from '../affordances.js';
 import {
   defineCapability,
@@ -97,7 +99,19 @@ const handlers = {
 };
 
 const PORT = parseInt(process.env.PORT ?? '6020', 10);
-const app = createVerticalBridge({ verticalName: 'agent-development-practice', affordances: adpAffordances, handlers, defaultPodUrl: process.env.ADP_DEFAULT_POD_URL });
+const app = createVerticalBridge({
+  verticalName: 'agent-development-practice',
+  affordances: adpAffordances,
+  handlers,
+  defaultPodUrl: process.env.ADP_DEFAULT_POD_URL,
+  // Serve the adp: ontology dereferenceably (shared primitive) — author AND serve.
+  middleware: ontologyServingMiddleware({
+    mountPath: '/ns/adp',
+    ontologyIri: 'https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp',
+    namespace: 'https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#',
+    ontologyTurtle: () => readFileSync(new URL('../ontology/adp.ttl', import.meta.url), 'utf8'),
+  }),
+});
 app.listen(PORT, () => {
   console.log(`agent-development-practice bridge on http://localhost:${PORT}`);
   console.log(`  MCP: http://localhost:${PORT}/mcp  |  Manifest: http://localhost:${PORT}/affordances`);

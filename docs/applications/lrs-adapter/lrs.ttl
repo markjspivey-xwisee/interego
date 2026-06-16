@@ -1,0 +1,135 @@
+@prefix lrs:      <https://markjspivey-xwisee.github.io/interego/applications/lrs-adapter/lrs#> .
+@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix rdf:      <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:     <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:      <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:      <http://www.w3.org/2002/07/owl#> .
+@prefix dct:      <http://purl.org/dc/terms/> .
+@prefix prov:     <http://www.w3.org/ns/prov#> .
+@prefix vann:     <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════════════════
+#  VERTICAL APPLICATION ONTOLOGY — non-normative
+#  NOT part of the Interego protocol (L1/L2/L3).
+#  Vocabulary scoped to the lrs-adapter boundary translator.
+#  See applications/lrs-adapter/README.md for the framing.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#  lrs: — LRS Adapter (xAPI ↔ Interego boundary translator)
+#
+#  Tracks two-way translation between xAPI Statements and Interego
+#  Context Descriptors. The translation is intentionally LOSSY in
+#  both directions; this vocabulary lets implementors record what was
+#  dropped so audits can trace it.
+
+<https://markjspivey-xwisee.github.io/interego/applications/lrs-adapter/lrs>
+    a owl:Ontology ;
+    dct:title "lrs: — LRS Adapter (vertical application)" ;
+    dct:description "Vertical-scoped, non-normative vocabulary for lossy two-way translation between xAPI Statements and Interego Context Descriptors. NOT part of the Interego protocol." ;
+    vann:preferredNamespacePrefix "lrs" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/lrs-adapter/lrs#" ;
+    rdfs:comment "Boundary adapter ontology. The Interego protocol does not depend on xAPI; this exists for interop with traditional LRS infrastructure." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> .
+
+# ── Classes ────────────────────────────────────────────────────────────
+
+lrs:LRSEndpoint a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "LRS Endpoint" ;
+    rdfs:comment "A target Learning Record Store. Records the URL, xAPI version, and authentication method." .
+
+lrs:StatementProjection a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Statement Projection" ;
+    rdfs:comment "Audit record that a cg:ContextDescriptor was projected to a particular LRS as an xAPI Statement. Captures what was preserved and what was lost." .
+
+lrs:StatementIngestion a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Statement Ingestion" ;
+    rdfs:comment "Audit record that a cg:ContextDescriptor was created from a particular xAPI Statement ingested from an LRS. Captures the source statement ID and any normalization applied." .
+
+# ── Properties ─────────────────────────────────────────────────────────
+
+lrs:endpointUrl a owl:DatatypeProperty ;
+    rdfs:label "endpoint URL" ;
+    rdfs:comment "Base URL of the LRS xAPI endpoint." ;
+    rdfs:domain lrs:LRSEndpoint ;
+    rdfs:range xsd:anyURI .
+
+lrs:xapiVersion a owl:DatatypeProperty ;
+    rdfs:label "xAPI version" ;
+    rdfs:comment "xAPI specification version supported by the endpoint (e.g., \"1.0.3\", \"2.0.0\")." ;
+    rdfs:range xsd:string .
+
+lrs:authMethod a owl:DatatypeProperty ;
+    rdfs:label "auth method" ;
+    rdfs:comment "Authentication method used to call the LRS (basic / oauth2 / apikey / signed-statements)." ;
+    rdfs:range xsd:string .
+
+lrs:projectedDescriptor a owl:ObjectProperty ;
+    rdfs:label "projected descriptor" ;
+    rdfs:comment "The cg:ContextDescriptor that was projected to a Statement." ;
+    rdfs:domain lrs:StatementProjection ;
+    rdfs:range cg:ContextDescriptor .
+
+lrs:projectedToEndpoint a owl:ObjectProperty ;
+    rdfs:label "projected to endpoint" ;
+    rdfs:comment "The LRS endpoint the Statement was projected to." ;
+    rdfs:domain lrs:StatementProjection ;
+    rdfs:range lrs:LRSEndpoint .
+
+lrs:projectedStatementId a owl:DatatypeProperty ;
+    rdfs:label "projected statement id" ;
+    rdfs:comment "The xAPI Statement UUID assigned by the LRS (or generated locally if the LRS echoed it back)." ;
+    rdfs:range xsd:string .
+
+lrs:projectionLossy a owl:DatatypeProperty ;
+    rdfs:label "projection lossy" ;
+    rdfs:comment "Boolean — whether information was lost in translation. Defaults true; xAPI's Statement shape cannot represent modal status, supersedes chains, or multi-narrative composition." ;
+    rdfs:range xsd:boolean .
+
+lrs:lossNote a owl:DatatypeProperty ;
+    rdfs:label "loss note" ;
+    rdfs:comment "Free-text description of what information was dropped in translation. Multiple notes per projection / ingestion are normal." ;
+    rdfs:range xsd:string .
+
+lrs:ingestedFromEndpoint a owl:ObjectProperty ;
+    rdfs:label "ingested from endpoint" ;
+    rdfs:comment "The LRS endpoint a Statement was ingested from." ;
+    rdfs:domain lrs:StatementIngestion ;
+    rdfs:range lrs:LRSEndpoint .
+
+lrs:sourceStatementId a owl:DatatypeProperty ;
+    rdfs:label "source statement id" ;
+    rdfs:comment "The xAPI Statement UUID at the source LRS — preserved so the descriptor can be traced back." ;
+    rdfs:range xsd:string .
+
+lrs:ingestedDescriptor a owl:ObjectProperty ;
+    rdfs:label "ingested descriptor" ;
+    rdfs:comment "The cg:ContextDescriptor produced by ingesting an xAPI Statement." ;
+    rdfs:domain lrs:StatementIngestion ;
+    rdfs:range cg:ContextDescriptor .
+
+# ── xAPI passthrough properties ─────────────────────────────────────
+# These preserve original xAPI fields on ingested descriptors so a
+# round-trip projection can reconstruct the Statement faithfully.
+
+lrs:xapiVerb a owl:DatatypeProperty ;
+    rdfs:label "xAPI verb IRI" ;
+    rdfs:comment "Original xAPI verb IRI (e.g., http://adlnet.gov/expapi/verbs/completed). Preserved on ingested descriptors so round-trip projection reconstructs the verb faithfully." ;
+    rdfs:range xsd:anyURI .
+
+lrs:xapiResult a owl:DatatypeProperty ;
+    rdfs:label "xAPI result extension" ;
+    rdfs:comment "Original xAPI result block as JSON literal. Preserved on ingested descriptors; projection back uses it verbatim." ;
+    rdfs:range xsd:string .
+
+lrs:xapiContext a owl:DatatypeProperty ;
+    rdfs:label "xAPI context extension" ;
+    rdfs:comment "Original xAPI context block as JSON literal. Preserved on ingested descriptors; projection back uses it verbatim." ;
+    rdfs:range xsd:string .
+
+lrs:xapiSkipReason a owl:DatatypeProperty ;
+    rdfs:label "xAPI skip reason" ;
+    rdfs:comment "Reason a descriptor was NOT projected to xAPI (typically: modal status was Hypothetical or Counterfactual). Used for audit trails of what was withheld from the LRS." ;
+    rdfs:range xsd:string .

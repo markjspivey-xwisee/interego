@@ -12,7 +12,9 @@
  *     node dist/server.js
  */
 
+import { readFileSync } from 'node:fs';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { ontologyServingMiddleware } from '../../_shared/ontology-serve/index.js';
 import { lrsAffordances } from '../affordances.js';
 import {
   ingestStatementFromLrs,
@@ -77,7 +79,19 @@ const handlers = {
 };
 
 const PORT = parseInt(process.env.PORT ?? '6030', 10);
-const app = createVerticalBridge({ verticalName: 'lrs-adapter', affordances: lrsAffordances, handlers, defaultPodUrl: process.env.LRS_DEFAULT_POD_URL });
+const app = createVerticalBridge({
+  verticalName: 'lrs-adapter',
+  affordances: lrsAffordances,
+  handlers,
+  defaultPodUrl: process.env.LRS_DEFAULT_POD_URL,
+  // Serve the lrs: ontology dereferenceably (shared primitive).
+  middleware: ontologyServingMiddleware({
+    mountPath: '/ns/lrs',
+    ontologyIri: 'https://markjspivey-xwisee.github.io/interego/applications/lrs-adapter/lrs',
+    namespace: 'https://markjspivey-xwisee.github.io/interego/applications/lrs-adapter/lrs#',
+    ontologyTurtle: () => readFileSync(new URL('../ontology/lrs.ttl', import.meta.url), 'utf8'),
+  }),
+});
 app.listen(PORT, () => {
   console.log(`lrs-adapter bridge on http://localhost:${PORT}`);
   console.log(`  MCP: http://localhost:${PORT}/mcp  |  Manifest: http://localhost:${PORT}/affordances`);

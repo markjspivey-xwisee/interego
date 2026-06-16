@@ -21,8 +21,8 @@
  *     npx tsx server.ts
  */
 
-import type { Express, Request, Response } from 'express';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { ontologyServingMiddleware } from '../../_shared/ontology-serve/index.js';
 import { agpAffordances } from '../affordances.js';
 import {
   AGP_NS, AGP_ONTOLOGY_IRI,
@@ -55,43 +55,24 @@ const handlers: Record<string, (a: Record<string, unknown>) => Promise<unknown>>
   'agp.list_practice': pendingHandler('agp.list_practice', []),
 };
 
-// ── Dereferenceable ontology serving (content negotiation + HATEOAS) ──────
-function serveOntology(app: Express): void {
-  const cors = (res: Response) => res.setHeader('Access-Control-Allow-Origin', '*');
-  const wantsJson = (req: Request) => /json/i.test(req.headers.accept ?? '');
-
-  app.get('/ns/agp', (req: Request, res: Response) => {
-    cors(res);
-    if (wantsJson(req)) res.type('application/ld+json').json(renderOntologyJsonLd());
-    else res.type('text/turtle').send(readOntologyTurtle());
-  });
-
-  app.get('/ns/agp/shapes', (_req: Request, res: Response) => {
-    cors(res);
-    res.type('text/turtle').send(readShapesTurtle());
-  });
-
-  // Per-term resolution. An owned-namespace fragment NEVER 404s — an unknown
-  // term returns a minimal back-pointer to the ontology (the convention the
-  // survey documented for dereferenceable vocab hosts).
-  app.get('/ns/agp/term/:name', (req: Request, res: Response) => {
-    cors(res);
-    const term = renderTermJsonLd(req.params.name);
-    res.type('application/ld+json').json(term ?? {
-      '@id': `${AGP_NS}${req.params.name}`,
-      '_links': { ontology: AGP_ONTOLOGY_IRI },
-      note: 'Unknown term in an owned namespace — see the ontology for declared terms.',
-    });
-  });
-}
-
 const PORT = parseInt(process.env.PORT ?? '6030', 10);
 const app = createVerticalBridge({
   verticalName: 'agentic-performance-practice',
   affordances: agpAffordances,
   handlers,
   defaultPodUrl: process.env.AGP_DEFAULT_POD_URL,
-  middleware: serveOntology,
+  // Dereferenceable ontology serving via the shared primitive (content
+  // negotiation + HATEOAS + per-term + SHACL shapes) — same helper every
+  // vertical + the substrate use.
+  middleware: ontologyServingMiddleware({
+    mountPath: '/ns/agp',
+    ontologyIri: AGP_ONTOLOGY_IRI,
+    namespace: AGP_NS,
+    ontologyTurtle: readOntologyTurtle,
+    shapesTurtle: readShapesTurtle,
+    jsonld: renderOntologyJsonLd,
+    term: renderTermJsonLd,
+  }),
 });
 app.listen(PORT, () => {
   console.log(`agentic-performance-practice bridge on http://localhost:${PORT}`);

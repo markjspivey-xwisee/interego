@@ -16,7 +16,9 @@
  * Connect from any MCP client at: ${BRIDGE_DEPLOYMENT_URL}/mcp
  */
 
+import { readFileSync } from 'node:fs';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { ontologyServingMiddleware } from '../../_shared/ontology-serve/index.js';
 import { lpcAffordances, lpcEnterpriseAffordances } from '../affordances.js';
 import {
   ingestTrainingContent,
@@ -183,6 +185,13 @@ const app = createVerticalBridge({
   affordances: activeAffordances,
   handlers,
   defaultPodUrl: process.env.LPC_DEFAULT_POD_URL,
+  // Serve the lpc: ontology dereferenceably (shared primitive).
+  middleware: ontologyServingMiddleware({
+    mountPath: '/ns/lpc',
+    ontologyIri: 'https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc',
+    namespace: 'https://markjspivey-xwisee.github.io/interego/applications/learner-performer-companion/lpc#',
+    ontologyTurtle: () => readFileSync(new URL('../ontology/lpc.ttl', import.meta.url), 'utf8'),
+  }),
 });
 
 app.listen(PORT, () => {

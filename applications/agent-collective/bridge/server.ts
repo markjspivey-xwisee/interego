@@ -12,7 +12,9 @@
  *     node dist/server.js
  */
 
+import { readFileSync } from 'node:fs';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
+import { ontologyServingMiddleware } from '../../_shared/ontology-serve/index.js';
 import { acAffordances } from '../affordances.js';
 import {
   authorTool,
@@ -79,7 +81,19 @@ const handlers = {
 };
 
 const PORT = parseInt(process.env.PORT ?? '6040', 10);
-const app = createVerticalBridge({ verticalName: 'agent-collective', affordances: acAffordances, handlers, defaultPodUrl: process.env.AC_DEFAULT_POD_URL });
+const app = createVerticalBridge({
+  verticalName: 'agent-collective',
+  affordances: acAffordances,
+  handlers,
+  defaultPodUrl: process.env.AC_DEFAULT_POD_URL,
+  // Serve the ac: ontology dereferenceably (shared primitive).
+  middleware: ontologyServingMiddleware({
+    mountPath: '/ns/ac',
+    ontologyIri: 'https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac',
+    namespace: 'https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#',
+    ontologyTurtle: () => readFileSync(new URL('../ontology/ac.ttl', import.meta.url), 'utf8'),
+  }),
+});
 app.listen(PORT, () => {
   console.log(`agent-collective bridge on http://localhost:${PORT}`);
   console.log(`  MCP: http://localhost:${PORT}/mcp  |  Manifest: http://localhost:${PORT}/affordances`);
