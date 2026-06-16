@@ -1,0 +1,140 @@
+@prefix agp:   <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#> .
+@prefix agpsh: <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp/shapes#> .
+@prefix cg:    <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+# ══════════════════════════════════════════════════════════════════════════
+#  SHACL node shapes for the agentic-performance-practice vertical.
+#  Authored within the EXECUTABLE subset of the in-process SHACL engine
+#  (packages/core/src/validation/shacl-engine.ts): sh:targetClass, single-
+#  predicate sh:path, sh:minCount/maxCount, sh:datatype, sh:nodeKind, sh:class,
+#  sh:in, sh:pattern, sh:message, sh:severity. NO sh:and/or/not/xone, NO
+#  sequence paths, NO sh:sparql (those are not executed by the in-process
+#  engine; only the normative substrate shapes use sh:sparql, validated
+#  externally). Cross-property rules that exceed this subset (e.g. "gap-analysis
+#  method REQUIRES a derived Knowable regime") are enforced in CODE by the
+#  regime-source discipline, not here — see the README.
+#
+#  Instances declare dct:conformsTo the relevant shape IRI and the container
+#  declares the shapes (.well-known/container-shape) so the relay conformance
+#  gate (deploy/mcp-relay runConformanceGate) validates them BEFORE the pod
+#  write.
+# ══════════════════════════════════════════════════════════════════════════
+
+agpsh:PerformanceSituationShape a sh:NodeShape ;
+    sh:targetClass agp:PerformanceSituation ;
+    sh:property [
+        sh:path agp:regime ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A performance situation MUST be placed in exactly one work regime (regime-first)." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:regimeSource ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+        sh:pattern "^(derived|asserted|default|unclassified)$" ;
+        sh:message "regimeSource MUST be one of derived|asserted|default|unclassified — provenance of the regime placement." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:CapabilityShape a sh:NodeShape ;
+    sh:targetClass agp:Capability ;
+    sh:property [
+        sh:path agp:composedOf ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A capability MUST be composed of at least one constituent (skill, tool, or knowledge) — an empty capability is not productive." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:KnowledgeShape a sh:NodeShape ;
+    sh:targetClass agp:Knowledge ;
+    sh:property [
+        sh:path agp:knowledgeComponentKind ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A knowledge component MUST carry exactly one codifiability kind (Recorded/Trained/Judged/Lived/Innate)." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:PerformanceAffordanceShape a sh:NodeShape ;
+    sh:targetClass agp:PerformanceAffordance ;
+    sh:property [
+        sh:path agp:requiresCapability ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A performance affordance MUST name the capability it requires — an affordance with no capability requirement cannot be actualized or unmet." ;
+        sh:severity sh:Violation ;
+    ] .
+
+# The productive join. This shape is what makes affordance-ACTUALIZATION a
+# first-class, validated object: an actualization is meaningless unless it
+# references the capability engaged, the situation it occurred in, the
+# affordance it realized, and the performance it yielded.
+agpsh:ActualizationShape a sh:NodeShape ;
+    sh:targetClass agp:Actualization ;
+    sh:property [
+        sh:path agp:engages ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "An actualization MUST engage a capability." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:inSituation ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "An actualization MUST occur in exactly one performance situation." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:actualizes ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "An actualization MUST realize at least one performance affordance." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:yields ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "An actualization MUST yield exactly one performance (the measurable result)." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:DiagnosisShape a sh:NodeShape ;
+    sh:targetClass agp:Diagnosis ;
+    sh:property [
+        sh:path agp:diagnoses ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A diagnosis MUST reference exactly one performance situation." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:method ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A diagnosis MUST route to exactly one performance method." ;
+        sh:severity sh:Violation ;
+    ] .
+
+agpsh:InterventionEvaluationShape a sh:NodeShape ;
+    sh:targetClass agp:InterventionEvaluation ;
+    sh:property [
+        sh:path agp:evaluates ;
+        sh:minCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "An intervention evaluation MUST reference the intervention it judges." ;
+        sh:severity sh:Violation ;
+    ] .

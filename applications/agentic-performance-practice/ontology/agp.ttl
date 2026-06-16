@@ -1,0 +1,356 @@
+@prefix agp:      <https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#> .
+@prefix cg:       <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix abac:     <https://markjspivey-xwisee.github.io/interego/ns/abac#> .
+@prefix passport: <https://markjspivey-xwisee.github.io/interego/ns/passport#> .
+@prefix olke:     <https://markjspivey-xwisee.github.io/interego/ns/olke#> .
+@prefix amta:     <https://markjspivey-xwisee.github.io/interego/ns/amta#> .
+@prefix adp:      <https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp#> .
+@prefix ac:       <https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac#> .
+@prefix rdf:      <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:     <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:      <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:      <http://www.w3.org/2002/07/owl#> .
+@prefix skos:     <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct:      <http://purl.org/dc/terms/> .
+@prefix prov:     <http://www.w3.org/ns/prov#> .
+@prefix vann:     <http://purl.org/vocab/vann/> .
+
+# ══════════════════════════════════════════════════════════════════════════
+#  VERTICAL APPLICATION ONTOLOGY — non-normative
+#  NOT part of the Interego protocol (L1/L2/L3).
+#  Scoped to the agentic-performance-practice vertical (the "L2" performance
+#  layer in this vertical's own framing: a complexity-aware THEORY OF
+#  PERFORMANCE that COMPOSES Foxxi's standards (xAPI 2.0 / IEEE-LER / ADL-TLA),
+#  the agent-development-practice (adp:) Complex-regime substrate, and the
+#  agent-collective (ac:) tool/teaching substrate, all over Interego.
+#  See applications/agentic-performance-practice/README.md for the framing.
+# ══════════════════════════════════════════════════════════════════════════
+#
+#  agp: — Agentic Performance Practice
+#
+#  A complexity-aware, REGIME-FIRST theory of performance for agents and teams
+#  of agents + humans. The unit is a PERFORMANCE SITUATION, not a gap: the
+#  situation's work regime is read FIRST, and only then is a regime-appropriate
+#  method chosen. Idealize-a-future-state / gap-analysis is the method of ONE
+#  regime (Knowable), never the universal frame.
+#
+#  This vertical realizes the performance sibling the agent-development-practice
+#  README deferred (its placeholder "agent-hpt/"), but reframed regime-first
+#  rather than as Human Performance Technology: ADP covers only the Complex /
+#  Emergent regime; agp: routes across ALL regimes and COMPOSES adp: for the
+#  Emergent row rather than absorbing it.
+#
+#  Net-new in this ontology (does not exist in adp:/ac:/foxxi:):
+#    (1) skills + tools + knowledge composed into a CAPABILITY that produces
+#        performance (agp:composedOf / cg:constructedFrom);
+#    (2) AFFORDANCE THEORY as performance — a situation AFFORDS a performer an
+#        action given its capabilities, and ACTUALIZATION is the productive
+#        join Capability × Situation × Affordance -> Performance. This
+#        agp:PerformanceAffordance is the ECOLOGICAL sense and is DELIBERATELY
+#        DISTINCT from the L0 cg:Affordance (REST/HATEOAS) — different layer,
+#        different namespace, MUST NOT be conflated.
+#
+#  Layering: application-over-L3. Every agp: class subclasses an existing
+#  L1/L2/L3 class without modifying it. The protocol does not bend toward this
+#  vertical. SHACL shapes live in ontology/agp-shapes.ttl.
+
+<https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp>
+    a owl:Ontology ;
+    dct:title "agp: — Agentic Performance Practice (vertical application)" ;
+    dct:description "Vertical-scoped, non-normative vocabulary for a complexity-aware, regime-first theory of performance for agents and teams of agents + humans. NOT part of the Interego protocol. Composes cg:, abac:, passport:, olke:, amta:, adp:, ac:, and Foxxi's xAPI 2.0 / IEEE-LER / ADL-TLA standards layer." ;
+    vann:preferredNamespacePrefix "agp" ;
+    vann:preferredNamespaceUri "https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/agp#" ;
+    rdfs:comment "Vertical application ontology. Non-normative. The Interego protocol does not depend on this; it is one specific use case. SHACL node shapes are in agp-shapes.ttl; instances are published as cg:ContextDescriptors carrying dct:conformsTo the relevant shape so the relay conformance gate validates them at write time." ;
+    owl:imports <https://markjspivey-xwisee.github.io/interego/ns/cg> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/abac> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/passport> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/olke> ,
+                <https://markjspivey-xwisee.github.io/interego/ns/amta> ,
+                <https://markjspivey-xwisee.github.io/interego/applications/agent-development-practice/adp> ,
+                <https://markjspivey-xwisee.github.io/interego/applications/agent-collective/ac> .
+
+# ── The unit + the actors ───────────────────────────────────────────────
+
+agp:PerformanceSituation a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Performance Situation" ;
+    rdfs:comment "The UNIT of the theory: a bounded situation in which a performer (or team) is to perform. It is contextualized FIRST by its work regime (agp:regime), which determines the appropriate method. NOT a gap — a gap is the framing of one regime (Knowable) only." .
+
+agp:Performer a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Performer" ;
+    rdfs:comment "A human, an agent, or a team of either/both that performs in a situation. Actor-agnostic: the same theory applies to humans, agents, and mixed teams." .
+
+agp:PerformanceDirection a owl:Class ;
+    rdfs:label "Performance Direction" ;
+    rdfs:comment "Enumerated direction of a performance relationship: who performs for/with whom. Human-to-Human, Human-to-Agent, Agent-to-Human, Agent-to-Agent." .
+
+agp:H2H a agp:PerformanceDirection ; rdfs:label "Human to Human" .
+agp:H2A a agp:PerformanceDirection ; rdfs:label "Human to Agent" .
+agp:A2H a agp:PerformanceDirection ; rdfs:label "Agent to Human" .
+agp:A2A a agp:PerformanceDirection ; rdfs:label "Agent to Agent" .
+
+# ── The work-regime taxonomy (complexity-aware, regime-FIRST) ────────────
+
+agp:WorkRegime a owl:Class ;
+    rdfs:label "Work Regime" ;
+    rdfs:comment "Enumerated complexity regime of a performance situation. Read FIRST; it routes the method (agp:PerformanceMethod). Choosing the wrong regime's method is itself a failure mode. Composes — does not duplicate — adp:CynefinDomain: each regime skos:closeMatch the corresponding adp domain. The unclassified state (no derived regime) corresponds to adp:Confused and routes to classify-first." .
+
+agp:Evident a agp:WorkRegime ;
+    rdfs:label "Evident regime" ;
+    rdfs:comment "Cause-effect obvious and stable. Method: apply established practice. Maps to adp:Clear." ;
+    skos:closeMatch adp:Clear .
+
+agp:Knowable a agp:WorkRegime ;
+    rdfs:label "Knowable regime" ;
+    rdfs:comment "Cause-effect knowable through analysis/expertise. The ONLY regime whose method is gap-analysis (idealize a future state, analyze the six factors for the dominant cause, close it). Maps to adp:Complicated." ;
+    skos:closeMatch adp:Complicated .
+
+agp:Emergent a agp:WorkRegime ;
+    rdfs:label "Emergent regime" ;
+    rdfs:comment "Cause-effect only knowable in hindsight. Method: dispositional read + safe-to-fail probes (probe-sense-respond). This is exactly the regime the agent-development-practice vertical addresses; agp: composes adp:Probe/NarrativeFragment/Synthesis here. Maps to adp:Complex." ;
+    skos:closeMatch adp:Complex .
+
+agp:Turbulent a agp:WorkRegime ;
+    rdfs:label "Turbulent regime" ;
+    rdfs:comment "No discernible cause-effect; the situation is unstable. Method: stabilise first (act to restore order), then re-contextualize. Maps to adp:Chaotic." ;
+    skos:closeMatch adp:Chaotic .
+
+# ── The regime-routed method (note: gap-analysis is Knowable-only) ───────
+
+agp:PerformanceMethod a owl:Class ;
+    rdfs:label "Performance Method" ;
+    rdfs:comment "Enumerated method a diagnosis routes to, determined by the situation's regime. Gap-analysis is bound to the Knowable regime ONLY — surfacing it for any other regime is a category error (enforced in code by the regime-source discipline, not by SHACL)." .
+
+agp:ApplyPractice    a agp:PerformanceMethod ; rdfs:label "Apply practice (Evident)" .
+agp:GapAnalysis      a agp:PerformanceMethod ; rdfs:label "Gap analysis (Knowable ONLY)" ;
+    rdfs:comment "Idealize a future state, identify the gap, analyze the six performance factors for the dominant cause, close it. Valid ONLY when the regime is Knowable and DERIVED from evidence, never asserted or defaulted." .
+agp:DispositionalRead a agp:PerformanceMethod ; rdfs:label "Dispositional read + probes (Emergent)" .
+agp:StabiliseFirst   a agp:PerformanceMethod ; rdfs:label "Stabilise first (Turbulent)" .
+agp:ClassifyFirst    a agp:PerformanceMethod ; rdfs:label "Classify first (unclassified)" .
+
+# ── Capability composition: skills + tools + knowledge -> capability ─────
+
+agp:Skill a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Skill" ;
+    rdfs:comment "A performer's learned ability to act effectively. A constituent of a capability." .
+
+agp:Tool a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Tool" ;
+    rdfs:comment "An instrument a performer wields to extend what it can do. A constituent of a capability." ;
+    skos:closeMatch ac:AgentTool .
+
+agp:Knowledge a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Knowledge" ;
+    rdfs:comment "Knowledge a performer can bring to bear. Classified by agp:knowledgeComponentKind. A constituent of a capability." .
+
+agp:KnowledgeComponentKind a owl:Class ;
+    rdfs:label "Knowledge Component Kind" ;
+    rdfs:comment "Enumerated codifiability class of a knowledge component, which determines whether it can be codified (stock) or must flow person-to-person (connect)." .
+
+agp:Recorded a agp:KnowledgeComponentKind ; rdfs:label "Recorded (fully codifiable)" .
+agp:Trained  a agp:KnowledgeComponentKind ; rdfs:label "Trained (codifiable into instruction)" .
+agp:Judged   a agp:KnowledgeComponentKind ; rdfs:label "Judged (partly codifiable, needs judgement)" .
+agp:Lived    a agp:KnowledgeComponentKind ; rdfs:label "Lived (tacit, flows by apprenticeship)" .
+agp:Innate   a agp:KnowledgeComponentKind ; rdfs:label "Innate (not codifiable; select for it)" .
+
+agp:Capability a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Capability (composed, productive)" ;
+    rdfs:comment "A performer's productive capability, COMPOSED OF skills + tools + knowledge (agp:composedOf / cg:constructedFrom). It is what a performer brings to a situation and what an affordance requires to be actualized. Related to but distinct from adp:Capability (an open-ended capability SPACE for emergent recognition) — agp:Capability is the composed productive unit that meets a situation." ;
+    skos:related adp:Capability ;
+    cg:constructedFrom agp:Skill , agp:Tool , agp:Knowledge .
+
+# ── Affordance theory as performance (DISTINCT from cg:Affordance) ────────
+
+agp:PerformanceAffordance a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Performance Affordance (ecological)" ;
+    rdfs:comment "An action-possibility a situation OFFERS a performer, conditional on the performer's capability. This is affordance theory in the ECOLOGICAL sense (what the situation affords given capability), NOT the L0 cg:Affordance (a followable REST/HATEOAS hypermedia transition). The two are different layers and MUST NOT be conflated: a performance affordance is a possibility for performance; a cg:Affordance is a machine-followable action on a resource. A performance affordance MAY ultimately be realized THROUGH cg:Affordances, but is not one." ;
+    rdfs:seeAlso cg:Affordance .
+
+agp:Actualization a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Actualization" ;
+    rdfs:comment "The productive JOIN: a capability engaging a situation's affordance to yield performance. Actualization = Capability × Situation × PerformanceAffordance -> Performance. This is the event the theory measures: did latent capability + offered affordance actually become performance." ;
+    cg:constructedFrom agp:Capability , agp:PerformanceSituation , agp:PerformanceAffordance .
+
+agp:Performance a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Performance" ;
+    rdfs:comment "The realized performance an actualization yields. Projected (lossily) to exactly one xAPI `performed` statement + one trajectory step via agp:recordedAs — Foxxi's xAPI 2.0 LRS records it; the vertical's own custom xAPI Profile (authored in Stage 2) names the capability / actualized-affordance / regime as context extensions. WHAT was performed is carried by the object's conformsTo, never a domain verb." .
+
+# ── Diagnosis -> intervention -> evaluation -> calibration ────────────────
+
+agp:Diagnosis a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Diagnosis" ;
+    rdfs:comment "A regime-aware reading of a performance situation: the placed regime, its provenance (agp:regimeSource), the routed method, and — for the Knowable regime only — the dominant performance factor. Carries no fabricated certainty: an asserted/defaulted regime never accrues calibration authority." .
+
+agp:PerformanceFactor a owl:Class ;
+    rdfs:label "Performance Factor" ;
+    rdfs:comment "Enumerated factor in the six-factor cause model used by gap-analysis (Knowable regime only). Environmental: information, instrumentation, incentives. Individual: knowledge/skill, capacity, motives." .
+
+agp:Information     a agp:PerformanceFactor ; rdfs:label "Information (environmental)" .
+agp:Instrumentation a agp:PerformanceFactor ; rdfs:label "Instrumentation (environmental)" .
+agp:Incentives     a agp:PerformanceFactor ; rdfs:label "Incentives (environmental)" .
+agp:KnowledgeSkill a agp:PerformanceFactor ; rdfs:label "Knowledge & Skill (individual)" .
+agp:Capacity       a agp:PerformanceFactor ; rdfs:label "Capacity (individual)" .
+agp:Motives        a agp:PerformanceFactor ; rdfs:label "Motives (individual)" .
+
+agp:InterventionPlan a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Intervention Plan" ;
+    rdfs:comment "A regime-appropriate plan of interventions emitted by a diagnosis. The plan paradigm spans the environment/individual × inform/instrument/incentivize space; instruction (a course) is warranted only when the dominant cause is a knowledge/skill deficiency in a Knowable situation." .
+
+agp:Intervention a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Intervention" ;
+    rdfs:comment "A single intervention within a plan: what is changed (environment or individual), how, and the affordance/capability it targets." .
+
+agp:InterventionEvaluation a owl:Class ;
+    rdfs:subClassOf amta:Attestation ;
+    rdfs:label "Intervention Evaluation" ;
+    rdfs:comment "A four-level evaluation of an intervention (reaction / capability / transfer / outcome) attesting whether it worked; closes the loop via cg:supersedes on the prior plan. An attestation, so it carries an axis and provenance." .
+
+agp:CalibrationProfile a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Calibration Profile" ;
+    rdfs:comment "The reflexive track-record: per (regime × cause × intervention) cell, the closure/effective rate and its modal status (Hypothetical until enough evidence, then Asserted). Federates across orgs by union with k-anonymity withholding. Only DERIVED Knowable regimes accrue calibration authority." .
+
+# ── Object properties ────────────────────────────────────────────────────
+
+agp:regime a owl:ObjectProperty ;
+    rdfs:label "regime" ;
+    rdfs:comment "The work regime of a performance situation. Read first; routes the method." ;
+    rdfs:domain agp:PerformanceSituation ;
+    rdfs:range agp:WorkRegime .
+
+agp:method a owl:ObjectProperty ;
+    rdfs:label "method" ;
+    rdfs:comment "The performance method a diagnosis routed to, determined by the regime." ;
+    rdfs:range agp:PerformanceMethod .
+
+agp:performer a owl:ObjectProperty ;
+    rdfs:label "performer" ;
+    rdfs:comment "Links a situation/actualization to the performer (human, agent, or team)." ;
+    rdfs:range agp:Performer .
+
+agp:direction a owl:ObjectProperty ;
+    rdfs:label "direction" ;
+    rdfs:comment "The H2H/H2A/A2H/A2A direction of a performance relationship." ;
+    rdfs:range agp:PerformanceDirection .
+
+agp:composedOf a owl:ObjectProperty ;
+    rdfs:label "composed of" ;
+    rdfs:comment "Composes a capability out of its constituent skills, tools, and knowledge. A capability with no constituents is not productive." ;
+    rdfs:domain agp:Capability ;
+    rdfs:range cg:ContextDescriptor .
+
+agp:knowledgeComponentKind a owl:ObjectProperty ;
+    rdfs:label "knowledge component kind" ;
+    rdfs:comment "Classifies a knowledge component by codifiability." ;
+    rdfs:domain agp:Knowledge ;
+    rdfs:range agp:KnowledgeComponentKind .
+
+agp:affords a owl:ObjectProperty ;
+    rdfs:label "affords" ;
+    rdfs:comment "A performance situation affords a performance affordance — an action-possibility the situation offers." ;
+    rdfs:domain agp:PerformanceSituation ;
+    rdfs:range agp:PerformanceAffordance .
+
+agp:requiresCapability a owl:ObjectProperty ;
+    rdfs:label "requires capability" ;
+    rdfs:comment "The capability a performance affordance requires in order to be actualized. The bridge between what a situation offers and what a performer can do." ;
+    rdfs:domain agp:PerformanceAffordance ;
+    rdfs:range agp:Capability .
+
+agp:engages a owl:ObjectProperty ;
+    rdfs:label "engages" ;
+    rdfs:comment "The capability an actualization engages." ;
+    rdfs:domain agp:Actualization ;
+    rdfs:range agp:Capability .
+
+agp:inSituation a owl:ObjectProperty ;
+    rdfs:label "in situation" ;
+    rdfs:comment "The situation an actualization occurs in." ;
+    rdfs:domain agp:Actualization ;
+    rdfs:range agp:PerformanceSituation .
+
+agp:actualizes a owl:ObjectProperty ;
+    rdfs:label "actualizes" ;
+    rdfs:comment "The performance affordance an actualization realizes." ;
+    rdfs:domain agp:Actualization ;
+    rdfs:range agp:PerformanceAffordance .
+
+agp:yields a owl:ObjectProperty ;
+    rdfs:label "yields" ;
+    rdfs:comment "The performance an actualization yields. The measurable result of capability meeting affordance in a situation." ;
+    rdfs:domain agp:Actualization ;
+    rdfs:range agp:Performance .
+
+agp:recordedAs a owl:ObjectProperty ;
+    rdfs:label "recorded as" ;
+    rdfs:comment "Links a performance to its lossy xAPI/trajectory projection (a single `performed` statement). Foxxi's xAPI 2.0 LRS is the system of record; agp: composes it rather than reimplementing it." ;
+    rdfs:domain agp:Performance ;
+    rdfs:range cg:ContextDescriptor .
+
+agp:factor a owl:ObjectProperty ;
+    rdfs:label "factor" ;
+    rdfs:comment "The dominant performance factor a Knowable-regime diagnosis identifies as the cause." ;
+    rdfs:domain agp:Diagnosis ;
+    rdfs:range agp:PerformanceFactor .
+
+agp:diagnoses a owl:ObjectProperty ;
+    rdfs:label "diagnoses" ;
+    rdfs:comment "Links a diagnosis to the situation it reads." ;
+    rdfs:domain agp:Diagnosis ;
+    rdfs:range agp:PerformanceSituation .
+
+agp:recommends a owl:ObjectProperty ;
+    rdfs:label "recommends" ;
+    rdfs:comment "Links a diagnosis to the intervention plan it emits." ;
+    rdfs:domain agp:Diagnosis ;
+    rdfs:range agp:InterventionPlan .
+
+agp:intervention a owl:ObjectProperty ;
+    rdfs:label "intervention" ;
+    rdfs:comment "Links a plan to one of its interventions." ;
+    rdfs:domain agp:InterventionPlan ;
+    rdfs:range agp:Intervention .
+
+agp:evaluates a owl:ObjectProperty ;
+    rdfs:label "evaluates" ;
+    rdfs:comment "Links an evaluation to the intervention it judges." ;
+    rdfs:domain agp:InterventionEvaluation ;
+    rdfs:range agp:Intervention .
+
+# ── Datatype properties ──────────────────────────────────────────────────
+
+agp:regimeSource a owl:DatatypeProperty ;
+    rdfs:label "regime source" ;
+    rdfs:comment "Provenance of a situation's placed regime: 'derived' (from trajectory evidence — the only source that may gap-analyse or accrue calibration), 'asserted' (a human/operator claim), 'default' (a fallback gap-intent), or 'unclassified'. Load-bearing: the calibration loop excludes non-derived regimes." ;
+    rdfs:range xsd:string .
+
+agp:situationStatement a owl:DatatypeProperty ;
+    rdfs:label "situation statement" ;
+    rdfs:comment "Free-text statement of the performance situation under contextualization." ;
+    rdfs:range xsd:string .
+
+agp:codifiability a owl:DatatypeProperty ;
+    rdfs:label "codifiability" ;
+    rdfs:comment "How codifiable a knowledge component is (drives stock-vs-flow strategy)." ;
+    rdfs:range xsd:string .
+
+agp:closureRate a owl:DatatypeProperty ;
+    rdfs:label "closure rate" ;
+    rdfs:comment "Fraction of situations in a calibration cell that the intervention is observed to close. 0..1." ;
+    rdfs:range xsd:decimal .
+
+agp:explicitClaimNotMade a owl:DatatypeProperty ;
+    rdfs:label "explicit claim not made" ;
+    rdfs:comment "What a diagnosis / evaluation is explicitly NOT claiming. Carries humility forward (mirrors adp:explicitDecisionNotMade) so a regime placement or an intervention recommendation is not over-read." ;
+    rdfs:range xsd:string .
