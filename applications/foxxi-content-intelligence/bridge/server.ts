@@ -684,6 +684,19 @@ async function resolveCaller(args: Record<string, unknown>): Promise<{ ctx: Call
 // ── Handlers ───────────────────────────────────────────────────────────
 
 const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknown>> = {
+  // ── Emergent standards-extension (agp layer re-integrated) ──────────
+  // Afforded by the agentic-performance layer composing Foxxi's standards;
+  // surfaced here so it is a first-class Foxxi affordance + MCP tool + the
+  // createVerticalBridge-registered POST /agent/extend-standards route.
+  'foxxi.extend_standards': async (args) => proposeStandardsExtension({
+    kind: String(args.kind) as AgpExtensionKind,
+    name: String(args.name ?? ''),
+    definition: String(args.definition ?? ''),
+    label: args.label as string | undefined,
+    extendsStandard: args.extends_standard as string | undefined,
+    subClassOf: args.subclass_of as string | undefined,
+    buildsCapability: args.builds_capability as string | undefined,
+  }),
   // ── Learner-side ────────────────────────────────────────────────────
   'foxxi.discover_assigned_courses': async (args) => {
     const resolved = await resolveCaller(args);
@@ -3527,30 +3540,9 @@ app.post('/agent/mesh-event', (req, res) => {
   }
 });
 
-// ── Emergent standards-extension affordance (agp layer re-integrated) ─────────
-// An agent extends a standard (xAPI / IEEE-LER / ADL-TLA) in the flow of work.
-// Self-descriptive + guided + composes Foxxi's own standards (the agp layer
-// affords the capability; Foxxi surfaces it). No auth gate: authoring a candidate
-// extension artifact is read-only-ish (it returns a document to publish yourself);
-// publishing it to a pod is a separate, signed act.
-app.post('/agent/extend-standards', (req, res) => {
-  try {
-    const b = (req.body ?? {}) as Record<string, unknown>;
-    const result = proposeStandardsExtension({
-      kind: String(b.kind) as AgpExtensionKind,
-      name: String(b.name ?? ''),
-      definition: String(b.definition ?? ''),
-      label: b.label as string | undefined,
-      extendsStandard: b.extends_standard as string | undefined,
-      subClassOf: b.subclass_of as string | undefined,
-      buildsCapability: b.builds_capability as string | undefined,
-    });
-    res.json(result);
-  } catch (err) {
-    res.status(400).json({ ok: false, error: (err as Error).message, hint: 'kind (XapiContextExtension|XapiProfileFragment|LerTerm|TlaTerm) + name + definition are required. GET /guidance for the capability catalog.' });
-  }
-});
-
+// The standards-extension capability is afforded by the agp layer, surfaced as the
+// foxxi.extend_standards affordance + handler above — createVerticalBridge registers
+// its POST /agent/extend-standards route + MCP tool from the affordance manifest.
 // Performance support in the flow: the discoverable learnable-capability catalog.
 const FOXXI_GUIDANCE: FoxxiGuidedEntry[] = [
   { action: 'urn:cg:action:foxxi:extend-standards', toolName: 'foxxi.extend_standards', guidance: EXTEND_STANDARDS_GUIDANCE },
