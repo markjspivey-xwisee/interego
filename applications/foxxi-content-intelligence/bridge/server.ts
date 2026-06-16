@@ -297,6 +297,11 @@ import {
 } from '../src/scorm-sequencing.js';
 import { attachPerformanceRoutes } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
+// Re-integration with the agentic-performance (agp:) layer: Foxxi surfaces the
+// emergent, learnable standards-extension capability the agp layer affords by
+// composing Foxxi's own standards. + the shared in-flow performance-support primitive.
+import { proposeStandardsExtension, EXTEND_STANDARDS_GUIDANCE, type ExtensionKind as AgpExtensionKind } from '../../agentic-performance-practice/src/standards-extension.js';
+import { attachGuidanceServing, type GuidedAffordanceEntry as FoxxiGuidedEntry } from '../../_shared/guided-affordance/index.js';
 import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
 import type { DeliveryChannel } from '../src/content-channels.js';
 import type { ChannelWebhook } from '../src/content-transport.js';
@@ -3522,10 +3527,41 @@ app.post('/agent/mesh-event', (req, res) => {
   }
 });
 
+// ── Emergent standards-extension affordance (agp layer re-integrated) ─────────
+// An agent extends a standard (xAPI / IEEE-LER / ADL-TLA) in the flow of work.
+// Self-descriptive + guided + composes Foxxi's own standards (the agp layer
+// affords the capability; Foxxi surfaces it). No auth gate: authoring a candidate
+// extension artifact is read-only-ish (it returns a document to publish yourself);
+// publishing it to a pod is a separate, signed act.
+app.post('/agent/extend-standards', (req, res) => {
+  try {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const result = proposeStandardsExtension({
+      kind: String(b.kind) as AgpExtensionKind,
+      name: String(b.name ?? ''),
+      definition: String(b.definition ?? ''),
+      label: b.label as string | undefined,
+      extendsStandard: b.extends_standard as string | undefined,
+      subClassOf: b.subclass_of as string | undefined,
+      buildsCapability: b.builds_capability as string | undefined,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, error: (err as Error).message, hint: 'kind (XapiContextExtension|XapiProfileFragment|LerTerm|TlaTerm) + name + definition are required. GET /guidance for the capability catalog.' });
+  }
+});
+
+// Performance support in the flow: the discoverable learnable-capability catalog.
+const FOXXI_GUIDANCE: FoxxiGuidedEntry[] = [
+  { action: 'urn:cg:action:foxxi:extend-standards', toolName: 'foxxi.extend_standards', guidance: EXTEND_STANDARDS_GUIDANCE },
+];
+attachGuidanceServing(app, '/guidance', FOXXI_GUIDANCE);
+
 app.listen(PORT, () => {
   console.log(`foxxi-content-intelligence bridge on http://localhost:${PORT}`);
   console.log(`  MCP endpoint:        http://localhost:${PORT}/mcp`);
   console.log(`  Affordance manifest: http://localhost:${PORT}/affordances`);
+  console.log(`  Standards extension: http://localhost:${PORT}/agent/extend-standards  |  Guidance: http://localhost:${PORT}/guidance`);
   console.log(`  Audience: ${audience} (${activeAffordances.length} affordances active; FOXXI_AUDIENCE=learner|admin|both)`);
   void seedDemoContent();
   // Agent-mesh projection: kick an initial cycle + schedule the poller.

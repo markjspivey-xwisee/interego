@@ -354,3 +354,50 @@ agp:explicitClaimNotMade a owl:DatatypeProperty ;
     rdfs:label "explicit claim not made" ;
     rdfs:comment "What a diagnosis / evaluation is explicitly NOT claiming. Carries humility forward (mirrors adp:explicitDecisionNotMade) so a regime placement or an intervention recommendation is not over-read." ;
     rdfs:range xsd:string .
+
+# ── Emergent standards-extension capability (agp re-integrates with Foxxi) ──
+# A learnable, teachable capability: an agent EXTENDS a standard (IEEE-LER /
+# ADL-TLA / xAPI) with an extension or profile fragment, in the flow of work,
+# with performance support. Afforded by the agp layer COMPOSING Foxxi's standards
+# (Foxxi owns the spec; agp affords agents the capability to extend it). The
+# affordance is self-descriptive + distributed (the extension is published as a
+# discoverable context descriptor), and authoring it is an agp:Capability agents
+# learn and teach each other (ac:TeachingPackage + the agent-teaching loop).
+
+agp:StandardsExtension a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Standards Extension" ;
+    rdfs:comment "An agent-authored extension to a standard — an xAPI context extension, an xAPI Profile fragment, or an IEEE-LER / ADL-TLA term. Self-descriptive (carries its own conformsTo + the standard it extends) and distributed (published as a context descriptor other agents discover, dereference, and reuse). Authoring one is a learnable agp:Capability that agents teach each other." .
+
+agp:ExtensionKind a owl:Class ;
+    rdfs:label "Extension Kind" ;
+    rdfs:comment "Enumerated kind of standards extension an agent may author." .
+
+agp:XapiContextExtension a agp:ExtensionKind ; rdfs:label "xAPI context extension" ;
+    rdfs:comment "A new xAPI context/result extension IRI + definition the agent contributes to the performance vocabulary." .
+agp:XapiProfileFragment  a agp:ExtensionKind ; rdfs:label "xAPI Profile fragment" ;
+    rdfs:comment "A concepts/templates/patterns fragment merged into an xAPI Profile (built via Foxxi's buildProfileDoc)." .
+agp:LerTerm a agp:ExtensionKind ; rdfs:label "IEEE-LER term extension" ;
+    rdfs:comment "A new term composed onto the IEEE-LER semantic layer (subclassing an existing LER class)." .
+agp:TlaTerm a agp:ExtensionKind ; rdfs:label "ADL-TLA term extension" ;
+    rdfs:comment "A new term composed onto the ADL-TLA semantic layer." .
+
+agp:PerformanceSupport a owl:Class ;
+    rdfs:subClassOf cg:ContextDescriptor ;
+    rdfs:label "Performance Support" ;
+    rdfs:comment "In-the-flow guidance attached to an affordance / response: what it does, when to use it, the competency it builds, its prerequisites, how to learn it, and where to go next. Self-descriptive performance support delivered in the flow of affordance / hypermedia — not a separate manual." .
+
+agp:extensionKind a owl:ObjectProperty ;
+    rdfs:label "extension kind" ;
+    rdfs:domain agp:StandardsExtension ;
+    rdfs:range agp:ExtensionKind .
+
+agp:extendsStandard a owl:DatatypeProperty ;
+    rdfs:label "extends standard" ;
+    rdfs:comment "Identifier/IRI of the standard being extended (an xAPI Profile IRI, or the IEEE-LER / ADL-TLA ontology IRI)." ;
+    rdfs:range xsd:string .
+
+agp:buildsCapability a owl:ObjectProperty ;
+    rdfs:label "builds capability" ;
+    rdfs:comment "The agp:Capability that authoring/using a thing builds or demonstrates — the link that makes an affordance a learnable, teachable skill/competency rather than a bare endpoint." ;
+    rdfs:range agp:Capability .

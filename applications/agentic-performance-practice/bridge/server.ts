@@ -23,12 +23,14 @@
 
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
+import { attachGuidanceServing, type GuidedAffordanceEntry } from '../../_shared/guided-affordance/index.js';
 import { agpAffordances } from '../affordances.js';
 import {
   AGP_NS, AGP_ONTOLOGY_IRI,
   readOntologyTurtle, readShapesTurtle, renderOntologyJsonLd, renderTermJsonLd,
 } from '../src/ontology.js';
 import { buildAgpProfileDoc, AGP_PROFILE_ID } from '../src/xapi-profile.js';
+import { proposeStandardsExtension, EXTEND_STANDARDS_GUIDANCE, type ExtensionKind } from '../src/standards-extension.js';
 
 // ── Stage-1 handler: validate + echo, mark pending Stage 2 (no fake publish) ──
 function pendingHandler(toolName: string, required: string[]) {
@@ -54,7 +56,36 @@ const handlers: Record<string, (a: Record<string, unknown>) => Promise<unknown>>
   'agp.plan_intervention': pendingHandler('agp.plan_intervention', ['diagnosis_iri']),
   'agp.evaluate_intervention': pendingHandler('agp.evaluate_intervention', ['intervention_iri']),
   'agp.list_practice': pendingHandler('agp.list_practice', []),
+  // REAL handler (not a stub): pure + composes Foxxi's standards, so it needs no
+  // pod write to produce a conformant, self-descriptive, guided artifact.
+  'agp.extend_standards': async (args: Record<string, unknown>) => proposeStandardsExtension({
+    kind: String(args.kind) as ExtensionKind,
+    name: String(args.name ?? ''),
+    definition: String(args.definition ?? ''),
+    label: args.label as string | undefined,
+    extendsStandard: args.extends_standard as string | undefined,
+    subClassOf: args.subclass_of as string | undefined,
+    buildsCapability: args.builds_capability as string | undefined,
+  }),
 };
+
+// In-flow performance support: the discoverable capability catalog (what each
+// affordance teaches + how to learn it) + per-tool guidance, served at /guidance.
+const GUIDANCE: GuidedAffordanceEntry[] = [
+  { action: 'urn:cg:action:agp:extend-standards', toolName: 'agp.extend_standards', guidance: EXTEND_STANDARDS_GUIDANCE },
+  { action: 'urn:cg:action:agp:contextualize-situation', toolName: 'agp.contextualize_situation', guidance: {
+    summary: 'Place a performance situation in its work regime BEFORE choosing a method.',
+    whenToUse: 'Always first. The regime (Evident/Knowable/Emergent/Turbulent) routes everything; gap-analysis is Knowable-only.',
+    teaches: `${AGP_NS}PerformanceSituation`,
+    nextAffordances: [{ action: 'urn:cg:action:agp:diagnose', rel: 'then', why: 'Diagnose the contextualized situation.' }],
+  } },
+  { action: 'urn:cg:action:agp:actualize', toolName: 'agp.actualize', guidance: {
+    summary: 'Record a capability engaging a situation\'s affordance to yield performance.',
+    whenToUse: 'When latent capability + an offered affordance actually became performance — the measurable event.',
+    teaches: `${AGP_NS}Actualization`,
+    requires: ['A defined capability (agp.define_capability) and a mapped affordance (agp.map_affordance).'],
+  } },
+];
 
 const PORT = parseInt(process.env.PORT ?? '6030', 10);
 const app = createVerticalBridge({
@@ -80,6 +111,8 @@ const app = createVerticalBridge({
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.type('application/ld+json').json(buildAgpProfileDoc({ generatedAt: new Date().toISOString() }));
     });
+    // Performance support in the flow: the capability catalog + per-tool guidance.
+    attachGuidanceServing(a, '/guidance', GUIDANCE);
   },
 });
 app.listen(PORT, () => {
@@ -87,4 +120,5 @@ app.listen(PORT, () => {
   console.log(`  MCP: http://localhost:${PORT}/mcp  |  Manifest: http://localhost:${PORT}/affordances`);
   console.log(`  Ontology: http://localhost:${PORT}/ns/agp  |  Shapes: http://localhost:${PORT}/ns/agp/shapes`);
   console.log(`  xAPI Profile: http://localhost:${PORT}/xapi/profile  (id: ${AGP_PROFILE_ID})`);
+  console.log(`  Performance support (in the flow): http://localhost:${PORT}/guidance`);
 });

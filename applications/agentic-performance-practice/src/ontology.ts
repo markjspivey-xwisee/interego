@@ -116,6 +116,17 @@ export const AGP_TERMS: ReadonlyArray<AgpTerm> = [
   { name: 'yields', kind: 'ObjectProperty', label: 'yields', domain: 'Actualization', range: 'Performance' },
   { name: 'recordedAs', kind: 'ObjectProperty', label: 'recorded as', domain: 'Performance', range: `${CG_NS}ContextDescriptor` },
   { name: 'regimeSource', kind: 'DatatypeProperty', label: 'regime source', comment: 'derived|asserted|default|unclassified — only derived may gap-analyse or calibrate.' },
+  // Emergent standards-extension capability + in-flow performance support.
+  { name: 'StandardsExtension', kind: 'Class', label: 'Standards Extension', subClassOf: `${CG_NS}ContextDescriptor`, comment: 'An agent-authored extension to a standard (xAPI extension / profile fragment / IEEE-LER / ADL-TLA term); self-descriptive + distributed; authoring it is a learnable, teachable capability.' },
+  { name: 'ExtensionKind', kind: 'Class', label: 'Extension Kind', comment: 'Enumerated kind of standards extension.' },
+  { name: 'PerformanceSupport', kind: 'Class', label: 'Performance Support', subClassOf: `${CG_NS}ContextDescriptor`, comment: 'In-the-flow, self-descriptive guidance attached to an affordance/response (what/when/teaches/requires/howToLearn/next).' },
+  { name: 'XapiContextExtension', kind: 'Individual', instanceOf: 'ExtensionKind', label: 'xAPI context extension' },
+  { name: 'XapiProfileFragment', kind: 'Individual', instanceOf: 'ExtensionKind', label: 'xAPI Profile fragment' },
+  { name: 'LerTerm', kind: 'Individual', instanceOf: 'ExtensionKind', label: 'IEEE-LER term extension' },
+  { name: 'TlaTerm', kind: 'Individual', instanceOf: 'ExtensionKind', label: 'ADL-TLA term extension' },
+  { name: 'extensionKind', kind: 'ObjectProperty', label: 'extension kind', domain: 'StandardsExtension', range: 'ExtensionKind' },
+  { name: 'extendsStandard', kind: 'DatatypeProperty', label: 'extends standard', comment: 'IRI of the standard being extended (xAPI Profile / IEEE-LER / ADL-TLA).' },
+  { name: 'buildsCapability', kind: 'ObjectProperty', label: 'builds capability', domain: 'StandardsExtension', range: 'Capability', comment: 'The agp:Capability authoring/using this builds — makes an affordance a learnable skill.' },
 ];
 
 const JSONLD_CONTEXT = {

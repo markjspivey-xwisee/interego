@@ -62,7 +62,7 @@ check('JSON-LD projection has @graph for every term', Array.isArray(jsonld['@gra
 const term = renderTermJsonLd('PerformanceAffordance') as Record<string, unknown> | null;
 check('per-term route resolves a class', !!term && String(term['@id']).endsWith('#PerformanceAffordance'));
 check('unknown term returns null (bridge serves a back-pointer)', renderTermJsonLd('NotATerm') === null);
-check('8 affordances declared', agpAffordances.length === 8);
+check('9 affordances declared (incl. extend_standards)', agpAffordances.length === 9);
 check('affordance actions are unique', new Set(agpAffordances.map(a => a.action)).size === agpAffordances.length);
 
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);

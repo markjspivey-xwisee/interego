@@ -171,6 +171,33 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
       { name: 'max_depth', type: 'number', required: false, description: 'Optional depth limit for prerequisite-edge traversal from focus_concept_id (default 3).' },
     ],
   },
+
+  {
+    action: 'urn:cg:action:foxxi:extend-standards' as IRI,
+    toolName: 'foxxi.extend_standards',
+    title: 'Extend a standard (xAPI / IEEE-LER / ADL-TLA) — afforded by the agentic-performance layer',
+    description: 'Emergent, self-descriptive capability: an agent extends a standard IN THE FLOW OF WORK — a new xAPI context extension, an xAPI Profile fragment, or an IEEE-LER / ADL-TLA term — COMPOSING Foxxi\'s standards (built with Foxxi\'s own buildProfileDoc + served LER/TLA namespaces), never forking the spec. The agentic-performance (agp:) layer affords this; Foxxi surfaces it (the agp<->Foxxi re-integration). Returns a conformant artifact + a publishable, discoverable cg:StandardsExtension descriptor (distributed) + in-flow performance support (what it builds, how to learn it, how to teach it). Discover the learnable-capability catalog at GET /guidance.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/extend-standards',
+    annotations: { title: 'Extend a standard', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: 'kind', type: 'string', required: true, description: 'What to author.', enum: ['XapiContextExtension', 'XapiProfileFragment', 'LerTerm', 'TlaTerm'] },
+      { name: 'name', type: 'string', required: true, description: 'Local slug for the new term/extension (e.g. "collaborationDepth").' },
+      { name: 'definition', type: 'string', required: true, description: 'Human-readable definition of the new term/extension.' },
+      { name: 'label', type: 'string', required: false, description: 'Display label (defaults to name).' },
+      { name: 'extends_standard', type: 'string', required: false, description: 'IRI of the standard being extended (defaults per kind).' },
+      { name: 'subclass_of', type: 'string', required: false, description: 'For LerTerm/TlaTerm: the superclass IRI to compose onto.' },
+      { name: 'builds_capability', type: 'string', required: false, description: 'IRI of the agp:Capability this extension builds/demonstrates.' },
+    ],
+    outputs: {
+      description: 'ProposedExtension — the new term IRI, a conformant artifact (xAPI Profile doc or Turtle term), a publishable cg:StandardsExtension descriptor, and _guidance (in-flow performance support).',
+      properties: {
+        ok: { type: 'boolean' }, iri: { type: 'string' }, kind: { type: 'string' }, extendsStandard: { type: 'string' },
+        artifact: { type: 'object', additionalProperties: true }, descriptor: { type: 'object', additionalProperties: true }, _guidance: { type: 'object', additionalProperties: true },
+      },
+      required: ['ok', 'iri', 'artifact'],
+    },
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────

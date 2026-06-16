@@ -186,6 +186,34 @@ const AGP_AFFORDANCES: ReadonlyArray<Affordance> = [
       required: ['operatorDid'],
     },
   },
+  {
+    action: 'urn:cg:action:agp:extend-standards' as IRI,
+    toolName: 'agp.extend_standards',
+    title: 'Extend a standard (xAPI / IEEE-LER / ADL-TLA) — emergent, learnable, teachable',
+    description: 'Author an extension to a standard IN THE FLOW OF WORK: a new xAPI context extension, an xAPI Profile fragment (concepts/templates/patterns), or an IEEE-LER / ADL-TLA term. COMPOSES Foxxi\'s standards (built with Foxxi\'s own buildProfileDoc + served LER/TLA namespaces) — never forks the spec. Returns a conformant, self-descriptive artifact + a publishable cg:StandardsExtension descriptor other agents discover and reuse (distributed) + in-flow performance support (what this builds, how to learn it, how to teach it). Authoring this is itself a learnable agp:Capability.',
+    method: 'POST',
+    targetTemplate: '{base}/agp/extend_standards',
+    annotations: { title: 'Extend a standard', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: 'kind', type: 'string', required: true, description: 'What to author.', enum: ['XapiContextExtension', 'XapiProfileFragment', 'LerTerm', 'TlaTerm'] },
+      { name: 'name', type: 'string', required: true, description: 'Local slug for the new term/extension (e.g. "collaborationDepth").' },
+      { name: 'definition', type: 'string', required: true, description: 'Human-readable definition of the new term/extension.' },
+      { name: 'label', type: 'string', required: false, description: 'Display label (defaults to name).' },
+      { name: 'extends_standard', type: 'string', required: false, description: 'IRI of the standard being extended (defaults per kind: the agp xAPI Profile, or the IEEE-LER / ADL-TLA namespace).' },
+      { name: 'subclass_of', type: 'string', required: false, description: 'For LerTerm/TlaTerm: the superclass IRI to compose onto.' },
+      { name: 'builds_capability', type: 'string', required: false, description: 'IRI of the agp:Capability this extension builds/demonstrates.' },
+      ...POD_INPUTS,
+    ],
+    outputs: {
+      description: 'ProposedExtension — the new term IRI, the conformant artifact (xAPI Profile doc or Turtle term), a publishable cg:StandardsExtension descriptor, and _guidance (in-flow performance support).',
+      properties: {
+        ok: { type: 'boolean' }, kind: { type: 'string' }, iri: { type: 'string' }, extendsStandard: { type: 'string' },
+        descriptor: { type: 'object', additionalProperties: true }, artifact: { type: 'object', additionalProperties: true },
+        _guidance: { type: 'object', additionalProperties: true },
+      },
+      required: ['ok', 'iri', 'artifact'],
+    },
+  },
 ];
 
 export const agpAffordances = AGP_AFFORDANCES;

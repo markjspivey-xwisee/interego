@@ -138,3 +138,21 @@ agpsh:InterventionEvaluationShape a sh:NodeShape ;
         sh:message "An intervention evaluation MUST reference the intervention it judges." ;
         sh:severity sh:Violation ;
     ] .
+
+agpsh:StandardsExtensionShape a sh:NodeShape ;
+    sh:targetClass agp:StandardsExtension ;
+    sh:property [
+        sh:path agp:extensionKind ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:nodeKind sh:IRI ;
+        sh:message "A standards extension MUST declare exactly one extension kind (xAPI extension / profile fragment / LER term / TLA term)." ;
+        sh:severity sh:Violation ;
+    ] ;
+    sh:property [
+        sh:path agp:extendsStandard ;
+        sh:minCount 1 ;
+        sh:datatype xsd:string ;
+        sh:message "A standards extension MUST name the standard it extends (so it is discoverable + composable, not orphaned)." ;
+        sh:severity sh:Violation ;
+    ] .

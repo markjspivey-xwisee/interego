@@ -66,6 +66,12 @@ COPY packages/ ./packages/
 COPY docs/ns/ ./docs/ns/
 COPY applications/_shared/ ./applications/_shared/
 COPY applications/foxxi-content-intelligence/ ./applications/foxxi-content-intelligence/
+# The agentic-performance (agp:) vertical: Foxxi composes its relocated engine
+# (transitional re-export shims) + the agp standards-extension capability it
+# re-integrates and surfaces. Imported by relative path from the foxxi bridge, so
+# the directory must ship in the image (it is not an npm workspace, so npm ci above
+# is unaffected; @interego/* still resolves via the root node_modules symlinks).
+COPY applications/agentic-performance-practice/ ./applications/agentic-performance-practice/
 COPY applications/learner-performer-companion/src/ ./applications/learner-performer-companion/src/
 # lrs-adapter provides the TLA Experience Index read-side federator that the
 # foxxi bridge composes for foxxi.query_experience_index.
