@@ -362,19 +362,60 @@ const patterns = [
 
 // ── Profile document ────────────────────────────────────────────────
 
-export function buildFoxxiProfileDoc(versionInfo: { generatedAt: string }): Record<string, unknown> {
+/** A composable xAPI Profile (ADL 2017) authoring spec. Parameterizing the
+ *  builder lets a COMPOSING vertical (e.g. agentic-performance-practice) author
+ *  + register its OWN Profile — its own id/namespace, concepts, templates, and
+ *  patterns — instead of being limited to Foxxi's fixed profile. Foxxi's own
+ *  profile is just one instance of this builder (buildFoxxiProfileDoc below). */
+export interface ProfileSpec {
+  /** The Profile's identity IRI (it dereferences to itself when served). */
+  id: string;
+  prefLabel: Record<string, string>;
+  definition: Record<string, string>;
+  author: { type: string; name: string };
+  generatedAt: string;
+  /** Already type-tagged concept objects (Verb / ActivityType / ContextExtension / …). */
+  concepts: Array<Record<string, unknown>>;
+  templates: Array<Record<string, unknown>>;
+  patterns: Array<Record<string, unknown>>;
+  seeAlso?: string;
+  conformsTo?: string;
+}
+
+/** Build an xAPI Profile JSON-LD document from a spec. Pure. */
+export function buildProfileDoc(spec: ProfileSpec): Record<string, unknown> {
   return {
     '@context': 'https://w3id.org/xapi/profiles/context',
-    id: FOXXI_PROFILE_ID,
+    id: spec.id,
     type: 'Profile',
-    conformsTo: 'https://w3id.org/xapi/profiles#1.0',
+    conformsTo: spec.conformsTo ?? 'https://w3id.org/xapi/profiles#1.0',
+    prefLabel: spec.prefLabel,
+    definition: spec.definition,
+    ...(spec.seeAlso ? { seeAlso: spec.seeAlso } : {}),
+    versions: [{ id: `${spec.id}/v/1`, generatedAtTime: spec.generatedAt }],
+    author: spec.author,
+    concepts: spec.concepts,
+    templates: spec.templates,
+    patterns: spec.patterns,
+  };
+}
+
+/** The Foxxi profile's building blocks, exported so a composing vertical can
+ *  REUSE the domain-agnostic performance concepts/templates/patterns (the
+ *  single `performed` verb + performed/superseding/voided-descriptor templates
+ *  + agent-performance patterns) rather than re-mint them. */
+export const FOXXI_PROFILE_PARTS = { verbs, activityTypes, extensions, templates, patterns } as const;
+
+export function buildFoxxiProfileDoc(versionInfo: { generatedAt: string }): Record<string, unknown> {
+  return buildProfileDoc({
+    id: FOXXI_PROFILE_ID,
     prefLabel: { en: 'Foxxi Content Intelligence — xAPI Profile' },
     definition: {
       en: `xAPI Profile (ADL Profile Spec 2017) for the Foxxi Content Intelligence vertical on the Interego substrate. Defines the verbs, activity types, statement templates, and patterns Foxxi emits when projecting substrate context-descriptor activity to xAPI Statements. Conformance: cmi5 + xAPI 2.0 core verbs, plus Foxxi-specific extensions for concept-graph retrieval, ABAC policy decisions, and affordance instrumentation.`,
     },
     seeAlso: 'https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/CONFORMANCE.md',
-    versions: [{ id: `${FOXXI_PROFILE_ID}/v/1`, generatedAtTime: versionInfo.generatedAt }],
     author: { type: 'Organization', name: 'Acme Training Co (demo tenant)' },
+    generatedAt: versionInfo.generatedAt,
     concepts: [
       ...verbs.map(v => ({ ...v, type: 'Verb' })),
       ...activityTypes.map(a => ({ ...a, type: 'ActivityType' })),
@@ -382,5 +423,5 @@ export function buildFoxxiProfileDoc(versionInfo: { generatedAt: string }): Reco
     ],
     templates,
     patterns,
-  };
+  });
 }
