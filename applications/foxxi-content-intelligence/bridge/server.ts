@@ -100,7 +100,7 @@ import {
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
-import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident } from '../src/foundation-shared-lattice.js';
+import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -2782,7 +2782,10 @@ app.post('/agent/issue-credential', async (req, res) => {
     const issuerPod = resolveSubjectPodUrl(callerDid);
     const sharedLattice = await composeIntoSharedLattice({
       podUrl: issuerPod, agentDid: callerDid, label: actorForPod(issuerPod, MESH_ACTOR_LABELS),
-      sequence: [callerDid, CREDENTIALED_VERB, competencyId],
+      terms: [callerDid, CREDENTIALED_VERB, competencyId, recipientDid],
+      content: result.vc as unknown as Record<string, unknown>, contentType: 'ob3:OpenBadgeCredential',
+      ts: typeof result.vc.validFrom === 'string' ? result.vc.validFrom : undefined,
+      projections: ['rdf', 'vc', 'activity'],
     });
     res.json({
       ok: true,
@@ -3110,6 +3113,19 @@ app.get('/agent/lattice/:label/term', (req, res) => {
   if (!d) { res.status(404).json({ ok: false, error: 'no resident shared lattice for this agent' }); return; }
   res.json({ ok: true, label: req.params.label, ...d });
 });
+// PGSL is canonical; RDF is one of several projections. Given a holon URI (from a
+// term's `holons`), project it as ?as=rdf|vc|activity AND read the EXACT artifact
+// back from the lattice — proof the lattice is the source, not the stored RDF.
+app.get('/agent/lattice/:label/holon', (req, res) => {
+  const holon = typeof req.query.uri === 'string' ? req.query.uri : '';
+  const as = (typeof req.query.as === 'string' ? req.query.as : 'rdf') as ProjectionKind;
+  if (!holon) { res.status(400).json({ ok: false, error: 'uri query parameter (holon URI) required' }); return; }
+  if (!isResident(req.params.label)) { res.status(404).json({ ok: false, error: 'no resident shared lattice for this agent' }); return; }
+  const artifact = readArtifact(req.params.label, holon);
+  const projection = projectAs(req.params.label, holon, as);
+  if (projection == null && !artifact) { res.status(404).json({ ok: false, error: 'holon not found in this lattice' }); return; }
+  res.json({ ok: true, label: req.params.label, holon, as, availableProjections: ['rdf', 'vc', 'activity'], projection, artifact });
+});
 
 app.post('/agent/record-performance', async (req, res) => {
   try {
@@ -3179,7 +3195,10 @@ app.post('/agent/record-performance', async (req, res) => {
       podUrl: subjectPod, agentDid: callerDid, label,
       // actor · verb · activity-type · task — the first three are REUSED across the
       // agent's corpus; the task id makes each performance a distinct artifact.
-      sequence: [callerDid, PERFORMED_VERB, activityType, taskId],
+      terms: [callerDid, PERFORMED_VERB, activityType, taskId],
+      content: { ...statement, id: statementId }, contentType: 'xapi:Statement',
+      ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
+      projections: ['rdf', 'vc', 'activity'],
     });
     res.json({ ok: true, recorded: true, statementId, performer: callerDid, taskId, taskName, activityType, success: p.success, durable: subjectPod, lensTenant: lensTenantFor(label), ...(sharedLattice ? { sharedLattice } : {}) });
   } catch (err) {
@@ -3540,7 +3559,9 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
   // shared lattice — so the learner's DID + the course activity become reused nodes.
   void composeIntoSharedLattice({
     podUrl: learnerPod, agentDid: play.learnerDid, label: actorForPod(learnerPod, MESH_ACTOR_LABELS),
-    sequence: [play.learnerDid, `${ADL}${passed ? 'passed' : 'completed'}`, courseObj.id],
+    terms: [play.learnerDid, `${ADL}${passed ? 'passed' : 'completed'}`, courseObj.id],
+    content: { course: courseObj.id, title: course.title, completed: true, passed, score },
+    contentType: 'foxxi:CourseOutcome', projections: ['rdf', 'vc', 'activity'],
   });
   return ids;
 }
@@ -3604,7 +3625,9 @@ app.post('/agent/scorm/author', async (req, res) => {
     // Foundation-first (additive): compose the authoring into the author's shared lattice.
     const sharedLattice = await composeIntoSharedLattice({
       podUrl: authorPod, agentDid: auth.callerDid, label: actorForPod(authorPod, MESH_ACTOR_LABELS),
-      sequence: [auth.callerDid, AUTHORED_VERB, courseIri ?? `urn:foxxi:course:${course.courseId}`],
+      terms: [auth.callerDid, AUTHORED_VERB, courseIri ?? `urn:foxxi:course:${course.courseId}`],
+      content: { courseId: course.courseId, title: course.title, masteryScore: course.masteryScore, scos: course.scos.map(s => ({ id: s.id, title: s.title })) },
+      contentType: 'foxxi:Course', projections: ['rdf', 'vc', 'activity'],
     });
     res.json({ ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, ...(courseIri ? { courseIri } : {}), ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }

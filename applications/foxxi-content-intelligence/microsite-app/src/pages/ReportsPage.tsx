@@ -186,17 +186,37 @@ function LatticeExplorer({ label }: { label: string }) {
           ))}
         </div>
       </div>
-      {term && <TermCard term={term} />}
+      {term && <TermCard label={label} term={term} />}
     </div>
   );
 }
 
-function TermCard({ term }: { term: any }) {
+const PROJ_LABEL: Record<string, string> = { rdf: 'cg-RDF descriptor', vc: 'W3C Verifiable Credential', activity: 'ActivityStreams' };
+
+function TermCard({ label, term }: { label: string; term: any }) {
   const tail = (s: string) => s.split(/[#/]/).filter(Boolean).pop() || s;
+  const holon: string | undefined = term.holons?.[0];
+  const [as, setAs] = useState<'rdf' | 'vc' | 'activity'>('rdf');
+  const [proj, setProj] = useState<unknown>(term.projectedRdf ?? null);
+  const [artifact, setArtifact] = useState<{ contentType: string; content: unknown } | null>(null);
+  useEffect(() => {
+    if (!holon || !term.found) return;
+    let live = true;
+    (async () => {
+      try {
+        const r = await fetch(`${BRIDGE_URL}/agent/lattice/${encodeURIComponent(label)}/holon?uri=${encodeURIComponent(holon)}&as=${as}`);
+        const b = await r.json().catch(() => null);
+        if (!live) return;
+        setProj(b?.projection ?? null);
+        setArtifact(b?.artifact ?? null);
+      } catch { /* ignore */ }
+    })();
+    return () => { live = false; };
+  }, [label, holon, as, term.found]);
   if (!term.found) return <div style={{ ...lcard, color: 'var(--text-dim)', fontSize: 13 }}>Term not in this lattice{term.error ? ` (${term.error})` : ''}.</div>;
-  const Neighbors = ({ label, items }: { label: string; items?: string[] }) => (
+  const Neighbors = ({ label: l, items }: { label: string; items?: string[] }) => (
     <div style={{ fontSize: 12 }}>
-      <span style={{ color: 'var(--text-dim)' }}>{label}: </span>
+      <span style={{ color: 'var(--text-dim)' }}>{l}: </span>
       {(items && items.length) ? items.map((t, i) => <code key={i} title={t} style={{ ...code, marginRight: 4 }}>{tail(t)}</code>) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
     </div>
   );
@@ -210,14 +230,26 @@ function TermCard({ term }: { term: any }) {
       <Neighbors label="right (syntagmatic) →" items={term.rightNeighbors} />
       <Neighbors label="usage neighborhood (paradigmatic)" items={term.coOccurring} />
       <div>
-        <div style={ldim}>Artifacts this term participates in</div>
+        <div style={ldim}>Artifacts this term participates in (spine)</div>
         {(term.artifacts ?? []).map((a: string, i: number) => <div key={i} style={{ fontFamily: mono, fontSize: 10.5, wordBreak: 'break-all', color: 'var(--text-dim)', padding: '2px 0' }}>{a}</div>)}
       </div>
-      {term.projectedRdf && (
-        <details>
-          <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--accent)' }}>cg:ContextDescriptor RDF projected from this lattice node</summary>
-          <pre style={lpre}>{term.projectedRdf}</pre>
-        </details>
+      {artifact && (
+        <div>
+          <div style={ldim}>Artifact read BACK from the lattice — PGSL is canonical ({artifact.contentType})</div>
+          <pre style={lpre}>{JSON.stringify(artifact.content, null, 2)}</pre>
+        </div>
+      )}
+      {holon && (
+        <div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+            <span style={ldim}>Project this holon as</span>
+            {(['rdf', 'vc', 'activity'] as const).map(k => (
+              <button key={k} onClick={() => setAs(k)} style={{ ...lchip, background: as === k ? 'var(--accent)' : 'transparent', color: as === k ? 'var(--panel)' : 'var(--text)', borderColor: as === k ? 'var(--accent)' : 'var(--border)' }}>{PROJ_LABEL[k]}</button>
+            ))}
+            <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>— RDF is one projection of many</span>
+          </div>
+          <pre style={lpre}>{typeof proj === 'string' ? proj : JSON.stringify(proj, null, 2)}</pre>
+        </div>
       )}
     </div>
   );
