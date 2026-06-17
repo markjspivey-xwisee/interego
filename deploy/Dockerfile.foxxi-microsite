@@ -21,6 +21,10 @@ COPY applications/foxxi-content-intelligence/package.json /app-root/applications
 COPY applications/foxxi-content-intelligence/package-lock.json /app-root/applications/foxxi-content-intelligence/package-lock.json
 RUN cd /app-root/applications/foxxi-content-intelligence && npm ci --no-audit --no-fund
 
+# Shared report model + views (imported by the microsite Reports page; also used
+# by the dashboard — built once, surfaced in both).
+COPY applications/foxxi-content-intelligence/reports-ui/ /app-root/applications/foxxi-content-intelligence/reports-ui/
+
 # The microsite itself.
 COPY applications/foxxi-content-intelligence/microsite-app/ /app-root/applications/foxxi-content-intelligence/microsite-app/
 
