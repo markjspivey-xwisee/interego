@@ -100,7 +100,7 @@ import {
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
-import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, type ProjectionKind } from '../src/foundation-shared-lattice.js';
+import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, ensureResident, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -1002,9 +1002,15 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // subject's OWN pod are the system of record. Union them (deduped by id) so
     // the ELR reflects everything the agent has performed — even across a bridge
     // restart that emptied the lens.
+    // Foundation-first: PGSL is the canonical read source. Read the subject's
+    // statements from their shared lattice FIRST (load it from the pod on a cold
+    // miss), then union the in-memory lens + the durable hand-authored RDF as a
+    // fallback for legacy records not yet in the lattice (non-breaking).
+    await ensureResident(subjectPodUrl, requestedLearnerDid, subjectLabel);
+    const latticeStmts = latticeStatements(subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
-    const learnerStatements = mergeStatementsById(lensStatements, durableStatements);
+    const learnerStatements = mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements);
     const elr = await assembleEnterpriseLearnerRecord({
       learnerDid: requestedLearnerDid,
       learnerName: args.learner_name as string | undefined,
@@ -2636,9 +2642,17 @@ app.post('/agent/review-record', async (req, res) => {
     const subjectKind: 'human' | 'agent' = (p.actor_kind as string) === 'human' ? 'human' : 'agent';
     // Union the in-memory lens with the subject's durable on-pod records (deduped
     // by id) — the pod is the system of record, the lens just a derived view.
+    // Foundation-first: PGSL is the canonical read source. `source:'pgsl'` reads
+    // ONLY from the shared lattice (proof the lattice is sufficient); the default
+    // unions lattice (canonical) + lens + durable RDF (fallback for legacy records).
+    await ensureResident(subjectPodUrl, subjectDid, subjectLabel);
+    const latticeStmts = latticeStatements(subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
-    const statements = mergeStatementsById(lensStatements, durableStatements);
+    const statements = p.source === 'pgsl'
+      ? latticeStmts
+      : mergeStatementsById([...latticeStmts, ...lensStatements], durableStatements);
+    const statementSource = p.source === 'pgsl' ? 'pgsl-lattice-only' : 'pgsl-lattice+lens+durable-rdf-fallback';
     const elr = await assembleEnterpriseLearnerRecord({
       learnerDid: subjectDid,
       learnerName: typeof p.subject_name === 'string' ? p.subject_name : undefined,
@@ -2658,7 +2672,7 @@ app.post('/agent/review-record', async (req, res) => {
       reviewedAs: callerDid,
       authMode,
       self: isSelf,
-      subject: { did: subjectDid, podUrl: subjectPodUrl, label: subjectLabel, kind: subjectKind, lensTenant: lensTenantFor(subjectLabel), statementCount: statements.length },
+      subject: { did: subjectDid, podUrl: subjectPodUrl, label: subjectLabel, kind: subjectKind, lensTenant: lensTenantFor(subjectLabel), statementCount: statements.length, statementSource, latticeStatements: latticeStmts.length },
       elr,
       ...(clr !== undefined ? { clr } : {}),
     });
@@ -3555,14 +3569,18 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
     void persistRecordedStatement({ podUrl: learnerPod, agentDid: play.learnerDid, statement: s })
       .catch(e => console.warn('[durable-record][scorm-completion]', (e as Error).message));
   }
-  // Foundation-first (additive): compose the course outcome into the learner's
-  // shared lattice — so the learner's DID + the course activity become reused nodes.
-  void composeIntoSharedLattice({
-    podUrl: learnerPod, agentDid: play.learnerDid, label: actorForPod(learnerPod, MESH_ACTOR_LABELS),
-    terms: [play.learnerDid, `${ADL}${passed ? 'passed' : 'completed'}`, courseObj.id],
-    content: { course: courseObj.id, title: course.title, completed: true, passed, score },
-    contentType: 'foxxi:CourseOutcome', projections: ['rdf', 'vc', 'activity'],
-  });
+  // Foundation-first: compose the ACTUAL completion xAPI statements into the
+  // learner's shared lattice as the canonical record (lossless), so the ELR can be
+  // read from PGSL — the learner's DID + course activity become reused nodes.
+  const learnerLabel = actorForPod(learnerPod, MESH_ACTOR_LABELS);
+  for (const s of stmts) {
+    void composeIntoSharedLattice({
+      podUrl: learnerPod, agentDid: play.learnerDid, label: learnerLabel,
+      terms: [play.learnerDid, String((s.verb as { id?: string }).id ?? ''), courseObj.id],
+      content: s, contentType: 'xapi:Statement',
+      ts: String((s as { timestamp?: string }).timestamp ?? ''), projections: ['rdf', 'vc', 'activity'],
+    });
+  }
   return ids;
 }
 

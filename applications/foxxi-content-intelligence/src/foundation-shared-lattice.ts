@@ -289,3 +289,45 @@ export function latticeNamespaceView(label: string): NamespaceView {
 }
 
 export function isResident(label: string): boolean { return resident.has(label); }
+
+// ── Read FROM PGSL (the inversion — lattice is canonical, any content type) ────
+
+export interface LatticeArtifact { contentAtomUri: string; contentType: string; content: unknown }
+
+/** Every artifact of a content type held in the agent's lattice, reconstructed
+ *  losslessly from its content atom. PGSL is the read source — RDF is one of the
+ *  projections, not the store. Deduped (one per distinct content atom). */
+export function latticeArtifacts(label: string, contentType?: string): LatticeArtifact[] {
+  const a = resident.get(label);
+  if (!a) return [];
+  const out: LatticeArtifact[] = [];
+  for (const [uri, node] of a.pgsl.nodes) {
+    if (node.kind !== 'Atom') continue;
+    const v = String(node.value);
+    if (!isContentAtom(v)) continue;
+    try {
+      const env = JSON.parse(v.slice(ARTIFACT_SENTINEL.length)) as { t: string; c: unknown };
+      if (contentType && env.t !== contentType) continue;
+      out.push({ contentAtomUri: uri, contentType: env.t, content: env.c });
+    } catch { /* skip malformed */ }
+  }
+  return out;
+}
+
+/** ELR-shaped xAPI statements reconstructed FROM the lattice (the canonical read
+ *  source). Same wrapper shape the ELR assembler consumes. */
+export function latticeStatements(label: string): Array<{ id: string; statement: Record<string, unknown>; stored: string; voided: boolean }> {
+  return latticeArtifacts(label, 'xapi:Statement').map(a => {
+    const s = (a.content ?? {}) as Record<string, unknown>;
+    return { id: String((s as { id?: unknown }).id ?? ''), statement: s, stored: String((s as { timestamp?: unknown }).timestamp ?? ''), voided: false };
+  });
+}
+
+/** Best-effort: load an agent's lattice into residence (load-from-pod on a cold
+ *  miss) so the read path can source statements from PGSL. Returns whether the
+ *  resident lattice has any content. Never throws. */
+export async function ensureResident(podUrl: string, agentDid: string, label: string, fetchFn?: FetchFn): Promise<boolean> {
+  try { await getLattice(podUrl, agentDid, label, fetchFn ?? (globalThis.fetch as unknown as FetchFn)); } catch { /* best-effort */ }
+  const a = resident.get(label);
+  return !!a && a.pgsl.atoms.size > 0;
+}
