@@ -100,6 +100,7 @@ import {
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
+import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident } from '../src/foundation-shared-lattice.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -2777,6 +2778,12 @@ app.post('/agent/issue-credential', async (req, res) => {
       objectType: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#activities/credential',
       result: { completion: true, success: true },
     });
+    // Foundation-first (additive): compose the issuance into the issuer's shared lattice.
+    const issuerPod = resolveSubjectPodUrl(callerDid);
+    const sharedLattice = await composeIntoSharedLattice({
+      podUrl: issuerPod, agentDid: callerDid, label: actorForPod(issuerPod, MESH_ACTOR_LABELS),
+      sequence: [callerDid, CREDENTIALED_VERB, competencyId],
+    });
     res.json({
       ok: true,
       issuedBy: callerDid,
@@ -2786,6 +2793,7 @@ app.post('/agent/issue-credential', async (req, res) => {
       competency: { id: competencyId, name: competencyName },
       descriptorUrl: result.publishResult.descriptorUrl,
       ...(credentialedStatementId ? { credentialedStatementId } : {}),
+      ...(sharedLattice ? { sharedLattice } : {}),
       vc: result.vc,
     });
   } catch (err) {
@@ -3082,6 +3090,27 @@ app.post('/agent/publish-encryption-key', async (req, res) => {
   }
 });
 
+// ── Dereference the agent's shared PGSL lattice (the foundation-first read) ────
+// The cg-RDF an agent composes is a PROJECTION of a shared, accumulating PGSL
+// lattice whose nodes (IRIs, verbs, activity types) are content-addressed + reused
+// across the corpus. These read-only views expose that polygranular structure:
+//   GET /agent/lattice/:label            — COARSE: stats + namespaces present (a slice)
+//   GET /agent/lattice/:label/term?iri=  — FINE: where one IRI appears across the
+//        corpus + its syntagmatic (left/right) neighbors + usage + the projected RDF.
+app.get('/agent/lattice/:label', (req, res) => {
+  const v = latticeNamespaceView(req.params.label);
+  if (!v.resident) { res.status(404).json({ ok: false, error: `no resident shared lattice for '${req.params.label}' — the agent must compose an artifact first (record-performance / scorm-author / issue-credential)` }); return; }
+  res.json({ ok: true, label: req.params.label, ...v });
+});
+app.get('/agent/lattice/:label/term', (req, res) => {
+  const iri = typeof req.query.iri === 'string' ? req.query.iri : '';
+  if (!iri) { res.status(400).json({ ok: false, error: 'iri query parameter required' }); return; }
+  if (!isResident(req.params.label)) { res.status(404).json({ ok: false, error: 'no resident shared lattice for this agent' }); return; }
+  const d = dereferenceTerm(req.params.label, iri);
+  if (!d) { res.status(404).json({ ok: false, error: 'no resident shared lattice for this agent' }); return; }
+  res.json({ ok: true, label: req.params.label, ...d });
+});
+
 app.post('/agent/record-performance', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
@@ -3141,7 +3170,18 @@ app.post('/agent/record-performance', async (req, res) => {
     // Forward to the performer's OWN downstream targets (no-op if they set none).
     forwardToTargets(lensTenantFor(label), { ...statement, id: statementId })
       .catch(e => console.warn('[foxxi-forward][record-performance]', (e as Error).message));
-    res.json({ ok: true, recorded: true, statementId, performer: callerDid, taskId, taskName, activityType, success: p.success, durable: subjectPod, lensTenant: lensTenantFor(label) });
+    // Foundation-first (ADDITIVE, reversible): compose this performance INTO the
+    // agent's shared, accumulating PGSL lattice — so its terms (actor / verb /
+    // activity type) become REUSED content-addressed nodes and the cg descriptor
+    // is PROJECTED from the lattice. The authoritative hand-authored RDF above is
+    // untouched until the projection is verified.
+    const sharedLattice = await composeIntoSharedLattice({
+      podUrl: subjectPod, agentDid: callerDid, label,
+      // actor · verb · activity-type · task — the first three are REUSED across the
+      // agent's corpus; the task id makes each performance a distinct artifact.
+      sequence: [callerDid, PERFORMED_VERB, activityType, taskId],
+    });
+    res.json({ ok: true, recorded: true, statementId, performer: callerDid, taskId, taskName, activityType, success: p.success, durable: subjectPod, lensTenant: lensTenantFor(label), ...(sharedLattice ? { sharedLattice } : {}) });
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
   }
@@ -3496,6 +3536,12 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
     void persistRecordedStatement({ podUrl: learnerPod, agentDid: play.learnerDid, statement: s })
       .catch(e => console.warn('[durable-record][scorm-completion]', (e as Error).message));
   }
+  // Foundation-first (additive): compose the course outcome into the learner's
+  // shared lattice — so the learner's DID + the course activity become reused nodes.
+  void composeIntoSharedLattice({
+    podUrl: learnerPod, agentDid: play.learnerDid, label: actorForPod(learnerPod, MESH_ACTOR_LABELS),
+    sequence: [play.learnerDid, `${ADL}${passed ? 'passed' : 'completed'}`, courseObj.id],
+  });
   return ids;
 }
 
@@ -3555,7 +3601,12 @@ app.post('/agent/scorm/author', async (req, res) => {
       objectId: courseIri ?? `urn:foxxi:course:${course.courseId}`, objectName: course.title,
       objectType: 'http://adlnet.gov/expapi/activities/course', result: { completion: true },
     });
-    res.json({ ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, ...(courseIri ? { courseIri } : {}), ...(authoredStatementId ? { authoredStatementId } : {}) });
+    // Foundation-first (additive): compose the authoring into the author's shared lattice.
+    const sharedLattice = await composeIntoSharedLattice({
+      podUrl: authorPod, agentDid: auth.callerDid, label: actorForPod(authorPod, MESH_ACTOR_LABELS),
+      sequence: [auth.callerDid, AUTHORED_VERB, courseIri ?? `urn:foxxi:course:${course.courseId}`],
+    });
+    res.json({ ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, ...(courseIri ? { courseIri } : {}), ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 
