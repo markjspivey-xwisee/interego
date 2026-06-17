@@ -28,6 +28,12 @@ RUN cd /app-root/applications/foxxi-content-intelligence && npm ci --no-audit --
 COPY applications/foxxi-content-intelligence/reports-ui/ /app-root/applications/foxxi-content-intelligence/reports-ui/
 RUN cd /app-root/applications/foxxi-content-intelligence/reports-ui && npm install --no-audit --no-fund
 
+# Cache-bust hook: ACR Tasks can over-cache the COPY layer below, so a source
+# change in microsite-app/ doesn't always invalidate it. Pass a unique value via
+# `--build-arg CACHEBUST=<timestamp>` to force a clean rebuild of the microsite.
+ARG CACHEBUST=0
+RUN echo "cachebust ${CACHEBUST}"
+
 # The microsite itself.
 COPY applications/foxxi-content-intelligence/microsite-app/ /app-root/applications/foxxi-content-intelligence/microsite-app/
 
