@@ -22,8 +22,11 @@ COPY applications/foxxi-content-intelligence/package-lock.json /app-root/applica
 RUN cd /app-root/applications/foxxi-content-intelligence && npm ci --no-audit --no-fund
 
 # Shared report model + views (imported by the microsite Reports page; also used
-# by the dashboard — built once, surfaced in both).
+# by the dashboard — built once, surfaced in both). Install its react devDeps so
+# the cross-dir import resolves react/jsx-runtime in the isolated build (the views
+# are hook-free pure components — a second React copy is harmless).
 COPY applications/foxxi-content-intelligence/reports-ui/ /app-root/applications/foxxi-content-intelligence/reports-ui/
+RUN cd /app-root/applications/foxxi-content-intelligence/reports-ui && npm install --no-audit --no-fund
 
 # The microsite itself.
 COPY applications/foxxi-content-intelligence/microsite-app/ /app-root/applications/foxxi-content-intelligence/microsite-app/

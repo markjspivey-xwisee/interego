@@ -33,6 +33,13 @@ COPY applications/foxxi-content-intelligence/src/ /app-root/applications/foxxi-c
 COPY applications/foxxi-content-intelligence/package.json /app-root/applications/foxxi-content-intelligence/package.json
 RUN cd /app-root/applications/foxxi-content-intelligence && npm install --no-audit --no-fund
 
+# Shared report model + views (built once; imported by the dashboard ReportsPanel
+# + the microsite). Install its react devDeps so the cross-dir import resolves
+# react/jsx-runtime in the isolated build (hook-free pure views — a 2nd React copy
+# is harmless).
+COPY applications/foxxi-content-intelligence/reports-ui/ /app-root/applications/foxxi-content-intelligence/reports-ui/
+RUN cd /app-root/applications/foxxi-content-intelligence/reports-ui && npm install --no-audit --no-fund
+
 # Copy the dashboard-app itself.
 COPY applications/foxxi-content-intelligence/dashboard-app/ /app-root/applications/foxxi-content-intelligence/dashboard-app/
 

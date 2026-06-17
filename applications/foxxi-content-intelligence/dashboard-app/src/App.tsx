@@ -44,6 +44,7 @@ import { Login } from './components/Login.js';
 import { LearnerShell } from './components/LearnerShell.js';
 import { CatalogTab, PoliciesTab, CoverageTab, AccessTab, IntegrationsTab, AuditTab } from './components/AdminShell.js';
 import { LrsAdminPanel } from './components/LrsAdminPanel.js';
+import { ReportsPanel } from './components/ReportsPanel.js';
 import { LmsContentPanel } from './components/LmsContentPanel.js';
 import { MyActivityPanel } from './components/MyActivityPanel.js';
 import { MyForwardingPanel } from './components/MyForwardingPanel.js';
@@ -132,6 +133,7 @@ function AppRoutes() {
           {isPriv && <Route path="/statements" element={<StatementsPage session={session} />} />}
           {isPriv && <Route path="/statements/:statementSub" element={<StatementsPage session={session} />} />}
           {isPriv && <Route path="/lrs-config" element={<StatementsPage session={session} />} />}
+          {isPriv && <Route path="/reports" element={<ReportsPage session={session} />} />}
           {isPriv && <Route path="/agent-performance" element={<AgentPerformancePage session={session} />} />}
           {isPriv && <Route path="/content" element={<ContentPage session={session} />} />}
           <Route path="/my-activity" element={<MyActivityPage session={session} />} />
@@ -220,6 +222,7 @@ function TopNav({ session }: { session: FoxxiSession }) {
       {isPriv && <NavLink to="/content" label="Content" />}
       {isPriv && <NavLink to="/integrations" label="Integrations" />}
       {isPriv && <NavLink to="/statements" label="xAPI / LRS" />}
+      {isPriv && <NavLink to="/reports" label="Reports" />}
       {isPriv && <NavLink to="/agent-performance" label="Agent performance" />}
     </nav>
   );
@@ -299,6 +302,9 @@ function StatementsPage({ session }: { session: FoxxiSession }) {
 }
 function ContentPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><LmsContentPanel session={session} /></div>;
+}
+function ReportsPage({ session }: { session: FoxxiSession }) {
+  return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><ReportsPanel bearer={session.bearerToken} /></div>;
 }
 function MyActivityPage({ session }: { session: FoxxiSession }) {
   return <div style={{ maxWidth: 1180, margin: '24px auto', padding: 20 }}><MyActivityPanel session={session} /></div>;
