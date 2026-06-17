@@ -34,7 +34,7 @@
 
 import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
-import { PERFORMED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
+import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
 import type { TrajectoryStepInput, TrajectoryModalStatus } from './agent-trajectory.js';
 
 /** xAPI core voiding verb (ADL) — the protocol-native mapping for a Retracted descriptor. */
@@ -67,6 +67,13 @@ export interface MeshDiscoverEntry {
    *  (those are epistemic, not task success). Absent → no result is emitted. */
   success?: boolean;
   scoreScaled?: number;
+  /** OPTIONAL action verb the agent SELF-DECLARES for this act (GAP 5) — an IRI
+   *  (e.g. a Foxxi/agp verb) or a bare token (namespaced under the Foxxi verbs
+   *  namespace). Relayed VERBATIM — the source provides verb granularity; the
+   *  projector never invents a domain verb. Absent → the verb is derived from the
+   *  modal status (Asserted=performed, Hypothetical=intended, Counterfactual=
+   *  considered, Retracted=voided). */
+  verb?: string;
   /** OPTIONAL provenance/role envelope, when the manifest or pushed mesh-event
    *  carries it: WHO acted (actorKind: human | agent) and in WHAT context
    *  (contextKind: production | training | support). Read straight through to the
@@ -137,6 +144,29 @@ function modalMode(modalStatus?: string): {
   }
 }
 
+/** The xAPI statement verb (GAP 5). Priority: a Retracted descriptor voids; else
+ *  the agent's SELF-DECLARED verb when present (relayed verbatim — a full IRI as-is,
+ *  a bare token namespaced under the Foxxi verbs namespace); else a structural verb
+ *  derived from the modal mode. Honest: explicit source signal or a modal-derived
+ *  structural verb, NEVER a fabricated domain verb (what was done stays in the object).
+ *  This replaces the old monoculture where every act collapsed to `performed`. */
+function resolveVerb(entry: MeshDiscoverEntry, mode: ReturnType<typeof modalMode>): { id: string; display: { en: string } } {
+  if (mode.voided) return { id: ADL_VOIDED, display: { en: 'voided' } };
+  const raw = entry.verb?.trim();
+  if (raw) {
+    const id = /^(https?:|urn:)/i.test(raw)
+      ? raw
+      : `${FOXXI_NS}verbs/${raw.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase()}`;
+    return { id, display: { en: humanLabel(id) } };
+  }
+  switch (mode.stepVerb) {
+    case 'intended':   return { id: INTENDED_VERB, display: { en: 'intended' } };
+    case 'considered': return { id: CONSIDERED_VERB, display: { en: 'considered' } };
+    case 'asserted':
+    default:           return { id: PERFORMED_VERB, display: { en: 'performed' } };
+  }
+}
+
 /**
  * Project a discovered context descriptor into one xAPI statement + one
  * agentic-native trajectory step, reading ONLY the protocol envelope.
@@ -151,6 +181,7 @@ export function projectMeshEntry(
   const graph = entry.describes[0] ?? entry.descriptorUrl;
   const label = humanLabel(graph);
   const mode = modalMode(entry.modalStatus);
+  const verb = resolveVerb(entry, mode);
   // The descriptor's OWN type, passed through verbatim — Foxxi routes by it, never
   // interprets it. When a descriptor declares MULTIPLE conformsTo types, prefer a
   // genuine DOMAIN type over a protocol-envelope facet (Temporal/SignedAuthorship/…):
@@ -208,7 +239,7 @@ export function projectMeshEntry(
         id,
         version: '2.0.0',
         actor,
-        verb: { id: ADL_VOIDED, display: { en: 'voided' } },
+        verb,
         object: { objectType: 'StatementRef', id: deterministicUuid(superseded ?? entry.descriptorUrl) },
         context: { extensions },
         ...(ts ? { timestamp: ts } : {}),
@@ -217,7 +248,7 @@ export function projectMeshEntry(
         id,
         version: '2.0.0',
         actor,
-        verb: { id: PERFORMED_VERB, display: { en: 'performed' } },
+        verb,
         object: {
           objectType: 'Activity',
           id: graph,

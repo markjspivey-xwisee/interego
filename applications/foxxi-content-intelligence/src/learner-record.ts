@@ -49,6 +49,13 @@ const FOXXI_VOCAB = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azu
 const MASTERY_VERBS = new Set([`${ADL}passed`, `${ADL}completed`, `${ADL}mastered`]);
 /** The verb a `performed` production-work statement carries. */
 export const PERFORMED_VERB = `${FOXXI_VOCAB}performed`;
+/** Structural modal verbs (GAP 5): an Asserted descriptor PERFORMED work; a
+ *  Hypothetical one records an INTENDED act (a plan/intention); a Counterfactual
+ *  one a CONSIDERED act (a road not taken). These name the MODAL MODE — honestly
+ *  derived from cg:ModalStatusEnum, never a fabricated domain verb — and match the
+ *  Foxxi xAPI Profile's structural verb concepts. */
+export const INTENDED_VERB = `${FOXXI_VOCAB}verbs/intended`;
+export const CONSIDERED_VERB = `${FOXXI_VOCAB}verbs/considered`;
 /** Context-extension IRIs the record_performance handler stamps. */
 export const PERF_EXT = {
   observedBy: `${FOXXI_VOCAB}observedBy`,
