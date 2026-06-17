@@ -55,8 +55,8 @@ export function App() {
         {route === 'demos' && <Demos onHome={() => navigate('landing')} onEmergent={() => navigate('emergent')} />}
         {route === 'emergent' && <EmergentCollective onHome={() => navigate('landing')} onDemos={() => navigate('demos')} />}
         {route === 'pod' && <PodBrowser onHome={() => navigate('landing')} />}
-        {route === 'agentdemo' && <AgenticDemo onHome={() => navigate('landing')} />}
-        {route === 'reports' && <ReportsPage onHome={() => navigate('landing')} />}
+        {route === 'agentdemo' && <AgenticDemo onHome={() => navigate('landing')} onReports={() => navigate('reports')} />}
+        {route === 'reports' && <ReportsPage onHome={() => navigate('landing')} onAgents={() => navigate('agentdemo')} />}
       </main>
       <SiteFooter />
     </div>

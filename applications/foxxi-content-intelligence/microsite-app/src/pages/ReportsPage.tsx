@@ -1,13 +1,13 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useSyncExternalStore } from 'react';
 import { ethers } from 'ethers';
 import { BRIDGE_URL, DEMO_IDENTITIES } from '../bridge-client.js';
 import { mintSessionToken, deriveUserWallet } from '../session-token.js';
+import { getDemoState, subscribeDemo, type DemoAgent } from '../demo/demo-session.js';
 import { normalizeLrs, lmsFromStatements, subjectFromReview, type LrsAnalytics, type LmsCompletions, type SubjectRecord } from '../../../reports-ui/report-model.js';
 import { LrsAnalyticsView, LmsCompletionsView, SubjectRecordView } from '../../../reports-ui/report-views.js';
 
 type Tab = 'lrs' | 'lms' | 'subject';
-const ADMIN = DEMO_IDENTITIES.jordan; // u-admin — verifies as admin against the published directory
-const DEFAULT_SUBJECT = 'did:ethr:0x8f3b8e9396003c4e25a89ca2ec4d2bec54c679fd'; // the maintainer mesh agent (has live records)
+const ADMIN = DEMO_IDENTITIES.jordan; // the demo's operator — reads the demo agents' lenses (scoped by tenant)
 
 async function adminToken(): Promise<string> {
   return mintSessionToken({ userId: ADMIN.userId, webId: ADMIN.webId, ttlMs: 30 * 60 * 1000 });
@@ -18,40 +18,40 @@ async function adminGet(path: string, token: string): Promise<any> {
   return r.json();
 }
 
-export function ReportsPage({ onHome }: { onHome: () => void }) {
+export function ReportsPage({ onHome, onAgents }: { onHome: () => void; onAgents?: () => void }) {
+  const state = useSyncExternalStore(subscribeDemo, getDemoState);
+  const [slot, setSlot] = useState<'A' | 'B'>('B');
   const [tab, setTab] = useState<Tab>('lrs');
-  const [tenant, setTenant] = useState('lens:johnny'); // a populated per-agent lens; blank = default tenant
   const [lrs, setLrs] = useState<LrsAnalytics | null>(null);
   const [lms, setLms] = useState<LmsCompletions | null>(null);
+  const [subject, setSubject] = useState<SubjectRecord | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [subjectInput, setSubjectInput] = useState(DEFAULT_SUBJECT);
-  const [subject, setSubject] = useState<SubjectRecord | null>(null);
-  const [subjBusy, setSubjBusy] = useState(false);
 
-  const tq = tenant ? `&tenant=${encodeURIComponent(tenant)}` : '';
+  const agent: DemoAgent | undefined = state.agents[slot] ?? state.agents.A ?? state.agents.B;
+  const tenant = agent?.lensTenant ?? '';
+  const did = agent?.did ?? '';
 
   const loadAnalytics = useCallback(async () => {
-    setLoading(true); setErr(null);
+    if (!tenant) return;
+    setLoading(true); setErr(null); setLrs(null); setLms(null);
     try {
       const token = await adminToken();
+      const tq = `&tenant=${encodeURIComponent(tenant)}`;
       const [agg, conf, stmts] = await Promise.all([
         adminGet(`/xapi/admin/aggregates?_=${Date.now()}${tq}`, token),
         adminGet(`/xapi/admin/conformance?_=${Date.now()}${tq}`, token).catch(() => null),
         adminGet(`/xapi/admin/statements?limit=200${tq}`, token).catch(() => ({ page: [] })),
       ]);
       setLrs(normalizeLrs(agg, conf));
-      setLms(lmsFromStatements((stmts.page ?? []).map((r: any) => r))); // page rows carry verb/object/result
+      setLms(lmsFromStatements((stmts.page ?? [])));
     } catch (e) { setErr((e as Error).message); }
     finally { setLoading(false); }
   }, [tenant]);
 
-  useEffect(() => { void loadAnalytics(); }, [loadAnalytics]);
-
-  const loadSubject = useCallback(async (didRaw: string) => {
-    const did = didRaw.trim().toLowerCase();
-    if (!/^did:ethr:0x[0-9a-f]{40}$/.test(did)) { setSubject({ did, statementCount: 0, competencies: [], credentials: [], error: 'enter a did:ethr:0x… (40 hex)' }); return; }
-    setSubjBusy(true);
+  const loadSubject = useCallback(async () => {
+    if (!did) return;
+    setSubject(null);
     try {
       const wallet = deriveUserWallet(ADMIN.userId);
       const payload = JSON.stringify({ subject_did: did, include_clr: true, agent_id: `did:ethr:${wallet.address.toLowerCase()}`, timestamp: new Date().toISOString() });
@@ -60,56 +60,59 @@ export function ReportsPage({ onHome }: { onHome: () => void }) {
       const body = await r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` }));
       setSubject(subjectFromReview(did, body));
     } catch (e) { setSubject({ did, statementCount: 0, competencies: [], credentials: [], error: (e as Error).message }); }
-    finally { setSubjBusy(false); }
-  }, []);
+  }, [did]);
 
-  useEffect(() => { if (tab === 'subject' && !subject) void loadSubject(DEFAULT_SUBJECT); }, [tab, subject, loadSubject]);
+  useEffect(() => { void loadAnalytics(); }, [loadAnalytics]);
+  useEffect(() => { if (tab === 'subject') void loadSubject(); }, [tab, loadSubject]);
+
+  const noRun = !state.agents.A && !state.agents.B;
 
   return (
     <div style={{ maxWidth: 1180, margin: '0 auto', padding: '28px 24px 80px' }}>
-      <button onClick={onHome} style={{ background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 13 }}>← home</button>
-      <h1 style={{ fontFamily: "'EB Garamond', serif", fontSize: 34, margin: '10px 0 4px' }}>Reports</h1>
+      <button onClick={onHome} style={linkBtn}>← home</button>
+      <h1 style={{ fontFamily: "'EB Garamond', serif", fontSize: 34, margin: '10px 0 4px' }}>Reports — this demo's agents</h1>
       <p style={{ color: 'var(--text-dim)', fontSize: 15, maxWidth: 760, lineHeight: 1.5 }}>
-        Live LMS + LRS reporting over the deployed Foxxi LRS — read with the demo admin identity ({ADMIN.name}). Real
-        statements, real completions, real competencies + credentials. (For a tenant's per-agent view, set a tenant like
-        <code style={codeS}> lens:maintainer</code>.)
+        Live LMS + LRS reporting scoped to the <strong>two agents your Agents‑demo run spawned</strong> — their own xAPI
+        lenses, completions, competencies, and credentials. Nothing here is shared system data; it's purely this demo.
       </p>
 
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', margin: '16px 0' }}>
-        {(['lrs', 'lms', 'subject'] as Tab[]).map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ ...pill, background: tab === t ? 'var(--accent)' : 'transparent', color: tab === t ? 'var(--panel)' : 'var(--text)', borderColor: tab === t ? 'var(--accent)' : 'var(--border)' }}>
-            {t === 'lrs' ? 'LRS analytics' : t === 'lms' ? 'LMS completions' : 'Competencies & credentials'}
-          </button>
-        ))}
-        <span style={{ flex: 1 }} />
-        {(tab === 'lrs' || tab === 'lms') && (
-          <>
-            <input value={tenant} onChange={e => setTenant(e.target.value)} placeholder="tenant (blank = default)" style={inputS} />
-            <button onClick={() => void loadAnalytics()} disabled={loading} style={{ ...pill, borderColor: 'var(--border)' }}>{loading ? 'loading…' : 'refresh'}</button>
-          </>
-        )}
-      </div>
-
-      {err && <div style={{ padding: '10px 14px', background: '#fde8e8', color: '#d23f31', borderRadius: 6, fontSize: 13, marginBottom: 12 }}>⚠ {err}</div>}
-
-      {tab === 'lrs' && (lrs ? <LrsAnalyticsView data={lrs} /> : !err && <div style={{ color: 'var(--text-dim)' }}>loading LRS analytics…</div>)}
-      {tab === 'lms' && (lms ? <LmsCompletionsView data={lms} /> : !err && <div style={{ color: 'var(--text-dim)' }}>loading LMS completions…</div>)}
-      {tab === 'subject' && (
-        <div style={{ display: 'grid', gap: 14 }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <input value={subjectInput} onChange={e => setSubjectInput(e.target.value)} placeholder="did:ethr:0x…" style={{ ...inputS, flex: '1 1 420px', fontFamily: "'JetBrains Mono', monospace" }} />
-            <button onClick={() => void loadSubject(subjectInput)} disabled={subjBusy} style={{ ...pill, background: 'var(--accent)', color: 'var(--panel)', borderColor: 'var(--accent)' }}>{subjBusy ? 'reading…' : 'load record'}</button>
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-            Reads the subject's own ELR (competencies) + CLR wallet (credentials) via a signed <code style={codeS}>review-record</code> — the record a subject actually owns. Defaults to the maintainer mesh agent; paste any agent's did:ethr (e.g. from an Agents-demo run).
-          </div>
-          {subject && <SubjectRecordView data={subject} />}
+      {noRun ? (
+        <div style={{ marginTop: 24, padding: '18px 20px', border: '1px dashed var(--border)', borderRadius: 8, color: 'var(--text-dim)', fontSize: 14 }}>
+          No demo run yet — there are no spawned agents to report on.{' '}
+          {onAgents && <button onClick={onAgents} style={{ ...linkBtn, fontSize: 14 }}>Run the Agents demo →</button>}
         </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', margin: '16px 0' }}>
+            <span style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)' }}>Agent</span>
+            {(['A', 'B'] as const).map(s => state.agents[s] && (
+              <button key={s} onClick={() => setSlot(s)} style={{ ...pill, background: slot === s ? 'var(--accent)' : 'transparent', color: slot === s ? 'var(--panel)' : 'var(--text)', borderColor: slot === s ? 'var(--accent)' : 'var(--border)' }}>
+                Agent {s} · {s === 'A' ? 'teacher' : 'learner'}
+              </button>
+            ))}
+            <span style={{ flex: 1 }} />
+            {(tab === 'lrs' || tab === 'lms') && <button onClick={() => void loadAnalytics()} disabled={loading} style={{ ...pill, borderColor: 'var(--border)' }}>{loading ? 'loading…' : 'refresh'}</button>}
+          </div>
+          {agent && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--text-dim)', marginBottom: 10, wordBreak: 'break-all' }}>{agent.did} · lens <code style={code}>{agent.lensTenant}</code></div>}
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
+            {(['lrs', 'lms', 'subject'] as Tab[]).map(t => (
+              <button key={t} onClick={() => setTab(t)} style={{ ...pill, background: tab === t ? 'var(--text)' : 'transparent', color: tab === t ? 'var(--panel)' : 'var(--text)', borderColor: tab === t ? 'var(--text)' : 'var(--border)' }}>
+                {t === 'lrs' ? 'LRS analytics' : t === 'lms' ? 'LMS completions' : 'Competencies & credentials'}
+              </button>
+            ))}
+          </div>
+
+          {err && <div style={{ padding: '10px 14px', background: '#fde8e8', color: '#d23f31', borderRadius: 6, fontSize: 13, marginBottom: 12 }}>⚠ {err}</div>}
+          {tab === 'lrs' && (lrs ? <LrsAnalyticsView data={lrs} /> : !err && <div style={{ color: 'var(--text-dim)' }}>loading…</div>)}
+          {tab === 'lms' && (lms ? <LmsCompletionsView data={lms} /> : !err && <div style={{ color: 'var(--text-dim)' }}>loading…</div>)}
+          {tab === 'subject' && (subject ? <SubjectRecordView data={subject} /> : <div style={{ color: 'var(--text-dim)' }}>loading…</div>)}
+        </>
       )}
     </div>
   );
 }
 
 const pill: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 999, padding: '6px 14px', fontSize: 12, cursor: 'pointer' };
-const inputS: React.CSSProperties = { padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 };
-const codeS: React.CSSProperties = { fontFamily: "'JetBrains Mono', monospace", fontSize: 11, background: '#f3f3f1', padding: '1px 4px', borderRadius: 3 };
+const linkBtn: React.CSSProperties = { background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer', padding: 0, fontSize: 13 };
+const code: React.CSSProperties = { fontFamily: "'JetBrains Mono', monospace", fontSize: 11, background: '#f3f3f1', padding: '1px 4px', borderRadius: 3 };
