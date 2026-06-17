@@ -30,6 +30,7 @@ import { bridgeEncryptionKeypair } from './foundation-holon-altitude.js';
 interface AgentLattice { pgsl: PGSLInstance; podUrl: string; agentDid: string }
 const resident = new Map<string, AgentLattice>();   // label -> in-memory shared lattice
 const loadAttempted = new Set<string>();
+const creating = new Map<string, Promise<PGSLInstance>>();   // per-label creation mutex
 
 const provFor = (agentDid: string) => ({ wasAttributedTo: agentDid as IRI, generatedAtTime: new Date().toISOString() });
 
@@ -71,20 +72,29 @@ function rebuildInstance(nodes: Map<IRI, PgslNode>, agentDid: string): PGSLInsta
 async function getLattice(podUrl: string, agentDid: string, label: string, fetchFn: FetchFn): Promise<PGSLInstance> {
   const existing = resident.get(label);
   if (existing) return existing.pgsl;
-  let pgsl: PGSLInstance | undefined;
-  if (!loadAttempted.has(label)) {
-    loadAttempted.add(label);
-    const kp = bridgeEncryptionKeypair();
-    if (kp) {
-      try {
-        const loaded = await resolveLatticeFromPod(latticeResourceUrl(podUrl), kp, fetchFn as unknown as typeof fetch);
-        if (loaded && loaded.nodes.size) pgsl = rebuildInstance(loaded.nodes, agentDid);
-      } catch { /* fresh */ }
+  // Per-label creation mutex: concurrent callers (e.g. a fire-and-forget completion
+  // compose racing an awaited performance compose) MUST share ONE lattice instance,
+  // else two cold creations clobber each other in `resident` and lose ingests.
+  const inflight = creating.get(label);
+  if (inflight) return inflight;
+  const p = (async (): Promise<PGSLInstance> => {
+    let pgsl: PGSLInstance | undefined;
+    if (!loadAttempted.has(label)) {
+      loadAttempted.add(label);
+      const kp = bridgeEncryptionKeypair();
+      if (kp) {
+        try {
+          const loaded = await resolveLatticeFromPod(latticeResourceUrl(podUrl), kp, fetchFn as unknown as typeof fetch);
+          if (loaded && loaded.nodes.size) pgsl = rebuildInstance(loaded.nodes, agentDid);
+        } catch { /* fresh */ }
+      }
     }
-  }
-  if (!pgsl) pgsl = createPGSL(provFor(agentDid));
-  resident.set(label, { pgsl, podUrl, agentDid });
-  return pgsl;
+    if (!pgsl) pgsl = createPGSL(provFor(agentDid));
+    resident.set(label, { pgsl, podUrl, agentDid });
+    return pgsl;
+  })();
+  creating.set(label, p);
+  try { return await p; } finally { creating.delete(label); }
 }
 
 /** Interop surfaces a holon can be projected to. RDF is just ONE of them. */
