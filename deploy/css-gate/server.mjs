@@ -548,10 +548,18 @@ function buildResponseHeaders(upstreamHeaders, corsHeaders) {
     if (value === undefined) continue;
     const lower = name.toLowerCase();
     if (HOP_BY_HOP_RESPONSE_HEADERS.has(lower)) continue;
+    // Drop any upstream CORS / Vary echo. The gate sets its own canonical,
+    // single-value CORS headers below. Without this skip, the upstream's
+    // lowercase 'access-control-allow-origin' and the gate's canonical-cased
+    // 'Access-Control-Allow-Origin' are DIFFERENT JS keys, so Object.assign
+    // does NOT override the upstream one — both survive and the client joins
+    // them with a comma (e.g. "<origin-a>,<origin-b>"). A comma-joined ACAO is
+    // invalid per the CORS spec, so the browser rejects it ("failed to fetch").
+    if (lower.startsWith('access-control-') || lower === 'vary') continue;
     out[lower] = value;
   }
-  // Layer CORS over whatever upstream CSS returned. Our corsHeaders are
-  // already canonicalized; they override any echo from upstream.
+  // Layer the gate's canonical CORS over whatever upstream CSS returned —
+  // now collision-free because the upstream CORS/Vary echo was skipped above.
   Object.assign(out, corsHeaders);
   return out;
 }
