@@ -128,31 +128,50 @@ export function SubjectRecordView({ data }: { data: SubjectRecord }) {
         <Stat label="Credentials held" value={data.credentials.length} color={data.credentials.length > 0 ? OK : 'var(--text-dim)'} />
       </div>
       <div>
-        <div style={{ ...dim, marginBottom: 6 }}>Competencies (ELR rollup)</div>
+        <div style={{ ...dim, marginBottom: 6 }}>Competencies (ELR rollup) — expand for the evidencing statements</div>
         <div style={{ ...card, padding: 0 }}>
           {data.competencies.length === 0 && <div style={{ padding: 10, color: 'var(--text-dim)', fontSize: 12 }}>none yet</div>}
           {data.competencies.map((c, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
-              <span style={{ flex: 1 }}>{c.label}</span>
-              <span style={{ padding: '1px 7px', borderRadius: 3, fontSize: 10, background: c.basis === 'performance' ? 'rgba(46,156,74,0.14)' : 'rgba(124,124,124,0.14)', color: c.basis === 'performance' ? OK : 'var(--text-dim)' }}>{c.basis || c.modalStatus}</span>
-              {c.successRate != null && <span style={{ color: 'var(--text-dim)', fontFamily: mono }}>{(c.successRate * 100).toFixed(0)}%</span>}
-            </div>
+            <details key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+              <summary style={summaryS}>
+                <span style={{ flex: 1, fontSize: 12 }}>{c.label}</span>
+                <span style={{ padding: '1px 7px', borderRadius: 3, fontSize: 10, background: c.basis === 'performance' ? 'rgba(46,156,74,0.14)' : 'rgba(124,124,124,0.14)', color: c.basis === 'performance' ? OK : 'var(--text-dim)' }}>{c.basis || c.modalStatus}</span>
+                {c.successRate != null && <span style={{ color: 'var(--text-dim)', fontFamily: mono, fontSize: 11 }}>{(c.successRate * 100).toFixed(0)}%</span>}
+              </summary>
+              <div style={evBody}>
+                {c.framework && <div>framework: <code style={{ wordBreak: 'break-all' }}>{c.framework}</code></div>}
+                {c.evidenceSummary && <pre style={evPre}>{JSON.stringify(c.evidenceSummary, null, 2)}</pre>}
+                <div>{c.evidence.length} evidencing xAPI statement{c.evidence.length === 1 ? '' : 's'}{c.evidence.length === 0 ? ' recorded on this competency' : ':'}</div>
+                {c.evidence.map((id, j) => <code key={j} style={{ fontFamily: mono, fontSize: 10.5, wordBreak: 'break-all' }}>{id}</code>)}
+              </div>
+            </details>
           ))}
         </div>
       </div>
       <div>
-        <div style={{ ...dim, marginBottom: 6 }}>Credentials (CLR wallet · OB3 / VC)</div>
+        <div style={{ ...dim, marginBottom: 6 }}>Credentials (CLR wallet · OB3 / VC) — expand for the verifiable credential</div>
         <div style={{ ...card, padding: 0 }}>
           {data.credentials.length === 0 && <div style={{ padding: 10, color: 'var(--text-dim)', fontSize: 12 }}>none held</div>}
           {data.credentials.map((c, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
-              <span style={{ color: '#db2777' }}>🎓</span>
-              <span style={{ flex: 1 }}>{c.name}</span>
-              {c.issuedAt && <span style={{ color: 'var(--text-dim)', fontFamily: mono, fontSize: 10 }}>{String(c.issuedAt).slice(0, 10)}</span>}
-            </div>
+            <details key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+              <summary style={summaryS}>
+                <span style={{ color: '#db2777' }}>🎓</span>
+                <span style={{ flex: 1, fontSize: 12 }}>{c.name}</span>
+                {c.issuedAt && <span style={{ color: 'var(--text-dim)', fontFamily: mono, fontSize: 10 }}>{String(c.issuedAt).slice(0, 10)}</span>}
+              </summary>
+              <div style={evBody}>
+                {c.issuer && <div>issuer: <code style={{ wordBreak: 'break-all' }}>{c.issuer}</code></div>}
+                {c.description && <div>{c.description}</div>}
+                {c.raw != null && <pre style={evPre}>{JSON.stringify(c.raw, null, 2)}</pre>}
+              </div>
+            </details>
           ))}
         </div>
       </div>
     </div>
   );
 }
+
+const summaryS: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer' };
+const evBody: React.CSSProperties = { padding: '2px 12px 10px 24px', fontSize: 11.5, color: 'var(--text-dim)', display: 'grid', gap: 6 };
+const evPre: React.CSSProperties = { fontSize: 10.5, lineHeight: 1.45, background: '#0f1115', color: '#cdd6e0', padding: 8, borderRadius: 5, overflow: 'auto', maxHeight: 220, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' };

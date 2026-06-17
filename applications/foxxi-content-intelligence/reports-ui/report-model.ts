@@ -112,8 +112,26 @@ export function lmsFromStatements(statements: StatementLike[]): LmsCompletions {
 
 // ── Per-subject record (ELR competencies + CLR credentials) ─────────────
 
-export interface SubjectCompetency { label: string; basis: string; modalStatus: string; successRate?: number | null }
-export interface SubjectCredential { name: string; issuer?: string; issuedAt?: string }
+export interface SubjectCompetency {
+  id?: string;
+  label: string;
+  basis: string;
+  modalStatus: string;
+  successRate?: number | null;
+  framework?: string;
+  /** xAPI statement ids that evidence this competency. */
+  evidence: string[];
+  /** { trainingCompletions, performanceExecutions, performanceSuccessRate, performanceAvgQuality }. */
+  evidenceSummary?: Record<string, unknown>;
+}
+export interface SubjectCredential {
+  name: string;
+  issuer?: string;
+  issuedAt?: string;
+  description?: string;
+  /** The raw credential / CLR entry, for inline inspection. */
+  raw?: unknown;
+}
 export interface SubjectRecord {
   did: string;
   statementCount: number;
@@ -127,17 +145,28 @@ export function subjectFromReview(did: string, body: Record<string, any>): Subje
   if (!body || body.ok === false) return { did, statementCount: 0, competencies: [], credentials: [], error: String(body?.error ?? 'review-record failed') };
   const comps = (body.elr?.competencies ?? []) as Array<Record<string, any>>;
   const competencies: SubjectCompetency[] = comps.map(c => ({
+    id: c.id ? String(c.id) : undefined,
     label: String(c.label ?? c.id ?? 'competency'),
     basis: String(c.basis ?? ''),
     modalStatus: String(c.modalStatus ?? ''),
     successRate: c.evidenceSummary?.performanceSuccessRate ?? null,
+    framework: c.framework ? String(c.framework) : undefined,
+    evidence: Array.isArray(c.evidence) ? c.evidence.map((x: unknown) => String(x)) : [],
+    evidenceSummary: c.evidenceSummary && typeof c.evidenceSummary === 'object' ? c.evidenceSummary : undefined,
   }));
   const clr = body.clr as Record<string, any> | undefined;
   const entries = (clr?.credentialEntries ?? clr?.verifiableCredential ?? clr?.credentials ?? []) as any[];
   const credentials: SubjectCredential[] = (Array.isArray(entries) ? entries : []).map((e: any) => {
     const subj = e?.credential?.credentialSubject ?? e?.credentialSubject ?? e;
-    const name = subj?.achievement?.name ?? subj?.achievement?.[0]?.name ?? e?.name ?? e?.label ?? 'credential';
-    return { name: String(name), issuer: e?.credential?.issuer?.id ?? e?.issuer?.id ?? e?.issuer, issuedAt: e?.credential?.validFrom ?? e?.validFrom ?? e?.issuedAt };
+    const ach = subj?.achievement ?? subj?.achievement?.[0];
+    const name = ach?.name ?? subj?.achievement?.[0]?.name ?? e?.name ?? e?.label ?? 'credential';
+    return {
+      name: String(name),
+      issuer: e?.credential?.issuer?.id ?? e?.issuer?.id ?? e?.issuer,
+      issuedAt: e?.credential?.validFrom ?? e?.validFrom ?? e?.issuedAt,
+      description: ach?.description ? String(ach.description) : undefined,
+      raw: e?.credential ?? e,
+    };
   });
   return { did, statementCount: Number(body.subject?.statementCount ?? 0), competencies, credentials };
 }
