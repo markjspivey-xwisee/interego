@@ -112,20 +112,54 @@ function AgentColumn({ label, did, events, running }: { label: string; did?: str
   );
 }
 
+/** Pull the most meaningful artifacts out of an event's data for inline display. */
+function artifactsOf(data: unknown): Array<{ label: string; text?: string; json?: unknown }> {
+  const d = (data ?? {}) as Record<string, any>;
+  const out: Array<{ label: string; text?: string; json?: unknown }> = [];
+  const turtle = d?.artifact?.turtle ?? (d?.mediaType === 'text/turtle' ? d?.turtle : undefined);
+  if (turtle) out.push({ label: 'artifact · Turtle (composes the IEEE-LER / ADL-TLA layer)', text: String(turtle) });
+  else if (d?.artifact) out.push({ label: 'artifact · xAPI Profile fragment', json: d.artifact });
+  if (d?.descriptor) out.push({ label: 'self-descriptive descriptor (cg:StandardsExtension)', json: d.descriptor });
+  if (d?.elr?.competencies) out.push({ label: 'ELR competencies', json: d.elr.competencies });
+  if (d?.credential || d?.issuerDid) out.push({ label: 'credential (OB3 / VC)', json: d.credential ?? d });
+  if (d?.graded) out.push({ label: 'assessment grading', json: d.graded });
+  if (d?._guidance) out.push({ label: 'performance support (in the flow)', json: d._guidance });
+  // Always offer the full envelope last.
+  out.push({ label: 'full response / call', json: data });
+  return out;
+}
+
 function EventRow({ e }: { e: DemoEvent }) {
   const [open, setOpen] = useState(false);
   const color = KIND_COLOR[e.kind] ?? '#6b7280';
+  const longDetail = !!e.detail && e.detail.length > 150;
+  const expandable = e.data != null || longDetail;
+  const arts = open && e.data != null ? artifactsOf(e.data) : [];
   return (
-    <div style={{ padding: '8px 14px', borderBottom: '1px solid #f0f0ee', borderLeft: `3px solid ${color}` }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em', color, minWidth: 78 }}>{e.kind}</span>
-        <span style={{ fontSize: 13, fontWeight: 500 }}>{e.title}</span>
+    <div style={{ borderBottom: '1px solid #f0f0ee', borderLeft: `3px solid ${color}` }}>
+      <div onClick={() => expandable && setOpen(o => !o)}
+        style={{ padding: '8px 14px', cursor: expandable ? 'pointer' : 'default', display: 'flex', gap: 8, alignItems: 'baseline' }}>
+        {expandable && <span style={{ color, fontSize: 10, width: 10, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>}
+        <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.05em', color, minWidth: 74, flexShrink: 0 }}>{e.kind}</span>
+        <span style={{ fontSize: 13, fontWeight: 500, flex: 1 }}>{e.title}</span>
       </div>
-      {e.detail && <div style={{ fontSize: 12.5, color: 'var(--text-dim)', marginTop: 2, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: e.kind === 'thinking' ? 120 : undefined, overflow: 'auto' }}>{e.detail}</div>}
-      {e.data != null && (
-        <div style={{ marginTop: 3 }}>
-          <button onClick={() => setOpen(o => !o)} style={{ ...linkBtn, fontSize: 11 }}>{open ? 'hide' : 'raw'}</button>
-          {open && <pre style={{ fontSize: 10.5, background: '#0f1115', color: '#cdd6e0', padding: 10, borderRadius: 5, overflow: 'auto', maxHeight: 240, marginTop: 4 }}>{JSON.stringify(e.data, null, 2)}</pre>}
+      {e.detail && (
+        <div style={{
+          fontSize: 12.5, color: 'var(--text-dim)', padding: '0 14px 8px', marginLeft: expandable ? 18 : 0,
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          ...(open ? {} : { maxHeight: 38, overflow: 'hidden' }),
+        }}>{e.detail}</div>
+      )}
+      {open && (
+        <div style={{ padding: '0 14px 10px', marginLeft: 18, display: 'grid', gap: 8 }}>
+          {arts.map((a, i) => (
+            <div key={i}>
+              <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-dim)', marginBottom: 3 }}>{a.label}</div>
+              <pre style={{ fontSize: 10.5, lineHeight: 1.45, background: '#0f1115', color: '#cdd6e0', padding: 10, borderRadius: 5, overflow: 'auto', maxHeight: 300, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+{a.text ?? JSON.stringify(a.json, null, 2)}
+              </pre>
+            </div>
+          ))}
         </div>
       )}
     </div>
