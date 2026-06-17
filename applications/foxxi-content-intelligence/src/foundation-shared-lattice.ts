@@ -39,6 +39,19 @@ function latticeResourceUrl(podUrl: string): string {
   return `${base}foxxi-lattice/shared-lattice.holon.json`;
 }
 
+/** Idempotent LDP container create (CSS doesn't always auto-create the parent of a
+ *  PUT). Best-effort — already-exists or a 4xx is tolerated; we only need the
+ *  parent to exist so the resource PUT below doesn't 404. */
+async function ensureContainer(containerUrl: string, fetchFn: FetchFn): Promise<void> {
+  try {
+    await fetchFn(containerUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/turtle', 'Link': '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' },
+      body: '',
+    });
+  } catch { /* best-effort */ }
+}
+
 /** Rebuild a usable PGSLInstance from a persisted node map — reconstructs the
  *  atom (value->uri) + fragment (items->uri) registries so the lattice can keep
  *  ingesting with dedup. Keys mirror lattice.ts (atom: String(value); fragment:
@@ -90,6 +103,7 @@ export interface ComposeResult {
   /** Interop surfaces emitted from this holon — proof RDF is one projection of many. */
   projections: ProjectionKind[];
   persisted: boolean;
+  persistError?: string;
 }
 
 /**
@@ -129,22 +143,24 @@ export async function composeIntoSharedLattice(args: {
     // canonical and RDF is one projection of many.
     const projections = [...new Set<ProjectionKind>(args.projections ?? ['rdf'])];
 
-    // Durable altitude (BACKGROUND, best-effort): persist the whole shared lattice
-    // to its one canonical encrypted resource + PUT the projected descriptor.
-    void (async () => {
-      try {
-        const recipients = [kp.publicKey];
-        const ownerKey = await resolveAgentEncryptionKey(args.podUrl, { fetch: fetchFn }).catch(() => null);
-        if (ownerKey && ownerKey !== kp.publicKey) recipients.push(ownerKey);
-        await promoteInstanceEncrypted(pgsl, holonUri, latticeResourceUrl(args.podUrl), recipients, kp, fetchFn as unknown as typeof fetch);
-        await fetchFn(proj.descriptorUrl, { method: 'PUT', headers: { 'Content-Type': 'text/turtle' }, body: proj.descriptorTurtle });
-      } catch (e) { console.warn('[shared-lattice][persist]', (e as Error).message); }
-    })();
+    // Durable altitude: persist the whole shared lattice to its one canonical
+    // encrypted resource (AWAITED — this is now a canonical store, so we confirm
+    // the write rather than fire-and-forget) + PUT the projected descriptor.
+    let persisted = false; let persistError: string | undefined;
+    try {
+      const recipients = [kp.publicKey];
+      const ownerKey = await resolveAgentEncryptionKey(args.podUrl, { fetch: fetchFn }).catch(() => null);
+      if (ownerKey && ownerKey !== kp.publicKey) recipients.push(ownerKey);
+      await ensureContainer(`${args.podUrl.endsWith('/') ? args.podUrl : `${args.podUrl}/`}foxxi-lattice/`, fetchFn);
+      await promoteInstanceEncrypted(pgsl, holonUri, latticeResourceUrl(args.podUrl), recipients, kp, fetchFn as unknown as typeof fetch);
+      await fetchFn(proj.descriptorUrl, { method: 'PUT', headers: { 'Content-Type': 'text/turtle' }, body: proj.descriptorTurtle }).catch(() => undefined);
+      persisted = true;
+    } catch (e) { persistError = (e as Error).message; console.warn('[shared-lattice][persist]', persistError); }
 
     return {
       holonUri, contentType: args.contentType, descriptorUrl: proj.descriptorUrl,
       reusedNodes, newNodes: args.terms.length - reusedNodes,
-      stats: latticeStats(pgsl), projections, persisted: true,
+      stats: latticeStats(pgsl), projections, persisted, ...(persistError ? { persistError } : {}),
     };
   } catch { return null; }
 }
