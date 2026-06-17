@@ -137,6 +137,10 @@ export interface SubjectRecord {
   statementCount: number;
   competencies: SubjectCompetency[];
   credentials: SubjectCredential[];
+  /** Where the record's statements were read from (foundation-first: PGSL lattice canonical). */
+  statementSource?: string;
+  /** How many statements came from the PGSL lattice. */
+  latticeStatements?: number;
   error?: string;
 }
 
@@ -168,5 +172,12 @@ export function subjectFromReview(did: string, body: Record<string, any>): Subje
       raw: e?.credential ?? e,
     };
   });
-  return { did, statementCount: Number(body.subject?.statementCount ?? 0), competencies, credentials };
+  return {
+    did,
+    statementCount: Number(body.subject?.statementCount ?? 0),
+    statementSource: typeof body.subject?.statementSource === 'string' ? body.subject.statementSource : undefined,
+    latticeStatements: typeof body.subject?.latticeStatements === 'number' ? body.subject.latticeStatements : undefined,
+    competencies,
+    credentials,
+  };
 }

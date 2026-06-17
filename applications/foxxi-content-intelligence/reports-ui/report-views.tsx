@@ -127,6 +127,12 @@ export function SubjectRecordView({ data }: { data: SubjectRecord }) {
         <Stat label="Competencies" value={data.competencies.length} color={'var(--accent)'} />
         <Stat label="Credentials held" value={data.credentials.length} color={data.credentials.length > 0 ? OK : 'var(--text-dim)'} />
       </div>
+      {data.statementSource && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-dim)' }}>
+          statements read from <code style={{ fontFamily: mono, background: '#0f1115', color: '#9fd0b0', padding: '1px 6px', borderRadius: 3 }}>{data.statementSource}</code>
+          {typeof data.latticeStatements === 'number' && data.latticeStatements > 0 ? ` — ${data.latticeStatements} from the PGSL lattice (canonical)` : ''}
+        </div>
+      )}
       <div>
         <div style={{ ...dim, marginBottom: 6 }}>Competencies (ELR rollup) — expand for the evidencing statements</div>
         <div style={{ ...card, padding: 0 }}>
