@@ -4,9 +4,9 @@ import { BRIDGE_URL, DEMO_IDENTITIES } from '../bridge-client.js';
 import { mintSessionToken, deriveUserWallet } from '../session-token.js';
 import { getDemoState, subscribeDemo, type DemoAgent } from '../demo/demo-session.js';
 import { normalizeLrs, lmsFromStatements, subjectFromReview, type LrsAnalytics, type LmsCompletions, type SubjectRecord } from '../../../reports-ui/report-model.js';
-import { LrsAnalyticsView, LmsCompletionsView, SubjectRecordView } from '../../../reports-ui/report-views.js';
+import { LrsAnalyticsView, LmsCompletionsView, SubjectRecordView, Stat } from '../../../reports-ui/report-views.js';
 
-type Tab = 'lrs' | 'lms' | 'subject';
+type Tab = 'lrs' | 'lms' | 'subject' | 'lattice';
 const ADMIN = DEMO_IDENTITIES.jordan; // the demo's operator — reads the demo agents' lenses (scoped by tenant)
 
 async function adminToken(): Promise<string> {
@@ -96,9 +96,9 @@ export function ReportsPage({ onHome, onAgents }: { onHome: () => void; onAgents
           {agent && <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: 'var(--text-dim)', marginBottom: 10, wordBreak: 'break-all' }}>{agent.did} · lens <code style={code}>{agent.lensTenant}</code></div>}
 
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
-            {(['lrs', 'lms', 'subject'] as Tab[]).map(t => (
+            {(['lrs', 'lms', 'subject', 'lattice'] as Tab[]).map(t => (
               <button key={t} onClick={() => setTab(t)} style={{ ...pill, background: tab === t ? 'var(--text)' : 'transparent', color: tab === t ? 'var(--panel)' : 'var(--text)', borderColor: tab === t ? 'var(--text)' : 'var(--border)' }}>
-                {t === 'lrs' ? 'LRS analytics' : t === 'lms' ? 'LMS completions' : 'Competencies & credentials'}
+                {t === 'lrs' ? 'LRS analytics' : t === 'lms' ? 'LMS completions' : t === 'subject' ? 'Competencies & credentials' : 'Lattice (PGSL)'}
               </button>
             ))}
           </div>
@@ -107,7 +107,117 @@ export function ReportsPage({ onHome, onAgents }: { onHome: () => void; onAgents
           {tab === 'lrs' && (lrs ? <LrsAnalyticsView data={lrs} /> : !err && <div style={{ color: 'var(--text-dim)' }}>loading…</div>)}
           {tab === 'lms' && (lms ? <LmsCompletionsView data={lms} /> : !err && <div style={{ color: 'var(--text-dim)' }}>loading…</div>)}
           {tab === 'subject' && (subject ? <SubjectRecordView data={subject} /> : <div style={{ color: 'var(--text-dim)' }}>loading…</div>)}
+          {tab === 'lattice' && <LatticeExplorer label={tenant.replace(/^lens:/, '')} />}
         </>
+      )}
+    </div>
+  );
+}
+
+// ── Lattice (PGSL) explorer — dereference the agent's shared foundation lattice ──
+const mono = "'JetBrains Mono', monospace";
+const lcard: React.CSSProperties = { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 };
+const ldim: React.CSSProperties = { fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 };
+const lchip: React.CSSProperties = { border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', fontSize: 11, fontFamily: mono, cursor: 'pointer', background: 'transparent', color: 'var(--text)' };
+const lpre: React.CSSProperties = { fontSize: 10.5, lineHeight: 1.45, background: '#0f1115', color: '#cdd6e0', padding: 10, borderRadius: 6, overflow: 'auto', maxHeight: 320, marginTop: 8, whiteSpace: 'pre-wrap', wordBreak: 'break-word' };
+
+function LatticeExplorer({ label }: { label: string }) {
+  const [view, setView] = useState<any>(null);
+  const [term, setTerm] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busyTerm, setBusyTerm] = useState<string | null>(null);
+  const tail = (s: string) => s.split(/[#/]/).filter(Boolean).pop() || s;
+
+  useEffect(() => {
+    let live = true;
+    setView(null); setTerm(null); setErr(null);
+    if (!label) { setErr('no agent selected'); return; }
+    (async () => {
+      try {
+        const r = await fetch(`${BRIDGE_URL}/agent/lattice/${encodeURIComponent(label)}?_=${Date.now()}`);
+        const b = await r.json().catch(() => null);
+        if (!live) return;
+        if (!r.ok || !b?.ok) { setErr(b?.error ?? `HTTP ${r.status}`); return; }
+        setView(b);
+      } catch (e) { if (live) setErr((e as Error).message); }
+    })();
+    return () => { live = false; };
+  }, [label]);
+
+  const deref = async (iri: string) => {
+    setBusyTerm(iri); setTerm(null);
+    try {
+      const r = await fetch(`${BRIDGE_URL}/agent/lattice/${encodeURIComponent(label)}/term?iri=${encodeURIComponent(iri)}`);
+      const b = await r.json().catch(() => null);
+      setTerm(b?.ok ? b : { found: false, iri, error: b?.error ?? `HTTP ${r.status}` });
+    } catch (e) { setTerm({ found: false, iri, error: (e as Error).message }); }
+    finally { setBusyTerm(null); }
+  };
+
+  if (err) return <div style={{ ...lcard, color: 'var(--text-dim)', fontSize: 13.5 }}>This agent has no shared lattice yet — it accumulates as the agent composes artifacts (perform / author / credential). <span style={{ fontFamily: mono, fontSize: 11 }}>({err})</span></div>;
+  if (!view) return <div style={{ color: 'var(--text-dim)' }}>loading lattice…</div>;
+
+  return (
+    <div style={{ display: 'grid', gap: 14 }}>
+      <p style={{ color: 'var(--text-dim)', fontSize: 13.5, lineHeight: 1.55, margin: 0 }}>
+        The cg‑RDF this agent writes is a <strong>projection of one shared PGSL lattice</strong>: every term — its DID, each xAPI verb, each activity‑type IRI — is a content‑addressed node <strong>reused</strong> across all its artifacts (the foundation, not hand‑written RDF). Click a term to dereference it.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: 10 }}>
+        <Stat label="Atoms (reused nodes)" value={view.stats?.atoms ?? 0} color={'var(--accent)'} />
+        <Stat label="Fragments" value={view.stats?.fragments ?? 0} />
+        <Stat label="Max level" value={view.stats?.maxLevel ?? 0} />
+        <Stat label="Namespaces" value={view.namespaces?.length ?? 0} />
+      </div>
+      <div>
+        <div style={ldim}>Namespaces in the lattice (coarse granularity)</div>
+        <div style={{ ...lcard, padding: 0 }}>
+          {(view.namespaces ?? []).map((n: any, i: number) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', borderBottom: '1px solid var(--border)', fontSize: 12 }}>
+              <span style={{ fontFamily: mono, fontSize: 11, wordBreak: 'break-all', marginRight: 8 }}>{n.namespace}</span><strong>{n.count}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div style={ldim}>Terms — click to dereference (fine granularity)</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {(view.terms ?? []).map((t: string, i: number) => (
+            <button key={i} title={t} onClick={() => void deref(t)} style={{ ...lchip, opacity: busyTerm === t ? 0.5 : 1 }}>{tail(t)}</button>
+          ))}
+        </div>
+      </div>
+      {term && <TermCard term={term} />}
+    </div>
+  );
+}
+
+function TermCard({ term }: { term: any }) {
+  const tail = (s: string) => s.split(/[#/]/).filter(Boolean).pop() || s;
+  if (!term.found) return <div style={{ ...lcard, color: 'var(--text-dim)', fontSize: 13 }}>Term not in this lattice{term.error ? ` (${term.error})` : ''}.</div>;
+  const Neighbors = ({ label, items }: { label: string; items?: string[] }) => (
+    <div style={{ fontSize: 12 }}>
+      <span style={{ color: 'var(--text-dim)' }}>{label}: </span>
+      {(items && items.length) ? items.map((t, i) => <code key={i} title={t} style={{ ...code, marginRight: 4 }}>{tail(t)}</code>) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
+    </div>
+  );
+  return (
+    <div style={{ ...lcard, display: 'grid', gap: 10 }}>
+      <div style={{ fontFamily: mono, fontSize: 12, wordBreak: 'break-all' }}>{term.iri}</div>
+      <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+        node <code style={code}>{String(term.atomUri ?? '').slice(0, 28)}…</code> · appears in <strong>{term.appearsInFragments}</strong> fragments · across <strong>{term.artifacts?.length ?? 0}</strong> artifact(s)
+      </div>
+      <Neighbors label="← left (syntagmatic)" items={term.leftNeighbors} />
+      <Neighbors label="right (syntagmatic) →" items={term.rightNeighbors} />
+      <Neighbors label="usage neighborhood (paradigmatic)" items={term.coOccurring} />
+      <div>
+        <div style={ldim}>Artifacts this term participates in</div>
+        {(term.artifacts ?? []).map((a: string, i: number) => <div key={i} style={{ fontFamily: mono, fontSize: 10.5, wordBreak: 'break-all', color: 'var(--text-dim)', padding: '2px 0' }}>{a}</div>)}
+      </div>
+      {term.projectedRdf && (
+        <details>
+          <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--accent)' }}>cg:ContextDescriptor RDF projected from this lattice node</summary>
+          <pre style={lpre}>{term.projectedRdf}</pre>
+        </details>
       )}
     </div>
   );
