@@ -20,7 +20,7 @@ async function adminGet(path: string, token: string): Promise<any> {
 
 export function ReportsPage({ onHome }: { onHome: () => void }) {
   const [tab, setTab] = useState<Tab>('lrs');
-  const [tenant, setTenant] = useState('');
+  const [tenant, setTenant] = useState('lens:johnny'); // a populated per-agent lens; blank = default tenant
   const [lrs, setLrs] = useState<LrsAnalytics | null>(null);
   const [lms, setLms] = useState<LmsCompletions | null>(null);
   const [err, setErr] = useState<string | null>(null);

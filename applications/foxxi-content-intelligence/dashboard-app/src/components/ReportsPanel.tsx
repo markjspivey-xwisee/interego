@@ -17,25 +17,30 @@ export function ReportsPanel({ bearer }: { bearer: string }) {
   const confUrl = linkOf(entry, 'statements-conformance');
   const stmtUrl = linkOf(entry, 'statements-admin');
   const [tab, setTab] = useState<'lrs' | 'lms'>('lrs');
+  // The agent-activity data lives in per-agent lens:<agent> tenants; the default
+  // tenant is typically empty. Default to a populated lens so the report opens
+  // with data; the operator can retarget any tenant.
+  const [tenant, setTenant] = useState('lens:johnny');
   const [lrs, setLrs] = useState<LrsAnalytics | null>(null);
   const [lms, setLms] = useState<LmsCompletions | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const withT = (url: string) => tenant ? url + (url.includes('?') ? '&' : '?') + 'tenant=' + encodeURIComponent(tenant) : url;
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [agg, conf, stmts] = await Promise.all([
-        aggUrl ? fetchHypermedia<Record<string, unknown>>(aggUrl, bearer) : Promise.resolve(null),
-        confUrl ? fetchHypermedia<Record<string, unknown>>(confUrl, bearer).catch(() => null) : Promise.resolve(null),
-        stmtUrl ? fetchHypermedia<{ page?: unknown[] }>(`${stmtUrl}?limit=200`, bearer).catch(() => ({ page: [] })) : Promise.resolve({ page: [] }),
+        aggUrl ? fetchHypermedia<Record<string, unknown>>(withT(aggUrl), bearer) : Promise.resolve(null),
+        confUrl ? fetchHypermedia<Record<string, unknown>>(withT(confUrl), bearer).catch(() => null) : Promise.resolve(null),
+        stmtUrl ? fetchHypermedia<{ page?: unknown[] }>(withT(`${stmtUrl}?limit=200`), bearer).catch(() => ({ page: [] })) : Promise.resolve({ page: [] }),
       ]);
       if (agg) setLrs(normalizeLrs(agg, conf));
       setLms(lmsFromStatements((stmts?.page ?? []) as []));
       setErr(null);
     } catch (e) { setErr((e as Error).message); }
     finally { setLoading(false); }
-  }, [aggUrl, confUrl, stmtUrl, bearer]);
+  }, [aggUrl, confUrl, stmtUrl, bearer, tenant]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -43,6 +48,8 @@ export function ReportsPanel({ bearer }: { bearer: string }) {
     <Card title="Reports — LMS + LRS"
       right={
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input value={tenant} onChange={e => setTenant(e.target.value)} placeholder="tenant (blank = default)"
+            style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', fontSize: 12, width: 150, background: 'var(--panel)', color: 'var(--text)' }} />
           <Button small primary={tab === 'lrs'} onClick={() => setTab('lrs')}>LRS analytics</Button>
           <Button small primary={tab === 'lms'} onClick={() => setTab('lms')}>LMS completions</Button>
           <Button small onClick={() => void load()}>{loading ? '…' : 'Refresh'}</Button>
