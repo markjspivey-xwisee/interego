@@ -67,6 +67,15 @@ export const TOOLS: Record<string, ToolDef> = {
       activity_type: str('The activity-type IRI (e.g. the agp:StandardsExtension IRI).'),
     }, required: ['task_name', 'success'] },
   },
+  verify_extension: {
+    name: 'verify_extension',
+    description: 'Independently verify, from a SUBJECT\'s OWN authoritative pod records, that they completed an engine-graded course AND recorded a domain-typed StandardsExtension performance, and that a named extension conforms to the agp:StandardsExtension shape. Use this BEFORE issuing a credential — it separates independently-verified evidence (tamper-evident engine grading + shape conformance) from any self-attested outcome.',
+    input_schema: { type: 'object', properties: {
+      subject_did: str('did:ethr of the subject to verify.'),
+      name: str('The extension slug the subject claims to have authored (read it from their performance record / ELR, e.g. "collaborationDepth").'),
+      kind: { type: 'string', enum: ['XapiContextExtension', 'XapiProfileFragment', 'LerTerm', 'TlaTerm'], description: 'The extension kind the subject authored.' },
+    }, required: ['subject_did'] },
+  },
   review_record: {
     name: 'review_record',
     description: 'Read a learner record (ELR + optionally CLR credential wallet). Pass subject_did to read another agent\'s record (e.g. to verify they learned a skill).',
@@ -110,6 +119,8 @@ export async function dispatchTool(name: string, input: Record<string, unknown>,
       return postSigned('/agent/scorm/submit', agent, { session_id: input.session_id, answers: input.answers });
     case 'record_performance':
       return postSigned('/agent/record-performance', agent, { task_name: input.task_name, success: input.success ?? true, quality: input.quality, activity_type: input.activity_type });
+    case 'verify_extension':
+      return postSigned('/agent/verify-extension', agent, { subject_did: input.subject_did ?? ctx.subjectDid, name: input.name, kind: input.kind });
     case 'review_record':
       return postSigned('/agent/review-record', agent, { subject_did: input.subject_did ?? ctx.subjectDid, include_clr: input.include_clr ?? false });
     case 'issue_credential':

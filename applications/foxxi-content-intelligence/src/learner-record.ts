@@ -56,6 +56,13 @@ export const PERFORMED_VERB = `${FOXXI_VOCAB}performed`;
  *  Foxxi xAPI Profile's structural verb concepts. */
 export const INTENDED_VERB = `${FOXXI_VOCAB}verbs/intended`;
 export const CONSIDERED_VERB = `${FOXXI_VOCAB}verbs/considered`;
+/** Agent-declared ACTIVITY verbs — the teacher/issuer's OWN work is real activity
+ *  and is recorded with an EXPRESSIVE verb (not a `performed` monoculture) so a
+ *  teacher's record reflects what they DID. These name the act, not a learned
+ *  competency, so they project as experiences (no manufactured competency for the
+ *  author). Declared in the Foxxi xAPI Profile + dereferenceable. */
+export const AUTHORED_VERB = `${FOXXI_VOCAB}verbs/authored`;
+export const CREDENTIALED_VERB = `${FOXXI_VOCAB}verbs/credentialed`;
 /** Context-extension IRIs the record_performance handler stamps. */
 export const PERF_EXT = {
   observedBy: `${FOXXI_VOCAB}observedBy`,

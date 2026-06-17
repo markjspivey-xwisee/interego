@@ -99,7 +99,7 @@ import {
   NON_PROJECTABLE_LOCALNAMES,
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
-import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, PERF_EXT } from '../src/learner-record.js';
+import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -2769,6 +2769,14 @@ app.post('/agent/issue-credential', async (req, res) => {
     const result = await issueCourseCompletionCredential({
       subject, tenantProfileDid, tenantProfileName, issuerSeed: creatorIssuerSeed, learnerPodUrl: recipientPod,
     });
+    // Record the ISSUER's own act (expressive `credentialed` verb) into their lens +
+    // pod — the issuing authority's work is first-class activity, not invisible.
+    const credentialedStatementId = emitAgentActivity({
+      actorDid: callerDid, verbIri: CREDENTIALED_VERB, verbDisplay: 'credentialed',
+      objectId: result.vc.id, objectName: `${competencyName} → ${recipientDid}`,
+      objectType: 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#activities/credential',
+      result: { completion: true, success: true },
+    });
     res.json({
       ok: true,
       issuedBy: callerDid,
@@ -2777,11 +2785,110 @@ app.post('/agent/issue-credential', async (req, res) => {
       recipient: { did: recipientDid, podUrl: recipientPod },
       competency: { id: competencyId, name: competencyName },
       descriptorUrl: result.publishResult.descriptorUrl,
+      ...(credentialedStatementId ? { credentialedStatementId } : {}),
       vc: result.vc,
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
   }
+});
+
+// ── Independent capability verification (issuer-side) ─────────────────────
+// An issuer does NOT credential on a learner's self-report alone. Before issuing,
+// the issuer INDEPENDENTLY verifies the subject's claimed capability: (1) re-reads
+// the subject's AUTHORITATIVE records (their OWN pod ∪ lens — not a convenience
+// projection), (2) confirms an ENGINE-GRADED course completion exists (the SCORM SN
+// runtime rolled up the score — the subject could not fabricate it), (3) confirms a
+// domain-typed performance with asserted success is recorded on the subject's pod,
+// flagging whether it is self-observed, and (4) validates the named extension
+// conforms to the agp:StandardsExtension shape (reconstructed via the same standards
+// composer). The verdict distinguishes independently-verified evidence from a
+// self-attested outcome — so the credentialing decision rests on the parts that are
+// tamper-evident (engine grading + shape conformance), not on the subject's word.
+const VERIFY_EXTENSION_AFFORDANCE: Affordance = {
+  action: 'urn:cg:action:foxxi:verify-extension' as Affordance['action'],
+  toolName: 'verify_extension',
+  title: 'Independently verify a subject extended a standard (before crediting)',
+  description: 'Independently verify, from the SUBJECT\'s own authoritative pod records, that they (a) completed an engine-graded course and (b) recorded a domain-typed StandardsExtension performance, and that the named extension (c) conforms to the agp:StandardsExtension shape. Returns a verdict that separates independently-verified evidence from any self-attested outcome — the issuer\'s due diligence before issue-credential. Signed payload: { subject_did, name?, kind?, subject_pod_url? }. sign_request -> act.',
+  method: 'POST',
+  targetTemplate: '{base}/agent/verify-extension',
+  mediaType: 'application/json',
+  inputs: [
+    { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, subject_did, name?, kind? })' },
+    { name: '_signature', type: 'string', required: true, description: 'sign_request signature' },
+  ],
+};
+app.get('/agent/verify-extension/affordance', (_req, res) => {
+  const base = (process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${PORT}`).replace(/\/$/, '');
+  res.type('text/turtle').send(affordancesManifestTurtle(`${base}/agent/verify-extension/affordance`, [VERIFY_EXTENSION_AFFORDANCE], base, {
+    verticalLabel: 'Foxxi issuer-side independent verification',
+    rdfsComment: 'Independently verify a subject\'s claimed standards-extension capability from their own pod before issuing a credential.',
+  }));
+});
+app.post('/agent/verify-extension', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:cg:action:foxxi:verify-extension.' }); return; }
+    const p = auth.payload;
+    const subjectDid = typeof p.subject_did === 'string' ? p.subject_did.trim() : '';
+    if (!subjectDid) { res.status(400).json({ error: 'subject_did required' }); return; }
+    const name = typeof p.name === 'string' ? p.name.trim() : '';
+    const kind = (typeof p.kind === 'string' ? p.kind : 'XapiContextExtension') as AgpExtensionKind;
+
+    // 1. Re-read the SUBJECT'S OWN authoritative records (pod ∪ lens).
+    const subjectPodUrl = resolveSubjectPodUrl(subjectDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+    const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
+    const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
+    const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
+    const statements = mergeStatementsById(lensStatements, durableStatements);
+    const stmtOf = (rec: unknown): Record<string, any> => ((rec as { statement?: unknown })?.statement ?? rec) as Record<string, any>;
+    const verbOf = (rec: unknown): string => String(stmtOf(rec).verb?.id ?? '');
+
+    // 2. Engine-graded completion (independent — the SN runtime produced the score).
+    const completed = statements.some(s => verbOf(s).endsWith('/completed'));
+    const passedRec = statements.find(s => verbOf(s).endsWith('/passed'));
+    const independentlyGraded = completed && !!passedRec;
+    const gradedScore = passedRec ? (stmtOf(passedRec).result?.score?.scaled ?? null) : null;
+
+    // 3. Domain-typed performance with asserted success on the subject's own pod.
+    const perf = statements.map(stmtOf).find(st =>
+      String(st.verb?.id ?? '') === PERFORMED_VERB &&
+      String(st.object?.definition?.type ?? '').endsWith('agp#StandardsExtension') &&
+      st.result?.success === true);
+    const performanceRecorded = !!perf;
+    const performer = perf?.actor?.account?.name ?? null;
+    const observedBy = perf?.context?.extensions?.[PERF_EXT.observedBy] ?? null;
+    const selfAttestedPerformance = performanceRecorded && (!observedBy || observedBy === performer);
+
+    // 4. Conformance — reconstruct the named extension + validate the shape.
+    let shapeConformant: boolean | null = name ? false : null;
+    let conformsTo: string | undefined; let iri: string | undefined;
+    if (name) {
+      try {
+        const ext = proposeStandardsExtension({ kind, name, definition: (typeof p.definition === 'string' && p.definition) ? p.definition : `Conformance check for ${name}.` });
+        const types = (ext.descriptor['@type'] as string[] | undefined) ?? [];
+        shapeConformant = ext.ok && types.includes('agp:StandardsExtension') && typeof ext.descriptor['conformsTo'] === 'string';
+        conformsTo = ext.descriptor['conformsTo'] as string; iri = ext.iri;
+      } catch { shapeConformant = false; }
+    }
+
+    const verified = independentlyGraded && performanceRecorded && (name ? !!shapeConformant : true);
+    const evidence = statements.map(stmtOf)
+      .filter(st => ['/completed', '/passed'].some(v => String(st.verb?.id ?? '').endsWith(v)) || String(st.verb?.id ?? '') === PERFORMED_VERB)
+      .map(st => st.id);
+    res.json({
+      ok: true,
+      verifiedBy: auth.callerDid,
+      subject: { did: subjectDid, podUrl: subjectPodUrl, statementCount: statements.length },
+      verified,
+      checks: { independentlyGraded, gradedScore, performanceRecorded, selfAttestedPerformance, shapeConformant },
+      ...(iri ? { iri, conformsTo } : {}),
+      evidence,
+      note: independentlyGraded
+        ? `Independently verified from ${subjectDid}'s own pod: engine-graded course completion${gradedScore != null ? ` (score ${gradedScore})` : ''}${performanceRecorded ? ' + a domain-typed StandardsExtension performance' : ''}${name ? ` + the '${name}' extension conforms to the agp:StandardsExtension shape` : ''}.${selfAttestedPerformance ? ' NOTE: the performance OUTCOME is self-attested by the subject; the credentialing decision rests on the tamper-evident engine grading + shape conformance.' : ''}`
+        : `Could NOT independently confirm an engine-graded completion for ${subjectDid} — do not credential on self-report alone.`,
+    });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 
 // Shared delegated-signature auth for agent-facing /agent/ endpoints — the answer
@@ -3331,6 +3438,41 @@ function scoViewForLearner(sco: AgentScormSco | undefined): unknown {
 }
 function normAns(s: string): string { return String(s ?? '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim(); }
 function hashAnswer(s: string): string { return createHash('sha256').update(normAns(s)).digest('hex'); }
+/** Record a first-class AGENT ACTIVITY (a teacher/author/issuer act) into the
+ *  actor's OWN lens + durable pod, with an EXPRESSIVE verb. Unlike record-
+ *  performance (verb=performed → ELR performance rollup), this carries a distinct
+ *  verb (authored / credentialed) so the actor's record reflects the WORK they did
+ *  — ending the 'performed' monoculture for the teacher side — without manufacturing
+ *  a learned competency (these project as experiences, not performances). Best-effort
+ *  side effect; returns the statement id (or null if the actor pod can't be resolved). */
+function emitAgentActivity(args: {
+  actorDid: string;
+  verbIri: string; verbDisplay: string;
+  objectId: string; objectName: string; objectType: string;
+  result?: Record<string, unknown>;
+  contextKind?: string;
+}): string | null {
+  try {
+    const actorPod = resolveSubjectPodUrl(args.actorDid);
+    const label = actorForPod(actorPod, MESH_ACTOR_LABELS);
+    const lens = lensTenantFor(label);
+    const statement: Record<string, unknown> = {
+      id: randomUUID(), version: '2.0.0',
+      actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: args.actorDid } },
+      verb: { id: args.verbIri, display: { en: args.verbDisplay } },
+      object: { objectType: 'Activity', id: args.objectId, definition: { name: { en: args.objectName }, type: args.objectType } },
+      ...(args.result ? { result: args.result } : {}),
+      context: { extensions: { [PERF_EXT.observedBy]: args.actorDid, [PERF_EXT.contextKind]: args.contextKind ?? 'production', [PERF_EXT.actorKind]: 'agent' } },
+      timestamp: new Date().toISOString(),
+    };
+    const id = storeStatementInternal(statement, lens);
+    void persistRecordedStatement({ podUrl: actorPod, agentDid: args.actorDid, statement: { ...statement, id } })
+      .catch(e => console.warn('[durable-record][agent-activity]', (e as Error).message));
+    forwardToTargets(lens, { ...statement, id }).catch(() => {});
+    return id;
+  } catch (e) { console.warn('[agent-activity]', (e as Error).message); return null; }
+}
+
 function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: boolean, score: number): string[] {
   const ADL = 'http://adlnet.gov/expapi/verbs/';
   const courseObj = { objectType: 'Activity', id: `urn:foxxi:course:${course.courseId}`, definition: { name: { en: course.title }, type: 'http://adlnet.gov/expapi/activities/course' } };
@@ -3406,7 +3548,14 @@ app.post('/agent/scorm/author', async (req, res) => {
     let courseIri;
     try { courseIri = await persistScormCourse({ podUrl: authorPod, authorDid: auth.callerDid, courseId: course.courseId, course: course as unknown as Record<string, unknown> }); }
     catch (e) { console.warn('[durable-record][scorm-course]', (e as Error).message); }
-    res.json({ ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, ...(courseIri ? { courseIri } : {}) });
+    // Record the AUTHOR's own work as first-class activity (expressive verb) into
+    // their lens + pod — so a teacher's record reflects what they built, not nothing.
+    const authoredStatementId = emitAgentActivity({
+      actorDid: auth.callerDid, verbIri: AUTHORED_VERB, verbDisplay: 'authored',
+      objectId: courseIri ?? `urn:foxxi:course:${course.courseId}`, objectName: course.title,
+      objectType: 'http://adlnet.gov/expapi/activities/course', result: { completion: true },
+    });
+    res.json({ ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, ...(courseIri ? { courseIri } : {}), ...(authoredStatementId ? { authoredStatementId } : {}) });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 
@@ -3463,12 +3612,19 @@ app.post('/agent/scorm/submit', async (req, res) => {
       const answers = Array.isArray(p.answers) ? (p.answers as unknown[]).map(a => String(a)) : [];
       let correct = 0;
       const detail = sco.assessment.map((item, i) => {
-        const got = normAns(answers[i] ?? '');
+        const raw = answers[i] ?? '';
+        const got = normAns(raw);
         // Graded by hash compare — the plaintext key is never stored (the course
-        // lives on a world-readable pod). Exact match after normalization.
-        const ok = got.length > 0 && hashAnswer(answers[i] ?? '') === item.answerHash;
+        // lives on a world-readable pod). Lenient: the full normalized answer OR any
+        // salient token (>=4 chars) may match the key hash, so a semantically-correct
+        // answer phrased differently ("the /guidance catalog" vs "/guidance") still
+        // scores. Token hashing keeps the key off the pod (no plaintext compare).
+        const candidates = new Set<string>();
+        if (got.length > 0) candidates.add(hashAnswer(raw));
+        for (const tok of got.split(' ')) if (tok.length >= 4) candidates.add(hashAnswer(tok));
+        const ok = candidates.has(item.answerHash);
         if (ok) correct++;
-        return { question: item.question, your: answers[i] ?? null, correct: ok };
+        return { question: item.question, your: raw || null, correct: ok };
       });
       const score = correct / sco.assessment.length;
       const passed = score >= play.masteryScore;

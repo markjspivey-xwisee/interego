@@ -35,6 +35,7 @@ function summarizeInput(name: string, input: Record<string, unknown>): string {
   if (name === 'scorm_submit') return Array.isArray(input.answers) ? `answers: ${(input.answers as string[]).join(', ')}` : 'continue';
   if (name === 'record_performance') return String(input.task_name ?? '');
   if (name === 'review_record') return `subject ${String(input.subject_did ?? 'self').slice(0, 18)}…`;
+  if (name === 'verify_extension') return `subject ${String(input.subject_did ?? '').slice(0, 14)}… · ${String(input.name ?? '')}`;
   if (name === 'issue_credential') return `${input.competency_name} → ${String(input.recipient_did ?? '').slice(0, 18)}…`;
   return '';
 }
@@ -53,7 +54,8 @@ function interpret(name: string, body: unknown, who: 'A' | 'B'): void {
     const comps = (b.elr?.competencies ?? []) as Array<Record<string, unknown>>;
     emit({ agent: who, kind: 'verify', title: 'capability-transfer verified', detail: `${b.subject?.statementCount ?? 0} statements · competencies: ${comps.map(c => c.label ?? c.id).join('; ') || 'none'}`, data: b.elr });
   }
-  else if (name === 'issue_credential' && b.ok) emit({ agent: who, kind: 'credential', title: 'credential issued (OB3)', detail: `${b.competencyName ?? ''} → issuer ${String(b.issuerDid ?? '').slice(0, 16)}…`, data: b });
+  else if (name === 'verify_extension' && b.ok) emit({ agent: who, kind: 'verify', title: `independent verification — ${b.verified ? 'PASSED' : 'INSUFFICIENT'}`, detail: `engine-graded:${b.checks?.independentlyGraded}${b.checks?.gradedScore != null ? ` (${b.checks.gradedScore})` : ''} · performance:${b.checks?.performanceRecorded}${b.checks?.selfAttestedPerformance ? ' (self-attested)' : ''} · shape-conformant:${b.checks?.shapeConformant}`, data: b });
+  else if (name === 'issue_credential' && b.ok) emit({ agent: who, kind: 'credential', title: 'credential issued (OB3)', detail: `${b.competency?.name ?? b.competencyName ?? 'competency'} → ${String(b.recipient?.did ?? b.recipientDid ?? '').slice(0, 20)}…`, data: b });
   else if (b.error || b.ok === false) emit({ agent: who, kind: 'error', title: `${name} error`, detail: String(b.error ?? `HTTP error`), data: b });
 }
 
@@ -101,10 +103,11 @@ export async function runDemo(apiKey: string): Promise<void> {
     await runAgentLoop({
       apiKey, system: A_SYSTEM,
       goal: `Agent B (${B.did}) was supposed to learn and demonstrate "extend a standard".\n` +
-        `1) Verify it: call review_record with subject_did "${B.did}" (no admin token needed). Inspect the returned ELR competencies for evidence B both completed the course AND performed the skill.\n` +
-        `2) If the evidence is there, call issue_credential (recipient_did "${B.did}", competency_name "Standards Extension", a short achievement_description).\n` +
-        `Reply DONE with whether the credential was issued.`,
-      tools: toolList(['review_record', 'issue_credential'] as ToolName[]),
+        `1) Read B's record: call review_record with subject_did "${B.did}" (no admin token). Note the competencies AND the name of the extension B authored (from its performance record / ELR — e.g. "collaborationDepth").\n` +
+        `2) Do your DUE DILIGENCE before crediting — do NOT credential on B's self-report alone: call verify_extension (subject_did "${B.did}", name = the extension B authored, kind "XapiContextExtension"). It independently checks, from B's OWN pod, an engine-graded completion + a domain-typed performance + that the extension conforms to the agp:StandardsExtension shape. Proceed ONLY if it returns verified:true. Note: the performance OUTCOME may be self-attested — rely on the independently-verified evidence (engine grading + shape conformance).\n` +
+        `3) If verified, call issue_credential (recipient_did "${B.did}", competency_name "Standards Extension", a short achievement_description).\n` +
+        `Reply DONE with whether the credential was issued and what you INDEPENDENTLY verified.`,
+      tools: toolList(['review_record', 'verify_extension', 'issue_credential'] as ToolName[]),
       dispatch: makeDispatch(A, 'A', { subjectDid: B.did }),
       onThinking: t => emit({ agent: 'A', kind: 'thinking', title: 'reasoning', detail: t }),
       onToolCall: () => {}, onToolResult: () => {}, maxSteps: 6,

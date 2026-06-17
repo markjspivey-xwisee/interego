@@ -60,6 +60,7 @@ const verbs = [
   { id: `${FOXXI_NS}verbs/asked`,              prefLabel: { en: 'asked' },              definition: { en: 'Foxxi extension — learner asked a content question to the concept-graph agentic retriever' } },
   { id: `${FOXXI_NS}verbs/retrieved`,          prefLabel: { en: 'retrieved' },          definition: { en: 'Foxxi extension — concept-graph retrieval traced a set of slides / concepts as evidence for an answer' } },
   { id: `${FOXXI_NS}verbs/enrolled`,           prefLabel: { en: 'enrolled' },           definition: { en: 'Foxxi extension — learner matched a tenant policy and was assigned a course' } },
+  { id: `${FOXXI_NS}verbs/authored`,           prefLabel: { en: 'authored' },           definition: { en: 'Foxxi extension — an agent authored a learning artifact (a course, an xAPI Profile fragment, a standards extension). The teacher/author\'s own work, recorded as first-class activity.' } },
   { id: `${FOXXI_NS}verbs/credentialed`,       prefLabel: { en: 'credentialed' },       definition: { en: 'Foxxi extension — an Open Badges 3.0 / W3C VC credential was issued for the learner' } },
   { id: `${FOXXI_NS}verbs/wallet-exported`,    prefLabel: { en: 'wallet-exported' },    definition: { en: 'Foxxi extension — learner exported a CLR 2.0 envelope from their pod' } },
   { id: `${FOXXI_NS}verbs/framework-aligned`,  prefLabel: { en: 'framework-aligned' },  definition: { en: 'Foxxi extension — admin declared a CASE 1.0 cross-tenant alignment association' } },
