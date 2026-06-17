@@ -194,6 +194,14 @@ const SIBLING_DEPLOYMENT_ORIGINS = [
   'https://interego-css.internal.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-css-gate.livelysky-8b81abb0.eastus.azurecontainerapps.io',
   'https://interego-pgsl-browser.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  // Foxxi vertical front-ends that read pods directly (linked-data / pod
+  // browser, dashboard, SCORM player). Without these the gate denies their
+  // browser origin (serves its own FQDN as ACAO) and the cross-origin pod
+  // read fails with "failed to fetch".
+  'https://interego-foxxi-microsite.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-foxxi-dashboard.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-foxxi-scorm-player.livelysky-8b81abb0.eastus.azurecontainerapps.io',
+  'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io',
 ];
 const BROWSER_MCP_CLIENT_ORIGINS = [
   'https://claude.ai',
