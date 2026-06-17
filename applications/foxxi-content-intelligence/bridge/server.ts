@@ -91,16 +91,14 @@ import {
 } from '../src/credentials.js';
 import { exportClr } from '../src/clr.js';
 import {
-  persistRecordedStatement,
   readDurableRecordedStatements,
   mergeStatementsById,
-  persistScormCourse,
   loadScormCourse,
   NON_PROJECTABLE_LOCALNAMES,
 } from '../src/durable-records.js';
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
-import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, ensureResident, type ProjectionKind } from '../src/foundation-shared-lattice.js';
+import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, ensureResident, loadCourseFromLattice, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -2860,12 +2858,14 @@ app.post('/agent/verify-extension', async (req, res) => {
     const name = typeof p.name === 'string' ? p.name.trim() : '';
     const kind = (typeof p.kind === 'string' ? p.kind : 'XapiContextExtension') as AgpExtensionKind;
 
-    // 1. Re-read the SUBJECT'S OWN authoritative records (pod ∪ lens).
+    // 1. Re-read the SUBJECT'S OWN authoritative records — PGSL lattice (canonical)
+    //    first, then lens + durable hand-authored RDF (legacy fallback).
     const subjectPodUrl = resolveSubjectPodUrl(subjectDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
     const subjectLabel = actorForPod(subjectPodUrl, MESH_ACTOR_LABELS);
+    await ensureResident(subjectPodUrl, subjectDid, subjectLabel);
     const lensStatements = await listStoredStatements(lensTenantFor(subjectLabel));
     const durableStatements = await readDurableRecordedStatements({ podUrl: subjectPodUrl });
-    const statements = mergeStatementsById(lensStatements, durableStatements);
+    const statements = mergeStatementsById([...latticeStatements(subjectLabel), ...lensStatements], durableStatements);
     const stmtOf = (rec: unknown): Record<string, any> => ((rec as { statement?: unknown })?.statement ?? rec) as Record<string, any>;
     const verbOf = (rec: unknown): string => String(stmtOf(rec).verb?.id ?? '');
 
@@ -3191,28 +3191,21 @@ app.post('/agent/record-performance', async (req, res) => {
           .map(x => x.trim())
           .map(x => /^https?:\/\//.test(x) ? x : resolveSubjectPodUrl(x))
       : [];
-    // Durable + self-sovereign: persist to the performer's OWN pod (the lens is
-    // a derived in-memory view; the pod is the system of record). Best-effort —
-    // the in-memory record already succeeded, so a pod-write hiccup doesn't fail
-    // the call; it just means this record re-derives only until the next write.
-    void persistRecordedStatement({ podUrl: subjectPod, agentDid: callerDid, statement: { ...statement, id: statementId }, ...(recipientPods.length ? { recipientPods } : {}) })
-      .catch(e => console.warn('[durable-record][record-performance]', (e as Error).message));
     // Forward to the performer's OWN downstream targets (no-op if they set none).
     forwardToTargets(lensTenantFor(label), { ...statement, id: statementId })
       .catch(e => console.warn('[foxxi-forward][record-performance]', (e as Error).message));
-    // Foundation-first (ADDITIVE, reversible): compose this performance INTO the
-    // agent's shared, accumulating PGSL lattice — so its terms (actor / verb /
-    // activity type) become REUSED content-addressed nodes and the cg descriptor
-    // is PROJECTED from the lattice. The authoritative hand-authored RDF above is
-    // untouched until the projection is verified.
+    // Foundation-first: PGSL is the canonical durable store. Compose this
+    // performance INTO the agent's shared lattice — its terms become reused nodes,
+    // the full statement is stored losslessly, and the cg descriptor is PROJECTED
+    // from the lattice. No hand-authored RDF (the lattice + its projection are the
+    // record); cross-seat recipients are wrapped into the encrypted lattice.
     const sharedLattice = await composeIntoSharedLattice({
       podUrl: subjectPod, agentDid: callerDid, label,
-      // actor · verb · activity-type · task — the first three are REUSED across the
-      // agent's corpus; the task id makes each performance a distinct artifact.
       terms: [callerDid, PERFORMED_VERB, activityType, taskId],
       content: { ...statement, id: statementId }, contentType: 'xapi:Statement',
       ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
       projections: ['rdf', 'vc', 'activity'],
+      ...(recipientPods.length ? { recipientPods } : {}),
     });
     res.json({ ok: true, recorded: true, statementId, performer: callerDid, taskId, taskName, activityType, success: p.success, durable: subjectPod, lensTenant: lensTenantFor(label), ...(sharedLattice ? { sharedLattice } : {}) });
   } catch (err) {
@@ -3302,9 +3295,15 @@ app.post('/agent/record-course-completion', async (req, res) => {
       const s = stmt as unknown as Record<string, unknown>;
       const withId = { ...s, id: (typeof s.id === 'string' && s.id) ? s.id : randomUUID() };
       statementIds.push(storeStatementInternal(withId, lensTenantFor(label)));
-      // Durable + self-sovereign: persist each cmi5 statement to the learner's own pod.
-      void persistRecordedStatement({ podUrl: subjectPod, agentDid: callerDid, statement: withId })
-        .catch(e => console.warn('[durable-record][record-course-completion]', (e as Error).message));
+      // Foundation-first: PGSL canonical — compose each cmi5 statement into the
+      // learner's shared lattice (lossless), no hand-authored RDF.
+      void composeIntoSharedLattice({
+        podUrl: subjectPod, agentDid: callerDid, label,
+        terms: [callerDid, String((withId.verb as { id?: string } | undefined)?.id ?? ''), courseActivityId],
+        content: withId, contentType: 'xapi:Statement',
+        ts: typeof (withId as { timestamp?: string }).timestamp === 'string' ? (withId as { timestamp?: string }).timestamp : undefined,
+        projections: ['rdf', 'vc', 'activity'],
+      });
       // Forward to the learner's OWN downstream targets (no-op if none set).
       forwardToTargets(lensTenantFor(label), withId)
         .catch(e => console.warn('[foxxi-forward][record-course-completion]', (e as Error).message));
@@ -3539,8 +3538,13 @@ function emitAgentActivity(args: {
       timestamp: new Date().toISOString(),
     };
     const id = storeStatementInternal(statement, lens);
-    void persistRecordedStatement({ podUrl: actorPod, agentDid: args.actorDid, statement: { ...statement, id } })
-      .catch(e => console.warn('[durable-record][agent-activity]', (e as Error).message));
+    // Foundation-first: PGSL canonical — compose the activity statement into the
+    // actor's shared lattice (lossless), no hand-authored RDF.
+    void composeIntoSharedLattice({
+      podUrl: actorPod, agentDid: args.actorDid, label,
+      terms: [args.actorDid, args.verbIri, args.objectId], content: { ...statement, id },
+      contentType: 'xapi:Statement', ts: String(statement.timestamp ?? ''), projections: ['rdf', 'vc', 'activity'],
+    });
     forwardToTargets(lens, { ...statement, id }).catch(() => {});
     return id;
   } catch (e) { console.warn('[agent-activity]', (e as Error).message); return null; }
@@ -3561,17 +3565,10 @@ function emitScormCompletion(play: ScormPlay, course: AgentScormCourse, passed: 
     ? base('passed', 'passed', { success: true, completion: true, score: { scaled: score } })
     : base('failed', 'failed', { success: false, completion: true, score: { scaled: score } }));
   const ids: string[] = [];
-  // Durable + self-sovereign: the SCORM outcome belongs on the learner's OWN
-  // pod, not just the in-memory lens view.
   const learnerPod = resolveSubjectPodUrl(play.learnerDid);
-  for (const s of stmts) {
-    ids.push(storeStatementInternal(s, play.lens));
-    void persistRecordedStatement({ podUrl: learnerPod, agentDid: play.learnerDid, statement: s })
-      .catch(e => console.warn('[durable-record][scorm-completion]', (e as Error).message));
-  }
-  // Foundation-first: compose the ACTUAL completion xAPI statements into the
-  // learner's shared lattice as the canonical record (lossless), so the ELR can be
-  // read from PGSL — the learner's DID + course activity become reused nodes.
+  for (const s of stmts) ids.push(storeStatementInternal(s, play.lens));
+  // Foundation-first: PGSL canonical — compose the ACTUAL completion xAPI
+  // statements into the learner's shared lattice (lossless), no hand-authored RDF.
   const learnerLabel = actorForPod(learnerPod, MESH_ACTOR_LABELS);
   for (const s of stmts) {
     void composeIntoSharedLattice({
@@ -3627,27 +3624,24 @@ app.post('/agent/scorm/author', async (req, res) => {
     try { parseManifest(buildAgentScormManifest(course)); }
     catch (e) { res.status(400).json({ error: `generated SCORM manifest did not parse on the SN runtime: ${(e as Error).message}` }); return; }
     agentScormCourses.set(course.courseId, course);
-    // Persist to the author's OWN pod — a self-sovereign, addressable, durable
-    // artifact (the Map is a cache; the pod is the system of record). Best-effort.
     const authorPod = resolveSubjectPodUrl(auth.callerDid, typeof auth.payload.subject_pod_url === 'string' ? auth.payload.subject_pod_url : undefined);
-    let courseIri;
-    try { courseIri = await persistScormCourse({ podUrl: authorPod, authorDid: auth.callerDid, courseId: course.courseId, course: course as unknown as Record<string, unknown> }); }
-    catch (e) { console.warn('[durable-record][scorm-course]', (e as Error).message); }
-    // Record the AUTHOR's own work as first-class activity (expressive verb) into
-    // their lens + pod — so a teacher's record reflects what they built, not nothing.
+    const courseIri = `urn:foxxi:course:${course.courseId}`;
+    // Record the AUTHOR's own work as first-class activity (expressive verb).
     const authoredStatementId = emitAgentActivity({
       actorDid: auth.callerDid, verbIri: AUTHORED_VERB, verbDisplay: 'authored',
-      objectId: courseIri ?? `urn:foxxi:course:${course.courseId}`, objectName: course.title,
+      objectId: courseIri, objectName: course.title,
       objectType: 'http://adlnet.gov/expapi/activities/course', result: { completion: true },
     });
-    // Foundation-first (additive): compose the authoring into the author's shared lattice.
+    // Foundation-first: PGSL canonical — compose the authoring into the author's
+    // shared lattice and store the FULL course losslessly (so it is launchable from
+    // the lattice, cross-restart + cross-agent), no hand-authored RDF.
     const sharedLattice = await composeIntoSharedLattice({
       podUrl: authorPod, agentDid: auth.callerDid, label: actorForPod(authorPod, MESH_ACTOR_LABELS),
-      terms: [auth.callerDid, AUTHORED_VERB, courseIri ?? `urn:foxxi:course:${course.courseId}`],
-      content: { courseId: course.courseId, title: course.title, masteryScore: course.masteryScore, scos: course.scos.map(s => ({ id: s.id, title: s.title })) },
+      terms: [auth.callerDid, AUTHORED_VERB, courseIri],
+      content: course as unknown as Record<string, unknown>,
       contentType: 'foxxi:Course', projections: ['rdf', 'vc', 'activity'],
     });
-    res.json({ ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, ...(courseIri ? { courseIri } : {}), ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) });
+    res.json({ ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, courseIri, ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 
@@ -3663,11 +3657,14 @@ app.post('/agent/scorm/launch', async (req, res) => {
     // pod; default to the caller's own pod (a self-authored course).
     let course = agentScormCourses.get(courseId);
     if (!course) {
+      const authorDid = (typeof p.author_did === 'string' && p.author_did) ? p.author_did : callerDid;
       const coursePod = (typeof p.course_pod === 'string' && p.course_pod)
         ? p.course_pod
-        : resolveSubjectPodUrl((typeof p.author_did === 'string' && p.author_did) ? p.author_did : callerDid,
-            typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
-      const loaded = await loadScormCourse({ podUrl: coursePod, courseId }).catch(() => null);
+        : resolveSubjectPodUrl(authorDid, typeof p.subject_pod_url === 'string' ? p.subject_pod_url : undefined);
+      // Foundation-first: load the full course from the author's PGSL lattice
+      // (canonical); fall back to the legacy hand-authored RDF for old courses.
+      const fromLattice = await loadCourseFromLattice(coursePod, authorDid, actorForPod(coursePod, MESH_ACTOR_LABELS), courseId).catch(() => null);
+      const loaded = fromLattice ?? await loadScormCourse({ podUrl: coursePod, courseId }).catch(() => null);
       if (loaded) { course = loaded as unknown as AgentScormCourse; agentScormCourses.set(courseId, course); }
     }
     if (!course) { res.status(404).json({ error: `no authored SCORM course '${courseId}' found in the catalog or on the author's pod — author it via /agent/scorm/author, or pass author_did/course_pod` }); return; }

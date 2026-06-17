@@ -120,6 +120,10 @@ export async function composeIntoSharedLattice(args: {
   contentType: string;
   ts?: string;
   projections?: readonly ProjectionKind[];
+  /** Additional recipient pods whose published key also wraps the encrypted lattice
+   *  (cross-seat owner-decrypt) — preserves the recipients feature of the removed
+   *  hand-authored record. */
+  recipientPods?: readonly string[];
   fetch?: FetchFn;
 }): Promise<ComposeResult | null> {
   try {
@@ -151,6 +155,10 @@ export async function composeIntoSharedLattice(args: {
       const recipients = [kp.publicKey];
       const ownerKey = await resolveAgentEncryptionKey(args.podUrl, { fetch: fetchFn }).catch(() => null);
       if (ownerKey && ownerKey !== kp.publicKey) recipients.push(ownerKey);
+      for (const pod of args.recipientPods ?? []) {
+        try { const k = await resolveAgentEncryptionKey(pod, { fetch: fetchFn }); if (k && !recipients.includes(k)) recipients.push(k); }
+        catch { /* skip an unresolvable cross-seat recipient — best-effort */ }
+      }
       await ensureContainer(`${args.podUrl.endsWith('/') ? args.podUrl : `${args.podUrl}/`}foxxi-lattice/`, fetchFn);
       await promoteInstanceEncrypted(pgsl, holonUri, latticeResourceUrl(args.podUrl), recipients, kp, fetchFn as unknown as typeof fetch);
       await fetchFn(proj.descriptorUrl, { method: 'PUT', headers: { 'Content-Type': 'text/turtle' }, body: proj.descriptorTurtle }).catch(() => undefined);
@@ -337,6 +345,18 @@ export function latticeStatements(label: string): Array<{ id: string; statement:
     const s = (a.content ?? {}) as Record<string, unknown>;
     return { id: String((s as { id?: unknown }).id ?? ''), statement: s, stored: String((s as { timestamp?: unknown }).timestamp ?? ''), voided: false };
   });
+}
+
+/** Load a full SCORM course from an agent's shared lattice by courseId — the
+ *  course is stored losslessly as a foxxi:Course content atom (so it is launchable
+ *  from PGSL, cross-restart + cross-agent). Loads from the pod on a cold miss. */
+export async function loadCourseFromLattice(podUrl: string, agentDid: string, label: string, courseId: string, fetchFn?: FetchFn): Promise<Record<string, unknown> | null> {
+  await ensureResident(podUrl, agentDid, label, fetchFn);
+  for (const a of latticeArtifacts(label, 'foxxi:Course')) {
+    const c = a.content as { courseId?: string } | null;
+    if (c && c.courseId === courseId) return c as Record<string, unknown>;
+  }
+  return null;
 }
 
 /** Best-effort: load an agent's lattice into residence (load-from-pod on a cold
