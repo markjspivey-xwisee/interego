@@ -167,8 +167,10 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
 
       {/* Interrogating a holon needs it resident on the bridge — true right after a
           live run (the lattice is fresh), but a recorded tour's holon may have been
-          evicted, so only offer it for the visitor's own live run. */}
-      {mode === 'live' && <InterrogatePanel events={shown} agents={srcAgents} />}
+          evicted, so only offer it for the visitor's own live run. Bind to the FULL
+          live event list (not the replay slice `shown`) so the target holon is stable
+          and the panel doesn't flicker / re-bind as the no-key replay cursor advances. */}
+      {mode === 'live' && <InterrogatePanel events={srcEvents} agents={srcAgents} />}
 
       {!hasRun && mode === 'live' && (
         <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 22 }}>

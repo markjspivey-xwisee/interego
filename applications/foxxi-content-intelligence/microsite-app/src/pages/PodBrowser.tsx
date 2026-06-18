@@ -276,6 +276,7 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
     setSelected(entry); setDetail(null); setDetailLoading(true); setView('turtle');
     try {
       const dr = await fetch(entry.descriptorUrl, { headers: { Accept: 'text/turtle' } });
+      if (!dr.ok) throw new Error(`descriptor HTTP ${dr.status}`); // else the error body renders as an empty/"legacy" descriptor
       const descriptorTurtle = await dr.text();
       const affs = parseAffordances(descriptorTurtle);
       const graphUrl = findGraphUrl(affs);
