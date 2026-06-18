@@ -132,17 +132,32 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
     }
   }
 
+  // Dedup by credential id — one VC is often discoverable via MORE THAN ONE
+  // descriptor (its graph + its projected/encrypted-holon descriptor both conform
+  // to the credential type), which would otherwise list the same credential twice
+  // in the wallet (and duplicate it in competency evidence). Collapse to one entry
+  // per id, preferring a verified copy. Entries without an id are kept as-is.
+  const byId = new Map<string, ClrEntry>();
+  const anon: ClrEntry[] = [];
+  for (const e of composedEntries) {
+    const id = String((e.credential as { id?: unknown }).id ?? '');
+    if (!id) { anon.push(e); continue; }
+    const prev = byId.get(id);
+    if (!prev || (!prev.verified && e.verified)) byId.set(id, e);
+  }
+  const dedupedEntries = [...byId.values(), ...anon];
+
   const exportedAt = new Date().toISOString();
   const summary = {
-    totalEntries: composedEntries.length,
-    verifiedEntries: composedEntries.filter(e => e.verified).length,
-    achievements: Array.from(new Set(composedEntries
+    totalEntries: dedupedEntries.length,
+    verifiedEntries: dedupedEntries.filter(e => e.verified).length,
+    achievements: Array.from(new Set(dedupedEntries
       .map(e => {
         const subj = e.credential.credentialSubject as { achievement?: { name?: string } };
         return subj.achievement?.name;
       })
       .filter((n): n is string => !!n))),
-    issuers: Array.from(new Set(composedEntries.map(e => e.credential.issuer).filter(Boolean))),
+    issuers: Array.from(new Set(dedupedEntries.map(e => e.credential.issuer).filter(Boolean))),
   };
 
   return {
@@ -151,7 +166,7 @@ export async function exportClr(config: FetchClrConfig): Promise<ClrEnvelope> {
     id: `urn:foxxi:clr:${slugDid(config.learnerDid)}:${Date.now()}`,
     holderDid: config.learnerDid,
     exportedAt,
-    credentialEntries: composedEntries,
+    credentialEntries: dedupedEntries,
     summary,
   };
 }

@@ -524,7 +524,7 @@ function buildCompetencies(
       modalStatus,
       basis,
       framework: d.framework,
-      evidence: [...d.performanceEvidence, ...d.credentialEvidence, ...d.trainingEvidence],
+      evidence: [...new Set([...d.performanceEvidence, ...d.credentialEvidence, ...d.trainingEvidence])],
       evidenceSummary: {
         trainingCompletions: d.trainingEvidence.length,
         performanceExecutions: perfExec,

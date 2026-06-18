@@ -12,6 +12,13 @@ const OK = '#2e9c4a', WARN = '#d08700', BAD = '#d23f31';
 const card: React.CSSProperties = { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 };
 const dim: React.CSSProperties = { fontSize: 11, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.06em' };
 const mono = "'JetBrains Mono', monospace";
+/** Only show the training/performance counts when there are any — a credential-basis
+ *  competency has 0/0 there (its evidence is the credential), so the bare summary reads
+ *  misleadingly "empty". */
+function evHasCounts(s?: Record<string, unknown>): boolean {
+  if (!s) return false;
+  return Number(s.trainingCompletions ?? 0) > 0 || Number(s.performanceExecutions ?? 0) > 0;
+}
 
 export function Stat({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
   return (
@@ -146,8 +153,10 @@ export function SubjectRecordView({ data }: { data: SubjectRecord }) {
               </summary>
               <div style={evBody}>
                 {c.framework && <div>framework: <code style={{ wordBreak: 'break-all' }}>{c.framework}</code></div>}
-                {c.evidenceSummary && <pre style={evPre}>{JSON.stringify(c.evidenceSummary, null, 2)}</pre>}
-                <div>{c.evidence.length} evidencing xAPI statement{c.evidence.length === 1 ? '' : 's'}{c.evidence.length === 0 ? ' recorded on this competency' : ':'}</div>
+                {evHasCounts(c.evidenceSummary) && <pre style={evPre}>{JSON.stringify(c.evidenceSummary, null, 2)}</pre>}
+                {(() => { const kind = c.basis === 'credential' ? 'credential' : 'evidencing xAPI statement'; return (
+                  <div>{c.evidence.length} {kind}{c.evidence.length === 1 ? '' : 's'}{c.evidence.length === 0 ? ' recorded on this competency' : ':'}</div>
+                ); })()}
                 {c.evidence.map((id, j) => <code key={j} style={{ fontFamily: mono, fontSize: 10.5, wordBreak: 'break-all' }}>{id}</code>)}
               </div>
             </details>
