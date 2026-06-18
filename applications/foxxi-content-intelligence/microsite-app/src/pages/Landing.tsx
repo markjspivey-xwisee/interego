@@ -41,8 +41,9 @@ export function Landing({ onTry, onAbout }: { onTry: (role: 'learner' | 'admin' 
         }}>
           The LRS, LMS, SCORM, cmi5, LTI 1.3 and OneRoster surfaces are emergent projections over
           the Interego substrate — one signed graph rendered through each standard's lens, not
-          parallel implementations. The xAPI projection passes the ADL 2.0 conformance suite
-          1435/1435.
+          parallel implementations. Don't take our word for it: the <strong>Compliance</strong> tab
+          lets you run Foxxi's xAPI 2.0 (IEEE 9274.1.1) and SCORM 2004 Sequencing &amp; Navigation
+          conformance batteries live against this deployment and read every check.
         </p>
         <div style={{ display: 'flex', gap: 12, marginTop: 30, flexWrap: 'wrap' }}>
           <PrimaryCta onClick={() => onTry('learner')}>Try it as a learner →</PrimaryCta>

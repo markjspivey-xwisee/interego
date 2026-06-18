@@ -53,6 +53,17 @@ import { randomUUID, createHash } from 'node:crypto';
     console.log(`[foxxi-bridge] pod-write auth installed (writes to ${tenantOrigin} carry Authorization header)`);
   }
 }
+// Resilience: a thrown error / rejected promise on a request path (e.g. a pod
+// write that the handler didn't await inside its try/catch) must NEVER take the
+// whole bridge process down — under Node 22 an unhandled rejection exits the
+// process with code 1, which is exactly how an authenticated /xapi/statements
+// POST was crashing the LRS. Log the stack and continue serving.
+process.on('unhandledRejection', (reason) => {
+  console.error('[foxxi-bridge] unhandledRejection (continuing):', reason instanceof Error ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[foxxi-bridge] uncaughtException (continuing):', (err as Error)?.stack ?? err);
+});
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
@@ -101,6 +112,8 @@ import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, ensureResident, loadCourseFromLattice, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { routeInterrogatives } from '@interego/pgsl';
+import { mintSessionToken } from '../src/auth.js';
+import { runXapiConformance, runScormConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -3353,6 +3366,32 @@ app.post('/agent/landing-tour', async (req, res) => {
   if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
   try { await writeLandingTour(v.doc); res.json({ ok: true, pinned: true, eventCount: v.doc.eventCount, pinnedAt: v.doc.pinnedAt }); }
   catch (e) { res.status(500).json({ ok: false, error: `failed to persist tour: ${(e as Error).message}` }); }
+});
+
+// ── Public compliance runners — the engine behind the compliance microsite ────
+// Read-only, no auth: anyone can RUN Foxxi's own conformance batteries against the
+// live deployment and get the full per-check report. The runners ARE the in-repo
+// harnesses (tools/xapi-conformance-smoke + tools/lms-conformance SN engine),
+// refactored to return structured reports (src/compliance-runner.ts).
+app.get('/compliance/suites', (_req, res) => {
+  res.json({ ok: true, suites: [
+    { id: 'xapi-2.0', title: 'xAPI 2.0 LRS Conformance', standard: 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017', run: '/compliance/xapi/run' },
+    { id: 'scorm-2004-sn', title: 'SCORM 2004 Sequencing & Navigation', standard: 'ADL SCORM 2004 4th Ed (IMS SS + CAM + RTE)', run: '/compliance/scorm/run' },
+  ] });
+});
+app.get('/compliance/xapi/run', async (_req, res) => {
+  try {
+    const ranAt = new Date().toISOString();
+    const baseUrl = process.env.BRIDGE_DEPLOYMENT_URL ?? `http://localhost:${process.env.PORT ?? 6080}`;
+    const webId = process.env.FOXXI_TEST_WEBID ?? 'https://interego-acme-id.livelysky-8b81abb0.eastus.azurecontainerapps.io/users/jliu/profile/card#me';
+    const userId = process.env.FOXXI_TEST_USERID ?? 'u-joshua';
+    const token = await mintSessionToken({ webId, userId, ttlMs: 10 * 60 * 1000 });
+    res.json({ ok: true, report: await runXapiConformance({ baseUrl, token, webId, userId, ranAt }) });
+  } catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
+});
+app.get('/compliance/scorm/run', (_req, res) => {
+  try { res.json({ ok: true, report: runScormConformance(new Date().toISOString()) }); }
+  catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
 });
 
 app.post('/agent/record-performance', async (req, res) => {

@@ -23,11 +23,17 @@ done, the rest is roadmap · **Roadmap** = designed, not built.
 | Capability | Status | Evidence |
 |---|---|---|
 | Full LRS (Statements, State, Activity/Agent Profile, Activities, Agents, About) | **Conformant** | `src/xapi-lrs.ts` |
-| ADL `lrs-conformance-test-suite` (xAPI 2.0 battery) | **Conformant — 1435 / 1435** | run against the live production endpoint, 0 failures |
-| Statement validation, query-parameter validation, concurrency (ETag), multipart + signed statements, voided-statement retrieval | **Conformant** | covered by the 1435 suite |
+| In-repo xAPI 2.0 conformance battery — about/version, Profile doc, statement POST + round-trip, immutability (409), voiding, filtered queries, State ETag concurrency | **Conformant — 26 / 26, live, re-runnable by anyone** | `src/compliance-runner.ts` (`runXapiConformance`) + `tools/xapi-conformance-smoke.mjs`; run it yourself from the deployed microsite's **Compliance** tab → `GET /compliance/xapi/run`, or `FOXXI_BRIDGE_URL=<bridge> npx tsx tools/xapi-conformance-smoke.mjs` |
+| §4 statement data-model validation (UUID/IRI/timestamp/duration/lang-tag, IFI rules, voiding-verb-requires-StatementRef, …) enforced on every inbound statement | **Conformant** | `src/xapi-validate.ts` — 400s malformed statements |
 
-Foxxi-as-LRS is a genuinely conformant xAPI 2.0 LRS — re-verifiable any
-time with `node bin/console_runner.js -x 2.0.0 -e <bridge>/xapi -a -u <u> -p <p>`.
+Foxxi-as-LRS is a genuinely conformant xAPI 2.0 LRS — and you don't have
+to trust this table: the **Compliance** microsite runs the battery live
+against the deployment and shows every check pass/fail with its spec
+citation. The broader ADL `lrs-conformance-test-suite` (the ~1400-case
+external Mocha battery) is a separate, heavier run against the same
+`/xapi` surface (`node bin/console_runner.js -x 2.0.0 -e <bridge>/xapi -a
+-u <u> -p <p>`); it is **not vendored in this repo**, so the in-repo,
+always-runnable evidence above is what the microsite proves.
 
 ## 2. cmi5 / IEEE 9274.2.1 — the LMS launch standard
 
