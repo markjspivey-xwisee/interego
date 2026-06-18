@@ -40,9 +40,13 @@ Foxxi ships an executable conformance check that exercises every xAPI
 
 ```bash
 FOXXI_BRIDGE_URL=https://your-bridge.example \
-  node --experimental-strip-types \
-       applications/foxxi-content-intelligence/tools/xapi-conformance-smoke.mjs
+  npx tsx applications/foxxi-content-intelligence/tools/xapi-conformance-smoke.mjs
 ```
+
+The CLI is a thin wrapper over the shared runner `src/compliance-runner.ts`
+(`runXapiConformance`) — the same code the bridge's `GET /compliance/xapi/run`
+endpoint and the public **Compliance** microsite run, so there is one source of
+truth for the checks. Run it live yourself from the microsite, no clone required.
 
 26 checks covering: §3.1 version negotiation, §4.1 statement POST +
 required fields, §4.1.1 immutability (idempotent re-POST + 409 on
