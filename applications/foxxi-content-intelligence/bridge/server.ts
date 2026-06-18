@@ -3238,6 +3238,76 @@ app.get('/agent/lattice/:label/holon', (req, res) => {
   res.json({ ok: true, label: req.params.label, holon, as, availableProjections: ['rdf', 'vc', 'activity'], projection, artifact });
 });
 
+// ── Landing tour: pin a REAL completed run as the no-key autoplay ─────────────
+// A no-key visitor watches a recorded run — real artifacts AND real agent
+// reasoning, captured from an ACTUAL run (the visitor's DemoEvent stream). Nothing
+// synthetic. Pinning is OPERATOR-GATED (FOXXI_LANDING_PIN_SECRET): a public landing
+// page must not be defaceable by anonymous writes. Every visitor still gets the
+// no-key REPLAY of their OWN session client-side; this is only the seeded autoplay.
+// Persisted to the tenant pod (durable across restarts); the pin/clear secret rides
+// in the JSON body (the CORS allow-list permits Content-Type, not custom headers).
+const LANDING_TOUR_URL = tenantPodUrl
+  ? `${tenantPodUrl.endsWith('/') ? tenantPodUrl : `${tenantPodUrl}/`}landing-tour.json`
+  : '';
+const LANDING_PIN_SECRET = process.env.FOXXI_LANDING_PIN_SECRET ?? '';
+let landingTourCache: Record<string, unknown> | null | undefined; // undefined=not loaded, null=none
+
+async function readLandingTour(): Promise<Record<string, unknown> | null> {
+  if (landingTourCache !== undefined) return landingTourCache;
+  if (!LANDING_TOUR_URL) { landingTourCache = null; return null; }
+  try {
+    const r = await fetch(LANDING_TOUR_URL, { headers: { accept: 'application/json' } });
+    if (!r.ok) { landingTourCache = null; return null; }
+    landingTourCache = (await r.json()) as Record<string, unknown>;
+    return landingTourCache;
+  } catch { landingTourCache = null; return null; }
+}
+async function writeLandingTour(doc: Record<string, unknown> | null): Promise<void> {
+  landingTourCache = doc;
+  if (!LANDING_TOUR_URL) return;
+  if (doc === null) { await fetch(LANDING_TOUR_URL, { method: 'DELETE' }).catch(() => undefined); return; }
+  const r = await fetch(LANDING_TOUR_URL, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(doc) });
+  if (!r.ok) throw new Error(`pod write ${r.status}`);
+}
+/** A run is tour-worthy only if it actually completed the full 3-agent arc. */
+function validateTourRun(body: any): { ok: true; doc: Record<string, unknown> } | { ok: false; error: string } {
+  const events = Array.isArray(body?.events) ? body.events : null;
+  const agents = body?.agents && typeof body.agents === 'object' ? body.agents : null;
+  if (!events || !agents) return { ok: false, error: 'expected { agents, events }' };
+  if (events.length < 10) return { ok: false, error: `run too short (${events.length} events) — not a complete run` };
+  const kinds = new Set(events.map((e: any) => e?.kind));
+  const ags = new Set(events.map((e: any) => e?.agent));
+  if (!kinds.has('done')) return { ok: false, error: 'run never reached "done" — only a completed run can be pinned' };
+  if (!kinds.has('credential')) return { ok: false, error: 'no credential was issued — not a complete run' };
+  if (!ags.has('A') || !ags.has('B') || !ags.has('C')) return { ok: false, error: 'run is missing one of the three agents (A/B/C) — Phase 4 must have run' };
+  if (!agents.A || !agents.B || !agents.C) return { ok: false, error: 'agents must include A, B and C' };
+  const size = JSON.stringify({ events, agents }).length;
+  if (size > 8_000_000) return { ok: false, error: `payload too large (${size} bytes)` };
+  return { ok: true, doc: { agents: { A: agents.A, B: agents.B, C: agents.C }, events, eventCount: events.length, pinnedAt: new Date().toISOString() } };
+}
+
+// GET — what a no-key visitor's landing autoplay fetches (open; the tour is public).
+app.get('/agent/landing-tour', async (_req, res) => {
+  const tour = await readLandingTour();
+  if (!tour) { res.json({ ok: true, present: false, pinningEnabled: !!LANDING_PIN_SECRET }); return; }
+  res.json({ ok: true, present: true, tour });
+});
+// POST — pin a completed run (or {clear:true} to unpin). Operator-gated by pin.
+app.post('/agent/landing-tour', async (req, res) => {
+  if (!LANDING_PIN_SECRET) { res.status(503).json({ ok: false, error: 'pinning disabled — set FOXXI_LANDING_PIN_SECRET on the bridge' }); return; }
+  const pin = typeof req.body?.pin === 'string' ? req.body.pin : '';
+  if (pin !== LANDING_PIN_SECRET) { res.status(403).json({ ok: false, error: 'invalid or missing pin' }); return; }
+  if (req.body?.clear === true) {
+    try { await writeLandingTour(null); res.json({ ok: true, cleared: true }); }
+    catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
+    return;
+  }
+  const v = validateTourRun(req.body);
+  if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
+  try { await writeLandingTour(v.doc); res.json({ ok: true, pinned: true, eventCount: v.doc.eventCount, pinnedAt: v.doc.pinnedAt }); }
+  catch (e) { res.status(500).json({ ok: false, error: `failed to persist tour: ${(e as Error).message}` }); }
+});
+
 app.post('/agent/record-performance', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);

@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useSyncExternalStore } from 'react';
 import { runDemo } from '../demo/demo-runtime.js';
-import { getDemoState, subscribeDemo, clearDemo, type DemoEvent, type EventKind } from '../demo/demo-session.js';
+import { getDemoState, subscribeDemo, clearDemo, type DemoEvent, type EventKind, type DemoAgent } from '../demo/demo-session.js';
 import { BRIDGE_URL } from '../bridge-client.js';
+
+/** A pinned landing tour = a REAL completed run's captured event stream + its agents. */
+interface TourFixture { agents: { A?: DemoAgent; B?: DemoAgent; C?: DemoAgent }; events: DemoEvent[]; eventCount?: number; pinnedAt?: string }
 
 type Lens = 'dev' | 'le' | 'pm';
 
@@ -24,32 +27,66 @@ const KIND_COLOR: Record<EventKind, string> = {
 export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onReports?: () => void }) {
   const [apiKey, setApiKey] = useState('');
   const [lens, setLens] = useState<Lens>('dev');
-  const [replayN, setReplayN] = useState<number | null>(null);   // no-key replay cursor (null = live)
+  const [replayN, setReplayN] = useState<number | null>(null);   // reveal cursor (null = not playing)
+  const [tour, setTour] = useState<TourFixture | null>(null);    // pinned landing tour (a REAL run)
+  const [mode, setMode] = useState<'live' | 'tour'>('live');     // which event source the page shows
+  const [pinMsg, setPinMsg] = useState('');                      // operator pin feedback
   const state = useSyncExternalStore(subscribeDemo, getDemoState);
   const running = state.status === 'running';
 
+  // Fetch the pinned landing tour once — a no-key visitor can watch a real run.
+  useEffect(() => {
+    let alive = true;
+    fetch(`${BRIDGE_URL}/agent/landing-tour`).then(r => r.json()).then(j => {
+      if (alive && j?.present && Array.isArray(j.tour?.events) && j.tour.events.length) setTour(j.tour as TourFixture);
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
+
   async function run() {
     if (!apiKey.trim() || running) return;
-    setReplayN(null);
+    setMode('live'); setReplayN(null);
     await runDemo(apiKey.trim()); // writes to the shared store; never throws
   }
 
-  // No-key replay: incrementally reveal the last run's REAL event stream (no key, no
-  // bridge calls) — re-watch the wow for a screen-share without spending a token.
+  // The active event source: the visitor's OWN live run, or the pinned tour.
+  const srcEvents = mode === 'tour' && tour ? tour.events : state.events;
+  const srcAgents = mode === 'tour' && tour ? tour.agents : state.agents;
+
+  // Incremental reveal (no key, no bridge calls) — drives BOTH the own-run replay
+  // and the pinned-tour autoplay. Re-watch the wow without spending a token.
   useEffect(() => {
     if (replayN == null) return;
-    if (replayN >= state.events.length) { const t = setTimeout(() => setReplayN(null), 1800); return () => clearTimeout(t); }
+    if (replayN >= srcEvents.length) { const t = setTimeout(() => setReplayN(null), 1800); return () => clearTimeout(t); }
     const t = setTimeout(() => setReplayN(n => (n == null ? null : n + 1)), 480);
     return () => clearTimeout(t);
-  }, [replayN, state.events.length]);
+  }, [replayN, srcEvents.length]);
 
-  const shown = replayN == null ? state.events : state.events.slice(0, replayN);
+  const shown = replayN == null ? srcEvents : srcEvents.slice(0, replayN);
   const visible = (a: 'A' | 'B' | 'C') => shown.filter(e => e.agent === a && LENS_KINDS[lens].has(e.kind));
   const phase = [...shown].reverse().find(e => e.kind === 'phase');
   const done = shown.find(e => e.kind === 'done');
   const credential = shown.find(e => e.kind === 'credential');
-  const showC = !!state.agents.C && shown.some(e => e.agent === 'C');
+  const showC = !!srcAgents.C && shown.some(e => e.agent === 'C');
   const hasRun = state.events.length > 0 || state.status !== 'idle';
+  const liveComplete = !running && !!state.events.find(e => e.kind === 'done') && !!state.agents.C; // a pinnable run
+
+  function watchTour() { setMode('tour'); setReplayN(0); }
+  function exitTour() { setMode('live'); setReplayN(null); }
+  async function pinTour() {
+    const pin = window.prompt('Operator pin — publish THIS run as the no-key landing tour for all visitors:');
+    if (!pin) return;
+    setPinMsg('pinning…');
+    try {
+      const r = await fetch(`${BRIDGE_URL}/agent/landing-tour`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ pin, agents: state.agents, events: state.events }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j?.pinned) { setPinMsg(`✓ pinned as the landing tour (${j.eventCount} events) — no-key visitors now see this run`); setTour({ agents: state.agents, events: state.events }); }
+      else setPinMsg(`✗ ${j?.error ?? `HTTP ${r.status}`}`);
+    } catch (e) { setPinMsg(`✗ ${(e as Error).message}`); }
+  }
 
   return (
     <div style={{ maxWidth: 1180, margin: '0 auto', padding: '28px 24px 80px' }}>
@@ -70,13 +107,31 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
         <button onClick={run} disabled={running || !apiKey.trim()} style={{ ...runBtn, opacity: running || !apiKey.trim() ? 0.5 : 1 }}>
           {running ? 'Running…' : hasRun ? 'Run again' : 'Run the demo'}
         </button>
-        {hasRun && !running && replayN == null && <button onClick={() => setReplayN(0)} style={{ ...pill, borderColor: 'var(--accent)', color: 'var(--accent)' }}>&#9654; Replay (no key)</button>}
-        {replayN != null && <button onClick={() => setReplayN(null)} style={{ ...pill, borderColor: 'var(--border)' }}>&#9632; Stop replay</button>}
-        {hasRun && !running && <button onClick={clearDemo} style={{ ...pill, borderColor: 'var(--border)' }}>Clear</button>}
+        {/* Watch the pinned tour (a real run) — for no-key visitors */}
+        {tour && mode === 'live' && !running && <button onClick={watchTour} style={{ ...pill, borderColor: 'var(--accent)', color: 'var(--accent)' }}>&#9654; Watch a recorded run (no key)</button>}
+        {mode === 'tour' && <button onClick={exitTour} style={{ ...pill, borderColor: 'var(--border)' }}>&#10005; Exit recorded run</button>}
+        {/* Replay the visitor's OWN run */}
+        {mode === 'live' && hasRun && !running && replayN == null && <button onClick={() => setReplayN(0)} style={{ ...pill, borderColor: 'var(--accent)', color: 'var(--accent)' }}>&#9654; Replay (no key)</button>}
+        {mode === 'live' && replayN != null && <button onClick={() => setReplayN(null)} style={{ ...pill, borderColor: 'var(--border)' }}>&#9632; Stop replay</button>}
+        {/* Operator: pin this completed run as the public landing tour */}
+        {liveComplete && mode === 'live' && replayN == null && <button onClick={pinTour} style={{ ...pill, borderColor: 'var(--border)' }}>&#128204; Pin as landing tour</button>}
+        {mode === 'live' && hasRun && !running && <button onClick={clearDemo} style={{ ...pill, borderColor: 'var(--border)' }}>Clear</button>}
       </div>
+      {pinMsg && <div style={{ fontSize: 12, color: pinMsg.startsWith('✗') ? '#dc2626' : 'var(--accent)', marginTop: 4 }}>{pinMsg}</div>}
       <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
         Your key calls <code style={code}>api.anthropic.com</code> directly from this browser tab; it is never sent to our servers. Results persist as you switch tabs.
       </div>
+
+      {tour && !hasRun && mode === 'live' && (
+        <div style={{ margin: '14px 0 0', padding: '11px 15px', background: 'var(--panel)', border: '1px solid var(--accent)', borderRadius: 8, fontSize: 13, color: 'var(--text)' }}>
+          &#9654; A <strong>recorded run</strong> is available — <button onClick={watchTour} style={{ ...linkBtn, fontSize: 13, color: 'var(--accent)' }}>watch it now</button> with no key. It’s a real prior run (real agents, real artifacts, real reasoning), replayed locally — enter your key above to run your own live.
+        </div>
+      )}
+      {mode === 'tour' && (
+        <div style={{ margin: '14px 0 0', padding: '11px 15px', background: '#fffbeb', border: '1px solid #d97706', borderRadius: 8, fontSize: 13, color: '#92400e' }}>
+          &#9654; <strong>Recorded run.</strong> This is a real prior run replayed locally (no key, no live calls). To run your own live, <button onClick={exitTour} style={{ ...linkBtn, fontSize: 13, color: '#92400e' }}>exit</button> and enter your Anthropic key.
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '22px 0 4px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-dim)' }}>Lens</span>
@@ -99,14 +154,14 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: showC ? '1fr 1fr 1fr' : '1fr 1fr', gap: 16, marginTop: 16 }}>
-        <AgentColumn label="Agent A — teacher · issuer · observer" did={state.agents.A?.did} events={visible('A')} running={running} />
-        <AgentColumn label="Agent B — learner · performer" did={state.agents.B?.did} events={visible('B')} running={running} />
-        {showC && <AgentColumn label="Agent C — independent verifier (no prior relationship)" did={state.agents.C?.did} events={visible('C')} running={running} />}
+        <AgentColumn label="Agent A — teacher · issuer · observer" did={srcAgents.A?.did} events={visible('A')} running={running} />
+        <AgentColumn label="Agent B — learner · performer" did={srcAgents.B?.did} events={visible('B')} running={running} />
+        {showC && <AgentColumn label="Agent C — independent verifier (no prior relationship)" did={srcAgents.C?.did} events={visible('C')} running={running} />}
       </div>
 
-      {!hasRun && (
+      {!hasRun && mode === 'live' && (
         <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 22 }}>
-          Enter your key and press <em>Run the demo</em>. The two agents will appear and start acting against the live bridge.
+          Enter your key and press <em>Run the demo</em>. The two agents will appear and start acting against the live bridge.{tour && <> Or <button onClick={watchTour} style={{ ...linkBtn, fontSize: 13 }}>watch a recorded run</button> first — no key needed.</>}
         </p>
       )}
     </div>
