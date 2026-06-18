@@ -1,4 +1,4 @@
-import React, { useState, useSyncExternalStore } from 'react';
+import React, { useState, useEffect, useSyncExternalStore } from 'react';
 import { runDemo } from '../demo/demo-runtime.js';
 import { getDemoState, subscribeDemo, clearDemo, type DemoEvent, type EventKind } from '../demo/demo-session.js';
 import { BRIDGE_URL } from '../bridge-client.js';
@@ -24,18 +24,31 @@ const KIND_COLOR: Record<EventKind, string> = {
 export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onReports?: () => void }) {
   const [apiKey, setApiKey] = useState('');
   const [lens, setLens] = useState<Lens>('dev');
+  const [replayN, setReplayN] = useState<number | null>(null);   // no-key replay cursor (null = live)
   const state = useSyncExternalStore(subscribeDemo, getDemoState);
   const running = state.status === 'running';
 
   async function run() {
     if (!apiKey.trim() || running) return;
+    setReplayN(null);
     await runDemo(apiKey.trim()); // writes to the shared store; never throws
   }
 
-  const visible = (a: 'A' | 'B' | 'C') => state.events.filter(e => e.agent === a && LENS_KINDS[lens].has(e.kind));
-  const phase = [...state.events].reverse().find(e => e.kind === 'phase');
-  const done = state.events.find(e => e.kind === 'done');
-  const credential = state.events.find(e => e.kind === 'credential');
+  // No-key replay: incrementally reveal the last run's REAL event stream (no key, no
+  // bridge calls) — re-watch the wow for a screen-share without spending a token.
+  useEffect(() => {
+    if (replayN == null) return;
+    if (replayN >= state.events.length) { const t = setTimeout(() => setReplayN(null), 1800); return () => clearTimeout(t); }
+    const t = setTimeout(() => setReplayN(n => (n == null ? null : n + 1)), 480);
+    return () => clearTimeout(t);
+  }, [replayN, state.events.length]);
+
+  const shown = replayN == null ? state.events : state.events.slice(0, replayN);
+  const visible = (a: 'A' | 'B' | 'C') => shown.filter(e => e.agent === a && LENS_KINDS[lens].has(e.kind));
+  const phase = [...shown].reverse().find(e => e.kind === 'phase');
+  const done = shown.find(e => e.kind === 'done');
+  const credential = shown.find(e => e.kind === 'credential');
+  const showC = !!state.agents.C && shown.some(e => e.agent === 'C');
   const hasRun = state.events.length > 0 || state.status !== 'idle';
 
   return (
@@ -57,6 +70,8 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
         <button onClick={run} disabled={running || !apiKey.trim()} style={{ ...runBtn, opacity: running || !apiKey.trim() ? 0.5 : 1 }}>
           {running ? 'Running…' : hasRun ? 'Run again' : 'Run the demo'}
         </button>
+        {hasRun && !running && replayN == null && <button onClick={() => setReplayN(0)} style={{ ...pill, borderColor: 'var(--accent)', color: 'var(--accent)' }}>&#9654; Replay (no key)</button>}
+        {replayN != null && <button onClick={() => setReplayN(null)} style={{ ...pill, borderColor: 'var(--border)' }}>&#9632; Stop replay</button>}
         {hasRun && !running && <button onClick={clearDemo} style={{ ...pill, borderColor: 'var(--border)' }}>Clear</button>}
       </div>
       <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
@@ -83,10 +98,10 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: state.agents.C ? '1fr 1fr 1fr' : '1fr 1fr', gap: 16, marginTop: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: showC ? '1fr 1fr 1fr' : '1fr 1fr', gap: 16, marginTop: 16 }}>
         <AgentColumn label="Agent A — teacher · issuer · observer" did={state.agents.A?.did} events={visible('A')} running={running} />
         <AgentColumn label="Agent B — learner · performer" did={state.agents.B?.did} events={visible('B')} running={running} />
-        {state.agents.C && <AgentColumn label="Agent C — independent verifier (no prior relationship)" did={state.agents.C?.did} events={visible('C')} running={running} />}
+        {showC && <AgentColumn label="Agent C — independent verifier (no prior relationship)" did={state.agents.C?.did} events={visible('C')} running={running} />}
       </div>
 
       {!hasRun && (
@@ -122,6 +137,7 @@ function artifactsOf(data: unknown): Array<{ label: string; text?: string; json?
   else if (d?.artifact) out.push({ label: 'artifact · xAPI Profile fragment', json: d.artifact });
   if (d?.descriptor) out.push({ label: 'self-descriptive descriptor (cg:StandardsExtension)', json: d.descriptor });
   if (d?.elr?.competencies) out.push({ label: 'ELR competencies', json: d.elr.competencies });
+  if (d?.justifiedBy) out.push({ label: 'chain of custody → justified by verification holon', text: String(d.justifiedBy) });
   if (d?.credential || d?.issuerDid) out.push({ label: 'credential (OB3 / VC)', json: d.credential ?? d });
   if (d?.graded) out.push({ label: 'assessment grading', json: d.graded });
   if (d?._guidance) out.push({ label: 'performance support (in the flow)', json: d._guidance });
@@ -196,6 +212,11 @@ function VerificationMatrix({ d }: { d: any }) {
           </div>
         ))}
       </div>
+      {d.verificationHolonUri ? (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 3 }}>
+          &#8627; published as a dereferenceable <strong>cg:Verification</strong> holon (chain of custody: credential &rarr; verification &rarr; evidence) &mdash; explore it in <em>Reports &rarr; Lattice (PGSL)</em>.
+        </div>
+      ) : null}
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, lineHeight: 1.45 }}>
         Engine grading + shape conformance are tamper-evident; the performance outcome is self‑attested by the subject. {n > 0 ? `${n} evidencing statement${n === 1 ? '' : 's'} on the subject’s own pod.` : ''}
       </div>

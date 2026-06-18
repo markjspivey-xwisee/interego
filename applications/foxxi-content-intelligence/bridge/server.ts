@@ -2808,6 +2808,9 @@ app.post('/agent/issue-credential', async (req, res) => {
       recipient: { did: recipientDid, podUrl: recipientPod },
       competency: { id: competencyId, name: competencyName },
       descriptorUrl: result.publishResult.descriptorUrl,
+      // Chain of custody: link the credential to the dereferenceable verification
+      // holon that justified it (passed from the prior verify_extension).
+      ...(typeof p.justified_by === 'string' && p.justified_by ? { justifiedBy: p.justified_by } : {}),
       ...(credentialedStatementId ? { credentialedStatementId } : {}),
       ...(sharedLattice ? { sharedLattice } : {}),
       vc: result.vc,
@@ -2902,6 +2905,22 @@ app.post('/agent/verify-extension', async (req, res) => {
     const evidence = statements.map(stmtOf)
       .filter(st => ['/completed', '/passed'].some(v => String(st.verb?.id ?? '').endsWith(v)) || String(st.verb?.id ?? '') === PERFORMED_VERB)
       .map(st => st.id);
+    // Publish the verification as a dereferenceable cg:Verification holon in the
+    // VERIFIER's own lattice — the chain of custody (credential → this verification
+    // → the evidence statements). Composed from PGSL like every other artifact.
+    let verificationHolonUri: string | undefined;
+    if (verified) {
+      try {
+        const verifierPod = resolveSubjectPodUrl(auth.callerDid);
+        const vh = await composeIntoSharedLattice({
+          podUrl: verifierPod, agentDid: auth.callerDid, label: actorForPod(verifierPod, MESH_ACTOR_LABELS),
+          terms: [auth.callerDid, 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#verbs/verified', subjectDid, iri ?? `urn:foxxi:competency:${(name || 'extension').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`],
+          content: { type: 'foxxi:Verification', verifier: auth.callerDid, subject: subjectDid, checks: { independentlyGraded, gradedScore, performanceRecorded, selfAttestedPerformance, shapeConformant }, evidence, ...(iri ? { iri, conformsTo } : {}) },
+          contentType: 'foxxi:Verification', projections: ['rdf', 'vc', 'activity'],
+        });
+        verificationHolonUri = vh?.holonUri;
+      } catch { /* best-effort */ }
+    }
     res.json({
       ok: true,
       verifiedBy: auth.callerDid,
@@ -2909,6 +2928,7 @@ app.post('/agent/verify-extension', async (req, res) => {
       verified,
       checks: { independentlyGraded, gradedScore, performanceRecorded, selfAttestedPerformance, shapeConformant },
       ...(iri ? { iri, conformsTo } : {}),
+      ...(verificationHolonUri ? { verificationHolonUri } : {}),
       evidence,
       note: independentlyGraded
         ? `Independently verified from ${subjectDid}'s own pod: engine-graded course completion${gradedScore != null ? ` (score ${gradedScore})` : ''}${performanceRecorded ? ' + a domain-typed StandardsExtension performance' : ''}${name ? ` + the '${name}' extension conforms to the agp:StandardsExtension shape` : ''}.${selfAttestedPerformance ? ' NOTE: the performance OUTCOME is self-attested by the subject; the credentialing decision rests on the tamper-evident engine grading + shape conformance.' : ''}`

@@ -108,6 +108,7 @@ export const TOOLS: Record<string, ToolDef> = {
       recipient_did: str('did:ethr of the recipient.'),
       competency_name: str('The competency the credential attests.'),
       achievement_description: str('What the recipient demonstrated.'),
+      justified_by: str('The verificationHolonUri returned by verify_extension — links the credential to its verification (chain of custody).'),
     }, required: ['recipient_did', 'competency_name'] },
   },
 };
@@ -145,7 +146,7 @@ export async function dispatchTool(name: string, input: Record<string, unknown>,
     case 'review_record':
       return postSigned('/agent/review-record', agent, { subject_did: input.subject_did ?? ctx.subjectDid, include_clr: input.include_clr ?? false });
     case 'issue_credential':
-      return postSigned('/agent/issue-credential', agent, { recipient_did: input.recipient_did ?? ctx.subjectDid, competency_name: input.competency_name, achievement_description: input.achievement_description });
+      return postSigned('/agent/issue-credential', agent, { recipient_did: input.recipient_did ?? ctx.subjectDid, competency_name: input.competency_name, achievement_description: input.achievement_description, justified_by: input.justified_by });
     default:
       return { ok: false, status: 400, body: { error: `unknown tool ${name}` } };
   }

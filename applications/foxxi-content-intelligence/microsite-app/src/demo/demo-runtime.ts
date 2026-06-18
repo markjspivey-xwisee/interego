@@ -73,7 +73,7 @@ export async function runDemo(apiKey: string): Promise<void> {
     emit({ agent: 'B', kind: 'identity', title: 'fresh agent B (learner · performer)', detail: B.did });
 
     emit({ agent: 'sys', kind: 'phase', title: 'Phase 1 — Agent A authors a custom xAPI extension + a SCORM course that teaches the skill' });
-    await runAgentLoop({
+    try { await runAgentLoop({
       apiKey, system: A_SYSTEM,
       goal: `Your goal: teach another agent the capability "extend a standard (xAPI/IEEE-LER/ADL-TLA) in Interego/Foxxi".\n` +
         `1) First author the supporting xAPI vocabulary with extend_standards (kind XapiProfileFragment, a sensible name + definition).\n` +
@@ -83,35 +83,36 @@ export async function runDemo(apiKey: string): Promise<void> {
       dispatch: makeDispatch(A, 'A', {}),
       onThinking: t => emit({ agent: 'A', kind: 'thinking', title: 'reasoning', detail: t }),
       onToolCall: () => {}, onToolResult: () => {}, maxSteps: 8,
-    });
+    }); } catch (e) { emit({ agent: 'A', kind: 'error', title: 'phase 1 error (continuing)', detail: (e as Error).message }); }
 
-    emit({ agent: 'sys', kind: 'phase', title: 'Phase 2 — Agent B completes the assigned course, then performs the learned skill' });
-    await runAgentLoop({
+    emit({ agent: 'sys', kind: 'phase', title: 'Phase 2 — Agent B completes the course, performs the skill, then proves TRANSFER on an untaught standard' });
+    try { await runAgentLoop({
       apiKey, system: B_SYSTEM,
       goal: `You have been assigned SCORM course "${courseId}", authored by ${A.did}.\n` +
         `1) Launch it with scorm_launch (course_id "${courseId}", author_did "${A.did}").\n` +
         `2) Read the SCO body, then call scorm_submit with your answers (array of short strings, in order). Repeat scorm_submit until the response says done:true. Aim to PASS.\n` +
-        `3) Now demonstrate the skill for real: call extend_standards to author your own extension, then record_performance (task_name about extending a standard, success true, quality ~0.9, activity_type "${STD_EXT_IRI}").\n` +
-        `Reply DONE when you have completed the course AND performed the skill.`,
+        `3) Demonstrate the skill: call extend_standards (kind XapiContextExtension) to author your own extension, then record_performance (task_name about extending a standard, success true, quality ~0.9, activity_type "${STD_EXT_IRI}").\n` +
+        `4) Now prove TRANSFER, not memorization: extend a DIFFERENT, UNTAUGHT standard — call extend_standards with kind "LerTerm" OR "TlaTerm" (the course only taught the xAPI kind), a NEW name + definition, then record_performance for it (activity_type "${STD_EXT_IRI}"). Generalizing to a standard nobody taught you is the real evidence you LEARNED rather than parroted.\n` +
+        `Reply DONE when you have passed the course, performed the skill, AND extended an untaught standard.`,
       tools: toolList(['get_guidance', 'scorm_launch', 'scorm_submit', 'extend_standards', 'record_performance'] as ToolName[]),
       dispatch: makeDispatch(B, 'B', { authorDid: A.did }),
       onThinking: t => emit({ agent: 'B', kind: 'thinking', title: 'reasoning', detail: t }),
-      onToolCall: () => {}, onToolResult: () => {}, maxSteps: 12,
-    });
+      onToolCall: () => {}, onToolResult: () => {}, maxSteps: 14,
+    }); } catch (e) { emit({ agent: 'B', kind: 'error', title: 'phase 2 error (continuing)', detail: (e as Error).message }); }
 
     emit({ agent: 'sys', kind: 'phase', title: 'Phase 3 — Agent A verifies the capability transferred, then issues Agent B a credential' });
-    await runAgentLoop({
+    try { await runAgentLoop({
       apiKey, system: A_SYSTEM,
       goal: `Agent B (${B.did}) was supposed to learn and demonstrate "extend a standard".\n` +
-        `1) Read B's record: call review_record with subject_did "${B.did}" (no admin token). Note the competencies AND the name of the extension B authored (from its performance record / ELR — e.g. "collaborationDepth").\n` +
-        `2) Do your DUE DILIGENCE before crediting — do NOT credential on B's self-report alone: call verify_extension (subject_did "${B.did}", name = the extension B authored, kind "XapiContextExtension"). It independently checks, from B's OWN pod, an engine-graded completion + a domain-typed performance + that the extension conforms to the agp:StandardsExtension shape. Proceed ONLY if it returns verified:true. Note: the performance OUTCOME may be self-attested — rely on the independently-verified evidence (engine grading + shape conformance).\n` +
-        `3) If verified, call issue_credential (recipient_did "${B.did}", competency_name "Standards Extension", a short achievement_description).\n` +
+        `1) Read B's record: call review_record with subject_did "${B.did}". Note the competencies AND the name of the extension B authored (e.g. "collaborationDepth").\n` +
+        `2) DUE DILIGENCE — do NOT credential on B's self-report alone: call verify_extension (subject_did "${B.did}", name = the extension B authored, kind "XapiContextExtension"). It independently checks, from B's OWN pod, an engine-graded completion + a domain-typed performance + shape conformance, and returns a verificationHolonUri. Proceed ONLY if it returns verified:true (the performance OUTCOME may be self-attested — rely on the tamper-evident engine grading + shape conformance).\n` +
+        `3) If verified, call issue_credential (recipient_did "${B.did}", competency_name "Standards Extension", a short achievement_description, AND justified_by = the verificationHolonUri returned in step 2 — this links the credential to its verification as a dereferenceable chain of custody).\n` +
         `Reply DONE with whether the credential was issued and what you INDEPENDENTLY verified.`,
       tools: toolList(['review_record', 'verify_extension', 'issue_credential'] as ToolName[]),
       dispatch: makeDispatch(A, 'A', { subjectDid: B.did }),
       onThinking: t => emit({ agent: 'A', kind: 'thinking', title: 'reasoning', detail: t }),
       onToolCall: () => {}, onToolResult: () => {}, maxSteps: 6,
-    });
+    }); } catch (e) { emit({ agent: 'A', kind: 'error', title: 'phase 3 error (continuing)', detail: (e as Error).message }); }
 
     // ── Phase 4 — a fresh THIRD agent independently re-checks B, then B proves its
     //    credential privately (BBS+ selective disclosure). The verification ceremony
