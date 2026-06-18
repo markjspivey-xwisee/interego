@@ -8,8 +8,10 @@
  * topic folders among the resource <file> hrefs become concepts, the content
  * pages become slides, and (where the page bytes are supplied) their visible
  * text becomes the slide transcript that grounds answers. Prerequisite edges are
- * taken ONLY from explicit imsss sequencing pre-conditions — we do not fabricate
- * a learning order the manifest doesn't assert.
+ * a STRUCTURAL HEURISTIC (confidence 0.5): when an activity declares imsss
+ * pre-condition rules we gate it behind its immediately preceding sibling — a
+ * likely order the manifest IMPLIES, not a resolved rule target. Activities with
+ * no pre-conditions get no edges; we don't invent an order the manifest is silent on.
  */
 import { parseManifest, type ScormActivityTree, type Activity } from './scorm-sequencing.js';
 import type { FoxxiAgenticCourse } from './agentic-rag.js';
@@ -136,7 +138,10 @@ export function manifestToAgenticCourse(args: ManifestToCourseArgs): ManifestCou
     for (const s of slides) (s as { concept_ids: string[] }).concept_ids = [slug(courseTitle)];
   }
 
-  // Prereq edges: ONLY from explicit imsss pre-condition sequencing (honest — no fabricated order).
+  // Prereq edges (structural heuristic, conf 0.5): an activity that DECLARES imsss
+  // pre-condition rules is gated behind its immediately preceding sibling. This is a
+  // likely order the manifest implies — NOT the rule's resolved target objective — so
+  // it carries low confidence. No pre-conditions ⇒ no edge (we don't invent an order).
   const prereq_edges: FoxxiAgenticCourse['prereq_edges'][number][] = [];
   if (tree) {
     for (const a of tree.preorder) {
@@ -144,7 +149,7 @@ export function manifestToAgenticCourse(args: ManifestToCourseArgs): ManifestCou
       if (hasPre && a.parent) {
         const sib = a.parent.children;
         const idx = sib.indexOf(a);
-        if (idx > 0) prereq_edges.push({ from: slug(sib[idx - 1].title || sib[idx - 1].id), to: slug(a.title || a.id), confidence: 0.9 });
+        if (idx > 0) prereq_edges.push({ from: slug(sib[idx - 1].title || sib[idx - 1].id), to: slug(a.title || a.id), confidence: 0.5 });
       }
     }
   }

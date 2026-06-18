@@ -194,11 +194,14 @@ const TOOLS: ToolDef[] = [
   {
     toolId: 'adapt', tool: 'Adapt', vendor: 'Adapt Learning',
     fileSignals: [
-      { test: p => hasFile(p, 'adapt.json') || has(p, 'course/config.json'), signal: 'adapt.json / course/config.json (Adapt)', weight: 5 },
-      { test: p => has(p, 'adapt/js/adapt.min.js'), signal: 'adapt/js/adapt.min.js', weight: 4 },
+      { test: p => hasFile(p, 'adapt.json'), signal: 'adapt.json (Adapt)', weight: 5 },
+      { test: p => has(p, 'adapt/js/adapt.min.js'), signal: 'adapt/js/adapt.min.js (Adapt runtime)', weight: 5 },
+      // course/config.json is generic — only count it WITH a corroborating adapt/ path.
+      { test: p => has(p, 'course/config.json') && has(p, 'adapt/'), signal: 'course/config.json + adapt/ (Adapt)', weight: 3 },
     ],
     manifestSignals: [
-      { test: x => x.includes('adapt'), signal: '"adapt" in manifest', weight: 2 },
+      // a distinctive marker, not the bare word "adapt" (common in course prose).
+      { test: x => x.includes('adaptlearning') || x.includes('adapt_framework'), signal: 'Adapt framework marker', weight: 4 },
     ],
   },
 ];
@@ -276,7 +279,15 @@ export function fingerprintAuthoringTool(input: FingerprintInput): FingerprintRe
 
   candidates.sort((a, b) => b.score - a.score);
   const totalScore = candidates.reduce((a, c) => a + c.score, 0);
-  for (const c of candidates) c.confidence = totalScore > 0 ? round2(c.score / totalScore) : 0;
+  // Confidence blends the winner's SHARE of fired weight with the ABSOLUTE strength of
+  // its evidence, so a single thin signal does not read as 100% certain. STRONG_SCORE
+  // (~two distinctive signals) saturates the strength term.
+  const STRONG_SCORE = 8;
+  for (const c of candidates) {
+    const share = totalScore > 0 ? c.score / totalScore : 0;
+    const strength = Math.min(1, c.score / STRONG_SCORE);
+    c.confidence = round2(share * strength);
+  }
 
   const top = candidates[0];
   // A tool is only "detected" if it has a meaningful, somewhat-distinctive signal.

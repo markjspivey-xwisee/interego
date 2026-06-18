@@ -41,7 +41,13 @@ ok('spine terms for the PGSL holon', built.spineTerms.length >= 5, `${built.spin
 console.log('\n[4] grounded retrieval over the course KG (key-less)');
 const r = retrieveCourseContext({ question: 'How is a golf handicap calculated?', learnerDid: 'urn:demo:asker', primary: built.course });
 ok('retrieval returns seed concepts', r.retrieval.seedConcepts.length > 0, `seeds: ${r.retrieval.seedConcepts.map(s => s.conceptLabel).join(', ')}`);
+ok('on-topic question is a real graph hit (grounded)', r.retrieval.retrievalKind === 'graph', `retrievalKind=${r.retrieval.retrievalKind}`);
 ok('retrieval cites slides from the course', r.retrieval.citedSlides.length > 0, `cited: ${r.retrieval.citedSlides.map(s => s.slideTitle).slice(0, 4).join(' | ')}`);
+
+console.log('\n[5] OFF-topic question → honest fallback (NOT reported as grounded)');
+const off = retrieveCourseContext({ question: 'What is the airspeed velocity of an unladen swallow?', learnerDid: 'urn:demo:asker', primary: built.course });
+ok('off-topic resolves to fallback retrievalKind', off.retrieval.retrievalKind === 'fallback', `retrievalKind=${off.retrieval.retrievalKind}, seeds=${off.retrieval.seedConcepts.length}`);
+ok('grounded gate (retrievalKind===graph && seeds>0) is FALSE for off-topic', !(off.retrieval.retrievalKind === 'graph' && off.retrieval.seedConcepts.length > 0));
 
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

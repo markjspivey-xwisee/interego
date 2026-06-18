@@ -48,7 +48,7 @@ const ROLES: Array<{ id: Role; label: string; blurb: string }> = [
 ];
 const DEFAULT_ACTIVITY = 'Completed the Etiquette and Playing topics; scored 60% on the Handicapping assessment; spent little time on Scoring.';
 
-interface Turn { who: 'you' | 'agent'; role: Role; text: string; cited?: string[]; grounded?: boolean; keyless?: boolean }
+interface Turn { who: 'you' | 'agent'; role: Role; text: string; cited?: string[]; grounded?: boolean; fallback?: boolean; keyless?: boolean }
 
 export function CourseIntel({ onHome }: { onHome: () => void }) {
   const [manifestXml, setManifestXml] = useState('');
@@ -158,7 +158,8 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
     setAsking(false);
     const cited = ((json.retrieval as any)?.citedSlides ?? []).map((s: any) => `${s.slideTitle}`);
     const answer = String((json.synthesizedAnswer as string) ?? '') || scaffoldFrom(json);
-    setTurns(t => [...t, { who: 'agent', role, text: answer, cited, grounded: !!json.grounded, keyless: !apiKey.trim() }]);
+    const grounded = !!json.grounded; // honest: true only on a real graph hit (bridge gates on retrievalKind)
+    setTurns(t => [...t, { who: 'agent', role, text: answer, cited, grounded, fallback: !grounded && cited.length > 0, keyless: !apiKey.trim() }]);
   }
 
   return (
@@ -169,8 +170,8 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
         Drop in a SCORM package. Foxxi tells you <strong>which authoring tool produced it</strong>, composes the course
         into a <strong>PGSL knowledge-graph</strong> (the authoritative source of truth), and then lets agents reason about it:
         the course reasons about <em>itself</em> from its own graph, the enrolled agent talks to the authoring agent, and to
-        the performance manager / assessor about the content in the context of performance. Every answer is grounded in the
-        course graph. <strong>Bring your own Anthropic key</strong> for synthesis (used only in your browser) — or go key-less and get the cited scaffold.
+        the performance manager / assessor about the content in the context of performance. Answers are grounded in the
+        course graph — and honestly flagged when a question falls outside it. <strong>Bring your own Anthropic key</strong> for synthesis (used only in your browser) — or go key-less and get the cited scaffold.
       </p>
 
       {/* Source */}
@@ -254,7 +255,7 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
                 <div key={i} style={{ margin: '8px 0', padding: '8px 11px', borderRadius: 8, background: t.who === 'you' ? '#eef2ff' : 'var(--panel-2, #faf9f7)', border: '1px solid var(--border)' }}>
                   <div style={{ ...lbl, marginBottom: 3 }}>{t.who === 'you' ? 'you' : ROLES.find(r => r.id === t.role)?.label ?? t.role}{t.who === 'agent' && t.keyless ? ' · key-less scaffold' : ''}</div>
                   <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{t.text}</div>
-                  {t.who === 'agent' && t.cited && t.cited.length > 0 && <div style={{ marginTop: 5, fontSize: 11, color: 'var(--text-dim)' }}>{t.grounded ? '✓ grounded · ' : ''}cited: {t.cited.slice(0, 6).join(' · ')}</div>}
+                  {t.who === 'agent' && t.cited && t.cited.length > 0 && <div style={{ marginTop: 5, fontSize: 11, color: t.fallback ? '#b45309' : 'var(--text-dim)' }}>{t.grounded ? '✓ grounded · ' : (t.fallback ? '⚠ no concept matched — course intro shown as fallback · ' : '')}cited: {t.cited.slice(0, 6).join(' · ')}</div>}
                 </div>
               ))}
               {asking && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>thinking…</div>}
