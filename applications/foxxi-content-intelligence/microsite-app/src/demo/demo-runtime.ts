@@ -113,7 +113,41 @@ export async function runDemo(apiKey: string): Promise<void> {
       onToolCall: () => {}, onToolResult: () => {}, maxSteps: 6,
     });
 
-    emit({ agent: 'sys', kind: 'done', title: 'Demo complete — discover → author → assign → complete → perform → verify → credential, all emergent + live' });
+    // ── Phase 4 — a fresh THIRD agent independently re-checks B, then B proves its
+    //    credential privately (BBS+ selective disclosure). The verification ceremony
+    //    is a fixed protocol (the emergence already happened in Phases 1-3); the agents,
+    //    signatures, and crypto are all real.
+    emit({ agent: 'sys', kind: 'phase', title: 'Phase 4 — an independent third agent re-checks B, then B proves its credential privately' });
+    const C = freshAgent();
+    setDemoAgent('C', { did: C.did, address: C.address, label: C.podLabel, lensTenant: `lens:${C.podLabel}`, role: 'independent verifier · no prior relationship' });
+    emit({ agent: 'C', kind: 'identity', title: 'fresh agent C (independent verifier — nobody told it to trust A or B)', detail: C.did });
+
+    // 1) CONSISTENCY CONFIRMATION — C, with no relationship to A, re-reads B's OWN pod
+    //    and re-runs the same checks. Honest: this confirms B's records are durable +
+    //    consistent across an independent read; it does NOT re-judge A's course design.
+    emit({ agent: 'C', kind: 'tool-call', title: 'affordance · verify_extension', detail: `independently re-check subject ${B.did.slice(0, 16)}…`, data: { subject_did: B.did } });
+    const cVer = await dispatchTool('verify_extension', { subject_did: B.did, name: 'collaborationDepth', kind: 'XapiContextExtension' }, C, {});
+    emit({ agent: 'C', kind: 'auth', title: 'signed call → verify_extension', detail: `did:ethr:${C.address.slice(0, 10)}… · HTTP ${cVer.status}${cVer.ok ? ' ✓' : ' ✗'}` });
+    const cv = (cVer.body ?? {}) as Record<string, any>;
+    emit({ agent: 'C', kind: 'verify', title: `independent consistency confirmation — ${cv.verified ? 'CONSISTENT' : 'MISMATCH'}`, detail: `Agent C (no prior relationship to A or B) re-read B's OWN pod and re-ran the verification. This confirms B's evidence is durable + consistent across an independent read — it does NOT re-judge A's course design.`, data: cv });
+
+    // 2) PRIVACY-PRESERVING PROOF — B derives a BBS+ presentation revealing ONLY the
+    //    competency + proficiency, cryptographically HIDING score/name/dates/id; C verifies.
+    emit({ agent: 'B', kind: 'tool-call', title: 'affordance · prove_competency', detail: 'reveal only the competency — hide score, name, dates, id', data: { issuer_did: A.did, competency_name: 'Standards Extension' } });
+    const prove = await dispatchTool('prove_competency', { issuer_did: A.did, competency_name: 'Standards Extension', score: 0.9, proficiency: 'Advanced' }, B, {});
+    emit({ agent: 'B', kind: 'auth', title: 'signed call → prove_competency', detail: `did:ethr:${B.address.slice(0, 10)}… · HTTP ${prove.status}${prove.ok ? ' ✓' : ' ✗'}` });
+    const pv = (prove.body ?? {}) as Record<string, any>;
+    emit({ agent: 'B', kind: 'credential', title: 'selective-disclosure proof derived (BBS+)', detail: `revealed ${pv.revealed?.length ?? 0} claim(s); ${pv.hiddenPaths?.length ?? 0} cryptographically hidden`, data: pv });
+
+    if (pv.presentation) {
+      emit({ agent: 'C', kind: 'tool-call', title: 'affordance · verify_presentation', detail: 'verify the BBS+ proof — learn ONLY what B disclosed', data: { presentation: '… (zero-knowledge proof)' } });
+      const vp = await dispatchTool('verify_presentation', { presentation: pv.presentation }, C, {});
+      emit({ agent: 'C', kind: 'auth', title: 'signed call → verify_presentation', detail: `did:ethr:${C.address.slice(0, 10)}… · HTTP ${vp.status}${vp.ok ? ' ✓' : ' ✗'}` });
+      const vv = (vp.body ?? {}) as Record<string, any>;
+      emit({ agent: 'C', kind: 'verify', title: `presentation verified (BBS+) — ${vv.verified ? 'PASSED' : 'FAILED'}`, detail: `C cryptographically confirmed the issuer signed exactly the disclosed claims, and learned ONLY: ${(vv.disclosed ?? []).map((d: any) => d.path.replace(/^achievement\./, '')).join(', ')} — the score, name, and dates stayed hidden.`, data: vv });
+    }
+
+    emit({ agent: 'sys', kind: 'done', title: 'Demo complete — author → teach → complete → perform → verify → credential → independent re-check → private proof, all live' });
     setDemoStatus('done');
   } catch (e) {
     emit({ agent: 'sys', kind: 'error', title: 'run halted', detail: (e as Error).message });

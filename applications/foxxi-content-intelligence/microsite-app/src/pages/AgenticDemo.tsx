@@ -32,7 +32,7 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
     await runDemo(apiKey.trim()); // writes to the shared store; never throws
   }
 
-  const visible = (a: 'A' | 'B') => state.events.filter(e => e.agent === a && LENS_KINDS[lens].has(e.kind));
+  const visible = (a: 'A' | 'B' | 'C') => state.events.filter(e => e.agent === a && LENS_KINDS[lens].has(e.kind));
   const phase = [...state.events].reverse().find(e => e.kind === 'phase');
   const done = state.events.find(e => e.kind === 'done');
   const credential = state.events.find(e => e.kind === 'credential');
@@ -83,9 +83,10 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: state.agents.C ? '1fr 1fr 1fr' : '1fr 1fr', gap: 16, marginTop: 16 }}>
         <AgentColumn label="Agent A — teacher · issuer · observer" did={state.agents.A?.did} events={visible('A')} running={running} />
         <AgentColumn label="Agent B — learner · performer" did={state.agents.B?.did} events={visible('B')} running={running} />
+        {state.agents.C && <AgentColumn label="Agent C — independent verifier (no prior relationship)" did={state.agents.C?.did} events={visible('C')} running={running} />}
       </div>
 
       {!hasRun && (
@@ -153,6 +154,7 @@ function EventRow({ e }: { e: DemoEvent }) {
       {open && (
         <div style={{ padding: '0 14px 10px', marginLeft: 18, display: 'grid', gap: 8 }}>
           {(e.data as any)?.checks && <VerificationMatrix d={e.data as any} />}
+          {(e.data as any)?.revealed && (e.data as any)?.hiddenPaths && <SelectiveDisclosure d={e.data as any} />}
           {(e.data as any)?.sharedLattice && <LatticeBadge sl={(e.data as any).sharedLattice} />}
           {arts.map((a, i) => (
             <div key={i}>
@@ -196,6 +198,32 @@ function VerificationMatrix({ d }: { d: any }) {
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, lineHeight: 1.45 }}>
         Engine grading + shape conformance are tamper-evident; the performance outcome is self‑attested by the subject. {n > 0 ? `${n} evidencing statement${n === 1 ? '' : 's'} on the subject’s own pod.` : ''}
+      </div>
+    </div>
+  );
+}
+
+/** BBS+ selective disclosure: what the verifier learns vs. what stays cryptographically
+ *  hidden — split-pane from the prove_competency response (revealed + hiddenPaths). */
+function SelectiveDisclosure({ d }: { d: any }) {
+  const revealed = (d.revealed ?? []) as Array<{ path: string; value: string }>;
+  const hidden = (d.hiddenPaths ?? []) as string[];
+  const tail = (p: string) => p.replace(/^achievement\./, '').replace(/\[0\]/, '').replace(/^issuer$/, 'issuer');
+  return (
+    <div>
+      <div style={artLabel}>BBS+ selective disclosure — revealed vs. cryptographically hidden</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div style={{ border: '1px solid #2e9c4a', borderRadius: 6, padding: 8 }}>
+          <div style={{ fontSize: 10.5, color: '#2e9c4a', fontWeight: 600, marginBottom: 4 }}>REVEALED ({revealed.length}) — what the verifier learns</div>
+          {revealed.map((r, i) => <div key={i} style={{ fontSize: 11.5, lineHeight: 1.5 }}><strong>{tail(r.path)}</strong>: <span style={{ wordBreak: 'break-all' }}>{r.value.length > 44 ? r.value.slice(0, 44) + '…' : r.value}</span></div>)}
+        </div>
+        <div style={{ border: '1px solid #d23f31', borderRadius: 6, padding: 8 }}>
+          <div style={{ fontSize: 10.5, color: '#d23f31', fontWeight: 600, marginBottom: 4 }}>HIDDEN ({hidden.length}) — withheld by the proof</div>
+          {hidden.map((h, i) => <div key={i} style={{ fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>🔒 {tail(h)}</div>)}
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, lineHeight: 1.45 }}>
+        Real W3C BBS+ (bbs‑2023) zero‑knowledge proof — the verifier confirms the issuer signed exactly the revealed claims, and learns nothing about the hidden ones (no score, name, or dates).
       </div>
     </div>
   );

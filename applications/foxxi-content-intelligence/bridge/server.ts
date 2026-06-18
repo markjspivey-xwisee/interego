@@ -90,6 +90,7 @@ import {
   type CourseCompletionSubject,
 } from '../src/credentials.js';
 import { exportClr } from '../src/clr.js';
+import { issueBbsCompletionCredential, deriveCompletionPresentation, verifyCompletionPresentation } from '../src/bbs-credentials.js';
 import {
   readDurableRecordedStatements,
   mergeStatementsById,
@@ -2912,6 +2913,82 @@ app.post('/agent/verify-extension', async (req, res) => {
       note: independentlyGraded
         ? `Independently verified from ${subjectDid}'s own pod: engine-graded course completion${gradedScore != null ? ` (score ${gradedScore})` : ''}${performanceRecorded ? ' + a domain-typed StandardsExtension performance' : ''}${name ? ` + the '${name}' extension conforms to the agp:StandardsExtension shape` : ''}.${selfAttestedPerformance ? ' NOTE: the performance OUTCOME is self-attested by the subject; the credentialing decision rests on the tamper-evident engine grading + shape conformance.' : ''}`
         : `Could NOT independently confirm an engine-graded completion for ${subjectDid} — do not credential on self-report alone.`,
+    });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+});
+
+// ── BBS+ selective disclosure (privacy-preserving credential presentation) ────
+// The holder proves it holds a competency WITHOUT revealing its transcript: the
+// issuer (the credentialing authority) signs a BBS+ credential over a flat claim
+// list; the HOLDER derives a zero-knowledge presentation disclosing only chosen
+// claims (e.g. the competency name) and cryptographically HIDING the rest (score,
+// dates, name); a VERIFIER checks the proof and learns only the disclosed claims.
+// Real W3C bbs-2023 crypto (src/bbs-credentials.ts) — no LMS can do this.
+const b64e = (u: Uint8Array): string => Buffer.from(u).toString('base64');
+const b64d = (s: unknown): Uint8Array => new Uint8Array(Buffer.from(String(s ?? ''), 'base64'));
+const PROFICIENCY = new Set(['Novice', 'Beginner', 'Intermediate', 'Advanced', 'Expert']);
+
+app.post('/agent/prove-competency', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);   // the HOLDER (subject of the credential)
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:cg:action:foxxi:prove-competency.' }); return; }
+    if (!issuerKeySeed) { res.status(503).json({ error: 'issuance not configured (FOXXI_ISSUER_KEY_SEED unset)' }); return; }
+    const p = auth.payload;
+    const holderDid = auth.callerDid;
+    const issuerDid = typeof p.issuer_did === 'string' ? p.issuer_did.trim() : '';
+    const competencyName = (typeof p.competency_name === 'string' && p.competency_name.trim()) ? p.competency_name.trim() : '';
+    if (!issuerDid || !competencyName) { res.status(400).json({ error: 'issuer_did + competency_name required' }); return; }
+    const score = typeof p.score === 'number' ? p.score : 0.9;
+    const proficiency = (typeof p.proficiency === 'string' && PROFICIENCY.has(p.proficiency)) ? p.proficiency as 'Advanced' : 'Advanced';
+    const courseId = competencyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const competencyId = `urn:foxxi:competency:${courseId}`;
+    // The issuer is the credentialing authority — its per-creator BBS+ seed (same
+    // derivation as issue-credential's per-creator issuer identity).
+    const issued = await issueBbsCompletionCredential({
+      issuerSeed: `${issuerKeySeed}:creator:${issuerDid}`,
+      tenantProfileName,
+      subject: { learnerDid: holderDid, courseId, courseTitle: competencyName, scoreScaled: score, proficiencyLevel: proficiency, alignedSkills: [{ targetCode: competencyId, targetName: competencyName }] },
+    });
+    const revealPaths = (Array.isArray(p.reveal) && p.reveal.length) ? (p.reveal as unknown[]).map(String) : ['issuer', 'achievement.name', 'achievement.proficiencyLevel'];
+    const pres = await deriveCompletionPresentation({ issued, revealPaths });
+    const revealed = pres.disclosedMessages.map(d => { const [path, ...r] = d.displayValue.split('='); return { path, value: r.join('=') }; });
+    const hiddenPaths = issued.claimIndex.filter(c => !revealPaths.includes(c.path)).map(c => c.path);
+    res.json({
+      ok: true, holder: holderDid, issuerDid: issued.issuerDid, credentialId: issued.credential.id,
+      totalClaims: issued.claimIndex.length, revealed, hiddenPaths,
+      // Serialized presentation for the verifier (binary BBS+ fields base64-encoded).
+      presentation: {
+        proof: b64e(pres.proof),
+        disclosedIndexes: pres.disclosedIndexes,
+        disclosedMessages: pres.disclosedMessages.map(d => ({ index: d.index, message: b64e(d.message), displayValue: d.displayValue })),
+        issuerPublicKey: b64e(pres.issuerPublicKey),
+        issuerDid: pres.issuerDid,
+      },
+      note: 'BBS+ selective disclosure (W3C bbs-2023): the holder proves ONLY the revealed claims; the hidden fields (score, dates, name, id) are cryptographically withheld. A verifier confirms the issuer signed exactly the disclosed claims without learning the rest.',
+    });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+});
+
+app.post('/agent/verify-presentation', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);   // the VERIFIER (any independent agent)
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error, hint: 'sign_request the args, then act urn:cg:action:foxxi:verify-presentation.' }); return; }
+    const pr = (auth.payload.presentation ?? {}) as Record<string, any>;
+    if (!pr.proof || !pr.issuerPublicKey) { res.status(400).json({ error: 'presentation { proof, disclosedMessages, issuerPublicKey, issuerDid } required' }); return; }
+    const presentation = {
+      proof: b64d(pr.proof),
+      disclosedIndexes: Array.isArray(pr.disclosedIndexes) ? pr.disclosedIndexes : [],
+      disclosedMessages: (Array.isArray(pr.disclosedMessages) ? pr.disclosedMessages : []).map((d: any) => ({ index: d.index, message: b64d(d.message), displayValue: d.displayValue })),
+      issuerPublicKey: b64d(pr.issuerPublicKey),
+      issuerDid: String(pr.issuerDid ?? ''),
+    };
+    const result = await verifyCompletionPresentation({ presentation });
+    res.json({
+      ok: true, verifiedBy: auth.callerDid, issuerDid: presentation.issuerDid,
+      verified: result.verified, reason: result.reason, disclosed: result.disclosed, learned: result.disclosed.length,
+      note: result.verified
+        ? 'Verified: the BBS+ proof confirms the issuer signed a credential containing exactly these disclosed claims — the verifier learned nothing else.'
+        : 'BBS+ proof did NOT verify.',
     });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });

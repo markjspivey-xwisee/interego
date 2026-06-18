@@ -10,7 +10,7 @@
 export type EventKind = 'identity' | 'phase' | 'thinking' | 'tool-call' | 'auth' | 'xapi' | 'scorm' | 'credential' | 'verify' | 'error' | 'done';
 export interface DemoEvent {
   id: number;
-  agent: 'A' | 'B' | 'sys';
+  agent: 'A' | 'B' | 'C' | 'sys';
   kind: EventKind;
   title: string;
   detail?: string;
@@ -29,7 +29,7 @@ export interface DemoAgent {
 export type DemoStatus = 'idle' | 'running' | 'done' | 'error';
 export interface DemoState {
   status: DemoStatus;
-  agents: { A?: DemoAgent; B?: DemoAgent };
+  agents: { A?: DemoAgent; B?: DemoAgent; C?: DemoAgent };
   events: DemoEvent[];
   error?: string;
   startedAt?: string;
@@ -70,7 +70,7 @@ export function clearDemo(): void {
   idCounter = 0;
   commit({ status: 'idle', agents: {}, events: [] });
 }
-export function setDemoAgent(slot: 'A' | 'B', agent: DemoAgent): void {
+export function setDemoAgent(slot: 'A' | 'B' | 'C', agent: DemoAgent): void {
   commit({ ...state, agents: { ...state.agents, [slot]: agent } });
 }
 export function addDemoEvent(e: Omit<DemoEvent, 'id' | 'ts'>): void {

@@ -84,6 +84,23 @@ export const TOOLS: Record<string, ToolDef> = {
       include_clr: bool('Include the credential wallet (CLR).'),
     } },
   },
+  prove_competency: {
+    name: 'prove_competency',
+    description: 'Derive a BBS+ selective-disclosure presentation of a competency you hold: prove ONLY the competency name + proficiency (and issuer) while cryptographically HIDING your score, name, dates, and credential id. Lets you present a credential to a verifier without leaking your transcript.',
+    input_schema: { type: 'object', properties: {
+      issuer_did: str('did:ethr of the authority that credentialed you (the issuer).'),
+      competency_name: str('The competency to prove, e.g. "Standards Extension".'),
+      score: num('Your score 0..1 (will be HIDDEN in the presentation).'),
+      proficiency: { type: 'string', enum: ['Novice', 'Beginner', 'Intermediate', 'Advanced', 'Expert'], description: 'Proficiency level (revealed).' },
+    }, required: ['issuer_did', 'competency_name'] },
+  },
+  verify_presentation: {
+    name: 'verify_presentation',
+    description: 'Cryptographically verify a BBS+ selective-disclosure presentation another agent derived: confirm the issuer signed exactly the disclosed claims while learning ONLY what was disclosed (the hidden fields stay hidden). Pass the `presentation` object you received.',
+    input_schema: { type: 'object', properties: {
+      presentation: { type: 'object', description: 'The presentation object returned by prove_competency.' },
+    }, required: ['presentation'] },
+  },
   issue_credential: {
     name: 'issue_credential',
     description: 'Issue an Open Badges 3.0 credential to an agent who demonstrated a competency. You are the issuing authority.',
@@ -121,6 +138,10 @@ export async function dispatchTool(name: string, input: Record<string, unknown>,
       return postSigned('/agent/record-performance', agent, { task_name: input.task_name, success: input.success ?? true, quality: input.quality, activity_type: input.activity_type });
     case 'verify_extension':
       return postSigned('/agent/verify-extension', agent, { subject_did: input.subject_did ?? ctx.subjectDid, name: input.name, kind: input.kind });
+    case 'prove_competency':
+      return postSigned('/agent/prove-competency', agent, { issuer_did: input.issuer_did ?? ctx.authorDid, competency_name: input.competency_name, score: input.score, proficiency: input.proficiency });
+    case 'verify_presentation':
+      return postSigned('/agent/verify-presentation', agent, { presentation: input.presentation });
     case 'review_record':
       return postSigned('/agent/review-record', agent, { subject_did: input.subject_did ?? ctx.subjectDid, include_clr: input.include_clr ?? false });
     case 'issue_credential':
