@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useSyncExternalStore } from 'react';
+import React, { useState, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { runDemo } from '../demo/demo-runtime.js';
 import { getDemoState, subscribeDemo, clearDemo, type DemoEvent, type EventKind, type DemoAgent } from '../demo/demo-session.js';
 import { BRIDGE_URL } from '../bridge-client.js';
@@ -68,6 +68,12 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
   const done = shown.find(e => e.kind === 'done');
   const credential = shown.find(e => e.kind === 'credential');
   const showC = !!srcAgents.C && shown.some(e => e.agent === 'C');
+  // A tour with model `thinking` events is an emergent BYOK capture; one without is a
+  // real headless protocol capture (no LLM in the loop). Label honestly either way.
+  const tourHasReasoning = !!tour?.events?.some(e => e.kind === 'thinking');
+  const tourProvenance = tourHasReasoning
+    ? 'a real prior run (real agents, real artifacts, real reasoning)'
+    : 'a real prior run (real agents, real signed calls, real artifacts) — captured headlessly, so it shows the protocol flow without the model’s reasoning narration';
   const hasRun = state.events.length > 0 || state.status !== 'idle';
   const liveComplete = !running && !!state.events.find(e => e.kind === 'done') && !!state.agents.C; // a pinnable run
 
@@ -124,12 +130,12 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
 
       {tour && !hasRun && mode === 'live' && (
         <div style={{ margin: '14px 0 0', padding: '11px 15px', background: 'var(--panel)', border: '1px solid var(--accent)', borderRadius: 8, fontSize: 13, color: 'var(--text)' }}>
-          &#9654; A <strong>recorded run</strong> is available — <button onClick={watchTour} style={{ ...linkBtn, fontSize: 13, color: 'var(--accent)' }}>watch it now</button> with no key. It’s a real prior run (real agents, real artifacts, real reasoning), replayed locally — enter your key above to run your own live.
+          &#9654; A <strong>recorded run</strong> is available — <button onClick={watchTour} style={{ ...linkBtn, fontSize: 13, color: 'var(--accent)' }}>watch it now</button> with no key. It’s {tourProvenance}, replayed locally — enter your key above to run your own live.
         </div>
       )}
       {mode === 'tour' && (
         <div style={{ margin: '14px 0 0', padding: '11px 15px', background: '#fffbeb', border: '1px solid #d97706', borderRadius: 8, fontSize: 13, color: '#92400e' }}>
-          &#9654; <strong>Recorded run.</strong> This is a real prior run replayed locally (no key, no live calls). To run your own live, <button onClick={exitTour} style={{ ...linkBtn, fontSize: 13, color: '#92400e' }}>exit</button> and enter your Anthropic key.
+          &#9654; <strong>Recorded run.</strong> This is {tourProvenance}, replayed locally (no key, no live calls). To run your own live, <button onClick={exitTour} style={{ ...linkBtn, fontSize: 13, color: '#92400e' }}>exit</button> and enter your Anthropic key.
         </div>
       )}
 
@@ -158,6 +164,8 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
         <AgentColumn label="Agent B — learner · performer" did={srcAgents.B?.did} events={visible('B')} running={running} />
         {showC && <AgentColumn label="Agent C — independent verifier (no prior relationship)" did={srcAgents.C?.did} events={visible('C')} running={running} />}
       </div>
+
+      <InterrogatePanel events={shown} agents={srcAgents} />
 
       {!hasRun && mode === 'live' && (
         <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 22 }}>
@@ -319,6 +327,153 @@ function LatticeBadge({ sl }: { sl: any }) {
       </div>
     </div>
   );
+}
+
+// ── Interrogatives: ask the substrate WHO/WHAT/WHEN/WHY/HOW-MUCH about the run ──
+// Interego maps the canonical interrogatives (ie:) to descriptor facets. After a
+// run, B's recorded performance is a published holon; the bridge routes the
+// interrogative grammar over its REAL descriptor bytes and resolves the pointers
+// it can satisfy locally (the What artifact + the HowMuch lattice cardinality).
+// Nothing synthetic — this reads the same descriptor the Pod browser shows.
+const IE_GLOSS: Record<string, string> = {
+  Who: 'who asserted it', What: 'what it is', When: 'when it became valid',
+  Where: 'where it lives', Why: 'why — motive / cause', How: 'how it was produced',
+  Which: 'which alternative', WhatKind: 'what kind — interpretation frame',
+  HowMuch: 'how much — extent / confidence', Whose: 'whose authority', Whether: 'whether — trust / permission',
+};
+const IE_ORDER = ['Who', 'What', 'When', 'WhatKind', 'Whether', 'Why', 'How', 'HowMuch', 'Where', 'Which', 'Whose'];
+const STATUS_STYLE: Record<string, { bg: string; fg: string }> = {
+  full: { bg: 'rgba(46,160,67,0.14)', fg: '#2e9c4a' },
+  partial: { bg: 'rgba(217,119,6,0.14)', fg: '#b45309' },
+  pointer: { bg: 'rgba(37,99,235,0.14)', fg: '#2563eb' },
+  absent: { bg: 'rgba(107,114,128,0.12)', fg: '#6b7280' },
+};
+
+interface HolonTarget { holonUri: string; label: string; did: string; agent: 'A' | 'B' | 'C'; descriptorUrl?: string; title: string; }
+/** The most recent shown event carrying a published holon (prefer B's performance). */
+function findHolonTarget(events: DemoEvent[], agents: { A?: DemoAgent; B?: DemoAgent; C?: DemoAgent }): HolonTarget | null {
+  let fallback: HolonTarget | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    const sl = (e.data as any)?.sharedLattice;
+    const uri: string | undefined = sl?.holonUri;
+    if (!uri || (e.agent !== 'A' && e.agent !== 'B' && e.agent !== 'C')) continue;
+    const ag = agents[e.agent];
+    if (!ag?.label || !ag?.did) continue;
+    const t: HolonTarget = { holonUri: uri, label: ag.label, did: ag.did, agent: e.agent, descriptorUrl: sl?.descriptorUrl, title: e.title };
+    if (e.agent === 'B') return t;           // the learner's performance is the most interesting target
+    if (!fallback) fallback = t;
+  }
+  return fallback;
+}
+
+function InterrogatePanel({ events, agents }: { events: DemoEvent[]; agents: { A?: DemoAgent; B?: DemoAgent; C?: DemoAgent } }) {
+  const target = useMemo(() => findHolonTarget(events, agents), [events, agents]);
+  const [res, setRes] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // A new run invalidates a prior interrogation.
+  useEffect(() => { setRes(null); setErr(null); }, [target?.holonUri]);
+  if (!target) return null;
+
+  async function interrogate() {
+    if (!target) return;
+    setLoading(true); setErr(null); setRes(null);
+    try {
+      const url = `${BRIDGE_URL}/agent/lattice/${target.label}/interrogate`
+        + `?uri=${encodeURIComponent(target.holonUri)}&agent_did=${encodeURIComponent(target.did)}`;
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
+      setRes(j);
+    } catch (e) { setErr((e as Error).message); }
+    finally { setLoading(false); }
+  }
+
+  const answers: any[] = Array.isArray(res?.answers) ? res.answers : [];
+  const byType = new Map<string, any>(answers.map(a => [a.interrogative, a]));
+  const ordered = [...IE_ORDER.filter(t => byType.has(t)), ...answers.map(a => a.interrogative).filter(t => !IE_ORDER.includes(t))];
+  const resolved = res?.resolved ?? {};
+
+  return (
+    <div style={{ marginTop: 22, border: '1px solid var(--border)', borderRadius: 8, background: 'var(--panel)', padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>Ask the substrate about this run</div>
+        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+          who · what · when · why · how much — routed over Agent {target.agent}'s published holon
+        </span>
+      </div>
+      <p style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5, margin: '6px 0 10px' }}>
+        Interego maps the canonical interrogatives to descriptor facets. The bridge routes the grammar over the
+        REAL bytes of <code style={code}>{target.title}</code> and resolves what it can locally — the same descriptor the
+        <strong> Pod</strong> browser dereferences. Honest by construction: each answer is tagged{' '}
+        <em>full / partial / pointer / absent</em>.
+      </p>
+      <button onClick={interrogate} disabled={loading} style={{ ...pill, borderColor: 'var(--accent)', color: 'var(--accent)', opacity: loading ? 0.5 : 1 }}>
+        {loading ? 'interrogating…' : res ? '↻ Interrogate again' : 'Interrogate this run'}
+      </button>
+      {target.descriptorUrl && (
+        <a href={target.descriptorUrl} target="_blank" rel="noreferrer" style={{ ...linkBtn, fontSize: 12, marginLeft: 12 }}>view the descriptor on the pod ↗</a>
+      )}
+      {err && <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>⚠ {err}</div>}
+
+      {ordered.length > 0 && (
+        <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(232px, 1fr))', gap: 8 }}>
+          {ordered.map(t => {
+            const a = byType.get(t);
+            const st = STATUS_STYLE[a.status] ?? STATUS_STYLE.absent;
+            const vals = a.values && Object.keys(a.values).length ? a.values : null;
+            return (
+              <div key={t} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <strong style={{ fontSize: 13 }}>{t}</strong>
+                  <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{IE_GLOSS[t] ?? ''}</span>
+                  <span style={{ marginLeft: 'auto', fontFamily: vMono, fontSize: 9.5, padding: '1px 6px', borderRadius: 3, background: st.bg, color: st.fg, textTransform: 'lowercase' }}>{a.status}</span>
+                </div>
+                {vals && (
+                  <div style={{ marginTop: 4, fontFamily: vMono, fontSize: 10.5, color: 'var(--text)', lineHeight: 1.5, wordBreak: 'break-word' }}>
+                    {Object.entries(vals).map(([k, v]) => (
+                      <div key={k}><span style={{ color: 'var(--text-dim)' }}>{k}:</span> {fmtVal(v)}</div>
+                    ))}
+                  </div>
+                )}
+                {!vals && a.nextStep && (
+                  <div style={{ marginTop: 4, fontSize: 11, color: '#2563eb' }}>→ resolve via <code style={{ fontFamily: vMono, fontSize: 10.5 }}>{a.nextStep.tool}</code></div>
+                )}
+                {a.caveat && <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--text-dim)', lineHeight: 1.4 }}>{a.caveat}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {(resolved.What || resolved.HowMuch) && (
+        <div style={{ marginTop: 12 }}>
+          <div style={artLabel}>resolve-depth — pointers the bridge walked locally (resident lattice)</div>
+          {resolved.What && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11.5, marginBottom: 3 }}><strong>What</strong> → resolved the real artifact <span style={{ fontFamily: vMono, fontSize: 10.5, color: 'var(--text-dim)' }}>({String(resolved.What.contentType)})</span></div>
+              <pre style={{ fontSize: 10.5, lineHeight: 1.45, background: '#0f1115', color: '#cdd6e0', padding: 10, borderRadius: 5, overflow: 'auto', maxHeight: 220, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+{typeof resolved.What.content === 'string' ? resolved.What.content : JSON.stringify(resolved.What.content, null, 2)}
+              </pre>
+            </div>
+          )}
+          {resolved.HowMuch && (
+            <div style={{ fontSize: 11.5 }}>
+              <strong>HowMuch</strong> → lattice now <code style={{ fontFamily: vMono, fontSize: 10.5 }}>{resolved.HowMuch.atoms} atoms / {resolved.HowMuch.fragments} fragments</code>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+/** Render an interrogative value compactly (truncate long IRIs/strings). */
+function fmtVal(v: unknown): string {
+  if (v == null) return '—';
+  if (typeof v === 'object') { const s = JSON.stringify(v); return s.length > 80 ? s.slice(0, 80) + '…' : s; }
+  const s = String(v);
+  return s.length > 80 ? s.slice(0, 80) + '…' : s;
 }
 
 const runBtn: React.CSSProperties = { background: 'var(--accent)', color: 'var(--panel)', border: 'none', padding: '11px 22px', borderRadius: 6, fontFamily: "'JetBrains Mono', monospace", fontSize: 13, letterSpacing: '0.04em', textTransform: 'uppercase', cursor: 'pointer' };

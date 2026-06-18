@@ -122,6 +122,89 @@ function findGraphUrl(affs: Affordance[]): string | null {
     ?? null;
 }
 
+// ── Typed facets ───────────────────────────────────────────────────
+// The bridge now emits nested `cg:hasFacet [ a cg:AgentFacet ; … ]` blocks on every
+// descriptor (in addition to the flat cg:hasFacetType markers). Interego maps the
+// canonical interrogatives (who/what/when/why/how) onto these facets, so we render
+// them structured + glossed with the interrogative each one answers. Parsed
+// client-side from the descriptor Turtle — no bridge call, same as the rest of this page.
+interface TypedFacet { type: string; ie: string; gloss: string; fields: Array<{ k: string; v: string }>; }
+const FACET_MAP: Record<string, { ie: string; gloss: string }> = {
+  AgentFacet:         { ie: 'Who',       gloss: 'who asserted it' },
+  TemporalFacet:      { ie: 'When',      gloss: 'when it became valid' },
+  ProvenanceFacet:    { ie: 'How · Why', gloss: 'how it was produced / attributed' },
+  TrustFacet:         { ie: 'Whether',   gloss: 'trust level (signed vs self-asserted)' },
+  SemioticFacet:      { ie: 'WhatKind',  gloss: 'interpretation frame' },
+  FederationFacet:    { ie: 'Where',     gloss: 'distribution / location' },
+  AccessControlFacet: { ie: 'Whose',     gloss: 'authority / access' },
+};
+
+/** Extract bracket-balanced `cg:hasFacet [ … ]` blocks (AgentFacet nests a bnode, so a
+ *  non-greedy regex would truncate at the inner `]` — count brackets instead). */
+function extractFacetBlocks(turtle: string): string[] {
+  const blocks: string[] = [];
+  let idx = 0;
+  while ((idx = turtle.indexOf('cg:hasFacet', idx)) !== -1) {
+    const open = turtle.indexOf('[', idx);
+    if (open === -1) break;
+    let depth = 0, i = open;
+    for (; i < turtle.length; i++) {
+      if (turtle[i] === '[') depth++;
+      else if (turtle[i] === ']') { depth--; if (depth === 0) break; }
+    }
+    blocks.push(turtle.slice(open + 1, i));
+    idx = i + 1;
+  }
+  return blocks;
+}
+
+const decodeFrame = (v: string): string => { try { return decodeURIComponent(v.replace(/^urn:cg:contenttype:/, '')); } catch { return v; } };
+
+/** Pull the salient fields out of one facet block, keyed to exactly what the
+ *  serializer emits (projection.ts typedFacetLines). */
+function facetFields(type: string, block: string): Array<{ k: string; v: string }> {
+  const iri = (re: RegExp): string | null => block.match(re)?.[1] ?? null;
+  const lit = (re: RegExp): string | null => block.match(re)?.[1] ?? null;
+  const out: Array<{ k: string; v: string }> = [];
+  const push = (k: string, v: string | null) => { if (v) out.push({ k, v }); };
+  switch (type) {
+    case 'AgentFacet':
+      push('identity', iri(/cg:agentIdentity\s+<([^>]+)>/));
+      push('role', lit(/cg:agentRole\s+cg:(\w+)/));
+      break;
+    case 'TemporalFacet':
+      push('validFrom', lit(/cg:validFrom\s+"([^"]+)"/));
+      break;
+    case 'ProvenanceFacet':
+      push('wasAttributedTo', iri(/prov:wasAttributedTo\s+<([^>]+)>/));
+      push('generatedAtTime', lit(/prov:generatedAtTime\s+"([^"]+)"/));
+      break;
+    case 'TrustFacet':
+      push('trustLevel', lit(/cg:trustLevel\s+cg:(\w+)/));
+      break;
+    case 'SemioticFacet': {
+      const f = iri(/cg:interpretationFrame\s+<([^>]+)>/);
+      if (f) out.push({ k: 'interpretationFrame', v: decodeFrame(f) });
+      break;
+    }
+    default:
+      break;
+  }
+  return out;
+}
+
+function parseTypedFacets(turtle: string): TypedFacet[] {
+  const out: TypedFacet[] = [];
+  for (const block of extractFacetBlocks(turtle)) {
+    const type = block.match(/a\s+cg:(\w+)/)?.[1];
+    if (!type) continue;
+    const map = FACET_MAP[type];
+    if (!map) continue;
+    out.push({ type, ie: map.ie, gloss: map.gloss, fields: facetFields(type, block) });
+  }
+  return out;
+}
+
 const typeShortName = (iri: string): string => {
   const last = iri.split(/[#/:]/).pop() ?? iri;
   return last;
@@ -172,7 +255,7 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
   const [detail, setDetail] = useState<DescriptorDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [filter, setFilter] = useState<string | null>(null);
-  const [view, setView] = useState<'turtle' | 'json' | 'graph'>('turtle');
+  const [view, setView] = useState<'turtle' | 'json' | 'graph' | 'facets'>('turtle');
 
   async function loadManifest(url: string) {
     setLoading(true); setError(null); setEntries([]); setSelected(null); setDetail(null);
@@ -329,7 +412,8 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
                   <TrustBadge level={selected.trustLevel} />
                   <span>{selected.conformsTo.map(typeShortName).join(' · ')} · {selected.modalStatus}</span>
                 </div>
-                <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                  <button onClick={() => setView('facets')} style={tabStyle(view === 'facets')}>facets (who · what · when)</button>
                   <button onClick={() => setView('turtle')} style={tabStyle(view === 'turtle')}>descriptor (Turtle)</button>
                   <button onClick={() => setView('graph')} style={tabStyle(view === 'graph')}>graph (TriG)</button>
                   <button onClick={() => setView('json')} style={tabStyle(view === 'json')}>payload (JSON)</button>
@@ -344,6 +428,9 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
                   <div style={{ padding: 16, fontFamily: mono, fontSize: 11, color: 'var(--text-dim)' }}>
                     fetching from pod…
                   </div>
+                )}
+                {!detailLoading && detail && view === 'facets' && (
+                  <FacetsView turtle={detail.descriptorTurtle} />
                 )}
                 {!detailLoading && detail && view === 'turtle' && (
                   <pre style={preStyle}>{detail.descriptorTurtle}</pre>
@@ -392,6 +479,52 @@ export function PodBrowser({ onHome }: { onHome: () => void }) {
         <button onClick={onHome} style={{ background: 'transparent', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontFamily: mono, fontSize: 12, padding: 0 }}>
           ← back to the site
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** The typed cg: facets, rendered structured + glossed with the interrogative each answers. */
+function FacetsView({ turtle }: { turtle: string }) {
+  const facets = parseTypedFacets(turtle);
+  if (facets.length === 0) {
+    return (
+      <div style={{ padding: 16, fontFamily: mono, fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.6 }}>
+        No typed <code>cg:hasFacet</code> blocks on this descriptor. (Legacy or manifest-only descriptors carry just the
+        flat <code>cg:hasFacetType</code> markers — see the <em>descriptor (Turtle)</em> tab.)
+      </div>
+    );
+  }
+  return (
+    <div style={{ padding: '12px 14px' }}>
+      <div style={{ fontFamily: serif, fontStyle: 'italic', fontSize: 15, marginBottom: 4 }}>
+        Typed facets — the interrogatives Interego can answer about this descriptor
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.55, margin: '0 0 12px' }}>
+        Every work product the bridge publishes now carries these nested <code>cg:hasFacet</code> blocks. Interego maps the
+        canonical interrogatives (who / what / when / why / how) onto them, so the same descriptor answers a question
+        directly instead of needing a bespoke query.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
+        {facets.map((f, i) => (
+          <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '9px 11px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <strong style={{ fontSize: 13 }}>{f.ie}</strong>
+              <span style={{ fontFamily: mono, fontSize: 9.5, color: typeColor(f.type), textTransform: 'uppercase', letterSpacing: '0.04em' }}>{f.type}</span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 5 }}>{f.gloss}</div>
+            {f.fields.length === 0
+              ? <div style={{ fontFamily: mono, fontSize: 10.5, color: 'var(--text-dim)' }}>(present, no surfaced value)</div>
+              : f.fields.map((fl, j) => (
+                <div key={j} style={{ fontFamily: mono, fontSize: 10.5, lineHeight: 1.55, wordBreak: 'break-all' }}>
+                  <span style={{ color: 'var(--text-dim)' }}>{fl.k}:</span>{' '}
+                  {fl.k === 'trustLevel'
+                    ? <span style={{ color: fl.v === 'CryptographicallyVerified' ? '#3fa84c' : '#caa028' }}>{fl.v}</span>
+                    : <span style={{ color: 'var(--text)' }}>{fl.v}</span>}
+                </div>
+              ))}
+          </div>
+        ))}
       </div>
     </div>
   );
