@@ -81,7 +81,7 @@ export function Compliance({ onHome }: { onHome: () => void }) {
                 <div style={{ marginTop: 14 }}>
                   <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
                     {(rep as Report).failed === 0
-                      ? <>✓ <strong style={{ color: '#15803d' }}>Fully conformant</strong> — {(rep as Report).total} checks, 0 failures.</>
+                      ? <>✓ <strong style={{ color: '#15803d' }}>All {(rep as Report).total} checks pass</strong> — 0 failures, run live just now against the deployment.</>
                       : <>⚠ <strong style={{ color: '#dc2626' }}>{(rep as Report).failed} failing</strong> of {(rep as Report).total}.</>}
                     {' '}<span style={{ fontFamily: "'JetBrains Mono', monospace" }}>target: {(rep as Report).target}</span>
                   </div>
