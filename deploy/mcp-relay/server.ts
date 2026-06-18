@@ -212,6 +212,8 @@ import {
   computeCognitiveStrategy,
   extractEntities,
   shouldAbstain,
+  routeInterrogatives,
+  CANONICAL_ORDER,
 } from '@interego/pgsl';
 import type { NodeProvenance } from '@interego/pgsl';
 
@@ -4797,6 +4799,51 @@ async function handleAnalyzeQuestion(args: ToolArgs): Promise<string> {
   });
 }
 
+// ── Interrogative router — runtime realization of the ie: grammar ──────
+//
+// Turns the published Interego Interrogatives Core Ontology (ie:) into a read:
+// classify a question into interrogative type(s), then PROJECT the answering
+// facet(s) already present on a context descriptor. Pure routing lives in
+// @interego/pgsl (interrogative-router.ts, drift-guarded against docs/ns); this
+// handler is a thin composer over the EXISTING get_descriptor read. Read-only.
+async function handleInterrogativeRoute(args: ToolArgs): Promise<string> {
+  const question = typeof args.question === 'string' ? args.question : undefined;
+  const interrogatives = args.interrogatives as string | string[] | undefined;
+  const all = args.all === true;
+  const hasInterro = interrogatives !== undefined &&
+    (Array.isArray(interrogatives) ? interrogatives.length > 0 : String(interrogatives).trim() !== '');
+  // Gate BEFORE any fetch — don't read a descriptor we have nothing to ask of.
+  if (!question?.trim() && !hasInterro && !all) {
+    return JSON.stringify({ error: 'specify a `question`, an `interrogatives` list, or `all:true`', interrogatives: [...CANONICAL_ORDER] });
+  }
+  const target = (typeof args.target === 'string' && args.target) ? args.target
+    : (typeof args.url === 'string' ? args.url : undefined);
+  if (!target) {
+    return JSON.stringify({ error: 'a descriptor `url` (or `target`) is required — pick one via discover_context / discover_all first' });
+  }
+  // Compose the EXISTING descriptor read (same normalize/fetch/decrypt/cache/auth path).
+  const descJson = JSON.parse(await handleGetDescriptor({ url: target, bypass_cache: args.bypass_cache } as ToolArgs)) as Record<string, unknown>;
+  if (descJson.error) return JSON.stringify({ error: `could not read descriptor: ${String(descJson.error)}`, target });
+  const turtle: string | undefined =
+    typeof descJson.turtle === 'string' ? descJson.turtle
+      : (descJson.encrypted !== true && typeof descJson.content === 'string') ? descJson.content
+        : undefined;
+  if (!turtle) {
+    return JSON.stringify({
+      error: 'descriptor-not-parseable', target, targetKind: 'descriptor',
+      reason: descJson.encrypted === true
+        ? 'the descriptor graph is encrypted and not decryptable by this relay key'
+        : 'no turtle/content in the descriptor response',
+    });
+  }
+  const result = routeInterrogatives({
+    turtle, question, interrogatives, all,
+    authorship: descJson.authorship as { effectiveTrustLevel?: string; authorshipVerified?: boolean; signedBy?: string } | undefined,
+    target,
+  });
+  return JSON.stringify(result);
+}
+
 // ── PGSL — compatibility shims composed over the kernel ────────────────
 //
 // Every pgsl_* tool here is a thin compatibility shim. The wire shape
@@ -5468,6 +5515,7 @@ const TOOLS: Record<string, { description: string; handler: (args: ToolArgs) => 
   check_balance: { description: 'Check ETH balance for a wallet address', handler: handleCheckBalance },
   // Comprehension
   analyze_question: { description: 'Analyze a question to pick the optimal cognitive strategy', handler: handleAnalyzeQuestion },
+  interrogative_route: { description: 'Route a question (or explicit interrogatives) to the descriptor facets that answer it — the ie: grammar (Who/What/When/Where/Why/How/Which/WhatKind/HowMuch/Whose/Whether) over a context descriptor. Read-only; composes get_descriptor.', handler: handleInterrogativeRoute },
   // PGSL lattice
   pgsl_ingest: { description: 'Ingest content into the PGSL lattice', handler: handlePgslIngest },
   pgsl_resolve: { description: 'Resolve a PGSL URI to its content + metadata', handler: handlePgslResolve },
@@ -6705,6 +6753,24 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: ANALYZE_QUESTION_OUTPUT,
     annotations: { title: 'Analyze a question', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'interrogative_route',
+    description: 'Answer interrogatives about a context descriptor by projecting the facet(s) that answer each — the runtime realization of the Interego ie: grammar. Pass a natural-language `question` (lexically classified into interrogative types from the ie: SKOS labels) OR an explicit `interrogatives` list (' + CANONICAL_ORDER.join(' / ') + '), plus the descriptor `url`. Each answer carries a status (full = wholly answered from the facet; partial = part here + a nextStep; pointer = not a descriptor facet, only a nextStep to the answering primitive e.g. pgsl_resolve for What; absent = the answering facet is missing). NOTE: this is NOT analyze_question (that picks a memory-retrieval strategy); and Why and How are both answered from the same cg:ProvenanceFacet. Read-only; composes get_descriptor.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Descriptor .ttl URL to interrogate (REQUIRED; `target` is an alias). Routed through the same fetch/decrypt/cache/auth path as get_descriptor. Pick one via discover_context / discover_all first.' },
+        target: { type: 'string', description: 'Alias for `url`.' },
+        question: { type: 'string', description: 'Natural-language question; lexically classified into interrogative type(s).' },
+        interrogatives: { type: 'array', items: { type: 'string' }, description: 'Explicit interrogative(s), e.g. ["Who","When"] — bypasses NL classification. One or more of: ' + CANONICAL_ORDER.join(', ') + '.' },
+        all: { type: 'boolean', description: 'Project all eleven interrogatives (only honored when neither `question` nor `interrogatives` is given).' },
+        bypass_cache: { type: 'boolean', description: 'Bypass the descriptor body cache.' },
+      },
+      required: ['url'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Route interrogatives over a descriptor', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'pgsl_ingest',

@@ -407,3 +407,26 @@ export type {
   SparqlProtocolResult,
   WriteBackResult,
 } from './virtualized-layer.js';
+// Interrogative router — runtime realization of the ie: grammar (Who/What/When/
+// Where/Why/How/...) over a context descriptor's facets. Composes get_descriptor.
+export {
+  deriveInterrogativeTable,
+  classifyInterrogatives,
+  normalizeInterrogatives,
+  resolveRequestedInterrogatives,
+  routeInterrogatives,
+  CANONICAL_ORDER,
+} from './interrogative-router.js';
+export { INTERROGATIVE_TABLE } from './interrogative-table.generated.js';
+export type {
+  InterrogativeType,
+  InterrogativeEntry,
+  InterrogativeAnswer,
+  AnswerStatus,
+  NextStep,
+  ClassificationCue,
+  RouteClassification,
+  RouteResult,
+  RouteError,
+  RouteOptions,
+} from './interrogative-router.js';
