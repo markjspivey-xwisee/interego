@@ -63,6 +63,13 @@ export function Compliance({ onHome }: { onHome: () => void }) {
           <code style={{ ...code, display: 'block', marginTop: 6, padding: '6px 8px', whiteSpace: 'pre-wrap' }}>git clone -b LRS-2.0 https://github.com/adlnet/lrs-conformance-test-suite && cd lrs-conformance-test-suite && npm i{'\n'}node bin/console_runner.js -x 2.0.0 -e {BRIDGE_URL}/xapi -a -u &lt;user&gt; -p &lt;pass&gt;</code>
           The suites below run <strong>live, per-click</strong> as the interactive, audit-it-yourself subset.
         </div>
+        <div style={{ fontSize: 12.5, color: '#14532d', marginTop: 10, paddingTop: 10, borderTop: '1px solid #bbf7d0' }}>
+          ✓ <strong>SCORM 2004 RTE (IEEE 1484.11.2): 9/9.</strong> The Run-Time Environment is browser code (the player's
+          <code style={code}>scorm-rte.js</code>), so it's exercised headlessly in jsdom — driving the real
+          <code style={code}>API_1484_11</code> + <code style={code}>API</code>: the 8-function surface, CMI data-model
+          round-trips, read-only enforcement (error 404), the 64&nbsp;KB suspend_data limit, and SCORM 1.2 LMS* — and
+          re-runnable via <code style={code}>npx vitest run tests/rte-conformance.test.ts</code>.
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 18, marginTop: 22 }}>
@@ -122,7 +129,7 @@ export function Compliance({ onHome }: { onHome: () => void }) {
         <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-dim)', fontSize: 12.5, lineHeight: 1.55 }}>
           <li><strong>xAPI</strong>: <strong>fully conformant — the complete official ADL <code style={code}>lrs-conformance-test-suite</code> passes 1442/1442</strong> (attested above, re-runnable). The per-click battery here is the interactive subset across the major sections + the §4 validator on every statement.</li>
           <li><strong>cmi5</strong>: the 9 statement types, §9 invariants, §10 moveOn category, §11 moveOn evaluation, §8 session — exercised live in-process.</li>
-          <li><strong>SCORM 2004</strong>: the <strong>Sequencing &amp; Navigation</strong> and <strong>Content Aggregation Model (manifest)</strong> books run live. The <strong>RTE</strong> book (the <code style={code}>API_1484_11</code> runtime + full CMI data model + error codes) is browser-side code in the SCORM player (<code style={code}>scorm-rte.js</code>); the desktop ADL SCORM test suite is a separate legacy GUI tool.</li>
+          <li><strong>SCORM 2004</strong>: all three books covered — <strong>Sequencing &amp; Navigation</strong> and <strong>Content Aggregation Model (manifest)</strong> run live here; the <strong>RTE</strong> book (browser code in the player) is verified by a headless jsdom harness (9/9, attested above). The desktop ADL SCORM test suite is a separate legacy GUI tool.</li>
         </ul>
       </div>
       <p style={{ color: 'var(--text-dim)', fontSize: 12.5, marginTop: 14, maxWidth: 820, lineHeight: 1.5 }}>

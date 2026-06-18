@@ -82,7 +82,8 @@
     "jose": "^6.2.3",
     "n3": "^1.17.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "jsdom": "^24.1.0"
   },
   "dependencies": {
     "@comunica/query-sparql": "^5.1.3",
