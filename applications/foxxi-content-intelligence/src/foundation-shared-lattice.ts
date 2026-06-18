@@ -214,7 +214,12 @@ export function projectAs(label: string, holonUri: string, as: ProjectionKind): 
   const node = a.pgsl.nodes.get(holonUri);
   if (!node) return null;
   const ts = node.provenance.generatedAtTime || '1970-01-01T00:00:00Z';
-  if (as === 'rdf') return projectHolon(node, a.pgsl, { descriptorBase: `${a.podUrl.replace(/\/$/, '')}/foxxi-lattice/` }).descriptorTurtle;
+  if (as === 'rdf') {
+    // Parity with the published compose descriptor: the dereference render also
+    // carries typed cg: facets so interrogative_route answers over it too.
+    const art = readArtifact(label, holonUri);
+    return projectHolon(node, a.pgsl, { descriptorBase: `${a.podUrl.replace(/\/$/, '')}/foxxi-lattice/`, typedFacets: true, ...(art ? { contentType: art.contentType } : {}) }).descriptorTurtle;
+  }
   if (as === 'vc') return projectHolonToCredential(node, { issuanceDate: ts, extraTypes: ['FoxxiArtifact'] });
   if (as === 'activity') return projectHolonToActivity(node, { published: ts, activityType: 'Create' });
   return null;
@@ -283,7 +288,7 @@ export function dereferenceIn(pgsl: PGSLInstance, podUrl: string, iri: string): 
   let projectedRdf: string | undefined;
   if (topFrags[0]) {
     try {
-      projectedRdf = projectHolon(topFrags[0], pgsl, { descriptorBase: `${podUrl.replace(/\/$/, '')}/foxxi-lattice/` }).descriptorTurtle;
+      projectedRdf = projectHolon(topFrags[0], pgsl, { descriptorBase: `${podUrl.replace(/\/$/, '')}/foxxi-lattice/`, typedFacets: true }).descriptorTurtle;
     } catch { /* skip */ }
   }
   return {

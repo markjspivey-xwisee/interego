@@ -58,6 +58,19 @@ async function main(): Promise<void> {
   ok('Whether = partial + SelfAsserted (unsigned holon)', route('Whether').status === 'partial' && String((route('Whether').values as any)?.trustLevel ?? '').endsWith('SelfAsserted'), '');
   ok('What = pointer to pgsl_resolve', route('What').status === 'pointer' && route('What').nextStep?.tool === 'pgsl_resolve', '');
 
+  // 4) Bridge-side resolve-depth: /agent/lattice/:label/interrogate walks the What /
+  //    HowMuch pointers locally (the bridge has the lattice resident + decryptable).
+  const holonUri: string | undefined = body?.sharedLattice?.holonUri;
+  const label = `eth-${W.address.slice(2, 14).toLowerCase()}`;
+  if (holonUri) {
+    const ir = await fetch(`${BRIDGE}/agent/lattice/${label}/interrogate?uri=${encodeURIComponent(holonUri)}&q=${encodeURIComponent('who recorded this, when, what is it, and how much')}&agent_did=${encodeURIComponent(`did:ethr:${W.address.toLowerCase()}`)}`);
+    const ij = await ir.json() as any;
+    ok('interrogate endpoint ok', ir.status === 200 && ij?.ok === true, `HTTP ${ir.status}`);
+    ok('resolve-depth: What resolved to the real artifact content', ij?.resolved?.What?.contentType === 'xapi:Statement' && !!ij?.resolved?.What?.content, ij?.resolved?.What?.contentType ?? '(none)');
+    ok('resolve-depth: HowMuch resolved to lattice cardinality', typeof ij?.resolved?.HowMuch?.atoms === 'number', `atoms=${ij?.resolved?.HowMuch?.atoms} fragments=${ij?.resolved?.HowMuch?.fragments}`);
+    ok('interrogate also answers facet interrogatives (Who full)', Array.isArray(ij?.answers) && ij.answers.find((a: any) => a.interrogative === 'Who')?.status === 'full', '');
+  } else { ok('holonUri present for interrogate', false, '(no holonUri)'); }
+
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   process.exit(fail === 0 ? 0 : 1);
 }

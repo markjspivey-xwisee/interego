@@ -100,6 +100,7 @@ import {
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, ensureResident, loadCourseFromLattice, type ProjectionKind } from '../src/foundation-shared-lattice.js';
+import { routeInterrogatives } from '@interego/pgsl';
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -3236,6 +3237,52 @@ app.get('/agent/lattice/:label/holon', (req, res) => {
   const projection = projectAs(req.params.label, holon, as);
   if (projection == null && !artifact) { res.status(404).json({ ok: false, error: 'holon not found in this lattice' }); return; }
   res.json({ ok: true, label: req.params.label, holon, as, availableProjections: ['rdf', 'vc', 'activity'], projection, artifact });
+});
+
+// Interrogate a resident holon with the ie: grammar AND resolve-depth. The relay's
+// interrogative_route answers the FACET interrogatives (Who/When/Why/WhatKind/Whether)
+// over any descriptor, but it cannot follow the What/HowMuch pointers — the holon's
+// content lives in an encrypted holon on the pod the relay isn't a recipient of. THIS
+// endpoint runs in the bridge, which HAS the lattice resident + decryptable, so it
+// walks those pointers locally and honestly: What -> the actual artifact, HowMuch ->
+// real lattice cardinality. Which/Whether stay honest pointers (a decision/policy is
+// not on the descriptor). Read-only.
+app.get('/agent/lattice/:label/interrogate', async (req, res) => {
+  const label = req.params.label;
+  const holon = typeof req.query.uri === 'string' ? req.query.uri : '';
+  const question = typeof req.query.q === 'string' ? req.query.q
+    : (typeof req.query.question === 'string' ? req.query.question : undefined);
+  const interrogatives = typeof req.query.interrogatives === 'string'
+    ? req.query.interrogatives.split(',').map(s => s.trim()).filter(Boolean) : undefined;
+  if (!holon) { res.status(400).json({ ok: false, error: 'uri query parameter (holon URI) required' }); return; }
+  // Rehydrate from the pod if not resident in THIS replica (the lattice is encrypted
+  // with the bridge's own key, so it can always decrypt its resource → replica/restart
+  // independent). label encodes the pod segment; agent_did is optional (only used when
+  // creating a fresh lattice, which we are not — we read the existing one).
+  if (!isResident(label)) {
+    try {
+      const podUrl = `${new URL(tenantPodUrl).origin}/${label}/`;
+      const agentDid = typeof req.query.agent_did === 'string' ? req.query.agent_did : `did:ethr:0x${label.replace(/^eth-/, '')}`;
+      await ensureResident(podUrl, agentDid, label);
+    } catch { /* best-effort rehydrate */ }
+  }
+  if (!isResident(label)) { res.status(404).json({ ok: false, error: `no resident shared lattice for '${label}' (rehydration from the pod failed)` }); return; }
+  const turtle = projectAs(label, holon, 'rdf');
+  if (typeof turtle !== 'string') { res.status(404).json({ ok: false, error: 'holon not found in this lattice' }); return; }
+  const all = !question && (!interrogatives || interrogatives.length === 0);
+  const result = routeInterrogatives({ turtle, question, interrogatives, all, target: holon });
+  if (!result.ok) { res.status(400).json(result); return; }
+  // Resolve-depth (local, honest): walk the pointers the bridge CAN satisfy.
+  const resolved: Record<string, unknown> = {};
+  if (result.answers.some(a => a.interrogative === 'What')) {
+    const art = readArtifact(label, holon);
+    if (art) resolved.What = { resolvedVia: 'pgsl_resolve (resident lattice)', contentType: art.contentType, content: art.content };
+  }
+  if (result.answers.some(a => a.interrogative === 'HowMuch')) {
+    const view = latticeNamespaceView(label);
+    if (view.resident) resolved.HowMuch = { resolvedVia: 'pgsl_lattice_status (resident lattice)', ...view.stats };
+  }
+  res.json({ ...result, ...(Object.keys(resolved).length ? { resolved } : {}) });
 });
 
 // ── Landing tour: pin a REAL completed run as the no-key autoplay ─────────────
