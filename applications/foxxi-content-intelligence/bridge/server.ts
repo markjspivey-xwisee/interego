@@ -111,6 +111,8 @@ import {
 import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, ensureResident, loadCourseFromLattice, type ProjectionKind } from '../src/foundation-shared-lattice.js';
+import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
+import { manifestToAgenticCourse } from '../src/course-graph.js';
 import { routeInterrogatives } from '@interego/pgsl';
 import { mintSessionToken } from '../src/auth.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
@@ -3366,6 +3368,99 @@ app.post('/agent/landing-tour', async (req, res) => {
   if (!v.ok) { res.status(400).json({ ok: false, error: v.error }); return; }
   try { await writeLandingTour(v.doc); res.json({ ok: true, pinned: true, eventCount: v.doc.eventCount, pinnedAt: v.doc.pinnedAt }); }
   catch (e) { res.status(500).json({ ok: false, error: `failed to persist tour: ${(e as Error).message}` }); }
+});
+
+// ── Course intelligence: parse a SCORM package, fingerprint the authoring tool,
+//    compose it into a PGSL knowledge-graph, then chat with it (grounded). ──────
+// All composition: fingerprintAuthoringTool (the one new primitive) + the existing
+// parseManifest + composeIntoSharedLattice + askAgenticRag. The course KG holon is
+// the authoritative source of truth — agents interrogate it (/agent/lattice/:label/
+// interrogate) and answer questions grounded in it (/agent/course/ask).
+const courseLabelFor = (courseId: string): string =>
+  'course-' + (courseId || 'x').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+
+app.post('/agent/course/analyze', async (req, res) => {
+  try {
+    const manifestXml = typeof req.body?.manifestXml === 'string' ? req.body.manifestXml : '';
+    if (!manifestXml || !/<manifest/i.test(manifestXml)) {
+      res.status(400).json({ ok: false, error: 'manifestXml (imsmanifest.xml text) required' }); return;
+    }
+    const fileList: string[] | undefined = Array.isArray(req.body?.fileList) ? req.body.fileList.filter((x: unknown) => typeof x === 'string') : undefined;
+    const fileText: Record<string, string> | undefined = req.body?.fileText && typeof req.body.fileText === 'object' ? req.body.fileText : undefined;
+    const fileContents: Record<string, string> | undefined = req.body?.fileContents && typeof req.body.fileContents === 'object' ? req.body.fileContents : undefined;
+
+    // 1) Fingerprint WHICH authoring tool produced it (the distinctive capability).
+    const fingerprint = fingerprintAuthoringTool({ manifestXml, fileList, fileContents });
+
+    // 2) Build the course concept/slide graph from the manifest (+ extracted page text).
+    const label = courseLabelFor(''); // provisional; replaced once we know the courseId
+    const provisional = manifestToAgenticCourse({ manifestXml, fileList, fileText, courseIri: 'urn:foxxi:course:pending', authoritativeSource: '' });
+    const realLabel = courseLabelFor(provisional.structure.courseId);
+    const courseIri = `urn:foxxi:course:${realLabel}`;
+    const built = manifestToAgenticCourse({ manifestXml, fileList, fileText, courseIri, authoritativeSource: courseIri });
+
+    // 3) Compose the course KG into a tenant-owned PGSL holon — the authoritative,
+    //    dereferenceable, interrogable source of truth.
+    let courseKg: { label: string; holonUri?: string; descriptorUrl?: string; agentDid: string; reusedNodes?: number; newNodes?: number; stats?: unknown } = { label: realLabel, agentDid: tenantProfileDid };
+    if (tenantPodUrl) {
+      const sl = await composeIntoSharedLattice({
+        podUrl: tenantPodUrl, agentDid: tenantProfileDid, label: realLabel,
+        terms: built.spineTerms,
+        content: { fingerprint, structure: built.structure, course: built.course, kind: 'foxxi:CourseKnowledgeGraph' },
+        contentType: 'foxxi:CourseKnowledgeGraph',
+        projections: ['rdf'],
+      });
+      if (sl) courseKg = { label: realLabel, holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl, agentDid: tenantProfileDid, reusedNodes: sl.reusedNodes, newNodes: sl.newNodes, stats: sl.stats };
+    }
+    void label;
+    res.json({ ok: true, fingerprint, structure: built.structure, course: built.course, courseKg });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
+});
+
+app.post('/agent/course/ask', async (req, res) => {
+  try {
+    const course = req.body?.course;
+    const question = typeof req.body?.question === 'string' ? req.body.question.trim() : '';
+    if (!course || !Array.isArray(course.concepts) || !Array.isArray(course.slides)) {
+      res.status(400).json({ ok: false, error: 'course (FoxxiAgenticCourse from /agent/course/analyze) required' }); return;
+    }
+    if (!question) { res.status(400).json({ ok: false, error: 'question required' }); return; }
+    const role = typeof req.body?.role === 'string' ? req.body.role : '';
+    const learnerActivity = typeof req.body?.learnerActivity === 'string' ? req.body.learnerActivity.trim() : '';
+    const byok = typeof req.body?.llm_api_key === 'string' ? req.body.llm_api_key.trim() : '';
+    const history = Array.isArray(req.body?.history) ? req.body.history : undefined;
+    const learnerDid = typeof req.body?.learnerDid === 'string' ? req.body.learnerDid : 'urn:foxxi:demo:asker';
+
+    // Role framing — the answer stays GROUNDED in the course KG; the role only sets
+    // the lens (who is asking, and about whose performance).
+    const ROLE_FRAME: Record<string, string> = {
+      author: 'You are the AUTHORING agent for this course, answering a question from the enrolled agent about why the content is structured as it is. Ground every claim in the course knowledge-graph.',
+      'performance-manager': 'You are the PERFORMANCE MANAGER, discussing the enrolled learner\'s activity in the CONTEXT of this course. Tie observations to specific course concepts/slides.',
+      assessor: 'You are the ASSESSOR/EVALUATOR, relating the learner\'s demonstrated performance to the course\'s claimed outcomes. Cite the course content that defines each outcome.',
+      meta: 'You are reasoning self-recursively ABOUT this course, using the course knowledge-graph itself as the authoritative source of truth. Describe what the course is, what it teaches, and how it is structured — strictly from its own graph.',
+      learner: 'You are the enrolled learner asking about the course content. Answer from the course knowledge-graph.',
+    };
+    const frame = ROLE_FRAME[role] ?? '';
+    const framedQuestion = [frame, learnerActivity ? `Learner activity: ${learnerActivity}` : '', question].filter(Boolean).join('\n\n');
+
+    if (!byok) {
+      // Non-BYOK: rate-limit the (potential) bridge-key path, then return the
+      // retrieval scaffold (honest, key-less — the caller's own LLM synthesises).
+      const xff = req.headers['x-forwarded-for'];
+      const ip = typeof xff === 'string' ? xff.split(',').at(-1)!.trim() : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
+      const rl = checkAgenticRateLimit(ip);
+      if (!rl.ok) { res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s, or supply llm_api_key (BYOK is exempt)` }); return; }
+      const result = retrieveCourseContext({ question: framedQuestion, learnerDid, primary: course });
+      res.json({ ok: true, role, grounded: result.retrieval.citedSlides.length > 0, ...result });
+      return;
+    }
+    const result = await askAgenticRag({ question: framedQuestion, learnerDid, primary: course, llmApiKey: byok, llmKeySource: 'per-request-byok', ...(history ? { history } : {}) });
+    res.json({ ok: true, role, grounded: result.retrieval.citedSlides.length > 0, ...result });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: (err as Error).message });
+  }
 });
 
 // ── Public compliance runners — the engine behind the compliance microsite ────

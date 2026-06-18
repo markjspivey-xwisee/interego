@@ -1,0 +1,181 @@
+/**
+ * course-graph.ts — turn a parsed SCORM manifest (+ optional extracted page text)
+ * into a FoxxiAgenticCourse: the concept/slide graph the existing agentic-RAG
+ * retrieval (agentic-rag.ts) reasons over, and the spine terms the PGSL lattice
+ * composes as the course knowledge-graph.
+ *
+ * Composition, not reinvention: we DERIVE the graph from the real manifest —
+ * topic folders among the resource <file> hrefs become concepts, the content
+ * pages become slides, and (where the page bytes are supplied) their visible
+ * text becomes the slide transcript that grounds answers. Prerequisite edges are
+ * taken ONLY from explicit imsss sequencing pre-conditions — we do not fabricate
+ * a learning order the manifest doesn't assert.
+ */
+import { parseManifest, type ScormActivityTree, type Activity } from './scorm-sequencing.js';
+import type { FoxxiAgenticCourse } from './agentic-rag.js';
+
+const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'x';
+
+function humanize(name: string): string {
+  const base = name.replace(/\.[a-z0-9]+$/i, '').split(/[\\/]/).pop() ?? name;
+  return base
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#\d+;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Pull every <file href="..."> out of the manifest (the resource file list). */
+export function extractFileHrefs(manifestXml: string): string[] {
+  const out: string[] = [];
+  for (const m of manifestXml.matchAll(/<file\s+href="([^"]+)"/gi)) out.push(m[1]);
+  return out;
+}
+
+const CONTENT_RE = /\.html?$/i;
+const NONCONTENT = /(^|\/)(shared|common|lib|js|css|assets|images?|img|fonts?|meta|scormdriver)\//i;
+const TEMPLATE_RE = /(launchpage|assessmenttemplate|index|story|goodbye|player)\.html?$/i;
+
+export interface ManifestToCourseArgs {
+  manifestXml: string;
+  /** full file list (from a browser-side unzip); falls back to manifest <file href>. */
+  fileList?: string[];
+  /** path -> page text (or raw HTML; HTML is stripped). Grounds slide transcripts. */
+  fileText?: Record<string, string>;
+  courseIri: string;
+  authoritativeSource: string;
+}
+
+export interface ManifestCourseResult {
+  course: FoxxiAgenticCourse;
+  /** spine terms for the PGSL lattice (course label + concept labels + slide titles). */
+  spineTerms: string[];
+  /** structural summary for display. */
+  structure: {
+    courseId: string;
+    courseTitle: string;
+    activityCount: number;
+    items: Array<{ id: string; title: string; href?: string }>;
+    topics: string[];
+    fileCount: number;
+  };
+}
+
+/**
+ * Build the course graph. Concepts = topic folders (+ activity items); slides =
+ * content pages; transcript = extracted page text where available, else the page
+ * title (honest: sparse when only the manifest is supplied).
+ */
+export function manifestToAgenticCourse(args: ManifestToCourseArgs): ManifestCourseResult {
+  let tree: ScormActivityTree | null = null;
+  try { tree = parseManifest(args.manifestXml); } catch { tree = null; }
+  const courseId = tree?.courseId || 'course';
+  const courseTitle = tree?.courseTitle || 'Course';
+  const items: Activity[] = tree ? tree.preorder.filter(a => a.href || a.children.length === 0) : [];
+
+  const files = (args.fileList && args.fileList.length ? args.fileList : extractFileHrefs(args.manifestXml))
+    .map(f => f.replace(/^\.?\//, ''));
+  const contentFiles = files.filter(f => CONTENT_RE.test(f) && !NONCONTENT.test(f) && !TEMPLATE_RE.test(f));
+
+  // Topics = first path segment of each content file (folder), excluding non-content folders.
+  const topicOf = (path: string): string | null => {
+    const parts = path.split('/');
+    if (parts.length < 2) return null;
+    const top = parts[0];
+    if (/^(shared|common|lib|js|css|assets|images?|img|fonts?|meta)$/i.test(top)) return null;
+    return top;
+  };
+  const topicOrder: string[] = [];
+  const topicSlides = new Map<string, string[]>();
+
+  const slides: FoxxiAgenticCourse['slides'][number][] = [];
+  let seq = 0;
+  for (const path of contentFiles) {
+    const topic = topicOf(path);
+    const sid = slug(path);
+    const rawText = args.fileText?.[path] ?? args.fileText?.[path.replace(/^\.?\//, '')] ?? '';
+    const text = /<[a-z!][^>]*>/i.test(rawText) ? stripHtml(rawText) : rawText.trim();
+    const title = humanize(path);
+    const conceptIds = topic ? [slug(topic)] : [];
+    slides.push({ id: sid, title, sequence_index: seq++, concept_ids: conceptIds, transcript_combined: text || title });
+    if (topic) {
+      if (!topicSlides.has(topic)) { topicSlides.set(topic, []); topicOrder.push(topic); }
+      topicSlides.get(topic)!.push(sid);
+    }
+  }
+
+  // Concepts: one per topic folder, plus any activity item titles not already a topic.
+  const concepts: FoxxiAgenticCourse['concepts'][number][] = [];
+  const seenConcept = new Set<string>();
+  for (const topic of topicOrder) {
+    const id = slug(topic);
+    if (seenConcept.has(id)) continue;
+    seenConcept.add(id);
+    concepts.push({ id, label: humanize(topic), confidence: 1, tier: 1, is_free_standing: true, taught_in_slides: topicSlides.get(topic) ?? [], total_freq: (topicSlides.get(topic) ?? []).length });
+  }
+  for (const it of items) {
+    const id = slug(it.title || it.id);
+    if (!it.title || seenConcept.has(id)) continue;
+    seenConcept.add(id);
+    concepts.push({ id, label: it.title, confidence: 0.8, tier: 2, is_free_standing: false, taught_in_slides: [], total_freq: 1 });
+  }
+  // If there were no topic folders (single-SCO/flat), fall back to the course title as one concept.
+  if (concepts.length === 0) {
+    concepts.push({ id: slug(courseTitle), label: courseTitle, confidence: 1, tier: 1, is_free_standing: true, taught_in_slides: slides.map(s => s.id), total_freq: slides.length });
+    for (const s of slides) (s as { concept_ids: string[] }).concept_ids = [slug(courseTitle)];
+  }
+
+  // Prereq edges: ONLY from explicit imsss pre-condition sequencing (honest — no fabricated order).
+  const prereq_edges: FoxxiAgenticCourse['prereq_edges'][number][] = [];
+  if (tree) {
+    for (const a of tree.preorder) {
+      const hasPre = a.sequencing?.preConditionRules?.length;
+      if (hasPre && a.parent) {
+        const sib = a.parent.children;
+        const idx = sib.indexOf(a);
+        if (idx > 0) prereq_edges.push({ from: slug(sib[idx - 1].title || sib[idx - 1].id), to: slug(a.title || a.id), confidence: 0.9 });
+      }
+    }
+  }
+
+  const course: FoxxiAgenticCourse = {
+    courseIri: args.courseIri,
+    title: courseTitle,
+    courseLabel: courseTitle,
+    courseId,
+    authoritativeSource: args.authoritativeSource,
+    concepts,
+    slides,
+    modifier_pairs: [],
+    prereq_edges,
+  };
+
+  const spineTerms = [
+    courseTitle,
+    ...concepts.map(c => c.label),
+    ...slides.map(s => s.title),
+  ].filter((t, i, a) => t && a.indexOf(t) === i).slice(0, 200);
+
+  return {
+    course,
+    spineTerms,
+    structure: {
+      courseId, courseTitle,
+      activityCount: tree?.preorder.length ?? 0,
+      items: items.slice(0, 50).map(a => ({ id: a.id, title: a.title, href: a.href })),
+      topics: topicOrder,
+      fileCount: files.length,
+    },
+  };
+}
