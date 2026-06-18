@@ -17,10 +17,10 @@ type SuiteId = 'xapi' | 'scorm';
 interface SuiteDef { id: SuiteId; label: string; standard: string; blurb: string; }
 
 const SUITES: SuiteDef[] = [
-  { id: 'xapi', label: 'LRS — xAPI 2.0', standard: 'IEEE 9274.1.1 + xAPI Profile Spec 2017',
-    blurb: 'Drives the live Foxxi LRS surface end to end: /about version negotiation, the xAPI Profile document, statement POST + round-trip, immutability (409), voiding, filtered queries, and State-resource ETag concurrency.' },
-  { id: 'scorm', label: 'LMS — SCORM 2004 S&N', standard: 'ADL SCORM 2004 4th Ed (IMS Simple Sequencing + CAM + RTE)',
-    blurb: 'Exercises the SCORM 2004 Sequencing & Navigation engine: activity-tree parse, control modes, the Flow + Choice subprocesses, pre-condition rules, limit conditions (attemptLimit), measure/objective rollup (satisfiedByMeasure), and suspend/resume.' },
+  { id: 'xapi', label: 'LRS — xAPI 2.0 (representative battery)', standard: 'IEEE 9274.1.1 + xAPI Profile Spec 2017',
+    blurb: 'Drives the live Foxxi LRS surface across the major spec sections: /about version negotiation, the xAPI Profile document, statement POST + round-trip, immutability (409), voiding, filtered queries, and State-resource ETag concurrency — plus the §4 validator on every statement. Representative live battery, not the full ~1300-case ADL lrs-conformance-test-suite.' },
+  { id: 'scorm', label: 'LMS — SCORM 2004 (S&N book)', standard: 'ADL SCORM 2004 4th Ed — Sequencing & Navigation (IMS Simple Sequencing) + manifest parse (CAM)',
+    blurb: 'Exercises the SCORM 2004 Sequencing & Navigation engine: activity-tree parse, control modes, the Flow + Choice subprocesses, pre-condition rules, limit conditions (attemptLimit), measure/objective rollup (satisfiedByMeasure), and suspend/resume. Covers the S&N book + manifest parse — the RTE book (the API_1484_11 runtime / CMI data model) runs browser-side in the SCORM player, not in this battery.' },
 ];
 
 export function Compliance({ onHome }: { onHome: () => void }) {
@@ -102,12 +102,19 @@ export function Compliance({ onHome }: { onHome: () => void }) {
         })}
       </div>
 
-      <p style={{ color: 'var(--text-dim)', fontSize: 12.5, marginTop: 24, maxWidth: 800, lineHeight: 1.5 }}>
+      <div style={{ marginTop: 22, padding: '12px 16px', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, maxWidth: 820 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>Scope — what these batteries do and don't cover (no rounding):</div>
+        <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-dim)', fontSize: 12.5, lineHeight: 1.55 }}>
+          <li><strong>xAPI</strong>: a representative live battery across the major spec sections + the §4 validator on every statement. It is <em>not</em> the full ADL <code style={code}>lrs-conformance-test-suite</code> (~1300 cases), which is not vendored here.</li>
+          <li><strong>SCORM</strong>: the <strong>Sequencing &amp; Navigation</strong> book + manifest parse. The <strong>RTE</strong> book (the <code style={code}>API_1484_11</code> runtime + full CMI data model + error codes) runs browser-side in the SCORM player (<code style={code}>scorm-rte.js</code>), not in this battery; cmi5 and the desktop ADL SCORM test suite are out of scope here.</li>
+        </ul>
+      </div>
+      <p style={{ color: 'var(--text-dim)', fontSize: 12.5, marginTop: 14, maxWidth: 820, lineHeight: 1.5 }}>
         Composed from Interego/Foxxi: the LRS is Foxxi's own statement store + section-4 validator
         (<code style={code}>src/xapi-validate.ts</code>), the SCORM engine is <code style={code}>src/scorm-sequencing.ts</code>,
         and the runner is <code style={code}>src/compliance-runner.ts</code> — the same code paths a production deployment uses.
-        Foxxi also passes the broader ADL/1EdTech matrix (cmi5, LTI 1.3 Advantage, OneRoster 1.2, OB3, CLR 2.0) — see the
-        repo's CONFORMANCE.md for the full citation-by-citation map.
+        The broader ADL/1EdTech matrix (cmi5, LTI 1.3 Advantage, OneRoster 1.2, OB3, CLR 2.0) is mapped citation-by-citation
+        to source in the repo's CONFORMANCE.md.
       </p>
     </div>
   );

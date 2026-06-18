@@ -162,7 +162,7 @@ export async function runXapiConformance(opts: XapiOpts): Promise<ComplianceRepo
     add('PUT state with correct If-Match → 204', r4.status === 204, '§6.3.3', `HTTP ${r4.status}`);
   } catch (e) { add('State resource', false, '§6.3', (e as Error).message); }
 
-  return tally('xapi-2.0', 'xAPI 2.0 LRS Conformance', 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017', B, ranAt, checks);
+  return tally('xapi-2.0', 'xAPI 2.0 LRS Conformance (representative battery)', 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017 — representative live battery across §3/§4/§6/§7 + the §4 validator on every statement; NOT the full ADL lrs-conformance-test-suite (~1300 cases, not vendored)', B, ranAt, checks);
 }
 
 // ── SCORM 2004 Sequencing & Navigation conformance ────────────────────────────
@@ -260,5 +260,5 @@ export function runScormConformance(ranAt: string): ComplianceReport {
   } catch (e) {
     add('SCORM SN engine executed', false, '§SN', (e as Error).message);
   }
-  return tally('scorm-2004-sn', 'SCORM 2004 Sequencing & Navigation Conformance', 'ADL SCORM 2004 4th Ed — Sequencing & Navigation (IMS SS) + CAM + RTE', 'in-process scorm-sequencing engine', ranAt, checks);
+  return tally('scorm-2004-sn', 'SCORM 2004 Sequencing & Navigation (S&N book only)', 'ADL SCORM 2004 4th Ed — Sequencing & Navigation (IMS Simple Sequencing) + activity-tree/manifest parse (CAM). The RTE book (API_1484_11 / CMI data model) runs browser-side in the SCORM player, not in this battery; cmi5 + the desktop ADL SCORM test suite are out of scope here', 'in-process scorm-sequencing engine', ranAt, checks);
 }
