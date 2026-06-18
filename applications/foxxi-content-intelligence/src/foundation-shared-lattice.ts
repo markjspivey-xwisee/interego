@@ -152,7 +152,10 @@ export async function composeIntoSharedLattice(args: {
     const node = pgsl.nodes.get(holonUri);
     if (!node) return null;
     const descriptorBase = `${args.podUrl.endsWith('/') ? args.podUrl : `${args.podUrl}/`}foxxi-lattice/`;
-    const proj = projectHolon(node, pgsl, { descriptorBase });
+    // typedFacets: emit nested cg: facets (Who/When/Why/How/WhatKind/Whether) from the
+    // holon's provenance + content-type so the PUBLISHED descriptor is answerable by the
+    // interrogative router — not just a cg:Projection marker. (See projectHolon JSDoc.)
+    const proj = projectHolon(node, pgsl, { descriptorBase, typedFacets: true, contentType: args.contentType });
     // Each requested surface is a render of the SAME holon — proof the lattice is
     // canonical and RDF is one projection of many.
     const projections = [...new Set<ProjectionKind>(args.projections ?? ['rdf'])];

@@ -57,6 +57,27 @@ export interface ProjectHolonOptions {
    * to fetch + decrypt the holon, rather than recomputing a resource path.
    */
   readonly encryptedHolonUrl?: string;
+  /**
+   * Opt-in: additionally emit nested typed facets (`cg:hasFacet [a cg:AgentFacet …]`,
+   * Temporal/Provenance/Trust/Semiotic) DERIVED FROM `node.provenance`, so the
+   * interrogative router answers Who/When/Why/How/WhatKind/Whether over this
+   * descriptor instead of returning `absent`. Default OFF → the descriptor is
+   * byte-identical for the manifest-render / persist callers (the new triples are
+   * additive to, and a different predicate from, the existing `cg:hasFacetType
+   * cg:Projection` marker). Honest tiers: Who/When/WhatKind=full; Why/How=partial;
+   * Whether=partial (`SelfAsserted` unless the node is signed). `cg:validFrom` is
+   * sourced from `provenance.generatedAtTime` — for an immutable lattice holon the
+   * moment it was minted is when its assertion takes effect (also carried, exactly,
+   * as `prov:generatedAtTime` on the Provenance facet).
+   */
+  readonly typedFacets?: boolean;
+  /**
+   * Content-type tag for the Semiotic facet's `cg:interpretationFrame` (e.g.
+   * `foxxi:Verification`, `ob3:OpenBadgeCredential`). Only read when `typedFacets`
+   * is set; pure (no clock / IO). When absent a defensible default frame is used so
+   * the five core facets are always present together.
+   */
+  readonly contentType?: string;
 }
 
 function levelOf(node: Node): number {
@@ -66,6 +87,44 @@ function levelOf(node: Node): number {
 /** Deterministic descriptor slug from a holon URI (stable across runs + pods). */
 export function descriptorSlug(pgslUri: string): string {
   return `holon-${createHash('sha256').update(pgslUri).digest('hex').slice(0, 24)}`;
+}
+
+/** Percent-encode a content-type tag into one opaque URN segment (deterministic). */
+function contentTypeFrame(contentType: string): string {
+  return `urn:cg:contenttype:${contentType.replace(/:/g, '%3A')}`;
+}
+
+/**
+ * Nested typed facet bnodes derived ENTIRELY from `node.provenance` + `contentType`
+ * (pure, deterministic — no clock read). Emitted as `cg:hasFacet [a cg:XFacet …]` so
+ * BOTH the SHACL six-facet shape (which keys off the `cg:hasFacet` wrapper) and the
+ * interrogative router (which keys off the bnode's `rdf:type`) read them. Each line
+ * ends with ` ;` so it chains inside the descriptor's predicate list.
+ *
+ * Honest by construction: no synthetic `prov:Activity` (would be empty padding); no
+ * `cg:modalStatus` (the modal-truth-consistency shape requires groundTruth when
+ * Asserted — we don't fabricate truth of a type tag); no `cg:proof` (the router
+ * never reads it and the demo holons are unsigned). Trust is `SelfAsserted` unless
+ * the node actually carries a signature.
+ */
+function typedFacetLines(node: Node, contentType?: string): string[] {
+  const p = node.provenance;
+  const agent = `<${p.wasAttributedTo}>`;
+  const when = `"${p.generatedAtTime}"^^xsd:dateTime`;
+  const trustLevel = p.signature ? 'cg:CryptographicallyVerified' : 'cg:SelfAsserted';
+  const frame = contentTypeFrame(contentType ?? 'unspecified');
+  return [
+    `    cg:hasFacet [ a cg:AgentFacet ;`,
+    `        cg:assertingAgent [ a prov:Agent ; cg:agentIdentity ${agent} ] ;`,
+    `        cg:agentRole cg:Author ;`,
+    `        cg:onBehalfOf ${agent} ] ;`,
+    `    cg:hasFacet [ a cg:TemporalFacet ; cg:validFrom ${when} ] ;`,
+    `    cg:hasFacet [ a cg:ProvenanceFacet ;`,
+    `        prov:wasAttributedTo ${agent} ;`,
+    `        prov:generatedAtTime ${when} ] ;`,
+    `    cg:hasFacet [ a cg:TrustFacet ; cg:trustLevel ${trustLevel} ] ;`,
+    `    cg:hasFacet [ a cg:SemioticFacet ; cg:interpretationFrame <${frame}> ] ;`,
+  ];
 }
 
 /**
@@ -94,6 +153,9 @@ export function projectHolon(
     `<${descriptorUrl}> a cg:ContextDescriptor ;`,
     `    cg:describes <${graphUri}> ;`,
     `    cg:hasFacetType cg:Projection ;`,
+    // Opt-in: additive typed facets so interrogative_route answers over this
+    // descriptor (default OFF keeps manifest-render / persist callers byte-identical).
+    ...(opts.typedFacets ? typedFacetLines(node, opts.contentType) : []),
     `    cg:pgslUri <${pgslUri}> ;`,
     `    cg:pgslLevel "${pgslLevel}"^^xsd:nonNegativeInteger ;`,
     // Hypermedia link to the encrypted canonical holon resource — a reader
