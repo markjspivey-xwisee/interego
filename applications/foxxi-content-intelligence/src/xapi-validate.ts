@@ -31,10 +31,18 @@ const IRI_RE = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s]+$/;
  * ISO 8601 calendar date-time (xAPI §4.1.8 timestamp / stored). The UTC
  * offset, when present, MUST use the extended form `±hh:mm` (a colon) or
  * `Z` — the basic form `±hhmm` is rejected, as the conformance suite
- * requires.
+ * requires. The date/time separator may be `T`, `t`, or a space: RFC 3339
+ * §5.6 NOTE permits a space for readability, and the ADL conformance suite
+ * sends `2008-09-15 15:53:00.601+00:00` as a VALID timestamp the LRS must
+ * accept (it then normalizes to UTC on store).
  */
 const TIMESTAMP_RE =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?$/;
+  // Seconds (and the fractional part) are OPTIONAL: ISO 8601 / ECMA-262 permit
+  // reduced precision (`HH:mm`), and the ADL conformance suite sends
+  // `2023-05-04T12:00-05:00` as a VALID timestamp the LRS must accept and
+  // normalize to UTC. (`-00:00` is still rejected below; basic-form offsets
+  // `±hhmm`/`±hh` are rejected by requiring the `±hh:mm` colon form.)
+  /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;
 
 /** ISO 8601 duration (xAPI §4.1.5.2 result.duration). At least one component. */
 const DURATION_RE =
@@ -60,7 +68,9 @@ const isUuid = (v: unknown): v is string => typeof v === 'string' && UUID_RE.tes
 const isIri = (v: unknown): v is string => typeof v === 'string' && IRI_RE.test(v);
 const isTimestamp = (v: unknown): boolean =>
   typeof v === 'string' && TIMESTAMP_RE.test(v) && !v.endsWith('-00:00')
-  && !Number.isNaN(Date.parse(v));
+  // Normalize a space separator to 'T' before Date.parse so the RFC 3339
+  // space form (accepted above) parses on every engine, not just lenient ones.
+  && !Number.isNaN(Date.parse(v.replace(' ', 'T')));
 const isDuration = (v: unknown): boolean => {
   if (typeof v !== 'string' || v.length < 2 || !DURATION_RE.test(v)) return false;
   // The week designator cannot be combined with any other component.

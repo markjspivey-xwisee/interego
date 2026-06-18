@@ -113,7 +113,7 @@ import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENT
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, ensureResident, loadCourseFromLattice, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { routeInterrogatives } from '@interego/pgsl';
 import { mintSessionToken } from '../src/auth.js';
-import { runXapiConformance, runScormConformance } from '../src/compliance-runner.js';
+import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { makeWalletDelegationVerifier } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -3376,7 +3376,9 @@ app.post('/agent/landing-tour', async (req, res) => {
 app.get('/compliance/suites', (_req, res) => {
   res.json({ ok: true, suites: [
     { id: 'xapi-2.0', title: 'xAPI 2.0 LRS Conformance', standard: 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017', run: '/compliance/xapi/run' },
-    { id: 'scorm-2004-sn', title: 'SCORM 2004 Sequencing & Navigation', standard: 'ADL SCORM 2004 4th Ed (IMS SS + CAM + RTE)', run: '/compliance/scorm/run' },
+    { id: 'cmi5', title: 'cmi5 Conformance', standard: 'IEEE 9274.2.1 / cmi5 v1.0', run: '/compliance/cmi5/run' },
+    { id: 'scorm-2004-sn', title: 'SCORM 2004 Sequencing & Navigation', standard: 'ADL SCORM 2004 4th Ed — IMS Simple Sequencing', run: '/compliance/scorm/run' },
+    { id: 'scorm-2004-cam', title: 'SCORM 2004 Content Aggregation Model', standard: 'ADL SCORM 2004 4th Ed — CAM (manifest)', run: '/compliance/cam/run' },
   ] });
 });
 app.get('/compliance/xapi/run', async (_req, res) => {
@@ -3391,6 +3393,14 @@ app.get('/compliance/xapi/run', async (_req, res) => {
 });
 app.get('/compliance/scorm/run', (_req, res) => {
   try { res.json({ ok: true, report: runScormConformance(new Date().toISOString()) }); }
+  catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
+});
+app.get('/compliance/cmi5/run', (_req, res) => {
+  try { res.json({ ok: true, report: runCmi5Conformance(new Date().toISOString()) }); }
+  catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
+});
+app.get('/compliance/cam/run', (_req, res) => {
+  try { res.json({ ok: true, report: runCamConformance(new Date().toISOString()) }); }
   catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
 });
 

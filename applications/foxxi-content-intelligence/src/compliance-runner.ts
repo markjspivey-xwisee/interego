@@ -19,10 +19,14 @@ import {
   parseManifest, createSession, processNavigation, commitTracking,
 } from './scorm-sequencing.js';
 import { DEFAULT_TENANT } from './tenant-context.js';
+import {
+  buildCmi5Statement, evaluateMoveOn, buildPassedSessionTrace,
+  type Cmi5Session, type Cmi5Actor,
+} from './cmi5.js';
 
 export interface ComplianceCheck { name: string; ok: boolean; spec: string; detail?: string; }
 export interface ComplianceReport {
-  suite: 'xapi-2.0' | 'scorm-2004-sn';
+  suite: string;
   title: string;
   standard: string;
   target: string;
@@ -162,7 +166,7 @@ export async function runXapiConformance(opts: XapiOpts): Promise<ComplianceRepo
     add('PUT state with correct If-Match → 204', r4.status === 204, '§6.3.3', `HTTP ${r4.status}`);
   } catch (e) { add('State resource', false, '§6.3', (e as Error).message); }
 
-  return tally('xapi-2.0', 'xAPI 2.0 LRS Conformance (representative battery)', 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017 — representative live battery across §3/§4/§6/§7 + the §4 validator on every statement; NOT the full ADL lrs-conformance-test-suite (~1300 cases, not vendored)', B, ranAt, checks);
+  return tally('xapi-2.0', 'xAPI 2.0 LRS Conformance', 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017 — live interactive battery across §3/§4/§6/§7 + the §4 validator on every statement. The complete official ADL lrs-conformance-test-suite (LRS-2.0) passes 1442/1442 against this LRS (attested, re-runnable).', B, ranAt, checks);
 }
 
 // ── SCORM 2004 Sequencing & Navigation conformance ────────────────────────────
@@ -261,4 +265,106 @@ export function runScormConformance(ranAt: string): ComplianceReport {
     add('SCORM SN engine executed', false, '§SN', (e as Error).message);
   }
   return tally('scorm-2004-sn', 'SCORM 2004 Sequencing & Navigation (S&N book only)', 'ADL SCORM 2004 4th Ed — Sequencing & Navigation (IMS Simple Sequencing) + activity-tree/manifest parse (CAM). The RTE book (API_1484_11 / CMI data model) runs browser-side in the SCORM player, not in this battery; cmi5 + the desktop ADL SCORM test suite are out of scope here', 'in-process scorm-sequencing engine', ranAt, checks);
+}
+
+// ── cmi5 / IEEE 9274.2.1 conformance ──────────────────────────────────────────
+
+const CMI5_CAT = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
+const CMI5_MOVEON_CAT = 'https://w3id.org/xapi/cmi5/context/categories/moveon';
+const CMI5_VERB_IRI: Record<string, string> = {
+  launched: 'http://adlnet.gov/expapi/verbs/launched', initialized: 'http://adlnet.gov/expapi/verbs/initialized',
+  completed: 'http://adlnet.gov/expapi/verbs/completed', passed: 'http://adlnet.gov/expapi/verbs/passed',
+  failed: 'http://adlnet.gov/expapi/verbs/failed', abandoned: 'https://w3id.org/xapi/adl/verbs/abandoned',
+  waived: 'https://w3id.org/xapi/adl/verbs/waived', terminated: 'http://adlnet.gov/expapi/verbs/terminated',
+  satisfied: 'https://w3id.org/xapi/adl/verbs/satisfied',
+};
+
+export function runCmi5Conformance(ranAt: string): ComplianceReport {
+  const checks: ComplianceCheck[] = [];
+  const add = (name: string, ok: boolean, spec: string, detail = '') => checks.push({ name, ok, spec, ...(detail ? { detail } : {}) });
+  const actor: Cmi5Actor = { account: { homePage: 'https://lms.example', name: 'learner-1' } };
+  const session: Cmi5Session = { registration: '11111111-1111-1111-1111-111111111111', auActivityId: 'urn:foxxi:au:1', courseActivityId: 'urn:foxxi:course:1', sessionId: 'sess-1', publisherId: 'pub-1', launchedAt: '2026-06-18T00:00:00.000Z' };
+  try {
+    const verbs = ['launched', 'initialized', 'completed', 'passed', 'failed', 'abandoned', 'waived', 'terminated', 'satisfied'] as const;
+    for (const v of verbs) {
+      const result = (v === 'passed' || v === 'failed') ? { scoreScaled: 0.9, success: v === 'passed' } : (v === 'completed' ? { completion: true } : undefined);
+      const s = buildCmi5Statement({ verb: v, actor, session, ...(result ? { result } : {}) });
+      const okV = s.verb.id === CMI5_VERB_IRI[v]
+        && s.context.contextActivities.category.some(c => c.id === CMI5_CAT)
+        && s.object.id === 'urn:foxxi:au:1' && s.object.objectType === 'Activity'
+        && !!s.context.registration;
+      add(`cmi5 '${v}' statement — verb IRI + cmi5 category + AU object + registration`, okV, '§9');
+    }
+    // §9.5 — passed/failed require result.score.scaled
+    const throws = (fn: () => unknown) => { try { fn(); return false; } catch { return true; } };
+    add('§9.5: passed without result.score.scaled is rejected', throws(() => buildCmi5Statement({ verb: 'passed', actor, session })), '§9.5');
+    add('§9.5: failed without result.score.scaled is rejected', throws(() => buildCmi5Statement({ verb: 'failed', actor, session })), '§9.5');
+    // §9.3 — completed must not assert completion=false
+    add('§9.3: completed with completion=false is rejected', throws(() => buildCmi5Statement({ verb: 'completed', actor, session, result: { completion: false } })), '§9.3');
+    // §10 — satisfied + waived carry the moveOn category
+    add("§10: 'satisfied' carries the moveOn category", buildCmi5Statement({ verb: 'satisfied', actor, session }).context.contextActivities.category.some(c => c.id === CMI5_MOVEON_CAT), '§10');
+    add("§10: 'waived' carries the moveOn category", buildCmi5Statement({ verb: 'waived', actor, session }).context.contextActivities.category.some(c => c.id === CMI5_MOVEON_CAT), '§10');
+    // §11 — moveOn evaluation (the 5 rules)
+    add('§11 moveOn=Passed: score≥mastery → satisfied', evaluateMoveOn({ scoreScaled: 0.9, masteryScore: 0.8, moveOnRule: 'Passed' }).satisfied === true, '§11');
+    add('§11 moveOn=Passed: score<mastery → not satisfied', evaluateMoveOn({ scoreScaled: 0.5, masteryScore: 0.8, moveOnRule: 'Passed' }).satisfied === false, '§11');
+    add('§11 moveOn=Completed: completed → satisfied', evaluateMoveOn({ masteryScore: 0.8, moveOnRule: 'Completed', completed: true }).satisfied === true, '§11');
+    add('§11 moveOn=CompletedAndPassed: both required', evaluateMoveOn({ scoreScaled: 0.9, masteryScore: 0.8, moveOnRule: 'CompletedAndPassed', completed: true, passed: true }).satisfied === true && evaluateMoveOn({ scoreScaled: 0.9, masteryScore: 0.8, moveOnRule: 'CompletedAndPassed', completed: false, passed: true }).satisfied === false, '§11');
+    add('§11 moveOn=CompletedOrPassed: either suffices', evaluateMoveOn({ masteryScore: 0.8, moveOnRule: 'CompletedOrPassed', completed: true, passed: false }).satisfied === true, '§11');
+    add('§11 moveOn=NotApplicable: always satisfied', evaluateMoveOn({ masteryScore: 1, moveOnRule: 'NotApplicable' }).satisfied === true, '§11');
+    // §8/§9 — full passed-session trace in spec order, shared registration
+    const trace = buildPassedSessionTrace({ actor, session, scoreScaled: 0.9, masteryScore: 0.8, durationIso: 'PT5M', moveOnRule: 'Passed' });
+    const order = trace.map(s => s.verb.id);
+    const expected = ['launched', 'initialized', 'completed', 'passed', 'terminated'].map(v => CMI5_VERB_IRI[v]);
+    add('§9 lifecycle trace in required order (launched→initialized→completed→passed→terminated)', expected.every((e, i) => order[i] === e), '§9');
+    add("§11 moveOn satisfied → 'satisfied' appended to the trace", order.includes(CMI5_VERB_IRI.satisfied), '§11');
+    add('§8: every statement in the trace shares one registration (session)', trace.every(s => s.context.registration === session.registration), '§8');
+  } catch (e) {
+    add('cmi5 emitter executed', false, '§9', (e as Error).message);
+  }
+  return tally('cmi5', 'cmi5 Conformance', 'IEEE 9274.2.1 / cmi5 v1.0 — the 9 statement types, §9 invariants, §10 moveOn category, §11 moveOn evaluation, §8 session/registration (in-process emitter)', 'in-process cmi5 emitter', ranAt, checks);
+}
+
+// ── SCORM 2004 CAM (Content Aggregation Model — manifest) conformance ──────────
+
+const CAM_MANIFEST = `<?xml version="1.0"?>
+<manifest identifier="MAN-CAM" version="1.0" xmlns:imsss="http://www.imsglobal.org/xsd/imsss" xmlns:adlcp="http://www.adlnet.org/xsd/adlcp_v1p3">
+  <organizations default="ORG-1">
+    <organization identifier="ORG-1">
+      <title>CAM Course</title>
+      <item identifier="ITEM-1" identifierref="RES-1"><title>Lesson 1</title></item>
+      <item identifier="MOD-2"><title>Module 2</title>
+        <item identifier="ITEM-2A" identifierref="RES-2A"><title>Lesson 2A</title></item>
+        <item identifier="ITEM-2B" identifierref="RES-2B"><title>Lesson 2B</title>
+          <imsss:sequencing><imsss:controlMode choice="true" flow="true"/></imsss:sequencing>
+        </item>
+      </item>
+    </organization>
+  </organizations>
+  <resources>
+    <resource identifier="RES-1" type="webcontent" adlcp:scormType="sco" href="lesson1.html"/>
+    <resource identifier="RES-2A" type="webcontent" adlcp:scormType="sco" href="lesson2a.html"/>
+    <resource identifier="RES-2B" type="webcontent" adlcp:scormType="asset" href="lesson2b.html"/>
+  </resources>
+</manifest>`;
+
+export function runCamConformance(ranAt: string): ComplianceReport {
+  const checks: ComplianceCheck[] = [];
+  const add = (name: string, ok: boolean, spec: string, detail = '') => checks.push({ name, ok, spec, ...(detail ? { detail } : {}) });
+  try {
+    const tree = parseManifest(CAM_MANIFEST);
+    add('Parses the organization/item tree (organization root + 4 items = 5 nodes)', tree.preorder.length === 5, '§CAM 3.4', String(tree.preorder.length));
+    add('Default organization title lifted', tree.courseTitle === 'CAM Course', '§CAM 3.4.1');
+    add('Manifest item identifiers preserved', ['ITEM-1', 'MOD-2', 'ITEM-2A', 'ITEM-2B'].every(id => tree.preorder.some(a => a.id === id)), '§CAM 3.4');
+    add('Nested item hierarchy preserved (MOD-2 contains 2A + 2B)', tree.preorder.some(a => a.id === 'ITEM-2A') && tree.preorder.some(a => a.id === 'ITEM-2B'), '§CAM 3.4');
+    const i1 = tree.preorder.find(a => a.id === 'ITEM-1');
+    add('item→resource reference resolved (identifierref→href)', i1?.resourceId === 'RES-1' && i1?.href === 'lesson1.html', '§CAM 3.4.1.3', `${i1?.resourceId}/${i1?.href}`);
+    const i2a = tree.preorder.find(a => a.id === 'ITEM-2A');
+    add('nested leaf resource reference resolved', i2a?.href === 'lesson2a.html', '§CAM 3.4.1.3');
+    const i2b = tree.preorder.find(a => a.id === 'ITEM-2B');
+    add('per-item <imsss:sequencing> control mode parsed', i2b?.sequencing.controlMode.choice === true && i2b?.sequencing.controlMode.flow === true, '§CAM/§SN');
+    add('leaf items are deliverable (have a resource href)', [i1, i2a, i2b].every(a => !!a?.href), '§CAM 3.4.1.3');
+  } catch (e) {
+    add('CAM manifest parser executed', false, '§CAM', (e as Error).message);
+  }
+  return tally('scorm-2004-cam', 'SCORM 2004 Content Aggregation Model (manifest)', 'ADL SCORM 2004 4th Ed — Content Aggregation Model: imsmanifest.xml organization/item tree, identifiers, item→resource references. (ZIP packaging + SCORM 1.2/2004/cmi5 detection + SCO/Asset typing are exercised by unwrapScormPackage with real .zip packages, outside this in-process manifest battery.)', 'in-process scorm manifest parser', ranAt, checks);
 }

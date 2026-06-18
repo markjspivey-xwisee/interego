@@ -1198,7 +1198,10 @@ function handleDocResource(
     // without a precondition is rejected 409 (lost-update guard). A POST
     // is a document *merge* and is exempt — it never needs a precondition.
     if (method === 'PUT' && existing && !ifMatch && !ifNoneMatch) {
-      res.status(409).json({ error: 'document exists — supply If-Match or If-None-Match to replace it via PUT (§4.1.4)' });
+      // Plain-text body: the xAPI conformance suite asserts the 409 response has a
+      // non-empty `text` (raw string) explaining the situation — superagent only
+      // populates res.text for non-JSON responses, so this MUST NOT be JSON.
+      res.status(409).type('text/plain').send('Conflict: a document already exists at this resource. Supply If-Match (to replace) or If-None-Match (to guard) on the PUT, per xAPI §6.3 concurrency.');
       return;
     }
     if (ifMatch && (!existing || existing.etag !== ifMatch)) {
@@ -1231,7 +1234,13 @@ function handleDocResource(
       storedCt = 'application/json';
     }
 
-    const etag = `"${randomUUID()}"`;
+    // Strong, content-addressed ETag: a 40-hex SHA-1 of the stored body enclosed
+    // in double quotes. The xAPI conformance suite asserts the quoted form
+    // (etag[0] === '"' and etag[41] === '"'), which requires exactly 40 chars
+    // between the quotes — a UUID (36) is too short. SHA-1 also makes the ETag
+    // change iff the content changes (correct concurrency semantics).
+    const etagBody = typeof stored === 'string' ? stored : JSON.stringify(stored);
+    const etag = `"${createHash('sha1').update(etagBody).digest('hex')}"`;
     resourceStore.set(key, { content: stored, etag, updated: nowIso(), contentType: storedCt });
     xapiDocsPodDirty();
     res.setHeader('ETag', etag);
