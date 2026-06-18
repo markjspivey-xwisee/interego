@@ -43,7 +43,10 @@ RUN npm ci --no-audit --no-fund && npm run build
 # ────────────────────────────────────────────────────────────
 #  Runtime stage: nginx static server.
 # ────────────────────────────────────────────────────────────
-FROM nginx:1.27-alpine
+# Pull nginx from the AWS ECR mirror of Docker Official Images (same namespace
+# as NODE_BASE) so the build does not hit Docker Hub's unauthenticated pull
+# rate limit (`toomanyrequests`) on shared ACR build agents.
+FROM public.ecr.aws/docker/library/nginx:1.27-alpine
 
 # SPA-style: any unknown route falls back to index.html (the
 # microsite uses the History API for /try /about routing).
