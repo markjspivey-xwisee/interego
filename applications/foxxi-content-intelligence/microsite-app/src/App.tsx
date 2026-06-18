@@ -10,8 +10,9 @@ import { PodBrowser } from './pages/PodBrowser.js';
 import { AgenticDemo } from './pages/AgenticDemo.js';
 import { ReportsPage } from './pages/ReportsPage.js';
 import { Compliance } from './pages/Compliance.js';
+import { CourseIntel } from './pages/CourseIntel.js';
 
-export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent' | 'pod' | 'agentdemo' | 'reports' | 'compliance';
+export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent' | 'pod' | 'agentdemo' | 'reports' | 'compliance' | 'course';
 
 export function App() {
   const [route, setRoute] = useState<Route>(initialRoute());
@@ -32,6 +33,7 @@ export function App() {
     else if (r === 'agentdemo') { url.pathname = '/agents'; url.searchParams.delete('role'); }
     else if (r === 'reports') { url.pathname = '/reports'; url.searchParams.delete('role'); }
     else if (r === 'compliance') { url.pathname = '/compliance'; url.searchParams.delete('role'); }
+    else if (r === 'course') { url.pathname = '/course'; url.searchParams.delete('role'); }
     window.history.pushState({}, '', url.toString());
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -60,6 +62,7 @@ export function App() {
         {route === 'agentdemo' && <AgenticDemo onHome={() => navigate('landing')} onReports={() => navigate('reports')} />}
         {route === 'reports' && <ReportsPage onHome={() => navigate('landing')} onAgents={() => navigate('agentdemo')} />}
         {route === 'compliance' && <Compliance onHome={() => navigate('landing')} />}
+        {route === 'course' && <CourseIntel onHome={() => navigate('landing')} />}
       </main>
       <SiteFooter />
     </div>
@@ -76,6 +79,7 @@ function initialRoute(): Route {
   if (p.startsWith('/agents')) return 'agentdemo';
   if (p.startsWith('/reports')) return 'reports';
   if (p.startsWith('/compliance')) return 'compliance';
+  if (p.startsWith('/course')) return 'course';
   if (p.startsWith('/demos')) return 'demos';
   if (p.startsWith('/pod')) return 'pod';
   return 'landing';
@@ -112,6 +116,7 @@ function TopNav({ active, onNavigate }: { active: Route; onNavigate: (r: Route, 
         <NavLink active={active === 'about'} onClick={() => onNavigate('about')}>How</NavLink>
         <NavLink active={active === 'demos'} onClick={() => onNavigate('demos')}>Demos</NavLink>
         <NavLink active={active === 'agentdemo'} onClick={() => onNavigate('agentdemo')}>Agents ▸</NavLink>
+        <NavLink active={active === 'course'} onClick={() => onNavigate('course')}>Course IQ</NavLink>
         <NavLink active={active === 'reports'} onClick={() => onNavigate('reports')}>Reports</NavLink>
         <NavLink active={active === 'compliance'} onClick={() => onNavigate('compliance')}>Compliance</NavLink>
         <NavLink active={active === 'pod'} onClick={() => onNavigate('pod')}>Pod</NavLink>
