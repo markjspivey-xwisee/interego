@@ -152,6 +152,8 @@ function EventRow({ e }: { e: DemoEvent }) {
       )}
       {open && (
         <div style={{ padding: '0 14px 10px', marginLeft: 18, display: 'grid', gap: 8 }}>
+          {(e.data as any)?.checks && <VerificationMatrix d={e.data as any} />}
+          {(e.data as any)?.sharedLattice && <LatticeBadge sl={(e.data as any).sharedLattice} />}
           {arts.map((a, i) => (
             <div key={i}>
               <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-dim)', marginBottom: 3 }}>{a.label}</div>
@@ -162,6 +164,55 @@ function EventRow({ e }: { e: DemoEvent }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const vMono = "'JetBrains Mono', monospace";
+const artLabel: React.CSSProperties = { fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-dim)', marginBottom: 3 };
+
+/** The issuer's due diligence, unfurled: the verify_extension `checks` as a 3-tier
+ *  matrix. Honest by construction — engine grading + shape conformance are
+ *  tamper-evident; the performance OUTCOME is flagged as self-attested. */
+function VerificationMatrix({ d }: { d: any }) {
+  const c = d.checks ?? {};
+  const rows = [
+    { label: 'Engine grading', sub: 'SCORM SN runtime — tamper-evident', ok: !!c.independentlyGraded, badge: c.gradedScore != null ? `score ${c.gradedScore}` : (c.independentlyGraded ? 'graded' : 'no grade') },
+    { label: 'Performance', sub: c.selfAttestedPerformance ? 'recorded on subject’s pod — ⚠ outcome self-attested' : 'recorded on subject’s pod', ok: !!c.performanceRecorded, badge: c.performanceRecorded ? 'recorded' : 'none' },
+    { label: 'Extension shape', sub: 'PGSL / SHACL structural check', ok: !!c.shapeConformant, badge: c.shapeConformant ? 'conforms' : '—' },
+  ];
+  const n = Array.isArray(d.evidence) ? d.evidence.length : 0;
+  return (
+    <div>
+      <div style={artLabel}>independent verification — {d.verified ? 'PASSED' : 'INSUFFICIENT'}</div>
+      <div style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+        {rows.map((r, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderBottom: i < 2 ? '1px solid #f0f0ee' : 'none', fontSize: 12 }}>
+            <span style={{ color: r.ok ? '#2e9c4a' : '#d23f31', fontWeight: 600, width: 12 }}>{r.ok ? '✓' : '✗'}</span>
+            <span style={{ flex: 1 }}><strong>{r.label}</strong> <span style={{ color: 'var(--text-dim)' }}>— {r.sub}</span></span>
+            <span style={{ fontFamily: vMono, fontSize: 10.5, color: 'var(--text-dim)' }}>{r.badge}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, lineHeight: 1.45 }}>
+        Engine grading + shape conformance are tamper-evident; the performance outcome is self‑attested by the subject. {n > 0 ? `${n} evidencing statement${n === 1 ? '' : 's'} on the subject’s own pod.` : ''}
+      </div>
+    </div>
+  );
+}
+
+/** Every artifact snaps onto the shared, content-addressed PGSL lattice — show the
+ *  reuse counts (honest: counts only, already returned by the bridge). */
+function LatticeBadge({ sl }: { sl: any }) {
+  const reused = Number(sl.reusedNodes ?? 0), nu = Number(sl.newNodes ?? 0);
+  return (
+    <div>
+      <div style={artLabel}>shared PGSL lattice (canonical)</div>
+      <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.5 }}>
+        composed <strong>{reused + nu}</strong> terms · <strong style={{ color: '#2e9c4a' }}>{reused}</strong> reused from the substrate · {nu} new
+        {sl.stats ? <> · lattice now <code style={{ fontFamily: vMono, fontSize: 11 }}>{sl.stats.atoms} atoms / {sl.stats.fragments} fragments</code></> : null}
+        {Array.isArray(sl.projections) && sl.projections.length ? <> · projects as {sl.projections.join(' / ')}</> : null}
+      </div>
     </div>
   );
 }
