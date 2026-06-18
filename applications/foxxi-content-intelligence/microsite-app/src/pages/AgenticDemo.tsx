@@ -165,7 +165,10 @@ export function AgenticDemo({ onHome, onReports }: { onHome: () => void; onRepor
         {showC && <AgentColumn label="Agent C — independent verifier (no prior relationship)" did={srcAgents.C?.did} events={visible('C')} running={running} />}
       </div>
 
-      <InterrogatePanel events={shown} agents={srcAgents} />
+      {/* Interrogating a holon needs it resident on the bridge — true right after a
+          live run (the lattice is fresh), but a recorded tour's holon may have been
+          evicted, so only offer it for the visitor's own live run. */}
+      {mode === 'live' && <InterrogatePanel events={shown} agents={srcAgents} />}
 
       {!hasRun && mode === 'live' && (
         <p style={{ color: 'var(--text-dim)', fontSize: 13, marginTop: 22 }}>
