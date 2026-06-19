@@ -83,6 +83,37 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
   const [metaBusy, setMetaBusy] = useState(false);
   const authored = lastAuthoredCourse(); // re-read each render (cheap) so it appears after an Agents run
 
+  // course ↔ skills.md round-trip
+  const [showIngest, setShowIngest] = useState(false);
+  const [skillInput, setSkillInput] = useState('');
+  const [emittedSkill, setEmittedSkill] = useState<string | null>(null);
+  const [emitBusy, setEmitBusy] = useState(false);
+
+  async function ingestSkill() {
+    if (!skillInput.trim() || analyzing) return;
+    setAnalyzing(true); setErr(null); setAnalysis(null); setMeta(null); setTurns([]); setEmittedSkill(null);
+    setSourceNote('Ingested an agent skill (skills.md)');
+    const { status, json } = await bridgeRest('/agent/course/analyze-skill', { skillMd: skillInput });
+    setAnalyzing(false);
+    if (status !== 200 || json.ok === false) { setErr(String(json.error ?? `HTTP ${status}`)); return; }
+    setManifestXml(''); setShowIngest(false); setAnalysis(json as unknown as Analysis);
+  }
+
+  async function emitSkill() {
+    if (!analysis || emitBusy) return;
+    setEmitBusy(true); setEmittedSkill(null);
+    const { json } = await bridgeRest('/agent/course/skill', { course: analysis.course, tool: analysis.fingerprint.tool, holonUri: analysis.courseKg.holonUri });
+    setEmitBusy(false);
+    if (json.ok) setEmittedSkill(String(json.skillMd)); else setErr(String(json.error ?? 'skill emit failed'));
+  }
+
+  function downloadSkill() {
+    if (!emittedSkill) return;
+    const blob = new Blob([emittedSkill], { type: 'text/markdown' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `${analysis?.course.courseId || 'skill'}.SKILL.md`; a.click(); URL.revokeObjectURL(a.href);
+  }
+
   async function analyzeAuthored() {
     if (!authored || analyzing) return;
     setAnalyzing(true); setErr(null); setAnalysis(null); setMeta(null); setTurns([]);
@@ -210,11 +241,23 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
             Upload SCORM .zip
             <input type="file" accept=".zip,.scorm" onChange={onUpload} style={{ display: 'none' }} />
           </label>
+          <button onClick={() => setShowIngest(s => !s)} style={pill}>Ingest a skills.md</button>
           <button onClick={analyze} disabled={!manifestXml || analyzing} style={{ ...btn, opacity: !manifestXml || analyzing ? 0.5 : 1 }}>
             {analyzing ? 'Analyzing…' : 'Analyze package'}
           </button>
           {sourceNote && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{sourceNote}</span>}
         </div>
+        {showIngest && (
+          <div style={{ marginTop: 10 }}>
+            <div style={lbl}>paste an agent skill (SKILL.md — frontmatter + ## sections) to ingest it as a course</div>
+            <textarea value={skillInput} onChange={e => setSkillInput(e.target.value)} rows={6}
+              placeholder={'---\nname: extend-a-standard\ndescription: How to extend a standard.\n---\n## Discover guidance\n...'}
+              style={{ width: '100%', marginTop: 5, padding: 9, borderRadius: 6, border: '1px solid var(--border)', fontFamily: mono, fontSize: 12 }} />
+            <button onClick={ingestSkill} disabled={!skillInput.trim() || analyzing} style={{ ...btn, marginTop: 6, opacity: !skillInput.trim() || analyzing ? 0.5 : 1 }}>
+              {analyzing ? 'Ingesting…' : 'Ingest as course ▸'}
+            </button>
+          </div>
+        )}
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-dim)' }}>
           The .zip is unzipped <strong>in your browser</strong>; we send the manifest + file list + extracted page text to the bridge to fingerprint + build the graph.
         </div>
@@ -228,6 +271,26 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 16 }}>
             <FingerprintCard fp={analysis.fingerprint} />
             <KgCard kg={analysis.courseKg} structure={analysis.structure} course={analysis.course} />
+          </div>
+
+          {/* Round-trip: project this course as an agent skill (skills.md) */}
+          <div style={{ ...card, marginTop: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Project as an agent skill</div>
+              <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>the same capability, distilled into a <code style={codeS}>skills.md</code> an agent can load — provenance points back to this course holon</span>
+              <button onClick={emitSkill} disabled={emitBusy} style={{ ...pill, marginLeft: 'auto', borderColor: 'var(--accent)', color: 'var(--accent)', opacity: emitBusy ? 0.5 : 1 }}>
+                {emitBusy ? 'projecting…' : 'Emit skills.md'}
+              </button>
+            </div>
+            {emittedSkill && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                  <button onClick={() => navigator.clipboard?.writeText(emittedSkill)} style={pill}>Copy</button>
+                  <button onClick={downloadSkill} style={pill}>Download .SKILL.md</button>
+                </div>
+                <pre style={{ fontSize: 11, lineHeight: 1.5, background: '#0f1115', color: '#cdd6e0', padding: 12, borderRadius: 6, overflow: 'auto', maxHeight: 360, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{emittedSkill}</pre>
+              </div>
+            )}
           </div>
 
           {/* Self-recursive meta */}

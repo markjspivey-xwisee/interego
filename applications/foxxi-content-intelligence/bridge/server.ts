@@ -113,6 +113,7 @@ import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENT
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, ensureResident, loadCourseFromLattice, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
 import { manifestToAgenticCourse, agentScormToAgenticCourse, type AgentScormCourseLike } from '../src/course-graph.js';
+import { courseToSkillMd, skillMdToAgenticCourse } from '../src/course-skill-bridge.js';
 import { routeInterrogatives } from '@interego/pgsl';
 import { mintSessionToken } from '../src/auth.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
@@ -3549,6 +3550,64 @@ app.post('/agent/course/ask', async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
   }
+});
+
+// ── Course ↔ agent-skill bridge: a course projects to a skills.md an agent can
+//    load; a skills.md ingests as a course (KG + grounded chat + credentialable). ──
+app.post('/agent/course/skill', (req, res) => {
+  try {
+    const course = req.body?.course;
+    if (!course || !Array.isArray(course.concepts) || !Array.isArray(course.slides)) {
+      res.status(400).json({ ok: false, error: 'course (FoxxiAgenticCourse from /agent/course/analyze*) required' }); return;
+    }
+    const prov = {
+      tool: typeof req.body?.tool === 'string' ? req.body.tool : undefined,
+      authoredBy: typeof req.body?.authoredBy === 'string' ? req.body.authoredBy : undefined,
+      holonUri: typeof req.body?.holonUri === 'string' ? req.body.holonUri : undefined,
+      courseId: typeof course.courseId === 'string' ? course.courseId : undefined,
+    };
+    const { skillMd, name } = courseToSkillMd(course, prov);
+    res.json({ ok: true, skillMd, name });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+});
+
+app.post('/agent/course/analyze-skill', async (req, res) => {
+  try {
+    const xff = req.headers['x-forwarded-for'];
+    const ip = typeof xff === 'string' ? xff.split(',').at(-1)!.trim() : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rl = checkAgenticRateLimit(ip);
+    if (!rl.ok) { res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
+
+    const skillMd = typeof req.body?.skillMd === 'string' ? req.body.skillMd : '';
+    if (!skillMd.trim() || skillMd.length > 2_000_000) { res.status(400).json({ ok: false, error: 'skillMd (a SKILL.md string, <2MB) required' }); return; }
+
+    const provisional = skillMdToAgenticCourse(skillMd, { courseIri: 'urn:foxxi:skill:pending', authoritativeSource: 'urn:foxxi:skill:pending' });
+    const realLabel = courseLabelFor('skill-' + provisional.structure.courseId);
+    const courseIri = `urn:foxxi:skill:${realLabel}`;
+    const built = skillMdToAgenticCourse(skillMd, { courseIri, authoritativeSource: courseIri });
+
+    // Provenance fingerprint: this capability arrived as an agent skill (skills.md),
+    // not a SCORM authoring tool — report that ground truth.
+    const fingerprint = {
+      tool: 'Agent skill (skills.md)', toolId: 'agent-skill', vendor: 'agent-native',
+      confidence: 1, standard: { standard: 'Agent Skill (Markdown)', standardId: 'SKILL_MD' },
+      candidates: [] as unknown[],
+      signals: [{ signal: `parsed SKILL.md "${built.parsed.name || 'skill'}" → ${built.parsed.sections.length} section(s)`, points: 'agent-skill', weight: 10, source: 'provenance' as const }],
+      summary: `Ingested an agent skill (skills.md): "${built.parsed.name || 'skill'}" — ${built.parsed.description || 'no description'}. Composed into a course knowledge-graph so it can be interrogated, chatted with, assessed, and credentialed like any course.`,
+    };
+
+    let courseKg: { label: string; holonUri?: string; descriptorUrl?: string; agentDid: string; reusedNodes?: number; newNodes?: number; stats?: unknown } = { label: realLabel, agentDid: tenantProfileDid };
+    if (tenantPodUrl) {
+      const coursePodUrl = `${new URL(tenantPodUrl).origin}/${realLabel}/`;
+      const sl = await composeIntoSharedLattice({
+        podUrl: coursePodUrl, agentDid: tenantProfileDid, label: realLabel, terms: built.spineTerms,
+        content: { fingerprint, structure: built.structure, course: built.course, skill: built.parsed, kind: 'foxxi:CourseKnowledgeGraph' },
+        contentType: 'foxxi:CourseKnowledgeGraph', projections: ['rdf'],
+      });
+      if (sl) courseKg = { label: realLabel, holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl, agentDid: tenantProfileDid, reusedNodes: sl.reusedNodes, newNodes: sl.newNodes, stats: sl.stats };
+    }
+    res.json({ ok: true, fingerprint, structure: built.structure, course: built.course, courseKg, fromSkill: true });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 
 // ── Public compliance runners — the engine behind the compliance microsite ────
