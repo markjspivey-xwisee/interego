@@ -286,7 +286,14 @@ export function runScormConformance(ranAt: string): ComplianceReport {
     const badRes = { '@type': 'Resource', scormType: 'bogus' }; // missing identifier+type; scormType not in {sco,asset}
     const vb = validateInstance('scorm-cam', badRes);
     add('the scorm-cam ontology rejects a malformed resource, citing shape IRIs', !!vb && !vb.conforms && vb.results.every(r => r.sourceShape.includes('/ns/scorm-cam/shapes#')), 'SHACL', vb ? `${vb.results.length} cited violations` : 'no validator');
-  } catch (e) { add('scorm-cam ontology (SHACL) validation', false, 'SHACL', (e as Error).message); }
+    // Sequencing & Navigation: validate a sequencing rule condition against /ns/scorm-sn.
+    const goodCond = { '@type': 'RuleCondition', ruleConditionName: 'objectiveMeasureGreaterThan', measureThreshold: 0.8 };
+    const vs = validateInstance('scorm-sn', goodCond);
+    add('a sequencing rule condition conforms to the composed scorm-sn ontology shapes', !!vs && vs.conforms, 'IMS SS / SHACL', vs ? `cites ${vs.shapesIri}` : 'no validator');
+    const badCond = { '@type': 'RuleCondition', ruleConditionName: 'bogusCondition', measureThreshold: 9 }; // not in the 12-term vocab; measure out of [-1,1]
+    const vsb = validateInstance('scorm-sn', badCond);
+    add('the scorm-sn ontology rejects a malformed rule condition, citing shape IRIs', !!vsb && !vsb.conforms && vsb.results.every(r => r.sourceShape.includes('/ns/scorm-sn/shapes#')), 'SHACL', vsb ? `${vsb.results.length} cited violations` : 'no validator');
+  } catch (e) { add('scorm-cam/sn ontology (SHACL) validation', false, 'SHACL', (e as Error).message); }
   return tally('scorm-2004-sn', 'SCORM 2004 Sequencing & Navigation (S&N book only)', 'ADL SCORM 2004 3rd Ed — Sequencing & Navigation (IMS Simple Sequencing) + activity-tree/manifest parse (CAM) validated against the dereferenceable /ns/scorm-sn + /ns/scorm-cam SHACL shapes. The RTE book (API_1484_11 / CMI data model) runs browser-side in the SCORM player; cmi5 + the desktop ADL SCORM test suite are out of scope here.', 'in-process scorm-sequencing engine', ranAt, checks);
 }
 
