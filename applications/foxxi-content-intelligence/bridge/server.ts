@@ -112,7 +112,7 @@ import { envelopeToClr1 } from '../src/clr-1.js';
 import { assembleEnterpriseLearnerRecord, PERFORMED_VERB, AUTHORED_VERB, CREDENTIALED_VERB, PERF_EXT } from '../src/learner-record.js';
 import { composeIntoSharedLattice, dereferenceTerm, latticeNamespaceView, isResident, readArtifact, projectAs, latticeStatements, ensureResident, loadCourseFromLattice, type ProjectionKind } from '../src/foundation-shared-lattice.js';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
-import { manifestToAgenticCourse } from '../src/course-graph.js';
+import { manifestToAgenticCourse, agentScormToAgenticCourse, type AgentScormCourseLike } from '../src/course-graph.js';
 import { routeInterrogatives } from '@interego/pgsl';
 import { mintSessionToken } from '../src/auth.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
@@ -3439,6 +3439,59 @@ app.post('/agent/course/analyze', async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, error: (err as Error).message });
   }
+});
+
+// Analyze a course an AGENT authored in the Agents demo (via /agent/scorm/author).
+// We have the structured course + cryptographic provenance (signed authoredBy), so the
+// "fingerprint" reports that ground truth — a Foxxi agent authored it — rather than
+// sniffing for a third-party tool. Same response shape as /agent/course/analyze.
+app.post('/agent/course/analyze-authored', async (req, res) => {
+  try {
+    const xff = req.headers['x-forwarded-for'];
+    const ip = typeof xff === 'string' ? xff.split(',').at(-1)!.trim() : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rl = checkAgenticRateLimit(ip);
+    if (!rl.ok) { res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
+
+    const courseId = typeof req.body?.courseId === 'string' ? req.body.courseId : '';
+    if (!courseId) { res.status(400).json({ ok: false, error: 'courseId required' }); return; }
+    const authorDid = (typeof req.body?.author_did === 'string' && req.body.author_did) ? req.body.author_did : '';
+
+    // Resolve the agent-authored course: in-memory cache → author's PGSL lattice → legacy pod RDF.
+    let course = agentScormCourses.get(courseId) as AgentScormCourseLike | undefined;
+    if (!course && authorDid) {
+      const coursePod = (typeof req.body?.course_pod === 'string' && req.body.course_pod) ? req.body.course_pod : resolveSubjectPodUrl(authorDid);
+      const fromLattice = await loadCourseFromLattice(coursePod, authorDid, actorForPod(coursePod, MESH_ACTOR_LABELS), courseId).catch(() => null);
+      const loaded = fromLattice ?? await loadScormCourse({ podUrl: coursePod, courseId }).catch(() => null);
+      if (loaded) course = loaded as unknown as AgentScormCourseLike;
+    }
+    if (!course || !Array.isArray(course.scos) || course.scos.length === 0) {
+      res.status(404).json({ ok: false, error: `agent-authored course '${courseId}' not found — run the Agents demo first, or pass author_did/course_pod` }); return;
+    }
+
+    const realLabel = courseLabelFor(courseId);
+    const courseIri = `urn:foxxi:course:${realLabel}`;
+    const built = agentScormToAgenticCourse(course, { courseIri, authoritativeSource: courseIri });
+    const author = course.authoredBy || authorDid || 'a Foxxi agent';
+    const fingerprint = {
+      tool: 'Foxxi (agent-authored)', toolId: 'foxxi-agent', vendor: 'Interego / Foxxi',
+      confidence: 1, standard: { standard: 'SCORM 2004 (Foxxi-generated)', standardId: 'SCORM_2004' },
+      candidates: [] as unknown[],
+      signals: [{ signal: `authored via /agent/scorm/author by ${author}`, points: 'foxxi-agent', weight: 10, source: 'provenance' as const }],
+      summary: `Authored by a Foxxi agent (${author}) directly on the substrate — cryptographic provenance, not a third-party authoring tool. ${course.scos.length} SCO(s).`,
+    };
+
+    let courseKg: { label: string; holonUri?: string; descriptorUrl?: string; agentDid: string; reusedNodes?: number; newNodes?: number; stats?: unknown } = { label: realLabel, agentDid: tenantProfileDid };
+    if (tenantPodUrl) {
+      const coursePodUrl = `${new URL(tenantPodUrl).origin}/${realLabel}/`;
+      const sl = await composeIntoSharedLattice({
+        podUrl: coursePodUrl, agentDid: tenantProfileDid, label: realLabel, terms: built.spineTerms,
+        content: { fingerprint, structure: built.structure, course: built.course, kind: 'foxxi:CourseKnowledgeGraph' },
+        contentType: 'foxxi:CourseKnowledgeGraph', projections: ['rdf'],
+      });
+      if (sl) courseKg = { label: realLabel, holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl, agentDid: tenantProfileDid, reusedNodes: sl.reusedNodes, newNodes: sl.newNodes, stats: sl.stats };
+    }
+    res.json({ ok: true, fingerprint, structure: built.structure, course: built.course, courseKg, authored: true });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 
 app.post('/agent/course/ask', async (req, res) => {

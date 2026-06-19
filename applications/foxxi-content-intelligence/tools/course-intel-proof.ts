@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { fingerprintAuthoringTool } from '../src/scorm-fingerprint.js';
-import { manifestToAgenticCourse } from '../src/course-graph.js';
+import { manifestToAgenticCourse, agentScormToAgenticCourse } from '../src/course-graph.js';
 import { retrieveCourseContext } from '../src/agentic-rag.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -48,6 +48,16 @@ console.log('\n[5] OFF-topic question → honest fallback (NOT reported as groun
 const off = retrieveCourseContext({ question: 'What is the airspeed velocity of an unladen swallow?', learnerDid: 'urn:demo:asker', primary: built.course });
 ok('off-topic resolves to fallback retrievalKind', off.retrieval.retrievalKind === 'fallback', `retrievalKind=${off.retrieval.retrievalKind}, seeds=${off.retrieval.seedConcepts.length}`);
 ok('grounded gate (retrievalKind===graph && seeds>0) is FALSE for off-topic', !(off.retrieval.retrievalKind === 'graph' && off.retrieval.seedConcepts.length > 0));
+
+console.log('\n[6] agent-authored course (AgentScormCourse → course graph)');
+const agentCourse = {
+  courseId: 'agp-extend-demo', title: 'Extend a standard (Interego/Foxxi)', masteryScore: 0.5, authoredBy: 'did:ethr:0xabc',
+  scos: [{ id: 'sco1', title: 'Extend a standard', body: 'Discover the /guidance catalog, then call the extend_standards affordance. What you did rides in the object, not the verb.', assessment: [{ question: 'Which affordance extends a standard?', answer: 'extend_standards' }] }],
+};
+const ag = agentScormToAgenticCourse(agentCourse, { courseIri: 'urn:foxxi:course:agp', authoritativeSource: 'urn:foxxi:course:agp' });
+ok('agent course → concepts + slides', ag.course.concepts.length >= 1 && ag.course.slides.length >= 1, `${ag.course.concepts.length} concepts, ${ag.course.slides.length} slides`);
+const agr = retrieveCourseContext({ question: 'How do I extend a standard?', learnerDid: 'urn:demo:asker', primary: ag.course });
+ok('agent course is groundable (graph hit)', agr.retrieval.retrievalKind === 'graph', `kind=${agr.retrieval.retrievalKind}, cited=${agr.retrieval.citedSlides.map(s => s.slideTitle).join(', ')}`);
 
 console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

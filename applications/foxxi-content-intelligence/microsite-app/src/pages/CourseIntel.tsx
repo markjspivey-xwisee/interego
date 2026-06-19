@@ -18,6 +18,19 @@ import React, { useState } from 'react';
 import { unzipSync, strFromU8 } from 'fflate';
 import { bridgeRest, BRIDGE_URL } from '../bridge-client.js';
 import { GOLF_SAMPLE } from '../data/golf-sample.generated.js';
+import { getDemoState } from '../demo/demo-session.js';
+
+/** The course Agent A authored in the most recent Agents demo run (read from the
+ *  shared demo-session store) — so Course IQ can analyze it, not just the sample. */
+function lastAuthoredCourse(): { courseId: string; authorDid?: string; title?: string } | null {
+  try {
+    const st = getDemoState();
+    const ev = [...st.events].reverse().find(e => e.kind === 'scorm' && (e.data as any)?.courseId && /author/i.test(e.title));
+    if (!ev) return null;
+    const d = ev.data as any;
+    return { courseId: String(d.courseId), authorDid: d.authoredBy ?? st.agents?.A?.did, title: d.title };
+  } catch { return null; }
+}
 
 const mono = "'JetBrains Mono', monospace";
 const serif = "'EB Garamond', serif";
@@ -68,6 +81,18 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
 
   const [meta, setMeta] = useState<{ answers?: any[]; selfDescription?: string; cited?: string[]; keyless?: boolean } | null>(null);
   const [metaBusy, setMetaBusy] = useState(false);
+  const authored = lastAuthoredCourse(); // re-read each render (cheap) so it appears after an Agents run
+
+  async function analyzeAuthored() {
+    if (!authored || analyzing) return;
+    setAnalyzing(true); setErr(null); setAnalysis(null); setMeta(null); setTurns([]);
+    setSourceNote(`Agent-authored: ${authored.title ?? authored.courseId} (from your Agents run)`);
+    const { status, json } = await bridgeRest('/agent/course/analyze-authored', { courseId: authored.courseId, author_did: authored.authorDid });
+    setAnalyzing(false);
+    if (status !== 200 || json.ok === false) { setErr(String(json.error ?? `HTTP ${status}`)); return; }
+    setManifestXml('');
+    setAnalysis(json as unknown as Analysis);
+  }
 
   function loadSample() {
     setManifestXml(GOLF_SAMPLE.manifestXml);
@@ -178,6 +203,9 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
       <div style={{ ...card, marginTop: 18 }}>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={loadSample} style={pill}>Try the sample (Golf Explained)</button>
+          {authored && <button onClick={analyzeAuthored} disabled={analyzing} style={{ ...pill, borderColor: 'var(--accent)', color: 'var(--accent)' }}>
+            Analyze the agent-authored course ▸
+          </button>}
           <label style={{ ...pill, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             Upload SCORM .zip
             <input type="file" accept=".zip,.scorm" onChange={onUpload} style={{ display: 'none' }} />

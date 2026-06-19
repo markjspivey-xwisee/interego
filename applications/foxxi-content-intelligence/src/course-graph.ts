@@ -38,6 +38,46 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+/** An agent-authored course (as stored by /agent/scorm/author): SCOs with body text
+ *  + optional assessment. We have the structured course directly, so we build the
+ *  graph from it (each SCO is a concept + a slide) rather than round-tripping a manifest. */
+export interface AgentScormCourseLike {
+  courseId: string;
+  title?: string;
+  masteryScore?: number;
+  authoredBy?: string;
+  scos: Array<{ id: string; title?: string; body?: string; assessment?: Array<{ question: string; answer?: string }> }>;
+}
+
+export function agentScormToAgenticCourse(course: AgentScormCourseLike, opts: { courseIri: string; authoritativeSource: string }): ManifestCourseResult {
+  const title = course.title || course.courseId;
+  const concepts: FoxxiAgenticCourse['concepts'][number][] = [];
+  const slides: FoxxiAgenticCourse['slides'][number][] = [];
+  const seen = new Set<string>();
+  course.scos.forEach((s, i) => {
+    const cid = slug(s.title || s.id);
+    const sid = slug(s.id || `sco-${i}`);
+    const qs = (s.assessment ?? []).map(a => a.question).filter(Boolean);
+    const transcript = [s.body ?? '', qs.length ? `Assessment questions: ${qs.join(' ')}` : ''].filter(Boolean).join(' ').trim() || (s.title || s.id);
+    slides.push({ id: sid, title: s.title || s.id, sequence_index: i, concept_ids: [cid], transcript_combined: transcript });
+    if (!seen.has(cid)) {
+      seen.add(cid);
+      concepts.push({ id: cid, label: s.title || s.id, confidence: 1, tier: 1, is_free_standing: true, taught_in_slides: [sid], total_freq: 1 });
+    } else {
+      const c = concepts.find(x => x.id === cid); if (c) (c.taught_in_slides as string[]).push(sid);
+    }
+  });
+  const built: FoxxiAgenticCourse = {
+    courseIri: opts.courseIri, title, courseLabel: title, courseId: course.courseId,
+    authoritativeSource: opts.authoritativeSource, concepts, slides, modifier_pairs: [], prereq_edges: [],
+  };
+  const spineTerms = [title, ...concepts.map(c => c.label)].filter((t, i, a) => t && a.indexOf(t) === i).slice(0, 200);
+  return {
+    course: built, spineTerms,
+    structure: { courseId: course.courseId, courseTitle: title, activityCount: course.scos.length, items: course.scos.map(s => ({ id: s.id, title: s.title || s.id })), topics: concepts.map(c => c.label), fileCount: course.scos.length },
+  };
+}
+
 /** Pull every <file href="..."> out of the manifest (the resource file list). */
 export function extractFileHrefs(manifestXml: string): string[] {
   const out: string[] = [];

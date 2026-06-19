@@ -22,7 +22,7 @@
  * fired and the standard/version we DID detect.
  */
 
-export type FingerprintSource = 'manifest' | 'file-tree';
+export type FingerprintSource = 'manifest' | 'file-tree' | 'provenance';
 export interface FingerprintSignal {
   /** human-readable signal, e.g. "html5/data/js/data.js present". */
   signal: string;
