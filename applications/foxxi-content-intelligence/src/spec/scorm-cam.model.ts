@@ -1,7 +1,7 @@
 /**
- * SCORM 2004 4th Edition — Content Aggregation Model (CAM) — the single source.
+ * SCORM 2004 3rd Edition — Content Aggregation Model (CAM) — the single source.
  *
- * Transcribes the two normative XSDs that bind the SCORM 2004 4th Ed CAM:
+ * Transcribes the two normative XSDs that bind the SCORM 2004 3rd Ed CAM:
  *   - IMS Content Packaging 1.1.3  (imscp_v1p1.xsd, namespace
  *     http://www.imsglobal.org/xsd/imscp_v1p1): manifest, metadata,
  *     organizations, organization, item, resources, resource, file,
@@ -20,10 +20,10 @@ import type { OntologyModel } from '../spec-ontology.js';
 
 export const SCORM_CAM_MODEL: OntologyModel = {
   module: 'scorm-cam',
-  title: 'SCORM 2004 4th Ed — Content Aggregation Model',
-  description: 'OWL + SHACL ontology of the SCORM 2004 4th Edition Content Aggregation Model: the IMS Content Packaging 1.1.3 manifest structure (Manifest, Metadata, Organizations, Organization, Item, Resources, Resource, File, Dependency, Schema, SchemaVersion, Title) plus the ADL CP 1.3 extensions (scormType, location, dataFromLMS, timeLimitAction, completionThreshold). Composed into PGSL and projected here; the Foxxi SCORM importer validates imsmanifest.xml against the shapes below.',
+  title: 'SCORM 2004 3rd Ed — Content Aggregation Model',
+  description: 'OWL + SHACL ontology of the SCORM 2004 3rd Edition Content Aggregation Model (the edition whose normative XSDs ship in this repo): the IMS Content Packaging 1.1.3 manifest structure (Manifest, Metadata, Organizations, Organization, Item, Resources, Resource, File, Dependency, Schema, SchemaVersion, Title) plus the ADL CP 1.3 extensions (scormType, location, dataFromLMS, timeLimitAction, completionThreshold). Composed into PGSL and projected here; the Foxxi SCORM importer validates imsmanifest.xml against the shapes below.',
   version: '1.0.0',
-  spec: 'https://adlnet.gov/projects/scorm-2004-4th-edition/',
+  spec: 'https://adlnet.gov/projects/scorm-2004-3rd-edition/',
   derivedFrom: 'deploy/foxxi-scorm-player/site/course/imscp_v1p1.xsd ; deploy/foxxi-scorm-player/site/course/adlcp_v1p3.xsd',
   prefixes: {
     imscp: 'http://www.imsglobal.org/xsd/imscp_v1p1#',
@@ -41,7 +41,7 @@ export const SCORM_CAM_MODEL: OntologyModel = {
     { name: 'File', label: 'File', comment: 'A <file> — a single physical file belonging to a resource (imscp fileType).' },
     { name: 'Dependency', label: 'Dependency', comment: 'A <dependency> — a reference from a resource to another resource whose files it also requires (imscp dependencyType).' },
     { name: 'Schema', label: 'Schema', comment: 'The <schema> element naming the metadata schema (imscp schemaType, e.g. "ADL SCORM").' },
-    { name: 'SchemaVersion', label: 'Schema Version', comment: 'The <schemaversion> element naming the metadata schema version (imscp schemaversionType, e.g. "2004 4th Edition").' },
+    { name: 'SchemaVersion', label: 'Schema Version', comment: 'The <schemaversion> element naming the metadata schema version (imscp schemaversionType, e.g. "2004 3rd Edition").' },
     { name: 'Title', label: 'Title', comment: 'A <title> element giving a human-readable label to an organization or item (imscp titleType).' },
   ],
   properties: [
@@ -115,7 +115,7 @@ export const SCORM_CAM_MODEL: OntologyModel = {
     },
     {
       name: 'MetadataShape', targetClass: 'Metadata', label: 'Metadata conformance',
-      comment: 'imscp metadataType: optional schema and schemaversion children. For SCORM 2004 a package-level metadata SHOULD declare schema "ADL SCORM" and schemaversion "2004 4th Edition".',
+      comment: 'imscp metadataType: optional schema and schemaversion children. For SCORM 2004 a package-level metadata SHOULD declare schema "ADL SCORM" and schemaversion "2004 3rd Edition".',
       constraints: [
         { path: 'schema', maxCount: 1, comment: 'optional <schema> (imscp metadataType)' },
         { path: 'schemaversion', maxCount: 1, comment: 'optional <schemaversion> (imscp metadataType)' },

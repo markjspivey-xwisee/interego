@@ -182,7 +182,10 @@ export function buildCmi5Statement(input: Cmi5StatementInput): Cmi5Statement {
       stmt.context.extensions['https://w3id.org/xapi/cmi5/context/extensions/sessionid'] = input.session.sessionId;
     }
     if (input.session.publisherId) {
-      stmt.context.extensions['https://w3id.org/xapi/cmi5/context/extensions/publisherid'] = input.session.publisherId;
+      // publisherId is NOT a cmi5-defined context extension — carry it under the
+      // dereferenceable Foxxi namespace, not the cmi5 IRI prefix, so emitted
+      // statements don't claim a cmi5 extension the cmi5 ontology doesn't define.
+      stmt.context.extensions['https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#publisherId'] = input.session.publisherId;
     }
   }
 
@@ -209,7 +212,8 @@ export function buildCmi5Statement(input: Cmi5StatementInput): Cmi5Statement {
 export interface MoveOnDecisionInput {
   /** Most recent scoreScaled the learner achieved on this AU (0..1). */
   scoreScaled?: number;
-  /** Mastery threshold from the AU's moveOn criterion. cmi5 default 1.0; institutions often set 0.7-0.8. */
+  /** Mastery threshold from the AU's moveOn criterion (0..1). cmi5 defines NO default —
+   *  masteryScore is optional; when the AU omits it, the AU itself determines mastery. */
   masteryScore: number;
   /** AU-defined moveOn rule (cmi5 §13.1.5). */
   moveOnRule: 'Passed' | 'Completed' | 'CompletedAndPassed' | 'CompletedOrPassed' | 'NotApplicable';

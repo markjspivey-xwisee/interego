@@ -15,7 +15,7 @@
  *      that same holon's content (readArtifact → render*). RDF is one projection
  *      of many — exactly how a course KG or a performance holon projects.
  *
- *   3. The SINGLE SOURCE for conformance: validateAgainstModel applies the SAME
+ *   3. The SINGLE SOURCE for conformance: validateAgainstShape applies the SAME
  *      constraints the SHACL projection publishes, and every result cites the
  *      dereferenceable sh:NodeShape IRI. So when the LRS/LMS validates a
  *      statement/manifest, it is validating against this ontology — not a
@@ -54,6 +54,9 @@ export interface OntShape {
   name: string; targetClass: string; label?: string; comment?: string;
   closed?: boolean; ignoredProperties?: string[];
   constraints: ShapeConstraint[];
+  /** Exactly one of these paths must be present (rendered as sh:xone, enforced by the
+   *  validator) — e.g. an xAPI Agent's single Inverse Functional Identifier. */
+  exactlyOneOf?: { paths: string[]; comment?: string };
 }
 export interface OntologyModel {
   module: string;         // 'xapi' | 'scorm-cam' | …  (→ <NS_ROOT><module>)
@@ -161,6 +164,10 @@ export function renderShacl(m: OntologyModel): string {
       if (c.comment) inner.push(`rdfs:comment "${esc(c.comment)}"`);
       parts.push(`    sh:property [ ${inner.join(' ; ')} ] ;`);
     }
+    if (s.exactlyOneOf) {
+      const branches = s.exactlyOneOf.paths.map(p => `[ sh:path ${expand(m, p)} ; sh:minCount 1 ]`).join(' ');
+      parts.push(`    sh:xone ( ${branches} ) ;${s.exactlyOneOf.comment ? ` # ${s.exactlyOneOf.comment}` : ''}`);
+    }
     parts.push(`    rdfs:isDefinedBy <${ontologyIri(m)}> .`);
     lines.push(parts.join('\n'), '');
   }
@@ -195,6 +202,9 @@ export interface ValidationResult {
 }
 const IRI_RE = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s]+$/;
 const XSD_NUM = new Set(['xsd:decimal', 'xsd:double', 'xsd:float', 'xsd:integer', 'xsd:nonNegativeInteger', 'xsd:int']);
+const XSD_STR = new Set(['xsd:string', 'xsd:anyURI', 'xsd:language', 'xsd:token', 'xsd:normalizedString']);
+const DATETIME_RE = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?$/;
+const DURATION_RE = /^P(?:\d+(?:\.\d+)?Y)?(?:\d+(?:\.\d+)?M)?(?:\d+(?:\.\d+)?W)?(?:\d+(?:\.\d+)?D)?(?:T(?:\d+(?:\.\d+)?H)?(?:\d+(?:\.\d+)?M)?(?:\d+(?:\.\d+)?S)?)?$/;
 
 function pick(instance: Record<string, unknown>, path: string): unknown {
   // path is a module curie like xapi:actor → property key 'actor'; support bare too.
@@ -215,15 +225,24 @@ export function validateAgainstShape(m: OntologyModel, shapeName: string, instan
     if (c.minCount != null && arr.length < c.minCount) results.push({ path: c.path, message: `expected at least ${c.minCount} value(s)`, sourceShape, severity: 'Violation' });
     if (c.maxCount != null && arr.length > c.maxCount) results.push({ path: c.path, message: `expected at most ${c.maxCount} value(s)`, value: v, sourceShape, severity: 'Violation' });
     for (const item of arr) {
-      if (c.datatype === 'xsd:string' && typeof item !== 'string') results.push({ path: c.path, message: 'expected a string', value: item, sourceShape, severity: 'Violation' });
-      if (c.datatype === 'xsd:boolean' && typeof item !== 'boolean') results.push({ path: c.path, message: 'expected a boolean', value: item, sourceShape, severity: 'Violation' });
-      if (c.datatype && XSD_NUM.has(c.datatype) && typeof item !== 'number') results.push({ path: c.path, message: `expected a number (${c.datatype})`, value: item, sourceShape, severity: 'Violation' });
-      if (c.nodeKind === 'IRI' && !(typeof item === 'string' && IRI_RE.test(item))) results.push({ path: c.path, message: 'expected an IRI', value: item, sourceShape, severity: 'Violation' });
-      if (c.pattern && typeof item === 'string' && !new RegExp(c.pattern).test(item)) results.push({ path: c.path, message: `does not match pattern ${c.pattern}`, value: item, sourceShape, severity: 'Violation' });
-      if (c.in && !c.in.includes(String(item))) results.push({ path: c.path, message: `not in the allowed vocabulary {${c.in.join(', ')}}`, value: item, sourceShape, severity: 'Violation' });
-      if (c.minInclusive != null && typeof item === 'number' && item < c.minInclusive) results.push({ path: c.path, message: `must be ≥ ${c.minInclusive}`, value: item, sourceShape, severity: 'Violation' });
-      if (c.maxInclusive != null && typeof item === 'number' && item > c.maxInclusive) results.push({ path: c.path, message: `must be ≤ ${c.maxInclusive}`, value: item, sourceShape, severity: 'Violation' });
+      const viol = (message: string): void => { results.push({ path: c.path, message, value: item, sourceShape, severity: 'Violation' }); };
+      if (c.datatype && XSD_STR.has(c.datatype) && typeof item !== 'string') viol(`expected a string (${c.datatype})`);
+      if (c.datatype === 'xsd:boolean' && typeof item !== 'boolean') viol('expected a boolean');
+      if (c.datatype && XSD_NUM.has(c.datatype) && typeof item !== 'number') viol(`expected a number (${c.datatype})`);
+      if (c.datatype === 'xsd:dateTime' && !(typeof item === 'string' && DATETIME_RE.test(item))) viol('expected an RFC 3339 dateTime');
+      if (c.datatype === 'xsd:duration' && !(typeof item === 'string' && DURATION_RE.test(item))) viol('expected an ISO 8601 duration');
+      if (c.datatype === 'rdf:langString' && !(typeof item === 'string' || (typeof item === 'object' && item !== null))) viol('expected a language-tagged string or language map');
+      if (c.nodeKind === 'IRI' && !(typeof item === 'string' && IRI_RE.test(item))) viol('expected an IRI');
+      if (c.nodeKind === 'Literal' && (item === null || typeof item === 'object')) viol('expected a literal, not an IRI/blank node');
+      if (c.pattern && typeof item === 'string' && !new RegExp(c.pattern).test(item)) viol(`does not match pattern ${c.pattern}`);
+      if (c.in && !c.in.includes(String(item))) viol(`not in the allowed vocabulary {${c.in.join(', ')}}`);
+      if (c.minInclusive != null && typeof item === 'number' && item < c.minInclusive) viol(`must be ≥ ${c.minInclusive}`);
+      if (c.maxInclusive != null && typeof item === 'number' && item > c.maxInclusive) viol(`must be ≤ ${c.maxInclusive}`);
     }
+  }
+  if (shape.exactlyOneOf) {
+    const present = shape.exactlyOneOf.paths.filter(p => { const x = pick(instance, p); return x !== undefined && x !== null; });
+    if (present.length !== 1) results.push({ path: shape.exactlyOneOf.paths.join(' | '), message: `exactly one of {${shape.exactlyOneOf.paths.join(', ')}} is required — found ${present.length}`, sourceShape, severity: 'Violation' });
   }
   return { conforms: results.length === 0, results, shapesIri: shapesIri(m) };
 }

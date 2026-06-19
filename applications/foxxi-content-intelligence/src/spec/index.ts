@@ -47,7 +47,19 @@ export function validateXapiStatement(stmt: Record<string, unknown>): Validation
     out.push(...validateAgainstShape(m, 'ResultShape', result).results);
     if (result.score && typeof result.score === 'object') out.push(...validateAgainstShape(m, 'ScoreShape', result.score as Record<string, unknown>).results);
   }
-  if (stmt.actor && typeof stmt.actor === 'object') out.push(...validateAgainstShape(m, 'AgentShape', stmt.actor as Record<string, unknown>).results);
+  if (stmt.actor && typeof stmt.actor === 'object') {
+    const actor = stmt.actor as Record<string, unknown>;
+    const shapeUri = `${shapesIri(m)}#GroupShape`;
+    if (actor.objectType === 'Group') {
+      out.push(...validateAgainstShape(m, 'GroupShape', actor).results);
+      const ifis = ['mbox', 'mbox_sha1sum', 'openid', 'account'].filter(k => actor[k] != null);
+      const hasMembers = Array.isArray(actor.member) && actor.member.length > 0;
+      if (!hasMembers && ifis.length !== 1) out.push({ path: 'member|ifi', message: 'a Group must be anonymous (a member list) or identified by exactly one IFI (§4.1.2.2)', sourceShape: shapeUri, severity: 'Violation' });
+      if (hasMembers && ifis.length > 0) out.push({ path: 'ifi', message: 'an anonymous Group (with members) must not carry an IFI (§4.1.2.2)', sourceShape: shapeUri, severity: 'Violation' });
+    } else {
+      out.push(...validateAgainstShape(m, 'AgentShape', actor).results); // enforces exactly-one IFI via sh:xone
+    }
+  }
   for (const att of (Array.isArray(stmt.attachments) ? stmt.attachments : []) as Array<Record<string, unknown>>) {
     out.push(...validateAgainstShape(m, 'AttachmentShape', att).results);
   }
@@ -59,9 +71,14 @@ export function validateInstance(module: string, instance: Record<string, unknow
   if (module === 'xapi') return validateXapiStatement(instance);
   const m = SPEC_MODELS[module];
   if (!m) return null;
-  // default: validate against the first shape whose targetClass matches the instance @type/objectType, else the first shape.
+  // Route to the shape whose targetClass matches the instance's declared type
+  // (@type / objectType / type) — running EVERY shape against one flat instance would
+  // produce spurious cross-class violations. Fall back to the first shape if untyped.
+  const declared = String((instance['@type'] ?? instance.objectType ?? instance.type ?? '')).split(/[#/]/).pop();
+  const matched = declared ? m.shapes.filter(s => s.targetClass === declared) : [];
+  const shapes = matched.length ? matched : (declared ? [] : m.shapes.slice(0, 1));
   const out: ValidationResult['results'] = [];
-  for (const s of m.shapes) out.push(...validateAgainstShape(m, s.name, instance).results);
+  for (const s of shapes) out.push(...validateAgainstShape(m, s.name, instance).results);
   return { conforms: out.length === 0, results: out, shapesIri: shapesIri(m) };
 }
 

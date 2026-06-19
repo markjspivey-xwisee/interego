@@ -1,5 +1,5 @@
 /**
- * SCORM 2004 4th Edition — Sequencing & Navigation (SN) data model — the single source.
+ * SCORM 2004 3rd Edition — Sequencing & Navigation (SN) data model — the single source.
  *
  * Transcribed from the normative IMS Simple Sequencing v1.0 XSD binding (the IMSSS
  * schema SCORM 2004 adopts: imsss_v1p0*.xsd) plus the ADL sequencing and navigation
@@ -11,18 +11,18 @@
  * Composed into the PGSL lattice (composeSpecOntology) and projected to OWL/SHACL/
  * JSON-LD on dereference at <bridge>/ns/scorm-sn. The SCORM SN engine validates a
  * parsed manifest's sequencing collection against the SHACL shapes this model
- * publishes (validateAgainstModel) — so a manifest is checked against THIS ontology,
+ * publishes (validateAgainstShape) — so a manifest is checked against THIS ontology,
  * and every conformance result cites its shape IRI.
  */
 import type { OntologyModel } from '../spec-ontology.js';
 
 export const SCORM_SN_MODEL: OntologyModel = {
   module: 'scorm-sn',
-  title: 'SCORM 2004 4th Ed — Sequencing & Navigation (IMSSS + ADL)',
+  title: 'SCORM 2004 3rd Ed — Sequencing & Navigation (IMSSS + ADL)',
   description:
-    'OWL + SHACL ontology of the SCORM 2004 4th Edition Sequencing & Navigation binding: the IMS Simple Sequencing v1.0 schema (Sequencing, ControlMode, SequencingRules with pre/exit/post-condition rules and their RuleConditions, LimitConditions, RollupRules/RollupConditions, Objectives with measure mapping, RandomizationControls, DeliveryControls, AuxiliaryResources) plus the ADL extensions adlseq_v1p3 (rollupConsiderations, constrainedChoiceConsiderations, objectivesGlobalToSystem) and adlnav_v1p3 (presentation / navigationInterface / hideLMSUI). Composed into PGSL and projected here; the SCORM SN runtime validates manifests against the shapes below.',
+    'OWL + SHACL ontology of the SCORM 2004 3rd Edition Sequencing & Navigation binding: the IMS Simple Sequencing v1.0 schema (Sequencing, ControlMode, SequencingRules with pre/exit/post-condition rules and their RuleConditions, LimitConditions, RollupRules/RollupConditions, Objectives with measure mapping, RandomizationControls, DeliveryControls, AuxiliaryResources) plus the ADL extensions adlseq_v1p3 (rollupConsiderations, constrainedChoiceConsiderations, objectivesGlobalToSystem) and adlnav_v1p3 (presentation / navigationInterface / hideLMSUI). Composed into PGSL and projected here; the SCORM SN runtime validates manifests against the shapes below.',
   version: '1.3.4',
-  spec: 'https://adlnet.gov/projects/scorm-2004-4th-edition/',
+  spec: 'https://adlnet.gov/projects/scorm-2004-3rd-edition/',
   prefixes: {
     imsss: 'http://www.imsglobal.org/xsd/imsss#',
     adlseq: 'http://www.adlnet.org/xsd/adlseq_v1p3#',

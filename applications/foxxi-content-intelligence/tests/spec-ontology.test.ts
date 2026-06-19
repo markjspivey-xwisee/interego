@@ -78,4 +78,22 @@ describe('validateXapiStatement (ontology-driven)', () => {
     expect(paths).toContain('timestamp');   // bad dateTime
     expect(r.results.every(x => x.sourceShape.startsWith(shapesIri(XAPI_MODEL) + '#'))).toBe(true);
   });
+
+  it('enforces the Agent single-IFI rule (§4.1.2.1)', () => {
+    const base = { verb: { id: 'http://adlnet.gov/expapi/verbs/x' }, object: { id: 'http://x/1', objectType: 'Activity' } };
+    const oneIfi = validateXapiStatement({ ...base, actor: { objectType: 'Agent', mbox: 'mailto:a@x.org' } });
+    expect(oneIfi.results.some(r => /one of/.test(r.message))).toBe(false); // exactly one IFI → ok
+    const zeroIfi = validateXapiStatement({ ...base, actor: { objectType: 'Agent', name: 'No IFI' } });
+    expect(zeroIfi.results.some(r => /exactly one of/.test(r.message))).toBe(true);
+    const twoIfi = validateXapiStatement({ ...base, actor: { objectType: 'Agent', mbox: 'mailto:a@x.org', openid: 'http://x/openid' } });
+    expect(twoIfi.results.some(r => /exactly one of/.test(r.message))).toBe(true);
+  });
+
+  it('allows an anonymous Group (members, no IFI) but rejects members + IFI (§4.1.2.2)', () => {
+    const base = { verb: { id: 'http://adlnet.gov/expapi/verbs/x' }, object: { id: 'http://x/1', objectType: 'Activity' } };
+    const anon = validateXapiStatement({ ...base, actor: { objectType: 'Group', member: [{ objectType: 'Agent', mbox: 'mailto:a@x.org' }] } });
+    expect(anon.results.some(r => /Group/.test(r.message))).toBe(false);
+    const bad = validateXapiStatement({ ...base, actor: { objectType: 'Group', mbox: 'mailto:g@x.org', member: [{ mbox: 'mailto:a@x.org' }] } });
+    expect(bad.results.some(r => /anonymous Group/.test(r.message))).toBe(true);
+  });
 });

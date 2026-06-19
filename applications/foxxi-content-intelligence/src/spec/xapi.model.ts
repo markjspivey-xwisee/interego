@@ -160,8 +160,14 @@ export const XAPI_MODEL: OntologyModel = {
     },
     {
       name: 'AgentShape', targetClass: 'Agent', label: 'Agent conformance',
-      comment: '§4.1.2.1: an Agent is identified by exactly one Inverse Functional Identifier (mbox / mbox_sha1sum / openid / account). The single-IFI rule is enforced by the LRS validator (sh:xone over the four IFIs).',
-      constraints: [{ path: 'objectType', maxCount: 1, in: ['Agent', 'Group'] }],
+      comment: '§4.1.2.1: an Agent is identified by EXACTLY ONE Inverse Functional Identifier (mbox / mbox_sha1sum / openid / account) — rendered as sh:xone below and enforced by the validator.',
+      constraints: [{ path: 'objectType', maxCount: 1, in: ['Agent'] }],
+      exactlyOneOf: { paths: ['mbox', 'mbox_sha1sum', 'openid', 'account'], comment: 'exactly one IFI (§4.1.2.1)' },
+    },
+    {
+      name: 'GroupShape', targetClass: 'Group', label: 'Group conformance',
+      comment: '§4.1.2.2: an Identified Group has exactly one IFI; an Anonymous Group has a member list and NO IFI. The anonymous-vs-identified disjunction is enforced by the LRS validator (validateXapiStatement).',
+      constraints: [{ path: 'objectType', maxCount: 1, in: ['Group'] }],
     },
     {
       name: 'AttachmentShape', targetClass: 'Attachment', label: 'Attachment conformance',
