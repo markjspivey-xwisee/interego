@@ -3471,7 +3471,9 @@ app.post('/agent/course/analyze-authored', async (req, res) => {
     const realLabel = courseLabelFor(courseId);
     const courseIri = `urn:foxxi:course:${realLabel}`;
     const built = agentScormToAgenticCourse(course, { courseIri, authoritativeSource: courseIri });
-    const author = course.authoredBy || authorDid || 'a Foxxi agent';
+    const authorRaw = String(course.authoredBy || authorDid || '');
+    // did:ethr addresses are case-insensitive; normalize to the lowercase convention.
+    const author = /^did:ethr:0x[0-9a-fA-F]{40}$/.test(authorRaw) ? authorRaw.toLowerCase() : (authorRaw || 'a Foxxi agent');
     const fingerprint = {
       tool: 'Foxxi (agent-authored)', toolId: 'foxxi-agent', vendor: 'Interego / Foxxi',
       confidence: 1, standard: { standard: 'SCORM 2004 (Foxxi-generated)', standardId: 'SCORM_2004' },
