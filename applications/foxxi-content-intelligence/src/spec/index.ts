@@ -9,10 +9,19 @@
  */
 import { type OntologyModel, validateAgainstShape, shapesIri, composeSpecOntology, type ValidationResult, type ComposedOntology } from '../spec-ontology.js';
 import { XAPI_MODEL } from './xapi.model.js';
+import { CMI5_MODEL } from './cmi5.model.js';
+import { SCORM_CAM_MODEL } from './scorm-cam.model.js';
+import { SCORM_SN_MODEL } from './scorm-sn.model.js';
+import { SCORM_RTE_MODEL } from './scorm-rte.model.js';
 
-/** The registered standards ontologies. (SCORM CAM/SN/RTE + cmi5 land here next.) */
+/** The registered standards ontologies — each composed into the PGSL lattice and
+ *  projected (OWL/SHACL/JSON-LD) dereferenceably at <bridge>/ns/<module>. */
 export const SPEC_MODELS: Record<string, OntologyModel> = {
   [XAPI_MODEL.module]: XAPI_MODEL,
+  [SCORM_CAM_MODEL.module]: SCORM_CAM_MODEL,
+  [SCORM_SN_MODEL.module]: SCORM_SN_MODEL,
+  [SCORM_RTE_MODEL.module]: SCORM_RTE_MODEL,
+  [CMI5_MODEL.module]: CMI5_MODEL,
 };
 
 export { validateAgainstShape, shapesIri };
