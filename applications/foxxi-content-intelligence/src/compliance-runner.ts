@@ -179,7 +179,7 @@ export async function runXapiConformance(opts: XapiOpts): Promise<ComplianceRepo
     add('the ontology rejects a malformed statement, citing dereferenceable shape IRIs', !bad.conforms && bad.results.length > 0 && bad.results.every(r => r.sourceShape.includes('/ns/xapi/shapes#')), 'SHACL', `${bad.results.length} cited violations`);
   } catch (e) { add('xAPI ontology (SHACL) validation', false, 'SHACL', (e as Error).message); }
 
-  return tally('xapi-2.0', 'xAPI 2.0 LRS Conformance', 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017 — live battery across §3/§4/§6/§7 + the §4 validator (whose vocab/patterns are single-sourced from the dereferenceable /ns/xapi ontology) on every statement, plus direct SHACL validation against the composed /ns/xapi shapes. The complete official ADL lrs-conformance-test-suite (LRS-2.0) passes 1442/1442 (attested, re-runnable).', B, ranAt, checks);
+  return tally('xapi-2.0', 'xAPI 2.0 LRS Conformance', 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017 — live battery across §3/§4/§6/§7 + the §4 validator (whose vocab/patterns are single-sourced from the dereferenceable /ns/xapi ontology) on every externally-submitted statement (internally-emitted statements are built from typed, ontology-aligned builders), plus direct SHACL validation against the composed /ns/xapi shapes. The complete official ADL lrs-conformance-test-suite (LRS-2.0) passes 1442/1442 (attested, re-runnable).', B, ranAt, checks);
 }
 
 // ── SCORM 2004 Sequencing & Navigation conformance ────────────────────────────

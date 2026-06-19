@@ -98,7 +98,7 @@ Advantage services are verified by `tools/lms-conformance-smoke.ts`.
 | Capability | Status | Evidence |
 |---|---|---|
 | One bridge serves many tenants, every in-memory store partitioned | **Conformant (verified)** | `src/tenant-context.ts`; isolation test: tenant B gets 404 on tenant A's statement, sees 0 of A's |
-| xAPI conformance preserved under multi-tenancy | **Conformant** | 1435 / 1435 with the default-tenant credential |
+| xAPI conformance preserved under multi-tenancy | **Conformant** | 1442 / 1442 (full ADL suite, re-runnable; default-tenant credential) |
 | Tenant resolution — LRS by auth credential (`user:pass:tenantId`), affordances by `tenant_pod_url` | **Implemented** | the auth gate + `callTenant` |
 | Deployment-per-tenant (fully-isolated alternative) | **Conformant** | env-configured, always available |
 
@@ -126,7 +126,7 @@ An incumbent xAPI LRS becomes a *data source under the substrate* — see
 
 ## Honest summary
 
-- **Foxxi-as-LRS**: production-conformant xAPI 2.0 (1435/1435), multi-tenant,
+- **Foxxi-as-LRS**: production-conformant xAPI 2.0 (1442/1442 ADL suite), multi-tenant,
   interoperable with any external LRS.
 - **Foxxi-as-LMS**: the full cmi5 launch-and-track loop closes inside
   Foxxi — register a cmi5.xml course structure, launch an AU (sequential

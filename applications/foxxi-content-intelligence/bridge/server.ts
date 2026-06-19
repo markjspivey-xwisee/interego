@@ -328,7 +328,7 @@ import {
 } from '../src/context-chat.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
-import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd, ontologyIri as specOntologyIri } from '../src/spec-ontology.js';
+import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd, ontologyIri as specOntologyIri, modelFromHolon as specModelFromHolon, type OntologyModel as SpecOntologyModel } from '../src/spec-ontology.js';
 import { SPEC_MODELS, validateInstance, composeAllSpecOntologies } from '../src/spec/index.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
 import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
@@ -1498,7 +1498,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       return { error: `forbidden — caller cannot emit cmi5 statements on behalf of ${learnerDid}` };
     }
     const trace = buildPassedSessionTrace({
-      actor: { mbox: `mailto:${learnerDid.split('/').pop()}@${authoritativeSource}`, name: ctx.webId, account: { homePage: learnerDid, name: ctx.userId } },
+      // Exactly ONE Inverse Functional Identifier (account, the WebID) per xAPI §4.1.2.1 —
+      // not mbox+account together (which would violate the single-IFI rule the ontology enforces).
+      actor: { name: ctx.webId, account: { homePage: learnerDid, name: ctx.userId } },
       session: {
         registration: args.registration as string,
         sessionId: args.registration as string,
@@ -2453,17 +2455,26 @@ const app = createVerticalBridge({
     // served here are PROJECTIONS of that composed holon. The LRS/LMS validate
     // instances against these shapes (POST /ns/<module>/validate); every result
     // cites a sh:NodeShape IRI here. Content-negotiated; CORS-open; HATEOAS.
+    // Once composed (below), each module is read back FROM its PGSL holon so the served
+    // bytes are a genuine projection of the lattice node; until then we render the
+    // single-source model (identical content — it IS the holon's content atom).
+    const specHolons = new Map<string, { label: string; holonUri: string }>();
+    const liveModel = (moduleName: string, fallback: SpecOntologyModel): SpecOntologyModel => {
+      const h = specHolons.get(moduleName);
+      return (h && specModelFromHolon(h.label, h.holonUri)) || fallback;
+    };
     for (const [moduleName, model] of Object.entries(SPEC_MODELS)) {
       a.get(`/ns/${moduleName}`, (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
+        const m = liveModel(moduleName, model);
         const acc = req.headers.accept ?? '';
-        if (acc.includes('text/turtle') || acc.includes('application/x-turtle')) res.type('text/turtle').send(renderSpecOwl(model));
-        else if (acc.includes('text/html')) res.type('text/html').send(renderSpecHtml(model));
-        else res.type('application/ld+json').send(JSON.stringify(renderSpecJsonLd(model), null, 2));
+        if (acc.includes('text/turtle') || acc.includes('application/x-turtle')) res.type('text/turtle').send(renderSpecOwl(m));
+        else if (acc.includes('text/html')) res.type('text/html').send(renderSpecHtml(m));
+        else res.type('application/ld+json').send(JSON.stringify(renderSpecJsonLd(m), null, 2));
       });
       a.get(`/ns/${moduleName}/shapes`, (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
-        res.type('text/turtle').send(renderSpecShacl(model));
+        res.type('text/turtle').send(renderSpecShacl(liveModel(moduleName, model)));
       });
       a.post(`/ns/${moduleName}/validate`, (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
@@ -2475,14 +2486,15 @@ const app = createVerticalBridge({
       });
       a.get(`/ns/${moduleName}/term/:name`, (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
-        res.type('application/ld+json').send(JSON.stringify(renderSpecTermJsonLd(model, req.params.name), null, 2));
+        res.type('application/ld+json').send(JSON.stringify(renderSpecTermJsonLd(liveModel(moduleName, model), req.params.name), null, 2));
       });
     }
-    // Emerge the spec ontologies into the shared lattice (best-effort; serving above
-    // works regardless — the projection is render(model), identical to the holon's).
+    // Emerge the spec ontologies into the shared lattice, then serve them BY PROJECTING
+    // those holons (liveModel reads modelFromHolon). Best-effort; until composed, serving
+    // renders the single-source model (identical to the holon's content atom).
     if (tenantPodUrl) {
       void composeAllSpecOntologies({ podUrl: tenantPodUrl, agentDid: tenantProfileDid })
-        .then(c => console.log(`[foxxi-bridge][spec-ontology] composed ${c.filter(x => x.holonUri).length}/${c.length} spec ontologies into the lattice`))
+        .then(c => { for (const x of c) if (x.holonUri) specHolons.set(x.module, { label: x.label, holonUri: x.holonUri }); console.log(`[foxxi-bridge][spec-ontology] composed ${specHolons.size}/${c.length} spec ontologies into the lattice (now served as holon projections)`); })
         .catch(e => console.warn('[foxxi-bridge][spec-ontology] compose skipped:', (e as Error).message));
     }
 

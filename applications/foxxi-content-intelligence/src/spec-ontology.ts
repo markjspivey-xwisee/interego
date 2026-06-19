@@ -110,7 +110,9 @@ export function renderOwl(m: OntologyModel): string {
   lines.push(`    owl:versionInfo "${esc(m.version)}" ;`);
   lines.push(`    rdfs:seeAlso <${m.spec}> ;`);
   if (m.derivedFrom) lines.push(`    rdfs:comment "Transcribed from the normative schema: ${esc(m.derivedFrom)}" ;`);
-  if (m.imports?.length) for (const i of m.imports) lines.push(`    owl:imports <${i}> ;`);
+  // Expand a bare module token (e.g. 'xapi') to its dereferenceable ontology IRI;
+  // keep an already-absolute IRI as-is. (A bare <xapi> would not resolve.)
+  if (m.imports?.length) for (const i of m.imports) lines.push(`    owl:imports <${/^https?:\/\//.test(i) ? i : `${NS_ROOT}${i}`}> ;`);
   lines.push(`    rdfs:isDefinedBy <${ontologyIri(m)}> .`, '');
 
   for (const c of m.classes) {
@@ -177,7 +179,7 @@ export function renderShacl(m: OntologyModel): string {
 // ── JSON-LD projection (HATEOAS) ───────────────────────────────────────────────
 export function renderJsonLd(m: OntologyModel): Record<string, unknown> {
   return {
-    '@context': { ...STD_PREFIXES, [m.module]: ns(m) },
+    '@context': { ...STD_PREFIXES, ...(m.prefixes ?? {}), [m.module]: ns(m) },
     '@id': ontologyIri(m),
     '@type': 'owl:Ontology',
     'dct:title': m.title, 'dct:description': m.description, 'owl:versionInfo': m.version,

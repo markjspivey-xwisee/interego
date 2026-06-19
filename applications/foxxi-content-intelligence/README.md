@@ -99,7 +99,7 @@ glue references them but does NOT re-implement them.
 | File | What it is |
 |---|---|
 | `foxxi_storyline_parser_v0{1,2,3}.py` | Python parser, Articulate Storyline → RDF, three-stratum emission |
-| `foxxi-content-graph{,-v0.2}.ttl`, `rcd.ttl`, `wallet.ttl` | Original three-stratum ontology (fxs/fxk/fxa, the `vocab.foxximediums.com` namespace) — **superseded by [`src/foxxi-vocab.ts`](src/foxxi-vocab.ts)**; kept as the historical record |
+| `foxxi-content-graph{,-v0.2}.ttl`, `rcd.ttl`, `wallet.ttl` | Original three-stratum ontology (fxs/fxk/fxa) — IRIs REBASED off the dead `vocab.foxximediums.com` domain onto `<bridge>/ns/legacy/*`; **superseded by [`src/foxxi-vocab.ts`](src/foxxi-vocab.ts) + the dereferenceable `/ns/<spec>` ontologies**; kept only as the historical record (not loaded at runtime) |
 | `lesson{2,3}_v0{2,3}.ttl` | Parsed lesson graphs (sample data) |
 | `build_dashboard_data{,_v03}.py` | Dashboard JSON builder |
 | `dashboard_data{,_v03}.json` + `lesson{2,3}_dashboard_data_v03.json` | Per-course dashboard payloads |

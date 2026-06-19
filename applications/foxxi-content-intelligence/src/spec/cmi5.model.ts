@@ -19,7 +19,7 @@
  *
  * Reference: cmi5 v1.0 — https://github.com/AICC/CMI-5_Spec_Current
  */
-import type { OntologyModel } from '../spec-ontology.js';
+import { type OntologyModel, NS_ROOT } from '../spec-ontology.js';
 
 // cmi5 §13.1.4 AU id / §13.1.2 course id — an IRI.
 // masteryScore is a decimal in [0,1] (§13.1.4.4 / §9.5.1).
@@ -31,12 +31,13 @@ const UUID = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 export const CMI5_MODEL: OntologyModel = {
   module: 'cmi5',
   title: 'cmi5 v1.0 (IEEE 9274.2.1) — xAPI Profile + course structure',
-  description: 'OWL + SHACL ontology of cmi5 v1.0 (IEEE 9274.2.1): the §13 course-structure binding (courseStructure / Course / Block / AssignableUnit with launchMethod, moveOn, masteryScore, activityType, launchParameters) and the cmi5 xAPI Profile surface — the 9 §9 defined verbs, the cmi5 + moveOn category context activities, the cmi5 context extensions (sessionid / masteryscore / launchmode / launchurl / moveon / launchparameters) and result extensions (progress / reason). Reuses the xAPI 2.0 data model from the xapi module. Composed into PGSL and projected here; the Foxxi LMS validates AUs and cmi5 statements against the shapes below.',
+  description: 'OWL + SHACL ontology of cmi5 v1.0 (IEEE 9274.2.1): the §13 course-structure binding (courseStructure / Course / Block / AssignableUnit with launchMethod, moveOn, masteryScore, activityType, launchParameters) and the cmi5 xAPI Profile surface — the 9 §9 defined verbs, the cmi5 + moveOn category context activities, the cmi5 context extensions (sessionid / masteryscore / launchmode / launchurl / moveon / launchparameters) and result extensions (progress / reason). Reuses the xAPI 2.0 data model from the xapi module. Composed into PGSL and projected here. The shapes below validate cmi5 course structures (Course / Block / AU / Session); cmi5 STATEMENT conformance is enforced by the /ns/xapi shapes plus the cmi5 verb / moveOn / launchMethod vocabularies defined here.',
   version: '1.0.0',
   spec: 'https://github.com/AICC/CMI-5_Spec_Current',
-  derivedFrom: 'xapi',
   prefixes: {
-    xapi: 'https://w3id.org/xapi/',
+    // Reference the bridge's OWN composed xAPI ontology (so xapi:Object resolves to the
+    // served /ns/xapi#Object class), not the external w3id base.
+    xapi: `${NS_ROOT}xapi#`,
     adl: 'http://adlnet.gov/expapi/verbs/',
     adlx: 'https://w3id.org/xapi/adl/verbs/',
     cmi5ext: 'https://w3id.org/xapi/cmi5/',

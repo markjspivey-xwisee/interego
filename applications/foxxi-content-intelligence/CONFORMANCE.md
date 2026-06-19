@@ -48,13 +48,13 @@ The CLI is a thin wrapper over the shared runner `src/compliance-runner.ts`
 endpoint and the public **Compliance** microsite run, so there is one source of
 truth for the checks. Run it live yourself from the microsite, no clone required.
 
-26 checks covering: §3.1 version negotiation, §4.1 statement POST +
+28 checks covering (incl. 2 ontology-grounded SHACL checks against /ns/xapi): §3.1 version negotiation, §4.1 statement POST +
 required fields, §4.1.1 immutability (idempotent re-POST + 409 on
 divergent body), §4.1.7 voiding, §4.2 filtered queries + paginated
 cursor, §6.3 ETag / If-Match / If-None-Match concurrency, §7.7 /about,
 xAPI Profile Spec 2017 document shape. Exit code 0 on full pass.
 
-Last run against the live deployment: **26 / 26 pass.**
+Last run against the live deployment: **28 / 28 pass.**
 
 ## 0. xAPI version conformance
 
@@ -80,6 +80,8 @@ LRSes (SCORM Cloud is 1.0.3-only) at the version they negotiate, but
 inbound and self-emitted statements are 2.0.0.
 
 ## 1. Content packaging — ADL SCORM 1.2 / 2004
+
+> **Note on the `fxs:` / `fxk:` / `rcd:` IRIs below:** these are the **legacy content vocabulary** (the original three-stratum graph, now under `imported/*.ttl`, rebased off the dead `vocab.foxximediums.com` domain onto `<bridge>/ns/legacy/*` — historical, **not dereferenceable, not loaded at runtime**). The **live, dereferenceable** standards layer is the composed spec ontologies at `<bridge>/ns/{scorm-cam,scorm-sn,scorm-rte,xapi,cmi5}` (+ `<bridge>/ns/foxxi`); the rows below document the original mappings and are superseded by those.
 
 | Standard requirement | Status | Where |
 |---|---|---|
