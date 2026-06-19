@@ -30,9 +30,13 @@ export interface SkillProvenance {
 /** Project a course knowledge-graph into an agent skill (SKILL.md text). */
 export function courseToSkillMd(course: FoxxiAgenticCourse, prov: SkillProvenance = {}): { skillMd: string; name: string } {
   const name = slug(course.title || course.courseId);
-  const conceptLabels = course.concepts.map(c => c.label);
+  // Sanitize any interpolated text to a single line + strip leading markdown control chars
+  // so course content can't inject frontmatter delimiters, headings, or list structure.
+  const inl = (s: string): string => oneLine(String(s ?? '')).replace(/^[#>\-*`|]+\s*/, '').slice(0, 400);
+  const safeTitle = inl(course.title) || course.courseId;
+  const conceptLabels = course.concepts.map(c => inl(c.label)).filter(Boolean);
   const description = oneLine(
-    `Capability distilled from the "${course.title}" course knowledge-graph — ${conceptLabels.length} concept(s)`
+    `Capability distilled from the "${safeTitle}" course knowledge-graph — ${conceptLabels.length} concept(s)`
     + (prov.tool ? `, authored with ${prov.tool}` : '') + '.',
   );
 
@@ -43,7 +47,7 @@ export function courseToSkillMd(course: FoxxiAgenticCourse, prov: SkillProvenanc
     const sid = c.taught_in_slides[0];
     const slide = sid ? slideById.get(sid) : undefined;
     const excerpt = oneLine(slide?.transcript_combined ?? '').slice(0, 360);
-    knowledge.push(`- **${c.label}**${excerpt ? ` — ${excerpt}` : ''}`);
+    knowledge.push(`- **${inl(c.label)}**${excerpt ? ` — ${excerpt}` : ''}`);
   }
 
   const provLines: string[] = [];
@@ -58,7 +62,7 @@ name: ${name}
 description: ${description}
 ---
 
-# ${course.title}
+# ${safeTitle}
 
 > Projected from a Foxxi course knowledge-graph for an agent to load. This is a
 > procedural distillation; the course holon remains the authoritative source of truth
@@ -82,21 +86,23 @@ export function parseSkillMd(md: string): ParsedSkill {
   const fm = md.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
   if (fm) {
     const front = fm[1]; body = fm[2];
-    name = oneLine((front.match(/^\s*name:\s*(.+)$/m) ?? [, ''])[1]).replace(/^["']|["']$/g, '');
-    description = oneLine((front.match(/^\s*description:\s*(.+)$/m) ?? [, ''])[1]).replace(/^["']|["']$/g, '');
+    // [ \t] (not \s) around the value so an EMPTY field can't swallow the next line; (.*) allows ''.
+    name = oneLine((front.match(/^[ \t]*name:[ \t]*(.*)$/m) ?? [, ''])[1]).replace(/^["']|["']$/g, '');
+    description = oneLine((front.match(/^[ \t]*description:[ \t]*(.*)$/m) ?? [, ''])[1]).replace(/^["']|["']$/g, '');
   }
-  // strip a leading `# Title` from the body
-  body = body.replace(/^\s*#\s+.+$/m, '').trim();
-  // split into `## ` sections
+  // strip a LEADING `# Title` only (anchored to the start — never a mid-document `# ` line).
+  body = body.replace(/^\s*#\s+.+(\r?\n|$)/, '').trim();
+  // Mask fenced code blocks (keeping offsets) so `## ` INSIDE a fence isn't read as a heading.
+  const scan = body.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, m => m.replace(/[^\n]/g, ' '));
   const sections: Array<{ heading: string; body: string }> = [];
   const re = /^##\s+(.+)$/gm;
   const heads: Array<{ heading: string; index: number; end: number }> = [];
   let m: RegExpExecArray | null;
-  while ((m = re.exec(body)) !== null) heads.push({ heading: oneLine(m[1]), index: m.index + m[0].length, end: m.index });
+  while ((m = re.exec(scan)) !== null) heads.push({ heading: oneLine(m[1]), index: m.index + m[0].length, end: m.index });
   for (let i = 0; i < heads.length; i++) {
     const start = heads[i].index;
     const stop = i + 1 < heads.length ? heads[i + 1].end : body.length;
-    sections.push({ heading: heads[i].heading, body: oneLine(body.slice(start, stop)) });
+    sections.push({ heading: heads[i].heading, body: oneLine(body.slice(start, stop)) }); // slice the ORIGINAL body (keeps code)
   }
   if (sections.length === 0 && body.trim()) sections.push({ heading: name || 'Overview', body: oneLine(body).slice(0, 4000) });
   return { name, description, sections };
@@ -110,7 +116,9 @@ export function skillMdToAgenticCourse(md: string, opts: { courseIri: string; au
   const slides: FoxxiAgenticCourse['slides'][number][] = [];
   const seen = new Set<string>();
   parsed.sections.forEach((sec, i) => {
-    const cid = slug(sec.heading);
+    // Per-section id: include the index when the heading has no [a-z0-9] (so symbol/emoji
+    // headings don't all collapse onto the 'skill' fallback and merge unrelated sections).
+    const cid = /[a-z0-9]/i.test(sec.heading) ? slug(sec.heading) : `section-${i}`;
     const sid = `${cid}-${i}`;
     const transcript = `${sec.heading}. ${sec.body}`.trim() || sec.heading;
     slides.push({ id: sid, title: sec.heading, sequence_index: i, concept_ids: [cid], transcript_combined: transcript });
@@ -118,12 +126,13 @@ export function skillMdToAgenticCourse(md: string, opts: { courseIri: string; au
     else { const c = concepts.find(x => x.id === cid); if (c) (c.taught_in_slides as string[]).push(sid); }
   });
   // The skill NAME is the overall capability — add it as a top concept spanning every
-  // slide so subject-level questions (not just per-section ones) ground against it.
+  // slide so subject-level questions (not just per-section ones) ground against it. Use a
+  // RESERVED id so it can never collide with (and get dropped by) a section heading slug.
   const capLabel = humanize(parsed.name || title);
-  const capId = slug(capLabel);
-  if (capLabel && !seen.has(capId)) {
-    seen.add(capId);
+  const capId = `cap-${slug(capLabel)}`;
+  if (capLabel) {
     concepts.unshift({ id: capId, label: capLabel, confidence: 1, tier: 1, is_free_standing: true, taught_in_slides: slides.map(s => s.id), total_freq: slides.length });
+    for (const s of slides) (s.concept_ids as string[]).push(capId); // keep the back-reference consistent
   }
   if (concepts.length === 0) concepts.push({ id: slug(title), label: title, confidence: 1, tier: 1, is_free_standing: true, taught_in_slides: [], total_freq: 0 });
 

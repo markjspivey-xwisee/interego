@@ -3579,12 +3579,14 @@ app.post('/agent/course/analyze-skill', async (req, res) => {
     if (!rl.ok) { res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
 
     const skillMd = typeof req.body?.skillMd === 'string' ? req.body.skillMd : '';
-    if (!skillMd.trim() || skillMd.length > 2_000_000) { res.status(400).json({ ok: false, error: 'skillMd (a SKILL.md string, <2MB) required' }); return; }
+    if (!skillMd.trim()) { res.status(400).json({ ok: false, error: 'skillMd (a SKILL.md string) required' }); return; }
+    if (skillMd.length > 2_000_000) { res.status(413).json({ ok: false, error: 'skillMd too large (>2MB)' }); return; }
 
     const provisional = skillMdToAgenticCourse(skillMd, { courseIri: 'urn:foxxi:skill:pending', authoritativeSource: 'urn:foxxi:skill:pending' });
     const realLabel = courseLabelFor('skill-' + provisional.structure.courseId);
     const courseIri = `urn:foxxi:skill:${realLabel}`;
     const built = skillMdToAgenticCourse(skillMd, { courseIri, authoritativeSource: courseIri });
+    if (built.course.slides.length === 0) { res.status(400).json({ ok: false, error: 'skillMd has no parseable content (need frontmatter + a body or ## sections)' }); return; }
 
     // Provenance fingerprint: this capability arrived as an agent skill (skills.md),
     // not a SCORM authoring tool — report that ground truth.
