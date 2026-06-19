@@ -12,10 +12,10 @@
 @prefix cnt:     <http://www.w3.org/2011/content#> .
 @prefix xapi:    <https://w3id.org/xapi/ontology#> .
 
-@prefix fxs:     <https://vocab.foxximediums.com/scorm#> .
-@prefix fxk:     <https://vocab.foxximediums.com/knowledge#> .
-@prefix fxa:     <https://vocab.foxximediums.com/activity#> .
-@prefix fxsh:    <https://vocab.foxximediums.com/shapes#> .
+@prefix fxs:     <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/scorm#> .
+@prefix fxk:     <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/knowledge#> .
+@prefix fxa:     <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/activity#> .
+@prefix fxsh:    <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/shapes#> .
 
 @prefix ex:      <https://example.foxximediums.com/> .
 
@@ -42,13 +42,13 @@
 #  Ontology declarations                                        #
 #################################################################
 
-<https://vocab.foxximediums.com/scorm> a owl:Ontology ;
+<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/scorm> a owl:Ontology ;
     dcterms:title "Foxxi Structural Vocabulary for eLearning Packages" ;
     dcterms:creator <https://id.foxximediums.com/markj/profile#me> ;
     dcterms:issued "2026-04-29"^^xsd:date ;
     dcterms:modified "2026-04-29"^^xsd:date ;
     owl:versionInfo "0.2.0" ;
-    owl:priorVersion <https://vocab.foxximediums.com/scorm/0.1.0> ;
+    owl:priorVersion <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/scorm/0.1.0> ;
     rdfs:comment """Deterministic structural rendering of SCORM 1.2, SCORM 2004, 
         cmi5, xAPI, and AICC packages as RDF. Emitted directly by the parser 
         without LLM involvement.
@@ -64,13 +64,13 @@
           - Added fxsh:EmbedsAssetReferentialShape: fxs:embedsAsset targets
             must be typed as fxs:Asset""" .
 
-<https://vocab.foxximediums.com/knowledge> a owl:Ontology ;
+<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/knowledge> a owl:Ontology ;
     dcterms:title "Foxxi Semantic Vocabulary for Extracted Knowledge" ;
     dcterms:creator <https://id.foxximediums.com/markj/profile#me> ;
     dcterms:issued "2026-04-29"^^xsd:date ;
     dcterms:modified "2026-04-29"^^xsd:date ;
     owl:versionInfo "0.2.0" ;
-    owl:priorVersion <https://vocab.foxximediums.com/knowledge/0.1.0> ;
+    owl:priorVersion <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/knowledge/0.1.0> ;
     rdfs:comment """Concepts, claims, pedagogical relations, and Peircean 
         sign/object/interpretant decomposition extracted from structural 
         content. Produced by SHACL-validated enrichment passes.
@@ -82,7 +82,7 @@
           - fxsh:ConceptShape now warns when isFreeStanding is false but no
             morphological head is recorded""" .
 
-<https://vocab.foxximediums.com/activity> a owl:Ontology ;
+<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/activity> a owl:Ontology ;
     dcterms:title "Foxxi Behavioral Vocabulary for Consumption and Extraction" ;
     dcterms:creator <https://id.foxximediums.com/markj/profile#me> ;
     dcterms:issued "2026-04-29"^^xsd:date ;
@@ -916,9 +916,9 @@ fxsh:PrerequisiteAcyclicShape a sh:NodeShape ;
     sh:targetClass fxk:Concept ;
     sh:sparql [
         sh:message "fxk:prerequisiteOf must be acyclic — a Concept cannot be a prerequisite of itself, directly or transitively." ;
-        sh:prefixes <https://vocab.foxximediums.com/shapes> ;
+        sh:prefixes <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/shapes> ;
         sh:select """
-            PREFIX fxk: <https://vocab.foxximediums.com/knowledge#>
+            PREFIX fxk: <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/knowledge#>
             SELECT $this
             WHERE {
                 $this fxk:prerequisiteOf+ $this .

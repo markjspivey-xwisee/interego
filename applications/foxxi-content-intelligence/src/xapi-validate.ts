@@ -21,8 +21,14 @@
  */
 
 // ── Primitive validators ─────────────────────────────────────────────
+// The enumerated vocabulary + UUID/version patterns are SINGLE-SOURCED from the
+// composed xAPI ontology model (src/spec/xapi.model.ts) — so what the LRS enforces
+// on write is exactly what the dereferenceable /ns/xapi ontology declares. Values are
+// byte-identical to the long-proven constants (ADL 1442/1442); this only relocates
+// their definition to the ontology.
+import { XAPI_INTERACTION_TYPES, XAPI_PATTERNS } from './spec/xapi.model.js';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = new RegExp(XAPI_PATTERNS.uuid, 'i');
 
 /** Absolute IRI: has a scheme, no whitespace, scheme-specific part present. */
 const IRI_RE = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s]+$/;
@@ -54,12 +60,9 @@ const WEEK_DURATION_RE = /^P\d+(?:\.\d+)?W$/;
 const LANG_TAG_RE = /^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$/;
 
 /** Statement `version` property — a 1.0.x or 2.0.x semantic version. */
-const VERSION_RE = /^(1\.0(\.\d+)?|2\.0(\.\d+)?)$/;
+const VERSION_RE = new RegExp(XAPI_PATTERNS.version);
 
-const INTERACTION_TYPES = new Set([
-  'true-false', 'choice', 'fill-in', 'long-fill-in', 'matching',
-  'performance', 'sequencing', 'likert', 'numeric', 'other',
-]);
+const INTERACTION_TYPES = new Set<string>(XAPI_INTERACTION_TYPES);
 
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);

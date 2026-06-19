@@ -5,8 +5,8 @@
 @prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
 @prefix dcterms: <http://purl.org/dc/terms/> .
 
-@prefix rcd:  <https://vocab.foxximediums.com/rcd#> .
-@prefix fxk:  <https://vocab.foxximediums.com/knowledge#> .
+@prefix rcd:  <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/rcd#> .
+@prefix fxk:  <https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/knowledge#> .
 
 #################################################################
 #  IEEE 1484.20.2 RCD (Reusable Competency Data) mapping —      #
@@ -18,7 +18,7 @@
 #  L1/L2/L3 protocol namespaces (cg:/cgh:/pgsl:/ie:/align:).   #
 #################################################################
 
-<https://vocab.foxximediums.com/rcd> a owl:Ontology ;
+<https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/legacy/rcd> a owl:Ontology ;
     dcterms:title "Foxxi RDCEO mapping (IEEE 1484.20.2)" ;
     dcterms:issued "2026-05-17"^^xsd:date ;
     owl:versionInfo "0.1.0" .

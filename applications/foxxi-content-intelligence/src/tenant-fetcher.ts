@@ -184,8 +184,8 @@ function extractDistributionTarget(descTurtle: string): string | null {
  */
 function extractBundleJson(trig: string): unknown {
   // Match `<…#bundleJson> "<base64>"^^<xsd:base64Binary>` by LOCAL NAME —
-  // the predicate's namespace migrated (vocab.foxximediums.com/scorm# →
-  // the foxxi vocab IRI), so match `#bundleJson` regardless of namespace,
+  // the predicate's namespace migrated (an old non-dereferenceable placeholder host →
+  // the bridge-served foxxi vocab IRI), so match `#bundleJson` regardless of namespace,
   // the same migration-tolerance findEntry() uses for conformsTo.
   const m = trig.match(/<[^>]*#bundleJson>\s+"([A-Za-z0-9+/=\s]+)"/);
   if (!m) {

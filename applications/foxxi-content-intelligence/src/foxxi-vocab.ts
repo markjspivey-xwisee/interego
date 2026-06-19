@@ -8,8 +8,8 @@
  * assuming.
  *
  * One base — `<bridge>/ns/foxxi#` — replaces the two earlier, never-
- * published placeholder namespaces (`…/interego/ns/foxxi#` and
- * `vocab.foxximediums.com/{activity,scorm,wallet}#`). It sits on the
+ * published placeholder namespaces (`…/interego/ns/foxxi#` and the now-RETIRED,
+ * non-dereferenceable `vocab.foxximediums.com/*`, fully removed from the repo). It sits on the
  * bridge's own host: vertical-scoped, outside the protocol IRI space
  * (where `cg:` etc. live), and — because the bridge serves it — actually
  * dereferenceable.
@@ -19,6 +19,12 @@
 
 /** The one Foxxi namespace base. Every foxxi term is `${FOXXI_NS}<name>`. */
 export const FOXXI_NS = 'https://interego-foxxi-bridge.livelysky-8b81abb0.eastus.azurecontainerapps.io/ns/foxxi#';
+/** The standards spec ontologies this vertical composes (dereferenceable at /ns/<module>).
+ *  The foxxi vocabulary rdfs:seeAlso's them so the vertical declares the standards it
+ *  emerges from — the emitted xAPI statements, SCORM manifests, and cmi5 sessions are
+ *  instances of these composed ontologies. */
+export const COMPOSED_SPEC_ONTOLOGIES = ['xapi', 'scorm-cam', 'scorm-sn', 'scorm-rte', 'cmi5']
+  .map(m => FOXXI_NS.replace('foxxi#', m));
 /** The vocabulary document IRI (strip the `#` — what a foxxi hash-IRI dereferences to). */
 export const FOXXI_VOCAB_DOC = FOXXI_NS.replace(/#$/, '');
 
@@ -172,9 +178,11 @@ export function renderVocabJsonLd(): Record<string, unknown> {
       isDefinedBy: FOXXI_VOCAB_DOC,
       _links: { self: { href: `${FOXXI_VOCAB_DOC}/term/${t.name}` } },
     })),
+    'rdfs:seeAlso': COMPOSED_SPEC_ONTOLOGIES.map(o => ({ '@id': o })),
     _links: {
       self: { href: FOXXI_VOCAB_DOC },
       xapiProfile: { href: FOXXI_VOCAB_DOC.replace('/ns/foxxi', '/xapi/profile') },
+      composesSpecOntologies: COMPOSED_SPEC_ONTOLOGIES.map(o => ({ href: o })),
     },
   };
 }
@@ -186,7 +194,9 @@ export function renderVocabTurtle(): string {
 
 <${FOXXI_VOCAB_DOC}> a foxxi:Vocabulary ;
     rdfs:label "Foxxi Content Intelligence — vocabulary" ;
-    rdfs:comment "Consolidated dereferenceable vocabulary for the Foxxi vertical." .
+    rdfs:comment "Consolidated dereferenceable vocabulary for the Foxxi vertical. Composes the standards spec ontologies it emerges from (see rdfs:seeAlso)." ;
+${COMPOSED_SPEC_ONTOLOGIES.map(o => `    rdfs:seeAlso <${o}> ;`).join('\n')}
+    rdfs:isDefinedBy <${FOXXI_VOCAB_DOC}> .
 `;
   const body = FOXXI_TERMS.map(t =>
     `foxxi:${t.name} a foxxi:${t.kind} ;

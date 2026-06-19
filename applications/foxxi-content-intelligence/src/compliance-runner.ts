@@ -23,6 +23,7 @@ import {
   buildCmi5Statement, evaluateMoveOn, buildPassedSessionTrace,
   type Cmi5Session, type Cmi5Actor,
 } from './cmi5.js';
+import { validateXapiStatement, validateInstance } from './spec/index.js';
 
 export interface ComplianceCheck { name: string; ok: boolean; spec: string; detail?: string; }
 export interface ComplianceReport {
@@ -166,7 +167,19 @@ export async function runXapiConformance(opts: XapiOpts): Promise<ComplianceRepo
     add('PUT state with correct If-Match → 204', r4.status === 204, '§6.3.3', `HTTP ${r4.status}`);
   } catch (e) { add('State resource', false, '§6.3', (e as Error).message); }
 
-  return tally('xapi-2.0', 'xAPI 2.0 LRS Conformance', 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017 — live interactive battery across §3/§4/§6/§7 + the §4 validator on every statement. The complete official ADL lrs-conformance-test-suite (LRS-2.0) passes 1442/1442 against this LRS (attested, re-runnable).', B, ranAt, checks);
+  // ── Ontology-grounded conformance: validate against the dereferenceable /ns/xapi
+  //    SHACL shapes (the composed xAPI ontology). The LRS's own §4 validator already
+  //    single-sources its vocab/patterns from this ontology; here we exercise the
+  //    shapes directly and cite their IRIs, so conformance is linked-data, not just code.
+  try {
+    const stmt = { id: '12345678-1234-1234-1234-1234567890ab', actor: { objectType: 'Agent', mbox: 'mailto:a@example.org' }, verb: { id: 'http://adlnet.gov/expapi/verbs/completed', display: { en: 'completed' } }, object: { id: 'http://example.org/a', objectType: 'Activity', definition: { interactionType: 'choice' } }, result: { success: true, score: { scaled: 0.9 } }, timestamp: '2026-01-01T00:00:00Z', version: '2.0.0' };
+    const v = validateXapiStatement(stmt);
+    add('a valid statement conforms to the composed xAPI ontology shapes', v.conforms, 'SHACL', `cites ${v.shapesIri}`);
+    const bad = validateXapiStatement({ ...stmt, verb: {}, result: { score: { scaled: 5 } } });
+    add('the ontology rejects a malformed statement, citing dereferenceable shape IRIs', !bad.conforms && bad.results.length > 0 && bad.results.every(r => r.sourceShape.includes('/ns/xapi/shapes#')), 'SHACL', `${bad.results.length} cited violations`);
+  } catch (e) { add('xAPI ontology (SHACL) validation', false, 'SHACL', (e as Error).message); }
+
+  return tally('xapi-2.0', 'xAPI 2.0 LRS Conformance', 'IEEE 9274.1.1 (xAPI 2.0) + xAPI Profile Spec 2017 — live battery across §3/§4/§6/§7 + the §4 validator (whose vocab/patterns are single-sourced from the dereferenceable /ns/xapi ontology) on every statement, plus direct SHACL validation against the composed /ns/xapi shapes. The complete official ADL lrs-conformance-test-suite (LRS-2.0) passes 1442/1442 (attested, re-runnable).', B, ranAt, checks);
 }
 
 // ── SCORM 2004 Sequencing & Navigation conformance ────────────────────────────
@@ -264,7 +277,17 @@ export function runScormConformance(ranAt: string): ComplianceReport {
   } catch (e) {
     add('SCORM SN engine executed', false, '§SN', (e as Error).message);
   }
-  return tally('scorm-2004-sn', 'SCORM 2004 Sequencing & Navigation (S&N book only)', 'ADL SCORM 2004 4th Ed — Sequencing & Navigation (IMS Simple Sequencing) + activity-tree/manifest parse (CAM). The RTE book (API_1484_11 / CMI data model) runs browser-side in the SCORM player, not in this battery; cmi5 + the desktop ADL SCORM test suite are out of scope here', 'in-process scorm-sequencing engine', ranAt, checks);
+  // ── Ontology-grounded CAM conformance: validate manifest resources against the
+  //    dereferenceable /ns/scorm-cam SHACL shapes, citing their IRIs.
+  try {
+    const goodRes = { '@type': 'Resource', identifier: 'RES-A1', type: 'webcontent', scormType: 'sco', href: 'a1.html' };
+    const v = validateInstance('scorm-cam', goodRes);
+    add('a SCORM resource conforms to the composed scorm-cam ontology shapes', !!v && v.conforms, 'ADL CAM / SHACL', v ? `cites ${v.shapesIri}` : 'no validator');
+    const badRes = { '@type': 'Resource', scormType: 'bogus' }; // missing identifier+type; scormType not in {sco,asset}
+    const vb = validateInstance('scorm-cam', badRes);
+    add('the scorm-cam ontology rejects a malformed resource, citing shape IRIs', !!vb && !vb.conforms && vb.results.every(r => r.sourceShape.includes('/ns/scorm-cam/shapes#')), 'SHACL', vb ? `${vb.results.length} cited violations` : 'no validator');
+  } catch (e) { add('scorm-cam ontology (SHACL) validation', false, 'SHACL', (e as Error).message); }
+  return tally('scorm-2004-sn', 'SCORM 2004 Sequencing & Navigation (S&N book only)', 'ADL SCORM 2004 3rd Ed — Sequencing & Navigation (IMS Simple Sequencing) + activity-tree/manifest parse (CAM) validated against the dereferenceable /ns/scorm-sn + /ns/scorm-cam SHACL shapes. The RTE book (API_1484_11 / CMI data model) runs browser-side in the SCORM player; cmi5 + the desktop ADL SCORM test suite are out of scope here.', 'in-process scorm-sequencing engine', ranAt, checks);
 }
 
 // ── cmi5 / IEEE 9274.2.1 conformance ──────────────────────────────────────────
