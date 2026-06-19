@@ -328,6 +328,8 @@ import {
 } from '../src/context-chat.js';
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
+import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd, ontologyIri as specOntologyIri } from '../src/spec-ontology.js';
+import { SPEC_MODELS, validateInstance, composeAllSpecOntologies } from '../src/spec/index.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
 import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
@@ -2443,6 +2445,45 @@ const app = createVerticalBridge({
       };
       a.get(`${path}/term/:a/:b`, (req, res) => sendSemTerm(`${req.params.a}/${req.params.b}`, res));
       a.get(`${path}/term/:a`, (req, res) => sendSemTerm(req.params.a, res));
+    }
+
+    // ── Standards spec ontologies (xAPI 2.0, SCORM CAM/SN/RTE, cmi5) ──
+    // EMERGENT, not hosted files: each is a single-source model composed into the
+    // PGSL lattice (composeAllSpecOntologies, below) — the OWL / SHACL / JSON-LD
+    // served here are PROJECTIONS of that composed holon. The LRS/LMS validate
+    // instances against these shapes (POST /ns/<module>/validate); every result
+    // cites a sh:NodeShape IRI here. Content-negotiated; CORS-open; HATEOAS.
+    for (const [moduleName, model] of Object.entries(SPEC_MODELS)) {
+      a.get(`/ns/${moduleName}`, (req, res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        const acc = req.headers.accept ?? '';
+        if (acc.includes('text/turtle') || acc.includes('application/x-turtle')) res.type('text/turtle').send(renderSpecOwl(model));
+        else if (acc.includes('text/html')) res.type('text/html').send(renderSpecHtml(model));
+        else res.type('application/ld+json').send(JSON.stringify(renderSpecJsonLd(model), null, 2));
+      });
+      a.get(`/ns/${moduleName}/shapes`, (req, res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.type('text/turtle').send(renderSpecShacl(model));
+      });
+      a.post(`/ns/${moduleName}/validate`, (req, res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
+        const instance = (body.instance && typeof body.instance === 'object') ? body.instance as Record<string, unknown> : body;
+        const r = validateInstance(moduleName, instance);
+        if (!r) { res.status(404).json({ ok: false, error: `no validator for ${moduleName}` }); return; }
+        res.json({ ok: true, module: moduleName, ontology: specOntologyIri(model), conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
+      });
+      a.get(`/ns/${moduleName}/term/:name`, (req, res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.type('application/ld+json').send(JSON.stringify(renderSpecTermJsonLd(model, req.params.name), null, 2));
+      });
+    }
+    // Emerge the spec ontologies into the shared lattice (best-effort; serving above
+    // works regardless — the projection is render(model), identical to the holon's).
+    if (tenantPodUrl) {
+      void composeAllSpecOntologies({ podUrl: tenantPodUrl, agentDid: tenantProfileDid })
+        .then(c => console.log(`[foxxi-bridge][spec-ontology] composed ${c.filter(x => x.holonUri).length}/${c.length} spec ontologies into the lattice`))
+        .catch(e => console.warn('[foxxi-bridge][spec-ontology] compose skipped:', (e as Error).message));
     }
 
     // LRS-admin dashboard endpoints — gated by admin or learning-engineer
