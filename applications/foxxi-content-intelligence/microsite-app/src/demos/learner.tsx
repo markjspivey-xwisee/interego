@@ -213,7 +213,7 @@ export const learnerSteps: DemoStep[] = [
       <>
         Imagine you're applying at PartnerCo. They want proof of your <em>handicap proficiency</em> —
         nothing else. Not your score, not your alignment to <em>pace of play</em>, not the credential ID,
-        not other competencies you hold. You derive a zero-knowledge BBS+ proof revealing only the
+        not other competencies you hold. You derive a BBS+ selective-disclosure proof revealing only the
         three claims you choose. The verifier learns those three claims + nothing else — the hidden
         claims stay <em>cryptographically hidden</em>, not just visually masked.
       </>

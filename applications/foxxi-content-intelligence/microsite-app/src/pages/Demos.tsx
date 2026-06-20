@@ -854,7 +854,7 @@ export function Demos({ onHome, onEmergent }: { onHome: () => void; onEmergent: 
           <b>actually closed the gap</b>, and, when it missed, what the cause turned out to be. A cell
           stays <b>Hypothetical</b> until it has the samples to Assert a rate, and the evidence{' '}
           <b>federates</b>: one organization's hard-won lesson calibrates the next, with only
-          aggregate cells above a k-anonymity threshold crossing the boundary. Run section 1 and every
+          aggregate cells above a minimum-aggregate (k-sample) suppression threshold crossing the boundary. Run section 1 and every
           plan now carries this track record.</>}
         doc={{ label: 'PERFORMANCE-ARCHITECTURE.md', href: `${REPO}/PERFORMANCE-ARCHITECTURE.md` }}
         cli="tools/performance-calibration-example.mjs">

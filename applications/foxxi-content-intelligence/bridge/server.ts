@@ -318,6 +318,8 @@ import { attachContentDeliveryRoutes } from '../src/content-delivery.js';
 // emergent, learnable standards-extension capability the agp layer affords by
 // composing Foxxi's own standards. + the shared in-flow performance-support primitive.
 import { proposeStandardsExtension, EXTEND_STANDARDS_GUIDANCE, type ExtensionKind as AgpExtensionKind } from '../../agentic-performance-practice/src/standards-extension.js';
+import { diagnose as diagnoseSituation, recommendInterventions } from '../src/performance-architecture.js';
+import { expandOutcomeCorpus, buildCalibrationProfile, composeCalibrationProfiles, federationView, calibrationReadout, type OutcomeSpec } from '../src/performance-calibration.js';
 import { attachGuidanceServing, type GuidedAffordanceEntry as FoxxiGuidedEntry } from '../../_shared/guided-affordance/index.js';
 import { SAMPLE_COURSE, SAMPLE_JOB_AID } from '../src/sample-content.js';
 import type { DeliveryChannel } from '../src/content-channels.js';
@@ -329,7 +331,9 @@ import {
 import { attachOpenApiRoutes } from '../src/openapi-spec.js';
 import { renderVocabJsonLd, renderVocabTurtle, renderTermJsonLd } from '../src/foxxi-vocab.js';
 import { renderOwl as renderSpecOwl, renderShacl as renderSpecShacl, renderJsonLd as renderSpecJsonLd, renderHtml as renderSpecHtml, renderTermJsonLd as renderSpecTermJsonLd, ontologyIri as specOntologyIri, modelFromHolon as specModelFromHolon, type OntologyModel as SpecOntologyModel } from '../src/spec-ontology.js';
-import { SPEC_MODELS, validateInstance, composeAllSpecOntologies } from '../src/spec/index.js';
+import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
+import { COMPLIANCE_MODELS } from '../src/spec/compliance.model.js';
+import { composeSpecOntology as composeComplianceOntology } from '../src/spec-ontology.js';
 import { renderSemOntologyJsonLd, renderSemOntologyTurtle, renderSemTermJsonLd } from '../src/ler-tla-vocab.js';
 import { emitAffordanceStatement } from '../src/xapi-instrumentation.js';
 import { attachXapiAdminRoutes } from '../src/xapi-admin.js';
@@ -2463,7 +2467,16 @@ const app = createVerticalBridge({
       const h = specHolons.get(moduleName);
       return (h && specModelFromHolon(h.label, h.holonUri)) || fallback;
     };
-    for (const [moduleName, model] of Object.entries(SPEC_MODELS)) {
+    // Standards spec ontologies (xAPI/SCORM/cmi5) AND the compliance framework
+    // ontologies (soc2 / eu-ai-act / nist-rmf) are projected the SAME way — each is
+    // a single-source model composed into PGSL, served as OWL/SHACL/JSON-LD with
+    // conneg + HATEOAS. Compliance models are kept OUT of SPEC_MODELS (so the
+    // LMS/LRS conformance path never treats a regulation as a learning standard);
+    // they validate via validateInstanceWith(model, …) instead of validateInstance.
+    const NS_MODELS: Record<string, { model: SpecOntologyModel; compliance: boolean }> = {};
+    for (const [k, v] of Object.entries(SPEC_MODELS)) NS_MODELS[k] = { model: v as SpecOntologyModel, compliance: false };
+    for (const [k, v] of Object.entries(COMPLIANCE_MODELS)) NS_MODELS[k] = { model: v as SpecOntologyModel, compliance: true };
+    for (const [moduleName, { model, compliance }] of Object.entries(NS_MODELS)) {
       a.get(`/ns/${moduleName}`, (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         const m = liveModel(moduleName, model);
@@ -2480,7 +2493,7 @@ const app = createVerticalBridge({
         res.setHeader('Access-Control-Allow-Origin', '*');
         const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
         const instance = (body.instance && typeof body.instance === 'object') ? body.instance as Record<string, unknown> : body;
-        const r = validateInstance(moduleName, instance);
+        const r = compliance ? validateInstanceWith(liveModel(moduleName, model), instance) : validateInstance(moduleName, instance);
         if (!r) { res.status(404).json({ ok: false, error: `no validator for ${moduleName}` }); return; }
         res.json({ ok: true, module: moduleName, ontology: specOntologyIri(model), conforms: r.conforms, results: r.results, shapesIri: r.shapesIri });
       });
@@ -2496,6 +2509,12 @@ const app = createVerticalBridge({
       void composeAllSpecOntologies({ podUrl: tenantPodUrl, agentDid: tenantProfileDid })
         .then(c => { for (const x of c) if (x.holonUri) specHolons.set(x.module, { label: x.label, holonUri: x.holonUri }); console.log(`[foxxi-bridge][spec-ontology] composed ${specHolons.size}/${c.length} spec ontologies into the lattice (now served as holon projections)`); })
         .catch(e => console.warn('[foxxi-bridge][spec-ontology] compose skipped:', (e as Error).message));
+      // Compose the compliance framework ontologies the same way (best-effort) so a
+      // cited control IRI (soc2:CC6.1, eu-ai-act:Article12, nist-rmf:MEASURE) is a
+      // genuine projection of a PGSL holon, not just a rendered file.
+      void Promise.allSettled(Object.values(COMPLIANCE_MODELS).map(m => composeComplianceOntology(m, { podUrl: tenantPodUrl, agentDid: tenantProfileDid })))
+        .then(rs => { let n = 0; for (const r of rs) if (r.status === 'fulfilled' && r.value?.holonUri) { specHolons.set(r.value.module, { label: r.value.label, holonUri: r.value.holonUri }); n++; } console.log(`[foxxi-bridge][compliance-ontology] composed ${n}/${rs.length} compliance ontologies into the lattice`); })
+        .catch(e => console.warn('[foxxi-bridge][compliance-ontology] compose skipped:', (e as Error).message));
     }
 
     // LRS-admin dashboard endpoints — gated by admin or learning-engineer
@@ -3662,6 +3681,210 @@ app.post('/agent/course/analyze-skill', async (req, res) => {
       if (sl) courseKg = { label: realLabel, holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl, agentDid: tenantProfileDid, reusedNodes: sl.reusedNodes, newNodes: sl.newNodes, stats: sl.stats };
     }
     res.json({ ok: true, fingerprint, structure: built.structure, course: built.course, courseKg, fromSkill: true });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+});
+
+// ── The Living Curriculum: a course proposes its own successor ─────────────────
+// Polygranular recursion + dogfooding: a course that was composed into the PGSL
+// lattice (via /agent/course/analyze*) now reasons about ITSELF concept by
+// concept. For each concept it routes a performance signal through the REGIME
+// engine (performance-architecture.diagnose) — which REFUSES the universal gap
+// frame: only the Knowable regime runs a content-gap analysis, and even then, if
+// the performer could perform under ideal conditions it names an environment /
+// incentive cause and flags that instruction is the wrong fix. It then composes a
+// real cg:supersedes SUCCESSOR holon into the lattice (sharing the original
+// holon's term, carrying a supersedes pointer) — a first-class, dereferenceable,
+// versioned revision, not a BI chart. Read-only-ish: the only write is the
+// successor holon to the tenant pod.
+interface ConceptSignal { id?: string; label?: string; completion?: number; fieldSuccess?: number; frequency?: string; criticality?: string }
+app.post('/agent/course/propose-successor', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const xff = req.headers['x-forwarded-for'];
+    const ip = typeof xff === 'string' ? xff.split(',').at(-1)!.trim() : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rl = checkAgenticRateLimit(ip);
+    if (!rl.ok) { res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
+
+    const course = req.body?.course as { courseId?: string; title?: string; concepts?: Array<{ id: string; label: string }> } | undefined;
+    if (!course || !Array.isArray(course.concepts) || course.concepts.length === 0) { res.status(400).json({ ok: false, error: 'course { courseId, title, concepts:[{id,label}] } (from /agent/course/analyze*) required' }); return; }
+    const signals = (Array.isArray(req.body?.concept_signals) ? req.body.concept_signals : []) as ConceptSignal[];
+    const sigFor = (id: string, label: string): ConceptSignal | undefined => signals.find(s => s.id === id || (s.label && s.label.toLowerCase() === label.toLowerCase()));
+
+    const VERB = { keep: 'keep', revise: 'revise-instruction', jobaid: 'demote-add-job-aid', instrument: 'instrument-first' } as const;
+    const perConcept = course.concepts.slice(0, 40).map(c => {
+      const sig = sigFor(c.id, c.label);
+      const completion = typeof sig?.completion === 'number' ? sig.completion : undefined;
+      const fieldSuccess = typeof sig?.fieldSuccess === 'number' ? sig.fieldSuccess : undefined;
+      const freq = (['continuous', 'frequent', 'occasional', 'rare'].includes(String(sig?.frequency)) ? sig!.frequency : 'occasional') as 'continuous' | 'frequent' | 'occasional' | 'rare';
+      const crit = (['low', 'moderate', 'high', 'safety-critical'].includes(String(sig?.criticality)) ? sig!.criticality : 'moderate') as 'low' | 'moderate' | 'high' | 'safety-critical';
+
+      // No outcome signal at all → the engine REFUSES to claim a regime: instrument first.
+      if (completion === undefined && fieldSuccess === undefined) {
+        const dx = diagnoseSituation({ situation: { id: `concept:${c.id}`, performer: { id: 'urn:foxxi:cohort', kind: 'agent' as const }, workContext: course.title ?? 'course', competency: c.label, observed: 'no outcome evidence captured yet', frequency: freq, criticality: crit, modalStatus: 'Hypothetical', provenance: 'no LRS signal' } });
+        return { concept: c, regime: dx.domain ?? null, method: dx.method, cause: null as string | null, skillDeficiency: dx.skillDeficiency, caveat: dx.caveat, recommendation: VERB.instrument, rationale: 'No completion / field-outcome evidence for this concept yet — the regime engine refuses to claim a regime (classify-first). Instrument the concept before revising it.', citations: [] as string[] };
+      }
+
+      const comp = completion ?? 0.85;
+      const field = fieldSuccess ?? comp;
+      const divergence = comp - field; // high completion, low field success ⇒ NOT a content gap
+      // Build the factor evidence + discriminating answer the regime engine routes on.
+      const couldUnderIdeal = divergence >= 0.2;       // they CAN do it under ideal conditions ⇒ not skill
+      const factorEvidence = divergence >= 0.2
+        ? { incentives: { adequate: false, evidence: `completion ${comp.toFixed(2)} but field success ${field.toFixed(2)} — the gap appears at the point of performance, not in learning` }, instrumentation: { adequate: false, evidence: 'no job aid at the moment of work' } }
+        : (field < 0.6 ? { knowledgeSkill: { adequate: false, evidence: `field success ${field.toFixed(2)} with completion ${comp.toFixed(2)} — genuine knowledge/skill deficiency` } } : undefined);
+      const situation = { id: `concept:${c.id}`, performer: { id: 'urn:foxxi:cohort', kind: 'agent' as const }, workContext: course.title ?? 'course', competency: c.label, observed: `completion ${comp.toFixed(2)}, field success ${field.toFixed(2)}`, frequency: freq, criticality: crit, modalStatus: 'Asserted' as const, provenance: 'LRS outcome signal' };
+      const dx = diagnoseSituation({ situation, exemplary: 'consistent successful execution in the field', factorEvidence, couldPerformUnderIdealConditions: couldUnderIdeal });
+      // The LOAD-BEARING verb comes from the ENGINE's intervention paradigm
+      // (recommendInterventions), not a bespoke threshold — so "routed through the
+      // regime engine" is literally true and instruction is only the answer when the
+      // engine warrants content.
+      const plan = recommendInterventions({ diagnosis: dx, situation });
+      const selected = plan.selected.map(o => o.type);
+      let recommendation: string = VERB.keep, rationale = '';
+      if (comp >= 0.75 && field >= 0.75) { recommendation = VERB.keep; rationale = `Concept performs in the field (${field.toFixed(2)}). The engine warrants no new intervention — keep the lesson.`; }
+      else if (plan.contentWarranted && selected.includes('instruction')) { recommendation = VERB.revise; rationale = `The regime engine warrants content here (selected: ${selected.join(', ')}) — a genuine knowledge/skill deficiency. Revise the instruction for this concept.`; }
+      else { recommendation = VERB.jobaid; rationale = `${dx.caveat || 'The performer can perform under ideal conditions.'} The engine did NOT warrant content (selected: ${selected.join(', ') || 'none'}) — completion ${comp.toFixed(2)} vs field ${field.toFixed(2)} points to an environment / incentive cause, not a content gap. Demote the lesson and add a job aid at the point of work; re-probe.`; }
+      return { concept: c, regime: dx.domain ?? null, method: dx.method, cause: dx.rootCauses?.[0] ?? null, skillDeficiency: dx.skillDeficiency, caveat: dx.caveat, contentWarranted: plan.contentWarranted, selected, recommendation, rationale, signal: { completion: comp, fieldSuccess: field }, citations: [] as string[] };
+    });
+
+    const summary = {
+      keep: perConcept.filter(p => p.recommendation === VERB.keep).length,
+      revise: perConcept.filter(p => p.recommendation === VERB.revise).length,
+      jobaid: perConcept.filter(p => p.recommendation === VERB.jobaid).length,
+      instrument: perConcept.filter(p => p.recommendation === VERB.instrument).length,
+    };
+    const supersedesUri = typeof req.body?.holonUri === 'string' ? req.body.holonUri : undefined;
+
+    // Compose the SUCCESSOR as a real cg:supersedes holon in the lattice (best-effort).
+    let successor: { holonUri?: string; descriptorUrl?: string; reusedNodes?: number; newNodes?: number } | null = null;
+    if (tenantPodUrl) {
+      // ALWAYS sanitize caller input through courseLabelFor (lowercases, strips to
+      // [a-z0-9-], caps 48, prefixes course-) — never interpolate caller text into a
+      // storage path or the resident-lattice key (traversal / lattice poisoning).
+      const label = courseLabelFor(typeof req.body?.label === 'string' && req.body.label ? req.body.label : `successor-${course.courseId ?? 'course'}`);
+      const coursePodUrl = `${new URL(tenantPodUrl).origin}/${label}/`;
+      const terms = [
+        `urn:foxxi:course:${course.courseId ?? 'course'}`,
+        ...(supersedesUri ? [supersedesUri] : []),      // share the original holon's term → links them in the lattice
+        ...perConcept.map(p => `urn:foxxi:concept:${p.concept.id}`),
+      ];
+      const sl = await composeIntoSharedLattice({
+        podUrl: coursePodUrl, agentDid: tenantProfileDid, label, terms,
+        content: { kind: 'foxxi:CourseSuccessor', supersedes: supersedesUri ?? null, courseId: course.courseId, title: course.title, proposedAt: new Date().toISOString(), summary, concepts: perConcept },
+        contentType: 'foxxi:CourseSuccessor', projections: ['rdf'],
+      });
+      if (sl) successor = { holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl, reusedNodes: sl.reusedNodes, newNodes: sl.newNodes };
+    }
+
+    res.json({ ok: true, courseId: course.courseId, supersedes: supersedesUri ?? null, summary, concepts: perConcept, successor,
+      note: 'Each concept was routed through the work-regime engine, which refuses the universal content-gap frame: only the Knowable regime runs a gap analysis, and even then a performer who could perform under ideal conditions yields an environment/incentive cause, not a content gap. The successor is a real cg:supersedes holon composed into the PGSL lattice — dereference it alongside the original.' });
+  } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
+});
+
+// ── Federated calibration: a shared memory two rivals both trust ──────────────
+// Two (or more) organizations build ONE calibration memory of what actually
+// closes performance gaps WITHOUT sharing a single raw record. Each contributes
+// a SIGNED set of aggregate (regime × cause × intervention → verdict) tallies;
+// the bridge recovers each contributor from its signature (authenticated, not
+// asserted), applies the k-anonymity floor (federationView — a cell crosses the
+// org boundary only as an aggregate above k samples, never narrowing to a
+// learner), then pools them (composeCalibrationProfiles): a cell that was
+// Hypothetical for each org alone becomes Asserted once the evidence is pooled —
+// trust the math, not the aggregator. The merged truth is composed into the PGSL
+// lattice as a dereferenceable, interrogable holon neither org could forge alone.
+// Compose-don't-reinvent: this is the existing calibration algebra over signed
+// contributions; no raw record, and no over-claimed anonymity (contributions are
+// authenticated; what is protected is the raw evidence, via aggregation + k-anon).
+const REGIME_METHOD: Record<string, 'apply-practice' | 'gap-analysis' | 'dispositional-read' | 'stabilise-first'> = { Evident: 'apply-practice', Knowable: 'gap-analysis', Emergent: 'dispositional-read', Turbulent: 'stabilise-first' };
+// Server-side canonical vocabularies — contributed specs are validated against
+// these (never String()-coerced into the lattice). Bounds prevent a single
+// signed request from materializing unbounded records (expandOutcomeCorpus is
+// O(total outcomes)).
+const CAL_REGIMES = new Set(['Evident', 'Knowable', 'Emergent', 'Turbulent']);
+const CAL_CAUSES = new Set(['information', 'instrumentation', 'incentives', 'knowledgeSkill', 'capacity', 'motives', 'not-applicable']);
+const CAL_INTERVENTIONS = new Set(['instruction', 'performance-support', 'reference', 'practice', 'assessment', 'coaching', 'probe', 'environmental-fix', 'no-intervention']);
+const CAL_MAX_CONTRIBUTIONS = 64, CAL_MAX_SPECS = 256, CAL_MAX_COUNT = 100_000, CAL_K_MIN = 8, CAL_ASSERT_MIN = 12;
+app.post('/agent/calibration/merge', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const xff = req.headers['x-forwarded-for'];
+    const ip = typeof xff === 'string' ? xff.split(',').at(-1)!.trim() : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
+    const rl = checkAgenticRateLimit(ip);
+    if (!rl.ok) { res.status(429).json({ ok: false, error: `rate limit — retry in ${rl.retryAfterSeconds}s` }); return; }
+
+    const contributions = Array.isArray(req.body?.contributions) ? req.body.contributions : [];
+    if (contributions.length < 1) { res.status(400).json({ ok: false, error: 'contributions: [{ _signature, _signed_payload: JSON.stringify({ agent_id, timestamp, specs:[…] }) }] required' }); return; }
+    if (contributions.length > CAL_MAX_CONTRIBUTIONS) { res.status(400).json({ ok: false, error: `too many contributions (max ${CAL_MAX_CONTRIBUTIONS})` }); return; }
+    // The thresholds are floors the SERVER enforces — a caller may raise them but
+    // never lower them (else k=1/assert=1 would self-promote everything).
+    const federationKThreshold = Math.min(10_000, Math.max(CAL_K_MIN, typeof req.body?.k === 'number' ? Math.floor(req.body.k) : CAL_K_MIN));
+    const assertThreshold = Math.min(100_000, Math.max(CAL_ASSERT_MIN, typeof req.body?.assertThreshold === 'number' ? Math.floor(req.body.assertThreshold) : CAL_ASSERT_MIN));
+
+    // Each contribution is independently SIGNED — recover the contributor. COLLAPSE
+    // by recovered signer so one key is one source no matter how many envelopes it
+    // submits (replay/double-count defense); count DISTINCT signers.
+    const bySigner = new Map<string, OutcomeSpec[]>();
+    for (const c of contributions) {
+      const rec = recoverSignedRequest(c);
+      if (!rec.ok) { res.status(401).json({ ok: false, error: `a contribution signature did not verify: ${rec.reason}` }); return; }
+      const source = `did:ethr:${rec.signer}`;
+      const rawSpecs = Array.isArray(rec.payload.specs) ? rec.payload.specs as Array<Record<string, unknown>> : [];
+      if (rawSpecs.length > CAL_MAX_SPECS) { res.status(400).json({ ok: false, error: `a contribution has too many specs (max ${CAL_MAX_SPECS})` }); return; }
+      const specs: OutcomeSpec[] = [];
+      for (const s of rawSpecs) {
+        const regime = String(s.regime), cause = String(s.causeFactor), intervention = String(s.intervention);
+        // Validate against the canonical vocabularies — never coerce garbage into the lattice.
+        if (!CAL_REGIMES.has(regime) || !CAL_CAUSES.has(cause) || !CAL_INTERVENTIONS.has(intervention)) continue;
+        const closed = Math.max(0, Math.min(CAL_MAX_COUNT, Number(s.closed) || 0));
+        const improved = Math.max(0, Math.min(CAL_MAX_COUNT, Number(s.improved) || 0));
+        const noChange = Math.max(0, Math.min(CAL_MAX_COUNT, Number(s.noChange) || 0));
+        const worsened = Math.max(0, Math.min(CAL_MAX_COUNT, Number(s.worsened) || 0));
+        if (closed + improved + noChange + worsened === 0) continue;
+        specs.push({ regime: regime as OutcomeSpec['regime'], method: REGIME_METHOD[regime] ?? 'gap-analysis', causeFactor: cause as OutcomeSpec['causeFactor'], intervention: intervention as OutcomeSpec['intervention'], closed, improved, noChange, worsened, source });
+      }
+      // Same signer re-submitting → keep ONE (the latest) set, not additive (no double-count).
+      bySigner.set(source, specs);
+    }
+
+    const orgProfiles = [];
+    const contributors: Array<{ source: string; cells: number; samples: number }> = [];
+    for (const [source, specs] of bySigner) {
+      const profile = buildCalibrationProfile(expandOutcomeCorpus(specs), { assertThreshold, federationKThreshold });
+      const shareable = federationView(profile);   // small-cell suppression: only cells >= k samples cross
+      orgProfiles.push(shareable);
+      contributors.push({ source, cells: shareable.cells.length, samples: shareable.totalSamples });
+    }
+    const distinctSigners = bySigner.size;
+    // The "neither alone" / cross-source promotion claim is only honest with >= 2
+    // DISTINCT signing keys. A single-signer merge is a self-only profile.
+    const multiParty = distinctSigners >= 2;
+
+    const merged = composeCalibrationProfiles(orgProfiles);
+    const readout = calibrationReadout(merged);
+    // Cells pooling PROMOTED Hypothetical -> Asserted — only meaningful across >= 2 sources.
+    const promoted = multiParty ? merged.cells.filter(mc => mc.modalStatus === 'Asserted' && orgProfiles.every(p => {
+      const oc = p.cells.find(x => x.regime === mc.regime && x.causeFactor === mc.causeFactor && x.intervention === mc.intervention);
+      return !oc || oc.modalStatus === 'Hypothetical';
+    })).map(c => ({ regime: c.regime, causeFactor: c.causeFactor, intervention: c.intervention, samples: c.samples, closureRate: c.closureRate })) : [];
+
+    // Compose the merged calibration memory as a dereferenceable PGSL holon.
+    let holon: { holonUri?: string; descriptorUrl?: string } | null = null;
+    if (tenantPodUrl) {
+      const label = courseLabelFor(multiParty ? 'calibration-consortium' : 'calibration-self');
+      const podUrl = `${new URL(tenantPodUrl).origin}/${label}/`;
+      const terms = ['urn:foxxi:calibration:consortium', ...contributors.map(c => c.source), ...merged.cells.map(c => `urn:foxxi:cell:${c.regime}:${c.causeFactor}:${c.intervention}`)];
+      const sl = await composeIntoSharedLattice({
+        podUrl, agentDid: tenantProfileDid, label, terms,
+        content: { kind: 'foxxi:CalibrationConsortium', distinctSigners, multiParty, contributors: contributors.map(c => ({ source: c.source, cells: c.cells, samples: c.samples })), federationKThreshold, assertThreshold, profile: merged, readout, promoted },
+        contentType: 'foxxi:CalibrationConsortium', projections: ['rdf'],
+      });
+      if (sl) holon = { holonUri: sl.holonUri, descriptorUrl: sl.descriptorUrl };
+    }
+
+    res.json({ ok: true, contributors, distinctSigners, multiParty, federationKThreshold, assertThreshold, merged, readout, promoted, holon,
+      note: multiParty
+        ? 'Each contribution is signed by a DISTINCT key (recovered, not asserted; same-key resubmissions collapse to one source). No raw record crossed a boundary — only aggregate cells above the minimum-aggregate (k-sample) suppression floor. A cell Hypothetical for each contributor alone is Asserted once pooled across distinct keys. The merged memory is a dereferenceable, interrogable PGSL holon no single key could assert alone. Note: signatures prove the contributing KEY, not that two keys are independent rival organizations.'
+        : 'Single-contributor merge (one distinct signing key) — this is a self-only profile, NOT cross-source consensus. Pooled promotion across sources requires >= 2 distinct keys.' });
   } catch (err) { res.status(500).json({ ok: false, error: (err as Error).message }); }
 });
 

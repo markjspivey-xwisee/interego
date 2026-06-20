@@ -5,7 +5,7 @@
  * affordances. All run state goes to the shared demo-session store (survives
  * navigation; scopes the Reports page to THIS run's agents).
  */
-import { freshAgent, type AgentWallet } from './agent-signing.js';
+import { freshAgent, recoverSigner, curlFor, type AgentWallet } from './agent-signing.js';
 import { dispatchTool, toolList, type DispatchCtx, type ToolName } from './agent-tools.js';
 import { runAgentLoop } from './anthropic-runner.js';
 import { resetDemo, setDemoAgent, addDemoEvent, setDemoStatus, type DemoEvent } from './demo-session.js';
@@ -22,7 +22,13 @@ function makeDispatch(agent: AgentWallet, who: 'A' | 'B', ctx: DispatchCtx) {
   return async (name: string, input: Record<string, unknown>): Promise<{ text: string }> => {
     emit({ agent: who, kind: 'tool-call', title: `affordance · ${name}`, detail: summarizeInput(name, input), data: input });
     const r = await dispatchTool(name, input, agent, ctx);
-    emit({ agent: who, kind: 'auth', title: `signed call → ${name}`, detail: `did:ethr:${agent.address.slice(0, 10)}… · HTTP ${r.status}${r.ok ? ' ✓' : ' ✗'}` });
+    // The protocol trace: for signed calls, carry the EXACT rev-196 envelope bytes,
+    // the signer recovered from them client-side, and a copy-paste curl recipe — so
+    // the dev lens shows the wire, not just "HTTP 200".
+    const wire = r.envelope
+      ? { envelope: r.envelope, path: r.path, recoveredSigner: recoverSigner(r.envelope), expectedSigner: agent.address.toLowerCase(), curl: curlFor(r.path ?? '', r.envelope) }
+      : undefined;
+    emit({ agent: who, kind: 'auth', title: `signed call → ${name}`, detail: `did:ethr:${agent.address.slice(0, 10)}… · HTTP ${r.status}${r.ok ? ' ✓' : ' ✗'}${wire ? ' · signer recovered from bytes ✓' : ''}`, data: wire });
     interpret(name, r.body, who);
     return { text: typeof r.body === 'string' ? r.body : JSON.stringify(r.body) };
   };
@@ -141,7 +147,7 @@ export async function runDemo(apiKey: string): Promise<void> {
     emit({ agent: 'B', kind: 'credential', title: 'selective-disclosure proof derived (BBS+)', detail: `revealed ${pv.revealed?.length ?? 0} claim(s); ${pv.hiddenPaths?.length ?? 0} cryptographically hidden`, data: pv });
 
     if (pv.presentation) {
-      emit({ agent: 'C', kind: 'tool-call', title: 'affordance · verify_presentation', detail: 'verify the BBS+ proof — learn ONLY what B disclosed', data: { presentation: '… (zero-knowledge proof)' } });
+      emit({ agent: 'C', kind: 'tool-call', title: 'affordance · verify_presentation', detail: 'verify the BBS+ proof — learn ONLY what B disclosed', data: { presentation: '… (selective-disclosure proof)' } });
       const vp = await dispatchTool('verify_presentation', { presentation: pv.presentation }, C, {});
       emit({ agent: 'C', kind: 'auth', title: 'signed call → verify_presentation', detail: `did:ethr:${C.address.slice(0, 10)}… · HTTP ${vp.status}${vp.ok ? ' ✓' : ' ✗'}` });
       const vv = (vp.body ?? {}) as Record<string, any>;

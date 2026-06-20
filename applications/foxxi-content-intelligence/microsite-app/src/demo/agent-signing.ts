@@ -37,12 +37,28 @@ export async function signEnvelope(a: AgentWallet, args: Record<string, unknown>
   return { _signature, _signed_payload };
 }
 
-export interface BridgeResult { ok: boolean; status: number; body: unknown; }
+export interface BridgeResult { ok: boolean; status: number; body: unknown; /** the rev-196 envelope sent (signed calls only) — for the protocol trace / evidence pack */ envelope?: SignedEnvelope; /** the bridge path called */ path?: string; }
 
-/** POST a rev-196 signed envelope to a /agent/* endpoint (DIRECT branch). */
+/** POST a rev-196 signed envelope to a /agent/* endpoint (DIRECT branch). The
+ *  returned result carries the exact envelope bytes so callers can show the raw
+ *  signed payload + signature (the protocol trace) and recover the signer. */
 export async function postSigned(path: string, a: AgentWallet, args: Record<string, unknown>): Promise<BridgeResult> {
   const env = await signEnvelope(a, args);
-  return doPost(path, env);
+  const r = await doPost(path, env);
+  return { ...r, envelope: env, path };
+}
+
+/** Recover the signer address from a rev-196 envelope — pure client-side crypto,
+ *  zero trust in the bridge. Returns the lowercase 0x address, or null if invalid. */
+export function recoverSigner(env: SignedEnvelope): string | null {
+  try { return ethers.verifyMessage(`sha256:${sha256Hex(env._signed_payload)}`, env._signature).toLowerCase(); }
+  catch { return null; }
+}
+
+/** Build the copy-paste curl recipe that reproduces a signed call from a shell. */
+export function curlFor(path: string, env: SignedEnvelope): string {
+  const body = JSON.stringify(env).replace(/'/g, `'\\''`);
+  return `curl -sX POST '${BRIDGE_URL}${path}' \\\n  -H 'content-type: application/json' \\\n  -d '${body}'`;
 }
 
 /** POST an unsigned body (the open authoring surfaces, e.g. extend-standards). */

@@ -324,6 +324,9 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
             )}
           </div>
 
+          {/* The Living Curriculum — the course proposes its own successor */}
+          <LivingCurriculum analysis={analysis} />
+
           {/* Conversations */}
           <div style={{ ...card, marginTop: 14 }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>Talk about the course</div>
@@ -370,6 +373,118 @@ export function CourseIntel({ onHome }: { onHome: () => void }) {
     </div>
   );
 }
+
+// ── The Living Curriculum: the course runs each concept through the work-regime
+// engine and proposes a versioned successor (cg:supersedes). The performance
+// signals are illustrative + editable (the performance CONTEXT) — the reasoning
+// and the successor holon are real. Refuses the universal content-gap frame.
+interface ConceptSignal { id: string; label: string; completion: number | null; fieldSuccess: number | null; frequency: string }
+const REC_STYLE: Record<string, { bg: string; fg: string; label: string }> = {
+  keep: { bg: 'rgba(46,160,67,0.12)', fg: '#2e9c4a', label: 'keep' },
+  'revise-instruction': { bg: 'rgba(217,119,6,0.14)', fg: '#b45309', label: 'revise instruction' },
+  'demote-add-job-aid': { bg: 'rgba(124,58,237,0.12)', fg: '#7c3aed', label: 'demote · add job aid' },
+  'instrument-first': { bg: 'rgba(37,99,235,0.12)', fg: '#2563eb', label: 'instrument first' },
+};
+function LivingCurriculum({ analysis }: { analysis: Analysis }) {
+  // Seed an illustrative-but-story-telling signal set: a high-completion/low-field
+  // concept (looks like a content gap, isn't), a genuinely weak one, and unmeasured ones.
+  const [signals, setSignals] = useState<ConceptSignal[]>(() => analysis.course.concepts.slice(0, 8).map((c, i) => ({
+    id: c.id, label: c.label,
+    completion: i === 0 ? 0.91 : i === 1 ? 0.40 : i === 2 ? 0.88 : null,
+    fieldSuccess: i === 0 ? 0.44 : i === 1 ? 0.40 : i === 2 ? 0.83 : null,
+    // i===1 is a continuously-performed skill gap → the engine warrants instruction;
+    // i===0 (high completion, low field) → a job aid, not a content rewrite.
+    frequency: i === 1 ? 'continuous' : 'occasional',
+  })));
+  const [res, setRes] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function propose() {
+    setBusy(true); setErr(null); setRes(null);
+    const concept_signals = signals.filter(s => s.completion != null || s.fieldSuccess != null)
+      .map(s => ({ id: s.id, label: s.label, completion: s.completion ?? undefined, fieldSuccess: s.fieldSuccess ?? undefined, frequency: s.frequency }));
+    const { status, json } = await bridgeRest('/agent/course/propose-successor', {
+      course: analysis.course, holonUri: analysis.courseKg.holonUri, label: analysis.courseKg.label, concept_signals,
+    });
+    setBusy(false);
+    if (status !== 200 || json.ok === false) { setErr(String(json.error ?? `HTTP ${status}`)); return; }
+    setRes(json);
+  }
+  function setSig(id: string, key: 'completion' | 'fieldSuccess', v: string) {
+    const n = v.trim() === '' ? null : Math.max(0, Math.min(1, Number(v)));
+    setSignals(s => s.map(x => x.id === id ? { ...x, [key]: Number.isNaN(n as number) ? null : n } : x));
+  }
+
+  return (
+    <div style={{ ...card, marginTop: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>The living curriculum — the course proposes its own successor</div>
+        <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>each concept routed through the work-regime engine; emits a <code style={codeS}>cg:supersedes</code> successor holon</span>
+        <button onClick={propose} disabled={busy} style={{ ...pill, marginLeft: 'auto', borderColor: 'var(--accent)', color: 'var(--accent)', opacity: busy ? 0.5 : 1 }}>
+          {busy ? 'reasoning…' : 'Propose a successor'}
+        </button>
+      </div>
+      <p style={{ fontSize: 12.5, color: 'var(--text-dim)', lineHeight: 1.5, margin: '6px 0 8px' }}>
+        Set each concept&rsquo;s <strong>completion</strong> vs <strong>field success</strong> (the performance context — illustrative
+        until wired to your LRS). The engine <strong>refuses the reflexive &ldquo;content gap&rdquo;</strong>: a concept completed at 0.91
+        but succeeding in the field at 0.44 is an environment / incentive cause, not a lesson to rewrite. Blank = no signal → the
+        engine refuses to claim a regime and says <em>instrument first</em>.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px,1fr))', gap: 8, marginBottom: 8 }}>
+        {signals.map(s => (
+          <div key={s.id} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '7px 9px' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.label}</div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <label style={{ fontSize: 10.5, color: 'var(--text-dim)', flex: 1 }}>compl.
+                <input value={s.completion ?? ''} onChange={e => setSig(s.id, 'completion', e.target.value)} placeholder="—" style={miniInp} /></label>
+              <label style={{ fontSize: 10.5, color: 'var(--text-dim)', flex: 1 }}>field
+                <input value={s.fieldSuccess ?? ''} onChange={e => setSig(s.id, 'fieldSuccess', e.target.value)} placeholder="—" style={miniInp} /></label>
+            </div>
+          </div>
+        ))}
+      </div>
+      {err && <div style={{ fontFamily: mono, fontSize: 12, color: '#c1432a' }}>⚠ {err}</div>}
+      {res && (
+        <div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '4px 0 10px' }}>
+            {Object.entries(res.summary ?? {}).map(([k, v]) => (
+              <span key={k} style={{ ...pill, cursor: 'default', background: (REC_STYLE[k === 'keep' ? 'keep' : k === 'revise' ? 'revise-instruction' : k === 'jobaid' ? 'demote-add-job-aid' : 'instrument-first']?.bg), fontSize: 11 }}>
+                {String(v)} {k}
+              </span>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {(res.concepts ?? []).map((p: any, i: number) => {
+              const st = REC_STYLE[p.recommendation] ?? REC_STYLE['instrument-first'];
+              return (
+                <div key={i} style={{ border: '1px solid var(--border)', borderRadius: 6, padding: '9px 11px', borderLeft: `4px solid ${st.fg}` }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                    <strong style={{ fontSize: 13 }}>{p.concept.label}</strong>
+                    <span style={{ fontFamily: mono, fontSize: 9.5, padding: '1px 7px', borderRadius: 3, background: st.bg, color: st.fg }}>{st.label}</span>
+                    {p.regime && <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>regime: <strong>{p.regime}</strong></span>}
+                    {p.cause && <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>· cause: {p.cause}</span>}
+                    {p.signal && <span style={{ marginLeft: 'auto', fontFamily: mono, fontSize: 10, color: 'var(--text-dim)' }}>compl {p.signal.completion} / field {p.signal.fieldSuccess}</span>}
+                  </div>
+                  <div style={{ fontSize: 12.5, color: 'var(--text)', lineHeight: 1.5, marginTop: 4 }}>{p.rationale}</div>
+                </div>
+              );
+            })}
+          </div>
+          {res.successor?.holonUri && (
+            <div style={{ marginTop: 10, padding: '9px 11px', background: '#faf9f7', border: '1px solid var(--accent)', borderRadius: 6, fontSize: 12.5 }}>
+              ↳ emitted a <strong>cg:supersedes successor holon</strong> <code style={codeS}>{String(res.successor.holonUri).slice(0, 40)}…</code>
+              {res.successor.descriptorUrl && <> · <a href={res.successor.descriptorUrl} target="_blank" rel="noreferrer" style={linkBtn}>dereference it ↗</a></>}
+              {analysis.courseKg.descriptorUrl && <> · <a href={analysis.courseKg.descriptorUrl} target="_blank" rel="noreferrer" style={linkBtn}>the original ↗</a></>}
+              <div style={{ color: 'var(--text-dim)', marginTop: 3 }}>a first-class, dereferenceable, versioned revision composed into the PGSL lattice — not a doc diff.</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+const miniInp: React.CSSProperties = { width: '100%', padding: '4px 6px', borderRadius: 4, border: '1px solid var(--border)', fontFamily: mono, fontSize: 11, boxSizing: 'border-box', marginTop: 2 };
 
 function FingerprintCard({ fp }: { fp: Fingerprint }) {
   const detected = fp.toolId !== 'hand-authored';

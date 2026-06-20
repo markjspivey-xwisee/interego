@@ -750,10 +750,21 @@ az containerapp create \
   --ingress external \
   --min-replicas 1 \
   --max-replicas 2 \
-  --cpu 0.5 \
-  --memory 1Gi \
-  --env-vars "CSS_URL=$CSS_INTERNAL_URL" "IDENTITY_URL=$IDENTITY_URL" "RELAY_URL=https://$RELAY_FQDN" \
+  --cpu 4.0 \
+  --memory 8.0Gi \
+  --env-vars "CSS_URL=$CSS_INTERNAL_URL" "IDENTITY_URL=$IDENTITY_URL" "RELAY_URL=https://$RELAY_FQDN" "NODE_OPTIONS=--max-old-space-size=4096" \
   --output none
+# RESOURCE FLOOR (do NOT lower): the bridge composes the PGSL lattice, the spec
+# AND compliance ontologies, the mesh projection (200+ events), BBS+ issuance,
+# onnxruntime embeddings, and a per-agent in-memory lattice — all in one process.
+# At 0.5 CPU / 1 GiB it V8-heap-OOMs ~50s after boot; at 2 CPU / 4 GiB it
+# cgroup-OOM-kills (exit 137) under burst load because TOTAL process memory
+# (V8 old-space + native onnxruntime/buffers + many per-agent lattices) exceeds
+# the container limit even with old-space capped. 4 CPU / 8 GiB + a 4 GiB Node
+# old-space cap (leaving ~4 GiB for native) is the validated floor under a
+# 15-fresh-agent burst. Both failure modes surface as gateway 503/504 on the
+# heavy pod-write / credential / holon-compose paths. Cost lever: add per-label
+# lattice eviction before lowering this. Mirrors the interego-relay floor.
 
 FOXXI_BRIDGE_FQDN=$(az containerapp show --name "$FOXXI_BRIDGE_APP" --resource-group "$RESOURCE_GROUP" --query "properties.configuration.ingress.fqdn" -o tsv)
 echo "    Foxxi Bridge: https://$FOXXI_BRIDGE_FQDN"

@@ -62,7 +62,7 @@ export function Landing({ onTry, onAbout }: { onTry: (role: 'learner' | 'admin' 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
           <ValueProp
             title="Selective disclosure"
-            blurb="Prove you're competent in handicap control without revealing your score, employer, or any other course you've taken. BBS+ zero-knowledge proofs make this real."
+            blurb="Prove you're competent in handicap control without revealing your score, employer, or any other course you've taken. BBS+ selective-disclosure proofs make this real."
           />
           <ValueProp
             title="Cross-org portability"

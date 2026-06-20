@@ -237,6 +237,7 @@ function EventRow({ e }: { e: DemoEvent }) {
       )}
       {open && (
         <div style={{ padding: '0 14px 10px', marginLeft: 18, display: 'grid', gap: 8 }}>
+          {(e.data as any)?.envelope && <WireTrace d={e.data as any} />}
           {(e.data as any)?.checks && <VerificationMatrix d={e.data as any} />}
           {(e.data as any)?.revealed && (e.data as any)?.hiddenPaths && <SelectiveDisclosure d={e.data as any} />}
           {(e.data as any)?.sharedLattice && <LatticeBadge sl={(e.data as any).sharedLattice} />}
@@ -256,6 +257,31 @@ function EventRow({ e }: { e: DemoEvent }) {
 
 const vMono = "'JetBrains Mono', monospace";
 const artLabel: React.CSSProperties = { fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-dim)', marginBottom: 3 };
+
+/** The wire: the exact rev-196 signed envelope, the signer recovered from those
+ *  bytes (client-side, zero trust in the bridge), and a copy-paste curl recipe.
+ *  This is "watch the protocol" — no account, no OAuth, just a signature. */
+function WireTrace({ d }: { d: any }) {
+  const [copied, setCopied] = useState(false);
+  const recovered = String(d.recoveredSigner ?? '').toLowerCase();
+  const expected = String(d.expectedSigner ?? '').toLowerCase();
+  const ok = recovered && recovered === expected;
+  const payload = (() => { try { return JSON.stringify(JSON.parse(d.envelope._signed_payload), null, 2); } catch { return String(d.envelope?._signed_payload ?? ''); } })();
+  return (
+    <div>
+      <div style={artLabel}>the wire — rev-196 signed envelope (no account · no OAuth · no directory)</div>
+      <div style={{ fontSize: 11.5, color: ok ? '#2e9c4a' : '#d23f31', marginBottom: 4 }}>
+        {ok ? '✓' : '✗'} signer recovered from the bytes alone: <code style={{ fontFamily: vMono, fontSize: 10.5 }}>{recovered.slice(0, 16)}…</code> {ok ? '= the acting agent (the bridge is not trusted to assert who acted)' : '≠ expected'}
+      </div>
+      <div style={{ ...artLabel, marginTop: 4 }}>POST {d.path} · _signed_payload</div>
+      <pre style={{ fontSize: 10.5, lineHeight: 1.45, background: '#0f1115', color: '#cdd6e0', padding: 10, borderRadius: 5, overflow: 'auto', maxHeight: 220, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{payload}</pre>
+      <div style={{ ...artLabel, marginTop: 6 }}>_signature (secp256k1)</div>
+      <pre style={{ fontSize: 10, lineHeight: 1.4, background: '#0f1115', color: '#8b9bb0', padding: 8, borderRadius: 5, overflow: 'auto', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{d.envelope?._signature}</pre>
+      <button onClick={() => { navigator.clipboard?.writeText(String(d.curl ?? '')); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+        style={{ ...pill, marginTop: 6, borderColor: 'var(--accent)', color: 'var(--accent)' }}>{copied ? '✓ copied' : 'Copy as curl — reproduce from a shell'}</button>
+    </div>
+  );
+}
 
 /** The issuer's due diligence, unfurled: the verify_extension `checks` as a 3-tier
  *  matrix. Honest by construction — engine grading + shape conformance are
@@ -312,7 +338,7 @@ function SelectiveDisclosure({ d }: { d: any }) {
         </div>
       </div>
       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, lineHeight: 1.45 }}>
-        Real W3C BBS+ (bbs‑2023) zero‑knowledge proof — the verifier confirms the issuer signed exactly the revealed claims, and learns nothing about the hidden ones (no score, name, or dates).
+        Real W3C BBS+ (bbs‑2023) selective‑disclosure proof — the verifier confirms the issuer signed exactly the revealed claims, and learns nothing about the hidden ones (no score, name, or dates). It proves issuer-signed possession, not a zero-knowledge predicate.
       </div>
     </div>
   );

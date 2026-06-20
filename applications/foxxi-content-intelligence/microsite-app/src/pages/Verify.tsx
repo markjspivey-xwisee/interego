@@ -93,7 +93,7 @@ export function Verify({ onHome }: { onHome: () => void }) {
       <p style={{ fontSize: 18, color: 'var(--text-dim)', marginTop: 12, lineHeight: 1.55 }}>
         You're a recruiter / compliance officer / partner-org consumer of credentials. The learner has
         granted you their WebID. Now you can either review their full wallet, or request a
-        zero-knowledge presentation revealing only the claims relevant to your role.
+        selective-disclosure presentation revealing only the claims relevant to your role.
       </p>
 
       {/* Step 1: pick learner + competency */}
