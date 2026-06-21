@@ -50,7 +50,7 @@ If a client only supports the older SSE-style endpoint, swap `/mcp` for `/sse` o
 <details>
 <summary>What's underneath (for readers who want the protocol view)</summary>
 
-The MCP surface above is a thin ergonomic wrapper on three pillars over one cryptographic root: **typed context** (Context Descriptors with seven facets, a composition algebra, modal status, `iep:supersedes` chains, the PGSL content-addressed lattice — the L1 protocol is [Interego Protocol 1.0](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html)), **verifiable identity** (wallet-rooted DIDs, capability passports that survive infrastructure migration, attribute-based access control), and **coordination** (multi-axis attestation, federated saga transactions, Nostr-style p2p relays). Wrapped in NaCl envelopes, secp256k1 signatures, ZK commitments, IPFS anchoring. Federated across Solid pods by default.
+The MCP surface above is a thin ergonomic wrapper on three pillars over one cryptographic root: **typed context** (Context Descriptors with seven facets, a composition algebra, modal status, `iep:supersedes` chains, the PGSL content-addressed lattice — the L1 protocol is [Interego Protocol 1.0](https://markjspivey-xwisee.github.io/interego/spec/interego-protocol-1.0-wd.html)), **verifiable identity** (wallet-rooted DIDs, capability passports that survive infrastructure migration, attribute-based access control), and **coordination** (multi-axis attestation, federated saga transactions, Nostr-style p2p relays). Wrapped in NaCl envelopes, secp256k1 signatures, ZK commitments, IPFS anchoring. Federated across Solid pods by default.
 
 The underlying surface is a small categorical kernel — eight verbs: `mint`, `dereference`, `compose`, `act`, `restrict`, `extend`, `promote`, `decompose` — exposed both as a TypeScript module ([`src/kernel/`](src/kernel/)) and as first-class MCP tools alongside the 27 named compatibility shims (`publish_context`, `register_agent`, `pgsl_*`, `invoke_affordance`, …). The named tools' wire format is unchanged so existing connectors keep working; new clients can call the kernel verbs directly. See [`docs/ARCHITECTURAL-FOUNDATIONS.md`](docs/ARCHITECTURAL-FOUNDATIONS.md) §11 for the categorical structure realized by the kernel.
 
@@ -1046,7 +1046,7 @@ npm run test:watch   # Watch mode
 
 | Document | What it covers |
 |----------|---------------|
-| [Interego 1.0 WD](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html) | Core spec: descriptors, facets, composition, serialization |
+| [Interego Protocol 1.0 WD](https://markjspivey-xwisee.github.io/interego/spec/interego-protocol-1.0-wd.html) | Core spec: descriptors, facets, composition, serialization |
 | [`spec/architecture.md`](spec/architecture.md) | Architecture overview + RDF 1.2 / SHACL 1.2 alignment statement |
 | [`spec/LAYERS.md`](spec/LAYERS.md) | Layering discipline (L1 / L2 / L3); namespace-as-projection-contract; drift triggers |
 | [`spec/DERIVATION.md`](spec/DERIVATION.md) | Construction rules: every L2/L3 class must ground in L1 (CI-enforced) |
@@ -1087,7 +1087,7 @@ This library is designed to compose with several adjacent theoretical frameworks
 
 ## Spec Compliance
 
-Implements the [Interego 1.0 Working Draft](https://markjspivey-xwisee.github.io/interego/spec/interego-1.0.html):
+Implements the [Interego Protocol 1.0 Working Draft](https://markjspivey-xwisee.github.io/interego/spec/interego-protocol-1.0-wd.html):
 
 - Section 3.1: Context Descriptor structure
 - Section 3.4: Composition operators forming a bounded lattice
